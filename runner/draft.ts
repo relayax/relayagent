@@ -6,6 +6,7 @@ import { parse as parseYaml, parseDocument } from "yaml";
 import { RELAY_HOME, saveLedger, type Ledger } from "./state.ts";
 import { loadManifest, judge, ManifestError, type Manifest } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
+import { spawnEntrySync } from "./entry.ts";
 import { judgeRequires, validateDir } from "./installer.ts";
 import { buildView, type BuildResult } from "./build.ts";
 
@@ -406,7 +407,7 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
       const reports: string[] = [];
       let picked: string | null = null;
       for (const hv of variants) {
-        const r = spawnSync(path.join(snapshot, hv.source, hv.entry), ["setup"], { encoding: "utf8" });
+        const r = spawnEntrySync(path.join(snapshot, hv.source, hv.entry), ["setup"], { encoding: "utf8" });
         reports.push(`${hv.name}: ${r.status === 0 ? "준비됨" : "불가"}`);
         if (r.status === 0 && !picked) picked = hv.name;
       }
