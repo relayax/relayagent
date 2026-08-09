@@ -299,7 +299,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 const B = process.env.B;
-const args = process.argv.slice(2);
+let args = process.argv.slice(2);
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 
 let meta = {};
@@ -314,19 +314,6 @@ try {
   if (hit && sl.names.includes(hit[1])) prompt = "/" + sl.prefix + ":" + prompt.slice(1);
 } catch { /* 커맨드 없는 패키지 */ }
 
-// 꼬리 로그는 이번 턴 것만 남긴다 — 누적하면 지난 턴 오류로 엉뚱한 진단을 낸다
-const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "w" });
-const child = spawn("claude", [
-  "-p", prompt,
-  "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-  "--dangerously-skip-permissions",
-  ...args,
-], { stdio: ["ignore", "pipe", "pipe"] });
-child.stderr.pipe(errLog);
-const relay = (sig) => process.on(sig, () => child.kill(sig));
-relay("SIGTERM");
-relay("SIGINT");
-
 let done = false;
 let cancelled = false;
 let model = null;                 // 본류가 실제로 말한 모델
@@ -336,8 +323,34 @@ const WRITERS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 const tools = new Map();          // tool_use_id -> { name, file } (end 이벤트 짝맞춤용)
 const filed = new Set();          // 같은 산출물을 턴마다 여러 번 알리지 않는다
 
-const rl = readline.createInterface({ input: child.stdout });
-rl.on("line", (line) => {
+// 죽은 resume 포인터는 복구 대상이다. 가리키던 대화는 도구 보존기간 정리나 워크스페이스(cwd)
+// 이동으로 사라질 수 있고, 그때 도구는 이 문구와 함께 대화 없이 즉사한다(실측 2026-08-09,
+// 2.1.153). resume 의 계약은 "있으면 잇고, 없으면 새로"다 — 없는 과거가 현재 턴을 죽이면
+// 그 슬롯은 사람이 포인터 파일을 지워 줄 때까지 영영 실패를 반복한다
+const RESUME_GONE = "No conversation found with session ID";
+let restarting = false;           // 이번 실행이 죽은 포인터로 끝남 — 닫히면 새 세션으로 다시 편다
+let restarted = false;            // 재시도는 정확히 한 번
+
+let child = null;
+function start() {
+  // 꼬리 로그는 이번 실행 것만 남긴다 — 누적하면 지난 실행 오류로 엉뚱한 진단을 낸다
+  const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "w" });
+  child = spawn("claude", [
+    "-p", prompt,
+    "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+    "--dangerously-skip-permissions",
+    ...args,
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  child.stderr.pipe(errLog);
+  const rl = readline.createInterface({ input: child.stdout });
+  rl.on("line", onLine);
+  child.on("close", (code) => { rl.close(); onClose(code); });
+}
+const relay = (sig) => process.on(sig, () => child?.kill(sig));
+relay("SIGTERM");
+relay("SIGINT");
+
+const onLine = (line) => {
   let j;
   try { j = JSON.parse(line); } catch { return; }
   // 중간 텍스트는 부분 청크에서 뽑는다. 서브에이전트(parent_tool_use_id 있음)의 말은
@@ -381,6 +394,14 @@ rl.on("line", (line) => {
     }
   } else if (j.type === "result") {
     if (done) return;             // 종결 reply 는 정확히 한 번
+    // 죽은 resume 포인터의 실패 결과가 실어 오는 session_id 는 대화 없이 지어낸 즉석 값이다
+    // (실측: num_turns 0). 이것을 종결로 받아 저장하면 다음 턴이 또 그 즉석 값을 resume 해
+    // 같은 실패를 반복한다 — 종결로 받지 않고, 프로세스가 닫히면 새 세션으로 다시 시도한다
+    if (j.is_error && !restarted && args.includes("--resume")
+      && (Array.isArray(j.errors) ? j.errors : []).some((e) => String(e).includes(RESUME_GONE))) {
+      restarting = true;
+      return;
+    }
     // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다. 이것을 종결로 받으면
     // 화면에 "(빈 응답)" 이 찍히고, 그 뒤에 오는 진짜 답은 done 에 막혀 통째로 버려진다
     if (!j.is_error && !String(j.result ?? "").trim() && !said.trim() && !j.usage) return;
@@ -402,7 +423,8 @@ rl.on("line", (line) => {
     const u = j.usage ?? {};
     emit({
       event: "reply",
-      text,
+      // 재시작 턴은 이전 문맥 없이 답한 것이다 — 그 사실을 본문 머리에 남긴다
+      text: restarted ? "(이전 대화가 하네스에서 만료되어 새 대화로 시작했습니다.)\n\n" + text : text,
       session: j.session_id ?? null,
       model: name,
       usage: {
@@ -412,7 +434,7 @@ rl.on("line", (line) => {
       },
     });
   }
-});
+};
 
 // 제어 채널. 기판이 취소를 stdin 으로 먼저 보내고 신호는 그물로 쓴다 —
 // 여기서 받아 도구를 끊고 실패로 종결한다 (capabilities 의 cancel 이 이것이다)
@@ -432,9 +454,17 @@ try {
   ctl.on("error", () => { /* 제어 채널 없음 — 신호로만 취소된다 */ });
 } catch { /* stdin 이 없는 환경 */ }
 
-child.on("close", (code) => {
+function onClose(code) {
   if (killTimer) clearTimeout(killTimer);
-  rl.close();
+  if (restarting && !cancelled) {
+    restarting = false;
+    restarted = true;
+    fs.rmSync(B + "/claude-session", { force: true });
+    const at = args.indexOf("--resume");
+    if (at >= 0) args.splice(at, 2);
+    start();
+    return;
+  }
   ctl?.close();
   process.stdin.destroy();
   if (done) return;
@@ -442,5 +472,7 @@ child.on("close", (code) => {
   try { tail = fs.readFileSync(B + "/stderr.log", "utf8").trim().split("\n").slice(-3).join(" / "); } catch { /* 로그 없음 */ }
   emit({ event: "error", message: cancelled ? "취소됨" : "claude 응답 없음 (exit " + code + ")" + (tail ? " — " + tail : "") });
   process.exitCode = cancelled ? 130 : 1;
-});
+}
+
+start();
 ' "$2" "${ARGS[@]}"
