@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+.DS_Store
+*.log
+.env
+*.tsbuildinfo
+
+# local agent/editor config
+.claude/
+.vscode/
+.idea/
+
+# substrate state (never belongs in the tree)
+.relay/

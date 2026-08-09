@@ -1,0 +1,525 @@
+#!/bin/bash
+set -eo pipefail
+VERB="${1:-session}"
+
+# 자격은 도구 소유다(relay.yaml llm.auth.kind: oauth) - ChatGPT 로그인이 codex 의 집
+# ($CODEX_HOME/auth.json)에 앉는다. 그래서 login 은 선택이 아니라 필수 동사다:
+# 없으면 사용자가 GUI 에서 이 하네스를 켤 길 자체가 없다.
+# 세션 분기가 CODEX_HOME 을 번들로 옮기므로 사용자의 집 좌표는 그 전에 잡아 둔다
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+NEED_CODEX="codex CLI 없음: npm install -g @openai/codex"
+
+# 자격 실체 - codex logout 이 비우는 자리가 여기다. login status 를 모르는 구버전의 대체 판정
+tool_cred() {
+  if [ -n "${OPENAI_API_KEY:-}" ]; then return 0; fi
+  [ -f "$CODEX_DIR/auth.json" ] || return 1
+  grep -qE '"(access_token|OPENAI_API_KEY)"[[:space:]]*:[[:space:]]*"[^"]' "$CODEX_DIR/auth.json"
+}
+
+# 계정 표시 - id_token(JWT) 클레임에서 신원만 꺼낸다. 토큰 값은 어떤 경로로도 내보내지 않는다
+account_json() {
+  CODEX_DIR="$CODEX_DIR" node --input-type=module -e '
+import fs from "node:fs";
+try {
+  const a = JSON.parse(fs.readFileSync(process.env.CODEX_DIR + "/auth.json", "utf8"));
+  let claims = {};
+  try {
+    claims = JSON.parse(Buffer.from(String(a.tokens?.id_token ?? "").split(".")[1], "base64url").toString());
+  } catch { /* API 키 자격에는 id_token 이 없다 */ }
+  const auth = claims["https://api.openai.com/auth"] ?? {};
+  const acc = {
+    method: a.auth_mode ?? (a.OPENAI_API_KEY ? "apikey" : null),
+    email: claims.email ?? null,
+    plan: auth.chatgpt_plan_type ?? null,
+  };
+  process.stdout.write(acc.method || acc.email ? JSON.stringify(acc) : "null");
+} catch { process.stdout.write("null"); }'
+}
+
+case "$VERB" in
+  info)
+    # capabilities 는 구현 의지가 아니라 물리적 능력이다.
+    #   cancel  아래 headless 러너가 stdin 의 {"type":"cancel"} 을 받아 자식을 끊는다
+    #   vision  카탈로그의 input_modalities 가 text+image 이고 codex 에 이미지 열람 도구가 있다
+    #   resume  codex exec resume <SESSION_ID> 로 네이티브 스레드를 그대로 이어간다
+    #   effort  -c model_reasoning_effort 로 강도를 받는다. -c 주입 레일이 있을 때만 싣는다
+    CAPS='"cancel","vision","resume"'
+    if command -v codex >/dev/null 2>&1; then
+      HELP="$(codex exec --help 2>/dev/null || true)"
+      case "$HELP" in *--config*) CAPS="$CAPS"',"effort"' ;; esac
+    fi
+    echo '{"name":"codex","provider":"openai","protocol":2,"verbs":["session","setup","login","models","commands","info"],"capabilities":['"$CAPS"'],"account":'"$(account_json)"'}'
+    exit 0
+    ;;
+  setup)
+    # 진단(읽기)이다. 자격을 만들지 않는다 - 설치 스윕이 후보마다 연달아 부르는 자리라
+    # 여기서 인증 플로우가 뜨면 설치가 브라우저를 연다.
+    # 종료코드가 미준비의 축을 가른다: 3 = 도구 없음(설치) · 그 외 비0 = 자격 없음(로그인)
+    if ! command -v codex >/dev/null 2>&1; then
+      echo "$NEED_CODEX"
+      exit 3
+    fi
+    # npm 래퍼만 남고 네이티브 바이너리가 빠진 설치가 실재한다(codex --version 이 spawn ENOENT 로 죽는다).
+    # 자격이 아니라 설치의 문제이므로 도구 없음 축으로 보낸다 - 여기서 자격 축으로 뭉뚱그리면
+    # 재설치가 답인 사용자에게 로그인 창이 뜬다
+    if ! VER="$(codex --version 2>&1)"; then
+      echo "codex 설치가 깨졌습니다: ${VER%%$'\n'*}"
+      echo "다시 설치하세요: npm install -g @openai/codex"
+      exit 3
+    fi
+    VER="${VER%%$'\n'*}"
+    # 자격은 도구에게 묻는다(codex login status = 읽기 전용 조회).
+    # status 를 모르는 구버전은 clap 이 unrecognized subcommand 로 끝내므로 그때만 파일로 판정한다 -
+    # 미로그인과 구버전을 뭉뚱그리면 로그인한 사용자를 막는다
+    if ST="$(codex login status 2>&1)"; then
+      echo "$VER"
+      echo "${ST%%$'\n'*}"
+      exit 0
+    fi
+    case "$ST" in
+      *"unrecognized subcommand"*|*"unexpected argument"*|*"invalid subcommand"*)
+        if tool_cred; then
+          echo "$VER"
+          echo "이 버전은 codex login status 를 모릅니다 - 자격 파일로 판정했습니다 ($CODEX_DIR/auth.json)"
+          exit 0
+        fi
+        ;;
+    esac
+    echo "$VER"
+    echo "로그인 필요: relay login <패키지> 를 실행하세요 (터미널 창에서 codex login 이 열립니다)"
+    exit 1
+    ;;
+  login)
+    # 처방(쓰기) - setup 이 진단이라면 이쪽이 치료다. 대화형이라 TTY 를 그대로 물려받는다(exec).
+    #   기본     ChatGPT 구독 로그인. 준비된 상태에서도 불린다 = 계정 전환 경로
+    #   --switch 기존 자격을 먼저 비우고(codex logout) 다시 로그인한다. codex login 은 이미
+    #            로그인된 상태에서 그대로 끝날 수 있어 전환은 명시 동작이어야 한다
+    #   --token  codex login --with-api-key 가 stdin 으로 API 키를 받는다(도구에 그 경로가 있을 때만)
+    if ! command -v codex >/dev/null 2>&1; then
+      echo "$NEED_CODEX"
+      exit 3
+    fi
+    if [ "${2:-}" = "--token" ]; then
+      LH="$(codex login --help 2>/dev/null || true)"
+      case "$LH" in
+        *--with-api-key*)
+          echo "OpenAI API 키를 붙여넣고 Enter 를 누르세요 (입력은 codex 가 받습니다):"
+          exec codex login --with-api-key
+          ;;
+      esac
+      echo "이 codex 버전에는 토큰 로그인 경로가 없습니다 - 인자 없이 relay login <패키지> 로 구독 로그인을 하세요"
+      exit 1
+    fi
+    if [ "${2:-}" = "--switch" ]; then
+      codex logout >/dev/null 2>&1 || true
+    fi
+    exec codex login
+    ;;
+  models)
+    # 정본 = codex debug models (도구 자신의 모델 카탈로그를 JSON 으로 낸다).
+    # 불달이면 도구가 서버에서 받아 남긴 같은 카탈로그 캐시로 강등한다 - 바이너리를 긁는 것이 아니다.
+    # 둘 다 없으면 다음 한 걸음을 적은 안내 항목 하나로 강등하고 사유는 stderr 에.
+    # 하드코딩한 모델 id 는 폴백에 쓰지 않는다: 낡은 목록이 정본 행세를 하면 사용자가 없는 모델을 고른다
+    CODEX_DIR="$CODEX_DIR" node --input-type=module -e '
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+const out = (xs) => process.stdout.write(JSON.stringify([...new Set(xs)]) + "\n");
+const why = (m) => process.stderr.write("models 강등 - " + m + "\n");
+// visibility 가 hide 인 항목은 도구가 목록에서 감춘 내부용이다. priority 는 도구의 정렬 의도다
+const slugs = (j) => (Array.isArray(j?.models) ? j.models : [])
+  .filter((m) => m && typeof m.slug === "string" && m.slug && m.visibility !== "hide")
+  .sort((a, b) => (a.priority ?? 9999) - (b.priority ?? 9999))
+  .map((m) => m.slug);
+
+const r = spawnSync("codex", ["debug", "models"], { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
+if (r.status === 0) {
+  try {
+    const s = slugs(JSON.parse(r.stdout));
+    if (s.length) { out(s); process.exit(0); }
+  } catch { /* 카탈로그가 JSON 이 아니다 - 캐시로 */ }
+}
+try {
+  const s = slugs(JSON.parse(fs.readFileSync(process.env.CODEX_DIR + "/models_cache.json", "utf8")));
+  if (s.length) {
+    why("codex debug models 불달" + (r.error ? ": " + r.error.message : " (exit " + r.status + ")") + " - 도구가 남긴 카탈로그 캐시로 대신한다");
+    out(s);
+    process.exit(0);
+  }
+} catch { /* 캐시 없음 - 안내로 */ }
+why("codex 카탈로그를 읽지 못했습니다 - 설치와 로그인을 먼저 확인하세요");
+out(["(codex 로그인 후 모델 목록이 여기 나옵니다)"]);'
+    exit 0
+    ;;
+  commands)
+    # codex TUI 내장 슬래시 커맨드. 설명은 도구가 자기 목록에 다는 문구를 옮긴 것이고,
+    # 이 workdir 에 조립된 패키지 커맨드는 기판이 따로 병합한다.
+    # headless 에서는 뜨지 않는 표면이라 전부 tty:true 다
+    echo '[{"name":"model","description":"이 세션의 모델과 추론 강도를 고른다","tty":true},
+ {"name":"new","description":"대화 도중에 새 대화를 시작한다","tty":true},
+ {"name":"clear","description":"화면을 비우고 새 대화를 시작한다","tty":true},
+ {"name":"compact","description":"컨텍스트 한계에 닿지 않게 대화를 압축한다","tty":true},
+ {"name":"init","description":"이 프로젝트의 AGENTS.md 를 만든다","tty":true},
+ {"name":"review","description":"지금 변경분을 리뷰해 문제를 찾는다","tty":true},
+ {"name":"diff","description":"git diff 를 본다 (추적 안 된 파일 포함)","tty":true},
+ {"name":"status","description":"현재 세션 설정과 토큰 사용량을 본다","tty":true},
+ {"name":"usage","description":"계정 사용량과 한도 초기화 시점을 본다","tty":true},
+ {"name":"mcp","description":"연결된 MCP 도구를 본다","tty":true},
+ {"name":"plan","description":"플랜 모드로 바꾼다","tty":true},
+ {"name":"resume","description":"저장된 대화를 고른다","tty":true},
+ {"name":"quit","description":"codex 를 끝낸다","tty":true}]'
+    exit 0
+    ;;
+  session)
+    ;;
+  *)
+    echo "지원하지 않는 동사: $VERB (session|setup|login|models|commands|info)"
+    exit 2
+    ;;
+esac
+
+B="${RELAY_BUNDLE:-}"
+HEADLESS=0
+if [ $# -gt 1 ] && [ -n "${2:-}" ]; then HEADLESS=1; fi
+
+# 실패는 종료코드로, 사유는 봉투(headless)나 stderr(TTY)로 - 텍스트로 위장하지 않는다
+fail() {
+  if [ "$HEADLESS" = 1 ]; then
+    MSG="$1" node --input-type=module -e 'process.stdout.write(JSON.stringify({ event: "error", message: process.env.MSG }) + "\n");'
+  else
+    echo "$1" >&2
+  fi
+  exit 1
+}
+
+if [ -z "$B" ] || [ ! -f "$B/meta.json" ] || [ ! -f "$B/persona.md" ]; then
+  fail "번들이 없습니다(RELAY_BUNDLE) - 기판이 스폰한 세션이 아닙니다"
+fi
+command -v codex >/dev/null 2>&1 || fail "$NEED_CODEX"
+
+# 설정 디렉토리 격리 = 혼입 금지의 유일한 레일이다. 사용자의 ~/.codex 에는 그의 config.toml,
+# MCP 서버, 플러그인, 메모리가 앉아 있고 그것이 세션에 새면 안 된다.
+# 격리의 대가는 자격이다: codex 의 자격은 도구 소유(auth.json)라 CODEX_HOME 을 옮기면 닿지 못한다.
+# 그래서 사용자의 auth.json 을 심볼릭 링크로 잇는다 - 갱신 토큰은 원본에 그대로 쓰인다.
+# 도구가 원자적 교체로 링크를 실체 파일로 갈아치우는 경우가 있어, 원본이 더 새것이면 다시 잇는다
+# (사용자가 재로그인·계정 전환을 하면 그 자격이 다음 세션부터 반영되어야 한다)
+CH="$B/codex-home"
+mkdir -p "$CH"
+SRC_AUTH="$CODEX_DIR/auth.json"
+if [ -f "$SRC_AUTH" ]; then
+  if [ ! -e "$CH/auth.json" ] || { [ ! -L "$CH/auth.json" ] && [ "$SRC_AUTH" -nt "$CH/auth.json" ]; }; then
+    ln -sfn "$SRC_AUTH" "$CH/auth.json"
+  fi
+fi
+export CODEX_HOME="$CH"
+export RELAY_MCP_TOKEN="$RELAY_TOKEN"
+
+# 조립은 전부 -c 인자로 넣는다. -c 는 모든 하위 명령에 있어서 exec·exec resume·TUI 가 같은
+# 어휘를 쓴다(플래그는 하위 명령마다 있고 없다 - exec resume 에는 --sandbox 가 없다).
+# 지침만은 파일 경로가 유일한 레일이라 번들 안의 CODEX_HOME 에 AGENTS.md 로 쓴다 -
+# 사용자의 집에도 cwd(workspace)에도 쓰지 않는다
+B="$B" CH="$CH" node --input-type=module -e '
+import fs from "node:fs";
+const B = process.env.B;
+const CH = process.env.CH;
+const meta = JSON.parse(fs.readFileSync(B + "/meta.json", "utf8"));
+
+let doc = fs.readFileSync(B + "/persona.md", "utf8");
+doc += "\n\n# 기판 (Relay)\n"
+  + "- 작업 무대(cwd): " + (meta.workspace ?? process.cwd()) + "\n"
+  + "- 파일 교환 무대: " + meta.stage + " - 사용자에게 채팅으로 전달할 파일은 여기 놓는다. 첨부도 여기서 온다\n";
+
+// 담장 번역: codex 의 훅(PreToolUse)은 설정 스키마와 훅 신뢰(hook trust)까지 걸려 있어
+// 근거 없이 지어낼 수 없다. 여기서는 두 겹으로 강등한다 - 쓰기는 샌드박스가 cwd 와 위 무대로
+// 묶고(아래 sandbox_mode), 읽기까지 막을 장치가 없으니 지침으로 명시한다.
+// 가드레일이지 샌드박스가 아니라는 사실을 본문에도 적는다(조용히 버리면 막힌 줄 알고 쓰게 된다)
+const deny = meta.hooks?.deny ?? [];
+if (deny.length) {
+  doc += "- 접근 금지: " + deny.join(", ") + "\n"
+    + "  이 경로는 읽지도 쓰지도 마라. 쓰기는 샌드박스가 막지만 읽기는 네 규율이 담장이다\n";
+}
+
+// 서브에이전트는 문서 절로 강등한다 - codex 에는 위임 실행 경로가 없다. 있는 척도, 조용한 폐기도 아니다
+for (const a of meta.agents ?? []) {
+  const p = B + "/agents/" + a.name + ".md";
+  if (!fs.existsSync(p)) continue;
+  doc += "\n\n# 위임 역할: " + a.name + "\ncodex 에는 서브에이전트가 없다. 이 역할의 일이 오면 본 세션이 아래 지침을 직접 따른다.\n\n"
+    + fs.readFileSync(p, "utf8");
+}
+// 커맨드도 문서 절이다. codex 의 슬래시 커맨드는 내장 집합이라 등록할 자리가 없고,
+// 문서 절은 TTY 와 headless 양쪽에서 똑같이 동작한다
+if (fs.existsSync(B + "/commands")) {
+  for (const f of fs.readdirSync(B + "/commands").filter((x) => x.endsWith(".md"))) {
+    doc += "\n\n# 커맨드: /" + f.replace(/\.md$/, "") + "\n사용자 메시지가 이 커맨드면 아래 지시를 따른다.\n\n"
+      + fs.readFileSync(B + "/commands/" + f, "utf8");
+  }
+}
+// 스킬은 주입 경로가 없다 - 번들 경로만 알려주고 codex 의 파일 도구로 직접 읽게 한다
+if (fs.existsSync(B + "/skills")) {
+  const names = fs.readdirSync(B + "/skills").filter((n) => fs.existsSync(B + "/skills/" + n + "/SKILL.md"));
+  if (names.length) {
+    doc += "\n\n# 스킬\n필요할 때 다음 문서를 읽는다:\n"
+      + names.map((n) => "- " + n + ": " + B + "/skills/" + n + "/SKILL.md").join("\n") + "\n";
+  }
+}
+fs.writeFileSync(CH + "/AGENTS.md", doc);
+
+// -c 한 줄 = key=value. 값은 TOML 로 파싱되므로 문자열은 JSON 표기로 감싼다
+const conf = [];
+const q = (v) => JSON.stringify(String(v));
+
+// 샌드박스가 담장의 쓰기 절반이다. cwd(workspace) 밖은 막히므로 파일 교환 무대를
+// writable_roots 로 열어 준다 - 이걸 빠뜨리면 산출물을 stage 에 놓지 못한다.
+// 네트워크는 켠다: 끄면 설치·조회가 전부 승인 요청으로 튀는데 headless 에는 승인할 사람이 없다
+conf.push("sandbox_mode=" + q("workspace-write"));
+conf.push("sandbox_workspace_write.writable_roots=[" + q(meta.stage) + "]");
+conf.push("sandbox_workspace_write.network_access=true");
+
+// AGENTS.md 는 문서 상한에 걸려 잘린다(기본 32KiB). 페르소나에 커맨드와 스킬 목록이 붙으면
+// 그 상한을 넘기므로 실제 크기에 맞춰 올린다 - 잘린 지침은 조용히 다른 에이전트가 된다
+conf.push("project_doc_max_bytes=" + Math.max(65536, Buffer.byteLength(doc) + 65536));
+
+if (meta.mcp?.url) {
+  // 토큰은 인자에 싣지 않는다. bearer_token_env_var 는 codex 가 자기 env 에서 읽는 이름이다
+  conf.push("mcp_servers.relay.url=" + q(meta.mcp.url));
+  conf.push("mcp_servers.relay.bearer_token_env_var=" + q("RELAY_MCP_TOKEN"));
+}
+
+// 모델도 -c 로 넣는다(-m 의 정본이 이 키다). 하위 명령마다 플래그 유무를 따질 필요가 없다
+if (process.env.RELAY_MODEL) conf.push("model=" + q(process.env.RELAY_MODEL));
+
+// 강도 어휘는 카탈로그의 supported_reasoning_levels 다. 모르는 값은 무시한다 -
+// 그대로 넘기면 도구가 세션 자체를 거절한다
+const EFFORT = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+const eff = process.env.RELAY_EFFORT;
+if (eff) {
+  if (EFFORT.includes(eff)) conf.push("model_reasoning_effort=" + q(eff));
+  else process.stderr.write("[relay] 모르는 RELAY_EFFORT 무시: " + eff + "\n");
+}
+fs.writeFileSync(B + "/codex-conf", conf.join("\n") + "\n");
+'
+
+CONF=()
+while IFS= read -r KV; do
+  if [ -n "$KV" ]; then CONF+=(-c "$KV"); fi
+done < "$B/codex-conf"
+
+# 같은 RELAY_SESSION 재호출 = 대화 이어가기. 네이티브 스레드 id 로 잇는다(resume capability 의 실체).
+# --last 는 쓰지 않는다: cwd 로 걸러 고르는 방식이라 사용자가 그 폴더에서 직접 돌린 대화를 물 수 있다.
+# 롤아웃이 실제로 남아 있을 때만 이어간다 - 사라진 id 로 resume 하면 턴 자체가 실패한다
+RESUME_ID=""
+if [ -f "$B/codex-thread" ]; then
+  TID="$(cat "$B/codex-thread")"
+  if [ -n "$TID" ] && [ -n "$(find "$CH/sessions" -name "*$TID*.jsonl" -print -quit 2>/dev/null)" ]; then
+    RESUME_ID="$TID"
+  fi
+fi
+
+# 네이티브 표면은 감싸지 않는다 - TUI 를 그대로 띄우고 TTY 를 물려준다
+if [ "$HEADLESS" = 0 ]; then
+  if [ -n "$RESUME_ID" ]; then
+    exec codex resume "$RESUME_ID" "${CONF[@]}"
+  fi
+  exec codex "${CONF[@]}"
+fi
+
+OUT_FILE="$B/last-message.txt"
+rm -f "$OUT_FILE"
+
+# headless 인자 벡터. 프롬프트는 -- 뒤에 놓는다 - 사용자 메시지가 - 로 시작해도 플래그로 먹히지 않게.
+# approval_policy 는 headless 에서만 never 다: 승인할 사람이 없는 자리에서 물으면 턴이 멎는다
+CX=(exec)
+if [ -n "$RESUME_ID" ]; then CX+=(resume); fi
+CX+=(--json --skip-git-repo-check -o "$OUT_FILE" -c 'approval_policy="never"' "${CONF[@]}" --)
+if [ -n "$RESUME_ID" ]; then CX+=("$RESUME_ID"); fi
+CX+=("$2")
+
+# 세션 봉투(protocol 2): codex exec --json 의 JSONL 을 relay 이벤트로 번역한다.
+# 어휘가 버전마다 두 갈래라 둘 다 받고, 모르는 줄은 버린다 - 없는 이벤트는 지어내지 않는다.
+#   신: thread.started · turn.started · item.started/updated/completed · turn.completed · turn.failed · error
+#   구: msg.type = session_configured · agent_message(_delta) · exec_command_begin/end ·
+#       mcp_tool_call_begin/end · patch_apply_begin/end · token_count · task_complete
+# 종결 reply 의 본문은 --output-last-message 파일이 정본이다(스키마를 몰라도 답은 나온다).
+# stdin 은 도구가 아니라 우리 것이다 - codex 는 stdin 이 파이프면 EOF 까지 읽고 멈추므로
+# 자식에게는 ignore 를 물리고(이걸 빠뜨리면 헤드리스 턴이 영원히 매달린다) 제어 채널은 여기서 받는다
+B="$B" OUT_FILE="$OUT_FILE" exec node --input-type=module -e '
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import readline from "node:readline";
+const B = process.env.B;
+const OUT_FILE = process.env.OUT_FILE;
+const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "a" });
+const meta = JSON.parse(fs.readFileSync(B + "/meta.json", "utf8"));
+const stage = meta.stage ? path.resolve(meta.stage) : null;
+
+const child = spawn("codex", process.argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+child.stderr.pipe(errLog);
+// 취소는 codex 까지만 닿는다. 그가 샌드박스로 띄운 셸은 자기 프로세스 그룹으로 빠져나가서
+// 그룹째 끊어도 살아남는다(실측) - 장기 명령의 뒷정리는 도구 몫이다
+const stop = () => child.kill("SIGTERM");
+process.on("SIGTERM", stop);
+
+let thread = null;
+let lastText = "";
+let usage = null;
+let failure = null;
+let cancelled = false;
+const open = new Map(); // item id -> 도구 이름 (start/end 짝맞춤)
+
+const toolName = (it) => {
+  if (it.type === "command_execution") return "shell";
+  if (it.type === "mcp_tool_call") return [it.server, it.tool].filter(Boolean).join(".") || "mcp";
+  if (it.type === "web_search") return "web_search";
+  if (it.type === "file_change") return "apply_patch";
+  return null;
+};
+const detailOf = (it) => {
+  const d = it.command ?? it.query ?? it.tool ?? "";
+  return Array.isArray(d) ? d.join(" ") : String(d ?? "");
+};
+const toolStart = (id, name, it) => {
+  if (id != null && open.has(id)) return;
+  if (id != null) open.set(id, name);
+  const d = detailOf(it);
+  emit({ event: "tool", name, status: "start", ...(d ? { detail: d.slice(0, 200) } : {}) });
+};
+const toolEnd = (id, name) => {
+  if (id != null) open.delete(id);
+  emit({ event: "tool", name, status: "end" });
+};
+// 산출물은 stage 에 놓인 것만 회신 대상이다. 그 밖의 편집은 기판의 관심사가 아니다
+const fileEvents = (it) => {
+  if (!stage) return;
+  const c = it.changes;
+  const paths = Array.isArray(c) ? c.map((x) => (typeof x === "string" ? x : x?.path))
+    : c && typeof c === "object" ? Object.keys(c) : [];
+  for (const p of paths) {
+    if (typeof p !== "string" || !p) continue;
+    const abs = path.resolve(process.cwd(), p);
+    if (abs === stage || abs.startsWith(stage + path.sep)) emit({ event: "file", path: path.relative(stage, abs) });
+  }
+};
+const setUsage = (u) => {
+  if (!u || typeof u !== "object") return;
+  let ctx = null;
+  if (process.env.RELAY_MODEL) {
+    try {
+      // 카탈로그는 도구가 CODEX_HOME 에 남긴 자기 자료다 - 컨텍스트 창은 여기서만 알 수 있다
+      const cat = JSON.parse(fs.readFileSync(process.env.CODEX_HOME + "/models_cache.json", "utf8"));
+      ctx = (cat.models ?? []).find((m) => m?.slug === process.env.RELAY_MODEL)?.context_window ?? null;
+    } catch { /* 캐시 없음 - 창 크기는 모른다 */ }
+  }
+  usage = { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0, context_window: ctx };
+};
+
+const rl = readline.createInterface({ input: child.stdout });
+rl.on("line", (line) => {
+  let j;
+  try { j = JSON.parse(line); } catch { return; }
+
+  if (typeof j.type === "string") {
+    const it = j.item ?? {};
+    const name = toolName(it);
+    if (j.type === "thread.started" && j.thread_id) {
+      thread = String(j.thread_id);
+      fs.writeFileSync(B + "/codex-thread", thread);
+    } else if (j.type === "item.started" && name) {
+      toolStart(it.id, name, it);
+    } else if (j.type === "item.completed") {
+      if (it.type === "agent_message" && it.text) {
+        lastText = String(it.text);
+        emit({ event: "delta", text: lastText });
+      } else if (name) {
+        // start 를 못 본 채 완료만 오는 버전이 있다 - 도구가 알려준 사실이라 짝을 맞춰 낸다
+        toolStart(it.id, name, it);
+        toolEnd(it.id, name);
+        if (it.type === "file_change") fileEvents(it);
+      }
+    } else if (j.type === "turn.completed") {
+      setUsage(j.usage);
+    } else if (j.type === "turn.failed") {
+      failure = String(j.error?.message ?? "turn failed");
+    } else if (j.type === "error") {
+      failure = String(j.message ?? "error");
+    }
+    return;
+  }
+
+  const m = j.msg;
+  if (!m || typeof m.type !== "string") return;
+  if (m.type === "session_configured" && m.session_id) {
+    thread = String(m.session_id);
+    fs.writeFileSync(B + "/codex-thread", thread);
+  } else if (m.type === "agent_message_delta" && m.delta) {
+    emit({ event: "delta", text: String(m.delta) });
+  } else if (m.type === "agent_message" && m.message) {
+    lastText = String(m.message);
+    emit({ event: "delta", text: lastText });
+  } else if (m.type === "exec_command_begin") {
+    toolStart(m.call_id, "shell", { command: m.command });
+  } else if (m.type === "exec_command_end") {
+    toolEnd(m.call_id, "shell");
+  } else if (m.type === "mcp_tool_call_begin") {
+    toolStart(m.call_id, [m.invocation?.server, m.invocation?.tool].filter(Boolean).join(".") || "mcp", {});
+  } else if (m.type === "mcp_tool_call_end") {
+    toolEnd(m.call_id, "mcp");
+  } else if (m.type === "patch_apply_begin") {
+    toolStart(m.call_id, "apply_patch", {});
+    fileEvents(m);
+  } else if (m.type === "patch_apply_end") {
+    toolEnd(m.call_id, "apply_patch");
+  } else if (m.type === "token_count") {
+    setUsage(m.info?.total_token_usage ?? m.info);
+  } else if (m.type === "task_complete") {
+    if (m.last_agent_message) lastText = String(m.last_agent_message);
+  } else if (m.type === "error") {
+    failure = String(m.message ?? "error");
+  }
+});
+
+const ctl = readline.createInterface({ input: process.stdin });
+ctl.on("line", (line) => {
+  try {
+    if (JSON.parse(line).type === "cancel") {
+      cancelled = true;
+      stop();
+    }
+  } catch { /* 제어 아님 - 무시 */ }
+});
+
+child.on("error", (e) => {
+  emit({ event: "error", message: "codex 실행 실패: " + (e?.message ?? e) });
+  process.exit(1);
+});
+child.on("close", (code) => {
+  rl.close();
+  ctl.close();
+  process.stdin.destroy();
+  let text = "";
+  try { text = fs.readFileSync(OUT_FILE, "utf8").trim(); } catch { /* 파일 없음 - 스트림에서 */ }
+  if (!text) text = lastText.trim();
+
+  if (cancelled) {
+    emit({ event: "error", message: "취소됨" });
+    process.exitCode = 130;
+    return;
+  }
+  if (!text) {
+    let tail = "";
+    try { tail = fs.readFileSync(B + "/stderr.log", "utf8").trim().split("\n").slice(-3).join(" / "); } catch { /* 로그 없음 */ }
+    emit({ event: "error", message: (failure ?? "codex 응답 없음 (exit " + code + ")") + (tail ? " - " + tail : "") });
+    process.exitCode = code || 1;
+    return;
+  }
+  emit({
+    event: "reply",
+    text,
+    session: thread,
+    model: process.env.RELAY_MODEL ?? null,
+    usage,
+  });
+  // 사유는 본문으로 전달됐고 실패는 종료코드로 드러낸다
+  if (code !== 0) process.exitCode = code;
+});
+' "${CX[@]}"

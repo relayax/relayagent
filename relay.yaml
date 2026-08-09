@@ -1,0 +1,122 @@
+schema: relay/v1
+name: "@local/orders"
+version: 0.1.0
+display_name: "주문 비서"
+description: "카드 한 줄. 지도, 카탈로그, 설치 화면이 이 문장을 그대로 쓴다."
+icon: assets/icon.svg
+
+surfaces:
+  view:
+    source: surfaces/view
+    out: out
+  chat:
+    mode: direct
+    greeting: "무엇을 도와드릴까요?"
+  channels:
+    - name: discord
+      source: channels/discord
+      entry: index.ts
+    - name: slack
+      source: channels/slack
+      entry: index.ts
+
+harness:
+  variants:
+    - name: claude-code
+      source: harness/claude-code
+      entry: run
+      dockerfile: Dockerfile
+      llm:
+        provider: anthropic
+        auth: { kind: oauth }
+    - name: codex
+      source: harness/codex
+      entry: run
+      llm:
+        provider: openai
+        auth: { kind: oauth }
+  workdir: work/
+
+hooks:
+  deny:
+    - ~/Documents/세무
+
+agents:
+  - name: orders
+    persona: agents/orders/AGENT.md
+    skills: agents/orders/skills
+    commands: agents/orders/commands
+    dispatch: [worker]
+  - name: worker
+    persona: agents/worker/AGENT.md
+    scripts: [orders-*, report-weekly]
+
+scripts:
+  source: scripts
+
+services:
+  - name: sessions
+    source: services/sessions
+    dockerfile: Dockerfile
+    disk: 1Gi
+    resources: { memory: 512Mi, cpu: 0.5 }
+    port: 8080
+  - name: browser
+    source: services/browser
+    dockerfile: Dockerfile
+    port: 9222
+  - name: erp-events
+    source: services/erp-events
+    entry: index.ts
+    port: 8090
+  - name: inbox
+    dir: ~/Documents/orders-inbox
+  - name: erp
+    url: https://erp.internal.example.com/mcp
+    tools: [list-orders, get-order, create-draft-order]
+    auth:
+      kind: token
+      env: ERP_TOKEN
+      help:
+        url: "https://erp.internal.example.com/settings/tokens"
+        note: "본인 계정으로 API 토큰을 발급해 붙여넣으세요."
+      verify:
+        url: "https://erp.internal.example.com/api/me"
+  - name: drive
+    url: https://drive-mcp.example.com/mcp
+    tools: [search, fetch]
+    auth:
+      kind: oauth
+      client: registered
+      oauth_client:
+        scopes: ["https://www.googleapis.com/auth/drive.readonly"]
+        auth_meta:
+          authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+          token_endpoint: "https://oauth2.googleapis.com/token"
+          authorize_params: { access_type: "offline", prompt: "consent" }
+
+triggers:
+  - id: daily-digest
+    when: { cron: "0 9 * * *", tz: "Asia/Seoul" }
+    then: { agent: orders, prompt: "어제 처리량을 요약해 주세요." }
+  - id: on-install
+    when: { event: relay.package.installed, debounce_ms: 60000 }
+    then: { agent: orders, prompt: "설치 직후 초기 설정 상태를 점검해 주세요.", route: "/orders" }
+  - id: nightly-sync
+    when: { cron: "0 3 * * *", tz: "Asia/Seoul" }
+    then: { script: orders-sync }
+
+missions:
+  - name: product-context
+    description: "제품 맥락(제품명, 포지셔닝, 핵심 기능, 타깃)을 질의에 답한다."
+
+edges:
+  - provider: "@relay/notion@^1"
+    tools: [search, fetch]
+  - provider: "@local/devteam"
+    mission: product-context
+
+org:
+  per_user:
+    accounts: [erp, drive, "@relay/notion"]
+    replicas: [browser]

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>영상 스튜디오 — 편집 현장</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --line: #e3e5e9; --text: #1b1e23; --dim: #6b7280;
+    --accent: #3b5bdb; --accent-soft: #e7ecfd; --green: #2f9e44; --green-soft: #e6f4ea;
+    --red: #e03131; --red-soft: #fdecec; --purple: #7048e8; --purple-soft: #f0ebfd;
+    --teal: #0c8599; --teal-soft: #e3f4f7; --chip: #eceef1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101215; --panel: #191c21; --line: #2a2e35; --text: #e8eaed; --dim: #9aa2ad;
+      --accent: #748ffc; --accent-soft: #232c4a; --green: #69db7c; --green-soft: #1d3324;
+      --red: #ff8787; --red-soft: #3d2224; --purple: #b197fc; --purple-soft: #2c2447;
+      --teal: #66d9e8; --teal-soft: #173a40; --chip: #23272e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.55 -apple-system, "Apple SD Gothic Neo", "Pretendard", sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr auto; height: 100vh; }
+  main { overflow-y: auto; padding: 20px 24px 60px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+
+  header.bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  header.bar h1 { font-size: 19px; margin: 0; font-weight: 800; }
+  header.bar .sub { color: var(--dim); font-size: 12.5px; }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.ghost { border: none; background: none; color: var(--dim); padding: 6px 6px; }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 5px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .plist { display: flex; flex-direction: column; gap: 12px; }
+  .pcard { cursor: pointer; transition: border-color .12s; }
+  .pcard:hover { border-color: var(--accent); }
+  .pcard .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pcard .name { font-size: 16px; font-weight: 700; }
+  .badge { font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .badge.reel { background: var(--accent-soft); color: var(--accent); }
+  .badge.wide { background: var(--teal-soft); color: var(--teal); }
+  .counts { color: var(--dim); font-size: 12.5px; margin-left: auto; }
+  .pipe { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .step { font-size: 11.5px; padding: 3px 10px; border-radius: 999px; background: var(--chip); color: var(--dim); border: 1px solid transparent; white-space: nowrap; }
+  .step.done { background: var(--green-soft); color: var(--green); }
+  .step.now { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+
+  h2.sec { font-size: 14px; margin: 26px 0 10px; color: var(--dim); font-weight: 700; letter-spacing: .02em; }
+  .cutgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .cut { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
+  .cut.miss { border-color: var(--red); background: var(--red-soft); }
+  .cut .head { display: flex; align-items: center; gap: 8px; }
+  .cut .no { font-weight: 800; font-size: 15px; }
+  .tchip { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+  .tchip.a { background: var(--accent-soft); color: var(--accent); }
+  .tchip.b { background: var(--teal-soft); color: var(--teal); }
+  .tchip.g { background: var(--purple-soft); color: var(--purple); }
+  .cut .desc { font-size: 12.5px; color: var(--text); margin-top: 5px; min-height: 1.4em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .cut .st { font-size: 11.5px; margin-top: 7px; font-weight: 700; }
+  .cut .st.ok { color: var(--green); } .cut .st.no2 { color: var(--red); } .cut .st.gg { color: var(--purple); }
+  .take { font-size: 11.5px; color: var(--dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .take b { color: var(--accent); font-weight: 700; }
+
+  .tl { display: flex; gap: 3px; align-items: stretch; overflow-x: auto; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .seg { min-width: 44px; border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.3; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex-shrink: 0; }
+  .seg small { opacity: .8; display: block; }
+  .seg.f { background: var(--accent); } .seg.as { background: var(--purple); } .seg.o { background: var(--dim); }
+  .tlmeta { color: var(--dim); font-size: 12px; margin-top: 6px; }
+
+  .rgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .rc { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .rc .ph { aspect-ratio: 16/10; background: var(--chip); display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 12px; overflow: hidden; }
+  .rc .ph img { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .rc .meta { padding: 9px 11px; }
+  .rc .fn { font-size: 12.5px; font-weight: 700; word-break: break-all; }
+  .rc .fi { font-size: 11.5px; color: var(--dim); margin-top: 2px; }
+  .rc .acts { display: flex; gap: 6px; padding: 0 11px 11px; }
+  .rc .acts button { font-size: 12px; padding: 4px 10px; }
+
+  .empty { color: var(--dim); padding: 26px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+  .note { font-size: 12px; color: var(--dim); margin-top: 8px; }
+  .err { background: var(--red-soft); color: var(--red); padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 13px; white-space: pre-wrap; }
+
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; z-index: 50; padding: 30px; }
+  #modal.open { display: flex; }
+  #modal .box { background: var(--panel); border-radius: 12px; max-width: min(880px, 92vw); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+  #modal .mh { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+  #modal .mb { overflow: auto; display: flex; align-items: center; justify-content: center; background: #000; }
+  #modal video { max-width: 100%; max-height: 74vh; display: block; }
+  #modal pre { margin: 0; padding: 16px; font-size: 12.5px; white-space: pre-wrap; color: var(--text); background: var(--panel); width: 100%; }
+
+  aside#chat { width: 0; border-left: 1px solid var(--line); background: var(--panel); transition: width .15s; overflow: hidden; }
+  aside#chat.open { width: 400px; }
+  aside#chat .inner { width: 400px; height: 100%; padding: 8px; }
+  @media (max-width: 980px) { aside#chat.open { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; box-shadow: -8px 0 30px rgba(0,0,0,.2); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <main><div class="wrap" id="view"></div></main>
+  <aside id="chat"><div class="inner" id="chatbox"></div></aside>
+</div>
+<div id="modal"><div class="box"><div class="mh"><span id="mtitle"></span><span class="spacer"></span><button class="ghost" onclick="closeModal()">닫기</button></div><div class="mb" id="mbody"></div></div></div>
+
+<script type="module">
+const PKG = (location.pathname.match(/\/pkg\/([^/]+)\/view/) || [])[1] || "video-studio";
+const $view = document.getElementById("view");
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const mb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+
+async function call(verb, input) {
+  const r = await fetch(`/pkg/${PKG}/script/${verb}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input }) });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  if (j.result && j.result.error) throw new Error(j.result.error);
+  return j.result;
+}
+
+// ── 상태 ────────────────────────────────────────────────
+let mode = { page: "list", project: null };
+let modalOpen = false;
+const thumbCache = new Map(); // name+mtime → dataURI
+const durCache = new Map();   // project|file → seconds
+
+const STEPS = ["대본", "촬영 리스트", "푸티지", "컷 편집", "그래픽", "자막", "완성"];
+function stepStates(st) {
+  const names = (st.renders || []).map((r) => r.name);
+  const has = (suf) => names.some((n) => n.endsWith(suf));
+  const done = [
+    !!st.script,
+    (st.shotlistCuts ?? 0) > 0,
+    (st.footage || []).length > 0,
+    has("-cut.mp4") || has("-final.mp4"),
+    (st.assets || []).length > 0,
+    has(".srt"),
+    has("-final.mp4") || (st.meta?.format === "wide" && has(".srt") && has("-cut.mp4")),
+  ];
+  let now = done.findIndex((d) => !d);
+  if (now === -1) now = 99;
+  return { done, now };
+}
+
+// ── 목록 ────────────────────────────────────────────────
+async function renderList() {
+  const { projects, dir } = await call("project-list", {});
+  if (!projects.length) {
+    $view.innerHTML = header() + `<div class="empty">아직 프로젝트가 없습니다.<br>오른쪽 대화에 대본을 붙여 넣으면 첫 프로젝트가 시작됩니다.<div class="note">${esc(dir)}</div></div>`;
+    return;
+  }
+  const detailed = await Promise.all(projects.map((p) => call("project-status", { project: p.project }).catch(() => null)));
+  let html = header() + `<div class="plist">`;
+  detailed.forEach((st, i) => {
+    const p = projects[i];
+    if (!st) return;
+    const s = stepStates(st);
+    const fmt = st.meta?.format === "wide" ? `<span class="badge wide">롱폼 16:9</span>` : `<span class="badge reel">숏폼 9:16</span>`;
+    const chips = STEPS.map((name, k) =>
+      `<span class="step ${s.done[k] ? "done" : ""} ${s.now === k ? "now" : ""}">${s.done[k] ? "✓ " : ""}${name}</span>`).join("");
+    html += `<div class="card pcard" data-p="${esc(st.project)}">
+      <div class="top"><span class="name">${esc(st.project)}</span>${fmt}
+        <span class="counts">푸티지 ${(st.footage || []).length} · 그래픽 ${(st.assets || []).length} · 결과물 ${(st.renders || []).length}</span></div>
+      <div class="pipe">${chips}</div></div>`;
+  });
+  $view.innerHTML = html + `</div>`;
+  $view.querySelectorAll(".pcard").forEach((el) => el.addEventListener("click", () => { mode = { page: "detail", project: el.dataset.p }; refresh(true); }));
+}
+
+function header(detail) {
+  return `<header class="bar">
+    ${detail ? `<button id="back">← 목록</button>` : ""}
+    <h1>${detail ? esc(detail) : "영상 스튜디오"}</h1>
+    <span class="sub"><span class="pulse"></span>5초마다 자동 갱신</span>
+    <span class="spacer"></span>
+    <button id="openws">작업 폴더 열기</button>
+    <button id="togglechat">대화</button>
+  </header>`;
+}
+
+// ── 상세: 편집 현장 보드 ─────────────────────────────────
+function parseCsv(body, n) {
+  if (!body) return [];
+  return body.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(1).map((l) => {
+    const c = l.split(",");
+    return [...c.slice(0, n - 1).map((x) => x.trim()), c.slice(n - 1).join(",").trim()];
+  });
+}
+
+async function renderDetail(project) {
+  const [st, scan, shot, plan] = await Promise.all([
+    call("project-status", { project }),
+    call("footage-scan", { project }).catch(() => null),
+    call("read-doc", { project, doc: "shotlist" }).catch(() => null),
+    call("read-doc", { project, doc: "editplan" }).catch(() => null),
+  ]);
+  const fmt = st.meta?.format === "wide" ? `<span class="badge wide">롱폼 16:9 · ${st.meta.width}x${st.meta.height}</span>` : `<span class="badge reel">숏폼 9:16 · ${st.meta?.width ?? 1080}x${st.meta?.height ?? 1920}</span>`;
+  let html = header(st.project) + `<div style="margin:-6px 0 4px">${fmt}</div>`;
+
+  // 컷 보드
+  const shotRows = parseCsv(shot?.body, 6); // cut,type,seconds,desc...
+  const takesByCut = new Map((scan?.cuts || []).map((c) => [Number(c.cut), c.takes]));
+  const usedSrc = new Set(parseCsv(plan?.body, 5).map((r) => r[1]));
+  html += `<h2 class="sec">컷 보드 — 촬영 리스트 기준</h2>`;
+  if (!shotRows.length) {
+    html += `<div class="empty">촬영 리스트가 아직 없습니다. 감독이 대본을 분해하면 여기에 컷이 나타납니다.</div>`;
+  } else {
+    html += `<div class="cutgrid">`;
+    for (const r of shotRows) {
+      const cut = parseInt(String(r[0]).replace(/[^0-9]/g, ""), 10);
+      const type = (r[1] || "").toLowerCase();
+      const secs = r[2] ? esc(r[2]) + "초" : "";
+      const desc = esc(r.slice(3).join(" ").split(",")[0]);
+      const takes = takesByCut.get(cut) || [];
+      const isG = type === "graphic";
+      const missing = !isG && takes.length === 0;
+      const tchip = isG ? `<span class="tchip g">그래픽</span>` : type === "b-roll" ? `<span class="tchip b">B롤</span>` : `<span class="tchip a">A롤</span>`;
+      let stLine = isG ? `<div class="st gg">편집자가 생성</div>`
+        : missing ? `<div class="st no2">미촬영</div>`
+        : `<div class="st ok">테이크 ${takes.length}개</div>`;
+      const takeList = takes.slice(0, 3).map((t) => {
+        const base = esc(t.file.split("/").pop());
+        const used = usedSrc.has(t.file) ? `<b>편집 사용중</b> ` : "";
+        const d = t.duration ? ` · ${Math.round(t.duration * 10) / 10}s` : "";
+        return `<div class="take">${used}${base}${d}</div>`;
+      }).join("");
+      html += `<div class="cut ${missing ? "miss" : ""}"><div class="head"><span class="no">${String(cut).padStart(2, "0")}</span>${tchip}<span class="spacer"></span><span style="color:var(--dim);font-size:11.5px">${secs}</span></div><div class="desc">${desc}</div>${stLine}${takeList}</div>`;
+    }
+    html += `</div>`;
+    if (scan?.unmatched?.length) html += `<div class="note">컷 번호를 읽지 못한 파일: ${scan.unmatched.map(esc).join(", ")} — 파일 이름을 c01 형식으로 시작하게 바꿔 주세요.</div>`;
+  }
+
+  // 타임라인
+  const planRows = parseCsv(plan?.body, 5); // order,source,start,end,note
+  html += `<h2 class="sec">타임라인 — 편집 계획</h2>`;
+  if (!planRows.length) {
+    html += `<div class="empty">편집 계획이 아직 없습니다. 푸티지가 모이면 편집자가 계획을 세우고 이 자리에 타임라인이 그려집니다.</div>`;
+  } else {
+    const durOf = async (srcRel) => {
+      const key = project + "|" + srcRel;
+      if (durCache.has(key)) return durCache.get(key);
+      const known = (scan?.cuts || []).flatMap((c) => c.takes).find((t) => t.file === srcRel);
+      let d = known?.duration ?? null;
+      if (d == null) { try { d = (await call("probe", { project, file: srcRel })).duration; } catch { d = null; } }
+      durCache.set(key, d);
+      return d;
+    };
+    let total = 0;
+    const segs = [];
+    for (const r of planRows.sort((a, b) => Number(a[0]) - Number(b[0]))) {
+      const [order, src, s, e, note] = r;
+      let dur = s !== "" && e !== "" ? Number(e) - Number(s) : e !== "" ? Number(e) : await durOf(src);
+      if (!Number.isFinite(dur) || dur == null || dur <= 0) dur = 3;
+      total += dur;
+      const cls = src.startsWith("assets/") ? "as" : src.startsWith("footage/") ? "f" : "o";
+      const label = esc(src.split("/").pop().replace(/\.(mp4|mov|m4v|webm|mkv)$/i, ""));
+      segs.push({ dur, html: `<div class="seg ${cls}" style="flex-grow:${dur}" title="${esc(note || "")} (${dur.toFixed(1)}s)">#${esc(order)} ${label}<small>${dur.toFixed(1)}s</small></div>` });
+    }
+    html += `<div class="tl">${segs.map((s) => s.html).join("")}</div>
+      <div class="tlmeta">총 ${total.toFixed(1)}초 · ${planRows.length}개 구간 · 파란색 = 촬영본, 보라색 = 모션그래픽</div>`;
+  }
+
+  // 결과물
+  html += `<h2 class="sec">결과물 — render 폴더</h2>`;
+  const renders = (st.renders || []).filter((r) => !r.name.includes("/.parts"));
+  if (!renders.length) {
+    html += `<div class="empty">아직 결과물이 없습니다. 편집이 시작되면 컷 편집본과 완성본이 여기 나타납니다.</div>`;
+  } else {
+    html += `<div class="rgrid">`;
+    for (const r of renders.sort((a, b) => b.updated - a.updated)) {
+      const base = esc(r.name.split("/").pop());
+      const isVideo = /\.(mp4|mov|webm)$/i.test(r.name);
+      const isSrt = /\.srt$/i.test(r.name);
+      const kind = base.includes("-final") ? "완성본" : base.includes("-cut") ? "컷 편집본" : base.includes("-asr") ? "음성 인식" : "";
+      html += `<div class="rc" data-f="${esc(r.name)}">
+        <div class="ph" data-thumb="${isVideo ? esc(r.name) + "@" + r.updated : ""}">${isVideo ? "썸네일 준비중" : isSrt ? "자막 파일" : "파일"}</div>
+        <div class="meta"><div class="fn">${base}</div><div class="fi">${kind ? kind + " · " : ""}${mb(r.size)}</div></div>
+        <div class="acts">${isVideo ? `<button class="primary" data-play="${esc(r.name)}" data-n="${base}">재생</button>` : ""}${isSrt ? `<button data-srt="${esc(r.name)}" data-n="${base}">내용 보기</button>` : ""}</div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  $view.innerHTML = html;
+  document.getElementById("back").addEventListener("click", () => { mode = { page: "list", project: null }; refresh(true); });
+  $view.querySelectorAll("[data-play]").forEach((b) => b.addEventListener("click", () => playVideo(project, b.dataset.play, b.dataset.n)));
+  $view.querySelectorAll("[data-srt]").forEach((b) => b.addEventListener("click", () => showSrt(project, b.dataset.srt, b.dataset.n)));
+  loadThumbs(project);
+}
+
+async function loadThumbs(project) {
+  for (const ph of $view.querySelectorAll(".ph[data-thumb]")) {
+    const key = ph.dataset.thumb;
+    if (!key) continue;
+    if (thumbCache.has(key)) { ph.innerHTML = `<img src="${thumbCache.get(key)}" alt="">`; continue; }
+    try {
+      const file = key.split("@")[0];
+      const r = await call("media-thumb", { project, file, at: 0.5, width: 480 });
+      thumbCache.set(key, r.thumb);
+      if (ph.isConnected) ph.innerHTML = `<img src="${r.thumb}" alt="">`;
+    } catch { ph.textContent = "썸네일 없음"; }
+  }
+}
+
+// ── 미리보기 모달 ────────────────────────────────────────
+const $modal = document.getElementById("modal");
+function openModal(title, bodyEl) {
+  document.getElementById("mtitle").textContent = title;
+  const mb2 = document.getElementById("mbody");
+  mb2.innerHTML = "";
+  mb2.appendChild(bodyEl);
+  $modal.classList.add("open");
+  modalOpen = true;
+}
+window.closeModal = () => { $modal.classList.remove("open"); document.getElementById("mbody").innerHTML = ""; modalOpen = false; };
+$modal.addEventListener("click", (e) => { if (e.target === $modal) window.closeModal(); });
+
+async function playVideo(project, file, name) {
+  try {
+    const r = await call("stage-preview", { project, file });
+    const v = document.createElement("video");
+    v.controls = true; v.autoplay = true;
+    v.src = `/pkg/${PKG}/file/${encodeURI(r.path)}`;
+    openModal(name, v);
+  } catch (e) { alert("재생 준비 실패: " + e.message); }
+}
+async function showSrt(project, file, name) {
+  try {
+    const r = await call("stage-preview", { project, file });
+    const text = await (await fetch(`/pkg/${PKG}/file/${encodeURI(r.path)}`)).text();
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    openModal(name, pre);
+  } catch (e) { alert("자막 읽기 실패: " + e.message); }
+}
+
+// ── 대화 도크 ────────────────────────────────────────────
+let chatMounted = false;
+async function toggleChat() {
+  const aside = document.getElementById("chat");
+  aside.classList.toggle("open");
+  if (!chatMounted && aside.classList.contains("open")) {
+    try {
+      const m = await import("/assets/chat-widget.js");
+      m.mount({ pkg: PKG, mode: "inline", target: document.getElementById("chatbox") });
+      chatMounted = true;
+    } catch { document.getElementById("chatbox").innerHTML = `<div class="empty">대화 위젯을 불러오지 못했습니다.<br>콘솔 첫 화면의 카드에서 대화를 여세요.</div>`; }
+  }
+}
+
+// ── 갱신 루프 ────────────────────────────────────────────
+async function refresh(force) {
+  if (modalOpen && !force) return;
+  try {
+    if (mode.page === "detail") await renderDetail(mode.project);
+    else await renderList();
+  } catch (e) {
+    $view.innerHTML = header() + `<div class="err">불러오기 실패: ${esc(e.message)}</div>`;
+  }
+  const ws = document.getElementById("openws");
+  if (ws) ws.addEventListener("click", () => fetch(`/pkg/${PKG}/workspace/open`, { method: "POST" }));
+  const tc = document.getElementById("togglechat");
+  if (tc) tc.addEventListener("click", toggleChat);
+}
+refresh(true);
+setInterval(() => { if (document.visibilityState === "visible") refresh(false); }, 5000);
+</script>
+</body>
+</html>

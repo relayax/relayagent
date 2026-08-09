@@ -1,0 +1,35 @@
+{
+  "name": "@relay/relayjs",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Relay FE SDK. 채팅 코어(하네스 호출 클라이언트)와 위젯. npm 임포트, file: 의존성, 기판 /assets 정적 서빙 세 경로로 소비한다.",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./core": {
+      "types": "./src/index.d.ts",
+      "default": "./src/core.js"
+    },
+    "./widget": {
+      "types": "./src/widget.d.ts",
+      "default": "./src/widget.js"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": [
+    "./src/widget.js"
+  ],
+  "keywords": [
+    "relay",
+    "agent",
+    "chat",
+    "harness"
+  ],
+  "license": "MIT"
+}

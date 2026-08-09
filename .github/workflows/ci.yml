@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    name: judge (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Validate every package manifest
+        run: npm run validate
+
+  hygiene:
+    name: hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No build artifacts or local paths committed
+        run: |
+          set -e
+          if git ls-files | grep -E '(\.tsbuildinfo$|/node_modules/|\.DS_Store$)'; then
+            echo "::error::build artifact or vendored dependency is tracked"
+            exit 1
+          fi
+          if git grep -nIE '/Users/[a-zA-Z0-9._-]+|/home/[a-zA-Z0-9._-]+' -- . ':!.github/workflows'; then
+            echo "::error::absolute local path committed"
+            exit 1
+          fi
+
+      - name: No secrets committed
+        run: |
+          set -e
+          if git grep -nIE '(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_|AKIA[0-9A-Z]{16}|xox[baprs]-|-----BEGIN [A-Z ]*PRIVATE KEY)' -- . ':!.github/workflows'; then
+            echo "::error::possible secret committed"
+            exit 1
+          fi

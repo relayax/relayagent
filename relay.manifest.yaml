@@ -1,0 +1,632 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: relay/v1
+title: relay.yaml
+description: |
+  에이전트 패키지 매니페스트 = 패키지의 BOM. 패키지 = 디렉토리 하나. relay.yaml 이 구조와
+  경로의 정본, 트리가 내용의 정본. 기판은 여기 선언된 경로 밖의 파일을 읽지 않고,
+  선언-실체 불일치는 설치 fail-loud. 관례 배치 (경로는 전부 relay.yaml 선언값):
+    relay.yaml
+    assets/icon.svg                  icon
+    agents/<name>/AGENT.md           agents[].persona. 스킬 = agents[].skills/<skill>/SKILL.md
+    scripts/<이름>.ts                scripts.source 아래 동사. 기본 수출 async 함수 (input, ctx) => 결과 JSON
+    surfaces/view/                   surfaces.view.source (+ out 선언 시 발행이 빌드해 <source>/<out> 서빙)
+    channels/<name>/                 channels[].source + entry
+    harness/<name>/                  harness.source + entry + dockerfile(선택)
+    services/<name>/                 services[].source + dockerfile(컨테이너 형) 또는 entry(프로세스 형)
+type: object
+additionalProperties: false
+required: [schema, name, version, display_name, description, surfaces]
+properties:
+  schema:
+    const: relay/v1
+  name:
+    type: string
+    pattern: '^@[a-z0-9-]+/[a-z0-9][a-z0-9-]{1,39}$'
+  version:
+    type: string
+    pattern: '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$'
+  display_name:
+    type: string
+    minLength: 1
+  description:
+    type: string
+    minLength: 1
+  icon:
+    type: string
+  requires:
+    description: |
+      호스트 환경 요구 = 설치 관문. validate 는 형태만 판정하고, 설치가 실체를 판정해
+      미충족이면 fail-loud. 기판은 안내(install)만 전하고 대신 설치하지 않는다.
+      os 는 process.platform 값, binaries 는 PATH 에서, apps 는 /Applications 계열에서 찾는다.
+    type: object
+    additionalProperties: false
+    properties:
+      os:
+        description: 지원 OS 닫힌집합. 미선언 = 모든 OS
+        type: array
+        minItems: 1
+        items:
+          enum: [darwin, linux, win32]
+      binaries:
+        description: PATH 에 있어야 하는 실행 파일
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name:
+              type: string
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+            install:
+              description: 미충족 판정문에 실리는 설치 안내 (명령 또는 URL)
+              type: string
+              minLength: 1
+      apps:
+        description: 데스크톱 앱 번들. darwin 전용 — 선언 시 os 는 [darwin]
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name:
+              description: '.app 확장자를 뺀 번들 이름 (예: Slack, Google Chrome)'
+              type: string
+              pattern: '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$'
+              not:
+                pattern: '\.app$'
+            install:
+              type: string
+              minLength: 1
+    if:
+      required: [apps]
+    then:
+      required: [os]
+      properties:
+        os:
+          items:
+            const: darwin
+  surfaces:
+    type: object
+    additionalProperties: false
+    properties:
+      view:
+        description: 화면 소스. out 미선언 = source 정적 서빙, out 선언 = 발행이 빌드 후 <source>/<out> 서빙
+        type: object
+        additionalProperties: false
+        required: [source]
+        properties:
+          source:
+            $ref: '#/$defs/relpath'
+          out:
+            description: |
+              빌드 산출 디렉토리. 선언하면 설치가 <source> 에서 npm install(최초) + npm run build 를 돌린다.
+              화면은 /pkg/<설치이름>/view/ 아래로 서빙되고 설치 이름은 설치 시점에 정해지므로,
+              기판이 그 접두사를 RELAY_BASE_PATH 로 주입한다. 프레임워크의 basePath 를 여기에 맞춰라
+              (Next.js: basePath: process.env.RELAY_BASE_PATH). 재빌드는 relay build <패키지>
+            $ref: '#/$defs/relpath'
+      chat:
+        type: object
+        additionalProperties: false
+        required: [mode]
+        properties:
+          mode:
+            enum: [direct, none]
+          greeting:
+            type: string
+      channels:
+        description: |
+          외부 대화 표면(Discord, Slack, 메일 등)을 잇는 상주 어댑터들. 어댑터는 글루다:
+          외부 이벤트를 착신으로, 회신을 외부 발화로 옮길 뿐 판단하지 않는다. 판단이
+          필요하면 착신하라 — 지능은 세션에 산다.
+          불변식: **채널의 모든 대화는 RELAY_API 를 통과한다.** 세션 이력·목록·담장·파일
+          무대가 전부 기판 장부라서, 장부를 우회한 대화는 기판이 이어가지도 복원하지도
+          못한다. 하네스 도구의 내장 채널(Claude Code 의 channels 처럼 MCP 서버가 도구의
+          상주 세션에 이벤트를 밀어 넣는 축)이 그래서 채널의 대체물이 못 된다 — 대화가
+          그 도구의 세션에 살아 장부 밖인 데다, 기판의 세션은 턴마다 스폰되어 이벤트를
+          받아줄 상주 세션 자체가 없다. 어댑터가 내부에서 어떤 라이브러리를 쓰든 자유지만,
+          착신·회신은 이 계약대로 기판을 통과시킨다.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, source, entry]
+          properties:
+            name:
+              description: 채널 이름. 서비스와 같은 자격 이름공간을 쓴다 — 겹치면 자격 키가 충돌한다
+              $ref: '#/$defs/slug'
+            source:
+              description: |
+                어댑터 디렉토리. 기판이 entry 를 스폰해 상주시키는 프로세스 계약:
+                  수명    외부 연결(웹소켓·폴링)의 유지와 재접속은 어댑터 소유다. 네트워크
+                          단절에 크래시로 답하지 마라. 프로세스 종료 = 실패, 기판 로그에 남는다.
+                  게이트  외부 신원의 검증·허용 판정은 어댑터 소유, 기본 닫힘. 착신은 전부
+                          기판 주인(principal)의 권한으로 돌므로 게이트가 곧 보안 경계다 —
+                          모르는 발신자는 착신 전에 끊는다 (org 기판의 다중 principal 매핑은
+                          추후 축이다). 판정 대상은 방이 아니라 발화자다: 그룹 대화에서
+                          방 ID 에 게이트하면 그 방의 전원이 통과해 버린다. 그룹에서는
+                          멘션·스레드 참여 같은 플랫폼 관례로 응답 범위를 더 좁힌다(어댑터 소유).
+                  봉투    착신 message 는 <channel source="<채널이름>" ...>원문</channel>
+                          태그로 감싼다. 발화자 닉네임·대화 키·시각 등 라우팅 맥락은 속성으로
+                          싣는다 — 그룹 대화는 한 slot 에 발화자가 여럿이라 닉네임은 매 착신마다
+                          실어야 세션이 회신 상대를 오인하지 않는다.
+                  착신    POST {RELAY_API}/pkg/{RELAY_NAME}/chat · Authorization: Bearer
+                          {RELAY_TOKEN} · body {message, slot, attachments?}. 동기 호출 —
+                          턴이 종결되면 {reply, model, usage, files} 가 온다.
+                  slot    대화 연속성의 축. <채널이름>-<대화키> 를 [a-zA-Z0-9._-]{1,64} 로
+                          정규화한다. 같은 외부 대화 = 같은 slot = 이어지는 세션. 사람이
+                          읽을 이름은 POST …/session/<slot>/label 로 앉힌다 — slot 원문은
+                          목록에서 정체를 숨긴다. slot(대화)은 영속, 하네스 맥락은 회전
+                          가능: 새 대화 시작은 POST …/session/reset — 이력은 남고 네이티브
+                          세션만 새로 시작한다. /reset 류 플랫폼 명령으로의 번역은 어댑터 소유다.
+                  직렬화  **한 slot 에 동시 착신 금지.** 착신 순서는 외부 발화 순서를
+                          보존한다. 턴 진행 중 새 발화가 오면 갈래는 둘이다: 큐잉(기본) =
+                          종결을 기다려 다음을 착신한다, 쌓인 발화는 하나로 합쳐도 된다.
+                          끼어들기 = POST …/session/<slot>/cancel 로 진행 턴을 끊고 새
+                          발화를 착신한다 — 취소로 끝난 호출의 오류 응답을 외부에 답인 양
+                          내보내지 마라. 다른 slot 끼리는 병렬 자유. 최소 한 번(at-least-once)
+                          배달 플랫폼의 중복 이벤트 dedup 도 어댑터 소유다.
+                  진행    긴 턴의 생존 신호(타이핑 표시·진행 편집)는 GET …/session/<slot>/events
+                          를 폴링해 delta·tool 이벤트로 그린다. 글자 수 제한, 마크다운 방언,
+                          메시지 분할, 레이트리밋 등 외부 표면 형편으로의 번역은 전부
+                          어댑터 소유다.
+                  파일    회신 files 는 stage 상대경로 — GET …/file/<경로> 로 받아 네이티브
+                          첨부로 내보낸다. 인바운드 첨부는 POST …/upload 로 stage 에 앉힌
+                          뒤 그 참조를 attachments 로 넘긴다.
+                  발신    stdin 은 기판의 발신 제어 채널이다. 줄 단위 JSON
+                          {"type":"post","conversation":"<대화키>","text":"…","files":["<stage 경로>"]?}
+                          를 받으면 그 대화에 게시한다 — 트리거 선톡(then.delivery)이 이
+                          길로 온다. 선톡이 대화가 되려면 그 턴은 해당 대화의 slot 에서
+                          돈다(기판 소관) — 사용자의 후속 발화가 같은 slot 에 착신되어
+                          맥락을 잇는다.
+                  실패    비 200 을 침묵으로 뭉개지 마라 — 외부에도 실패로 알린다. 단 내부
+                          사정(토큰·경로·스택)은 싣지 않는다. RELAY_TOKEN 과 자격은 외부
+                          대화에 절대 노출 금지.
+                env = RELAY_NAME, RELAY_CHANNEL(이 채널 이름), RELAY_API, RELAY_TOKEN.
+                봇 토큰 류 자격은 vault 에 채널 이름 소속으로 앉아(relay connect <패키지>
+                <채널이름>) RELAY_CRED_<이름> 으로 주입된다 — 코드·매니페스트에 박지 마라.
+                권한 릴레이(진행 턴의 도구 승인 프롬프트를 채널로 중계하고 판정을
+                회신받는 축)는 아직 계약 밖이다.
+              $ref: '#/$defs/relpath'
+            entry:
+              description: source 안 어댑터 진입 파일 — 기판 러너가 프로세스로 스폰해 상주시킨다
+              $ref: '#/$defs/relpath'
+            icon:
+              description: 채널 배지 아이콘 (패키지 상대경로, 이미지 파일) — 그래프 카드 상단에 배지로 뜬다
+              $ref: '#/$defs/relpath'
+  harness:
+    type: object
+    additionalProperties: false
+    properties:
+      variants:
+        description: |
+          동봉한 하네스 어댑터 후보들(agents 선언 시 최소 1). 선언 = 후보 목록(BOM), 활성 선택 = 장부.
+          설치가 각 후보의 setup 을 순서대로 점검해 첫 통과를 활성으로 고르고,
+          relay harness <패키지> [이름] 으로 바꾼다
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, source, entry]
+          properties:
+            name:
+              $ref: '#/$defs/slug'
+            source:
+              description: 실행 어댑터 디렉토리
+              $ref: '#/$defs/relpath'
+            entry:
+              description: |
+                source 안 실행 어댑터 파일. 첫 인자가 동사인 프로토콜:
+                  session [prompt]  세션 1회 (prompt 없으면 TTY 상속). headless 출력 = 아래 '세션 봉투'
+                  setup             진단(읽기). 도구 실재·로그인 점검. 종료코드가 미준비의 축을 가른다:
+                                    0 = 준비됨 · 3 = 도구 없음(설치 필요) · 그 외 비0 = 자격 없음(로그인 필요).
+                                    사유와 다음 한 걸음을 stdout 에. 화면은 이 축으로 처방을 고르므로
+                                    도구 없음을 자격 없음으로 뭉뚱그리면 사용자에게 헛된 토큰 입력창이 뜬다
+                  login [--switch|--token]
+                                    처방(쓰기). 대화형 인증 — TTY 를 그대로 물려받는다(exec).
+                                    자격을 만드는 유일한 동사이므로 setup 이 대신 수행하지 않는다.
+                                    이미 로그인된 상태에서도 호출된다 = 계정 전환 경로. --switch 는
+                                    기존 자격을 비우고 다시 로그인한다(도구가 '이미 로그인됨' 으로 끝내
+                                    전환이 막히는 구현이 있어 전환은 명시 동작이어야 한다).
+                                    사람이 볼 터미널 창을 전제하지 마라: 기판은 pty(script)로 감싸
+                                    데몬 안에서 돌리고 출력·입력을 화면과 중계한다(headless 로그인).
+                                    URL·코드·프롬프트는 평문 한 줄로, 입력은 줄 단위 stdin 으로 받아라.
+                                    전체화면 TUI·화면지우기·raw key 입력에 기대면 창을 여는 폴백으로 강등된다
+                                    **자격이 도구 소유(oauth·구독)인 어댑터는 login 이 필수다** —
+                                    없으면 사용자가 GUI 에서 그 하네스를 쓸 길이 없다. 기판은 터미널 창을
+                                    열어 이 동사를 돌린다(POST /pkg/<이름>/harness/login). 인증 자체는
+                                    그 창이 소유하고 기판은 문만 연다. --token 은 장기 토큰 발급(선택).
+                                    자격이 기판 소유(auth.kind: token)면 login 없이 vault 연결로 충분하다.
+                                    지원하면 info.verbs 에 'login' 을 싣는다 — 화면이 이걸 보고 버튼을 띄운다
+                  models            지원 모델 목록 (JSON 배열). 모든 항목은 세션의 --model 이 실제로
+                                    받는 값이어야 한다. 자격 미도달이면 도구가 스스로 선언하는 어휘
+                                    (조회 명령·설정·카탈로그 캐시·--help 의 별칭 문서)까지만 강등하고
+                                    사유를 stderr 에 남긴다. 어댑터 소스에 어휘를 하드코딩하지 마라 —
+                                    별칭이라도 CLI 버전과 어긋나면 없는 모델이 정본 행세를 한다
+                                    (2026-08-07 fable 실사고). 검증할 어휘가 없으면 다음 한 걸음을
+                                    적은 안내 항목 하나로 강등한다(빈 목록 금지)
+                  commands          하네스 내장 슬래시 커맨드 목록 (JSON 배열 [{name, description, tty}])
+                  info              자기 서술 {name, provider, verbs, protocol, capabilities, account}.
+                                    protocol 2 = 세션 봉투를 말한다. capabilities 는 구현 의지가 아니라
+                                    물리적 능력만 선언한다: cancel(stdin 제어 수신), vision(이미지 해석),
+                                    effort(RELAY_EFFORT 반영), resume(네이티브 세션 이어가기)
+                세션 봉투 (protocol 2 의 headless 계약): stdout 은 줄 단위 JSON 이벤트다.
+                  {"event":"delta","text"}                        중간 텍스트 (충실도는 도구가 주는 만큼)
+                  {"event":"tool","name","status":"start"|"end"}  도구 호출 진행
+                  {"event":"file","path"}                         stage 상대경로 산출물 (기판 diff 의 보조)
+                  {"event":"reply","text","session","model","usage"}  종결, 정확히 한 번. session = 네이티브
+                    세션 id, model = 실제 사용 모델, usage = {input, output, context_window} 토큰 장부
+                  {"event":"error","message"}                     실패 종결 (exit != 0 과 함께)
+                최소 구현 = 종결 reply 한 줄. 실패를 텍스트로 위장하지 않는다 — 실패는 종료코드로,
+                사유는 stderr 나 error 이벤트로. stdin 은 제어 채널: {"type":"cancel"} 수신 시 정리 후
+                종료(capabilities 에 cancel 선언 시). 미선언 어댑터는 기판이 프로세스를 죽인다.
+                봉투 없는 stdout(구형)은 기판이 통짜 응답으로 받아준다 — 신규 어댑터는 봉투가 필수다.
+                env = RELAY_NAME, RELAY_AGENT, RELAY_PRINCIPAL, RELAY_API, RELAY_TOKEN, RELAY_SESSION,
+                RELAY_BUNDLE, RELAY_MODEL(선택), RELAY_EFFORT(선택 — 모르는 값은 무시).
+                같은 RELAY_SESSION 재호출 = 대화 이어가기.
+                RELAY_BUNDLE = 중립 번들(persona.md, agents/<sub>.md 본문, skills/, commands/,
+                meta.json{pkg, agent, slot, workspace, stage, hooks.deny[], agents[], mcp{url,authorization}}).
+                네이티브 형식(설정 파일, 플래그, MCP 배선)으로의 번역은 전부 어댑터 소유이며 산출물은
+                번들 안에 쓴다. 불변식 셋: ① 오염 금지 — 사용자의 설정 디렉토리와 cwd(workspace)에
+                쓰지 않는다. ② 혼입 금지 — 사용자 개인 설정(스킬·메모리·MCP)이 세션에 새어들지 않게
+                한다. ③ 자격 보존 — 도구 자신의 자격 경로(Keychain 등)를 끊지 않는다. 설정 디렉토리
+                격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
+                규칙 + 훅 가드로 이중 번역한다 (가드레일이지 샌드박스가 아니다)
+              $ref: '#/$defs/relpath'
+            dockerfile:
+              description: 컨테이너 격리 백엔드용 (선택)
+              $ref: '#/$defs/relpath'
+            icon:
+              description: 어댑터 도구 아이콘 (패키지 상대경로 이미지) — 카드 하네스 필과 설정 목록에 뜬다
+              $ref: '#/$defs/relpath'
+            llm:
+              description: 이 하네스가 소비하는 LLM provider. 자격은 vault 에 provider 소속(llm/<provider>)으로 앉아 패키지 간 공유. kind token 은 그 값을 auth.env 이름 그대로 주입, kind oauth 는 도구 자신의 로그인(setup 동사가 점검). 미선언 = 어댑터가 자기 도구의 기존 로그인을 쓴다
+              type: object
+              additionalProperties: false
+              required: [provider]
+              properties:
+                provider:
+                  $ref: '#/$defs/slug'
+                icon:
+                  description: provider(모델) 아이콘 (패키지 상대경로 이미지) — 모델 선택 목록과 카드 필에 뜬다
+                  $ref: '#/$defs/relpath'
+                auth:
+                  $ref: '#/$defs/auth'
+      workdir:
+        description: |
+          세션 cwd 의 workspace 하위 상대경로 (미선언 = workspace 루트).
+          workspace 자체는 매니페스트가 아니라 설치 결재다 — 사용자가 폴더를 고르고 장부에 남는다
+        $ref: '#/$defs/relpath'
+  hooks:
+    description: |
+      세션 담장 선언. deny 경로는 세션의 도구 호출이 닿지 못한다 — 하네스 어댑터가
+      네이티브 훅·권한 규칙으로 번역한다. 기판은 자기 홈(~/.relay)을 모든 세션에
+      무조건 병합하므로 선언과 무관하게 항상 막힌다. 도구 호출 레벨 가드레일이며
+      OS 샌드박스가 아니다 — 신뢰 경계는 배포(서명·심사)가 담당한다
+    type: object
+    additionalProperties: false
+    required: [deny]
+    properties:
+      deny:
+        description: '~ 또는 절대경로 목록. 예: ~/Documents/세무'
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 2
+          pattern: '^(~($|/)|/)'
+          not:
+            pattern: '(^|/)\.\.(/|$)'
+  agents:
+    description: 착지점 = 패키지 짧은 이름과 같은 에이전트. persona 는 agents/<name>/AGENT.md
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, persona]
+      properties:
+        name:
+          $ref: '#/$defs/slug'
+        persona:
+          description: 페르소나 마크다운 파일
+          $ref: '#/$defs/relpath'
+        skills:
+          description: 스킬 디렉토리 (<skill>/SKILL.md) — 하네스 네이티브 스킬로 조립
+          $ref: '#/$defs/relpath'
+        commands:
+          description: 슬래시 커맨드 디렉토리 (<cmd>.md) — 하네스 네이티브 커맨드로 조립, TTY 와 headless 양쪽에서 동작
+          $ref: '#/$defs/relpath'
+        dispatch:
+          type: array
+          items:
+            $ref: '#/$defs/slug'
+        scripts:
+          description: 세션에 조립되는 동사 scope. scripts/<이름>.ts 실재 검증(fail-loud), 접두 glob 허용
+          type: array
+          items:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]*\*?$'
+  scripts:
+    description: 동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON
+    type: object
+    additionalProperties: false
+    required: [source]
+    properties:
+      source:
+        $ref: '#/$defs/relpath'
+  services:
+    type: array
+    items:
+      oneOf:
+        - $ref: '#/$defs/sourceService'
+        - $ref: '#/$defs/urlService'
+        - $ref: '#/$defs/dirService'
+  triggers:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, when, then]
+      properties:
+        id:
+          $ref: '#/$defs/slug'
+        when:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [cron]
+              properties:
+                cron:
+                  type: string
+                  minLength: 1
+                tz:
+                  type: string
+            - type: object
+              additionalProperties: false
+              required: [event]
+              properties:
+                event:
+                  type: string
+                  minLength: 1
+                filter:
+                  type: object
+                debounce_ms:
+                  type: integer
+                  minimum: 0
+        then:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [agent, prompt]
+              properties:
+                agent:
+                  $ref: '#/$defs/slug'
+                prompt:
+                  type: string
+                  minLength: 1
+                route:
+                  type: string
+                  pattern: '^/'
+                delivery:
+                  description: |
+                    선톡 좌표 '<채널이름>:<대화키>'. 기판이 이 트리거의 턴을 그 대화의
+                    slot(<채널이름>-<대화키>)에서 돌리고, reply 를 어댑터 stdin 발신
+                    (post)으로 배달한다 — 후속 발화가 같은 slot 에 착신되어 대화가 이어진다.
+                    미선언 = 세션 결과가 콘솔 세션 목록(trigger-<id> slot)에만 남는다
+                  type: string
+                  pattern: '^[a-z0-9][a-z0-9-]{0,39}:.+$'
+            - type: object
+              additionalProperties: false
+              required: [script]
+              properties:
+                script:
+                  description: scripts/<이름>.ts headless 실행(세션 없음)
+                  $ref: '#/$defs/slug'
+  missions:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+  edges:
+    description: 선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [provider]
+      not:
+        required: [tools, mission]
+      properties:
+        provider:
+          $ref: '#/$defs/provider'
+        tools:
+          type: array
+          items:
+            $ref: '#/$defs/slug'
+        mission:
+          type: string
+          minLength: 1
+  org:
+    description: org 기판이 호스팅할 때만 읽는 확장. 1인 기판과 등록 노드에서는 무시된다
+    type: object
+    additionalProperties: false
+    properties:
+      per_user:
+        type: object
+        additionalProperties: false
+        properties:
+          accounts:
+            description: 자격 축. url/dir 서비스 이름 또는 edge provider 좌표
+            type: array
+            items:
+              type: string
+              minLength: 1
+          replicas:
+            description: 복제 축. source 서비스 이름만, disk 와 병용 불가
+            type: array
+            items:
+              $ref: '#/$defs/slug'
+$defs:
+  slug:
+    type: string
+    pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
+  relpath:
+    type: string
+    minLength: 1
+    allOf:
+      - not:
+          pattern: '^[/~]'
+      - not:
+          pattern: '(^|/)\.\.(/|$)'
+  dirpath:
+    type: string
+    minLength: 1
+    allOf:
+      - not:
+          pattern: '^/'
+      - not:
+          pattern: '(^|/)\.\.(/|$)'
+  provider:
+    type: string
+    pattern: '^@[a-z0-9-]+/[a-z0-9][a-z0-9-]{1,39}(@[^\s@]+)?$'
+  resources:
+    type: object
+    additionalProperties: false
+    properties:
+      memory:
+        type: string
+        pattern: '^\d+(Mi|Gi)$'
+      cpu:
+        type: number
+        exclusiveMinimum: 0
+  auth:
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind:
+            const: none
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind:
+            const: token
+          env:
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
+          help:
+            type: object
+            additionalProperties: false
+            properties:
+              url:
+                type: string
+              note:
+                type: string
+          verify:
+            type: object
+            additionalProperties: false
+            required: [url]
+            properties:
+              url:
+                type: string
+              headers:
+                type: object
+                additionalProperties:
+                  type: string
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind:
+            const: oauth
+          client:
+            enum: [dcr, registered]
+          oauth_client:
+            type: object
+            additionalProperties: false
+            properties:
+              scopes:
+                type: array
+                items:
+                  type: string
+              auth_meta:
+                type: object
+                additionalProperties: false
+                properties:
+                  authorization_endpoint:
+                    type: string
+                  token_endpoint:
+                    type: string
+                  registration_endpoint:
+                    type: string
+                  authorize_params:
+                    type: object
+                    additionalProperties:
+                      type: string
+  sourceService:
+    type: object
+    additionalProperties: false
+    required: [name, source]
+    anyOf:
+      - required: [dockerfile]
+      - required: [entry]
+    properties:
+      name:
+        $ref: '#/$defs/slug'
+      source:
+        description: 서비스 몸 디렉토리. env = RELAY_NAME, RELAY_API, RELAY_TOKEN. 선언한 port 에서 listen, 영속 데이터는 /data(disk 선언 시)
+        $ref: '#/$defs/relpath'
+      dockerfile:
+        description: 컨테이너 형 — 발행·설치가 굽는다
+        $ref: '#/$defs/relpath'
+      entry:
+        description: 프로세스 형 진입 파일 — 기판 러너가 실행
+        $ref: '#/$defs/relpath'
+      disk:
+        type: string
+        pattern: '^\d+(Mi|Gi)$'
+      resources:
+        $ref: '#/$defs/resources'
+      port:
+        type: integer
+        minimum: 1
+        maximum: 65535
+  urlService:
+    type: object
+    additionalProperties: false
+    required: [name, url]
+    properties:
+      name:
+        $ref: '#/$defs/slug'
+      url:
+        type: string
+        pattern: '^https?://'
+      tools:
+        type: array
+        items:
+          $ref: '#/$defs/slug'
+      auth:
+        $ref: '#/$defs/auth'
+  dirService:
+    type: object
+    additionalProperties: false
+    required: [name, dir]
+    properties:
+      name:
+        $ref: '#/$defs/slug'
+      dir:
+        description: 상대경로 = 패키지 내부(자기 소유), '~' 경로 = 신청(설치 결재로 바인딩)
+        $ref: '#/$defs/dirpath'

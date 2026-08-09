@@ -1,0 +1,46 @@
+name: Harness adapter
+description: Propose or claim an execution adapter for another coding agent.
+labels: [harness, help wanted]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An adapter is a single shell script implementing the verbs `session`, `setup`, `models`,
+        `commands`, `info` (plus optional `login`) over the neutral agent bundle.
+        `packages/system/harness/claude-code` and `.../codex` are the reference;
+        `kimi` and `pi` show the minimal shape.
+  - type: input
+    id: agent
+    attributes:
+      label: Which coding agent
+      placeholder: Gemini CLI / Qwen Code / Ollama / ...
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to its CLI docs
+    validations:
+      required: true
+  - type: checkboxes
+    id: verbs
+    attributes:
+      label: Which verbs the CLI can support
+      options:
+        - label: session
+        - label: setup
+        - label: models
+        - label: commands
+        - label: info
+        - label: login (optional)
+  - type: textarea
+    id: gaps
+    attributes:
+      label: Gaps
+      description: Anything the CLI cannot express, and what you would do about it.
+  - type: checkboxes
+    id: claim
+    attributes:
+      label: Are you building it
+      options:
+        - label: I intend to open the PR myself

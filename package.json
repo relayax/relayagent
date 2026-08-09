@@ -1,0 +1,44 @@
+{
+  "name": "relayagent",
+  "version": "0.1.0",
+  "description": "A personal substrate for agent packages that ship their own screens.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "homepage": "https://github.com/relayax/relayagent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/relayax/relayagent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/relayax/relayagent/issues"
+  },
+  "keywords": [
+    "agent",
+    "ai-agent",
+    "agent-package",
+    "claude-code",
+    "codex",
+    "harness",
+    "manifest",
+    "local-first"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "bin": {
+    "relay": "./runner/relay.ts"
+  },
+  "scripts": {
+    "relay": "node --experimental-strip-types runner/relay.ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "for p in packages/*/; do node --experimental-strip-types runner/relay.ts validate \"$p\" || exit 1; done"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
+  }
+}

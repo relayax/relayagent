@@ -1,0 +1,52 @@
+name: Proposal
+description: Propose a change to the substrate or the manifest grammar.
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RelayAgent is a **personal** substrate: one person, one machine, one set of packages.
+        Org account/OIDC integration, multi-user permission governance, and fleet-wide agent
+        version management are deliberately out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you cannot express today. Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: What it touches
+      multiple: true
+      options:
+        - relay.yaml grammar (relay.manifest.yaml)
+        - runner / CLI
+        - daemon API
+        - harness contract
+        - channel contract
+        - surfaces / view
+        - grants and the ledger
+        - docs
+    validations:
+      required: true
+  - type: textarea
+    id: principles
+    attributes:
+      label: How it holds up against the design principles
+      description: |
+        Especially fail-loud (no warnings, only judgments), the manifest as the BOM,
+        declarations as caps and grants as approvals, and credentials never in the tree.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

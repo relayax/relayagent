@@ -1,0 +1,70 @@
+schema: relay/v1
+name: "@relay/system"
+version: 0.1.0
+display_name: "Relay"
+description: "기판 관리 셸. 패키지 목록, mcp/a2a 그래프, 연결 결재, surface 호스팅, 저작 스튜디오."
+
+# 수정 레이어(draft 이력·diff·릴리스 태그)가 git 을 쓴다
+requires:
+  binaries:
+    - name: git
+      install: "xcode-select --install (macOS) 또는 https://git-scm.com"
+
+surfaces:
+  view:
+    source: surfaces/view
+    out: out
+  chat:
+    mode: direct
+    greeting: "설치된 패키지와 연결 상태를 묻거나, 새 에이전트 패키지를 만들어 보세요."
+
+harness:
+  variants:
+    - name: claude-code
+      source: harness/claude-code
+      entry: run
+      icon: harness/claude-code/icon.png
+      llm:
+        provider: anthropic
+        icon: assets/llm/anthropic.svg
+        auth: { kind: oauth }
+    - name: codex
+      source: harness/codex
+      entry: run
+      icon: harness/codex/icon.png
+      llm:
+        provider: openai
+        icon: assets/llm/openai.svg
+        auth: { kind: oauth }
+    - name: pi
+      source: harness/pi
+      entry: run
+      llm:
+        provider: vllm
+        icon: assets/llm/vllm.svg
+        auth: { kind: token, env: PI_API_KEY }
+    - name: kimi
+      source: harness/kimi
+      entry: run
+      icon: harness/kimi/icon.png
+      llm:
+        provider: moonshot
+        icon: assets/llm/moonshot.svg
+        auth: { kind: token, env: MOONSHOT_API_KEY }
+
+agents:
+  - name: system
+    persona: agents/system/AGENT.md
+    commands: agents/system/commands
+    dispatch: [agent-builder]
+  - name: agent-builder
+    persona: agents/agent-builder/AGENT.md
+    skills: agents/agent-builder/skills
+    scripts: [pkg-*, grant-*, draft-*, release-*]
+
+scripts:
+  source: scripts
+
+services:
+  - name: packages
+    dir: "~/Relay/packages"

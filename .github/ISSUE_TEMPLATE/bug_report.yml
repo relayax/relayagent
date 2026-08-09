@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in the substrate behaves differently than it declares.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security issues here. Use
+        [private reporting](https://github.com/relayax/relayagent/security/advisories/new).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, and what the substrate did instead of what you expected.
+      placeholder: |
+        $ relay install packages/scribe
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output
+      description: If validation or install failed, paste the judgment verbatim. The message is the diagnosis.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node -v` (must be 22.6 or later)
+      placeholder: v22.11.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15.3 (arm64)
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: RelayAgent commit
+      description: Output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+  - type: textarea
+    id: manifest
+    attributes:
+      label: Relevant relay.yaml
+      description: If a package is involved, paste its manifest. Redact anything private.
+      render: yaml

@@ -1,0 +1,48 @@
+schema: relay/v1
+name: "@local/video-studio"
+version: 0.2.0
+display_name: "영상 스튜디오"
+description: "대본을 주면 촬영 리스트를 뽑아 주고, 찍어온 푸티지를 대본에 맞춰 자르고 이어붙이는 감독·편집 에이전트. 타이틀·트랜지션은 Remotion으로 만들고, 자막은 음성 인식으로 타이밍을 잡아 붙인다. 영상 한 편 = 프로젝트 폴더 하나(~/Relay/video-studio/projects)로 관리된다."
+icon: assets/icon.svg
+
+requires:
+  os: [darwin]
+  binaries:
+    - name: node
+      install: "https://nodejs.org 에서 Node.js 18 이상 설치 (Remotion 요구)"
+    - name: ffmpeg
+      install: "brew install ffmpeg (컷 편집·이어붙이기·자막 번인에 사용, ffprobe 동봉)"
+
+surfaces:
+  view:
+    source: surfaces/view
+  chat:
+    mode: direct
+    greeting: "대본을 붙여 넣어 주세요. 숏폼인지 롱폼인지 정하면 촬영 리스트를 뽑아 드리고, 찍어온 푸티지를 폴더에 넣으시면 대본에 맞춰 편집해 드립니다."
+
+harness:
+  variants:
+    - name: claude-code
+      source: harness/claude-code
+      entry: run
+      llm:
+        provider: anthropic
+        auth: { kind: oauth }
+
+scripts:
+  source: scripts
+
+services:
+  - name: studio
+    dir: ~/Relay/video-studio
+
+agents:
+  - name: video-studio
+    persona: agents/video-studio/AGENT.md
+    dispatch: [director, editor]
+  - name: director
+    persona: agents/director/AGENT.md
+    scripts: [project-create, project-list, project-status, save-doc, read-doc]
+  - name: editor
+    persona: agents/editor/AGENT.md
+    scripts: [project-list, project-status, save-doc, read-doc, footage-scan, probe, assemble, motion-init, motion-render, transcribe, save-subtitles, burn-subtitles]
