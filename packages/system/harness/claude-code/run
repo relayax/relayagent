@@ -299,7 +299,23 @@ fi
 # 프로세스가 살고, 다음 user 프레임이 같은 대화의 다음 턴이 되며, stdin EOF 로 자연 종료한다
 # (실측 2026-08-10, 2.1.153 — relayos-claude resident-session 실측과 동일). 턴 경계 = result.
 # 실패를 텍스트로 위장하지 않는다: 실패는 error 이벤트 + 비0 종료코드로만 낸다
-B="$B" exec node --input-type=module -e '
+# Windows: node 의 spawn 은 PATH 에 놓인 확장자 없는 shim(claude)이나 .cmd 를 실행하지 못하고
+# ENOENT 로 즉사한다(실측 2026-08-10, Windows 10 / Node 24). bash 는 shim 을 읽어 넘기므로
+# 대화형(exec claude)은 살아 있지만 봉투 경로만 죽는다. npm 이 함께 깐 실제 실행 파일을 찾아 넘긴다
+RELAY_CLAUDE_BIN="claude"
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*)
+    SHIM="$(command -v claude 2>/dev/null || true)"
+    if [ -n "$SHIM" ]; then
+      EXE="$(dirname "$SHIM")/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+      if [ -f "$EXE" ]; then
+        RELAY_CLAUDE_BIN="$(cygpath -w "$EXE" 2>/dev/null || echo "$EXE")"
+      fi
+    fi
+    ;;
+esac
+
+B="$B" RELAY_CLAUDE_BIN="$RELAY_CLAUDE_BIN" exec node --input-type=module -e '
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
