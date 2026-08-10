@@ -333,6 +333,31 @@ CX+=(--json --skip-git-repo-check -o "$OUT_FILE" -c 'approval_policy="never"' "$
 if [ -n "$RESUME_ID" ]; then CX+=("$RESUME_ID"); fi
 CX+=("$2")
 
+# Windows: node 의 spawn 은 PATH 의 확장자 없는 npm shim(codex)이나 .cmd 를 실행하지 못하고
+# ENOENT 로 즉사한다(#4 실측 - claude-code 어댑터와 같은 처방). 실행 계획을 여기서 정한다:
+#   - RELAY_CODEX_BIN 이 오면 그 값 그대로 (레이아웃을 아는 운영자의 이스케이프 해치, 전 플랫폼)
+#   - shim 이 진짜 .exe 면 그 절대경로를 Windows 형으로
+#   - 그 외(npm 의 sh shim)는 bash 로 감싼다 - bash 는 지금 이 스크립트를 돌리는 실행 파일이다
+# 판정 불능은 조용히 넘기지 않는다 - 죽을 것이 확실한 값으로 강등하는 대신 여기서 판정한다
+CODEX_BIN="${RELAY_CODEX_BIN:-codex}"
+CODEX_SHIM=""
+if [ -z "${RELAY_CODEX_BIN:-}" ]; then
+  case "$OSTYPE" in
+    msys*|cygwin*)
+      SHIM="$(command -v codex || true)"
+      case "$SHIM" in
+        "") fail "$NEED_CODEX" ;;
+        /*.exe) CODEX_BIN="$(cygpath -w "$SHIM")" ;;
+        /*)
+          CODEX_BIN="$(cygpath -w "$(command -v bash)")"
+          CODEX_SHIM="$SHIM"
+          ;;
+        *) fail "codex 해석 불능 - command -v 가 절대경로가 아닌 값을 냈습니다: $SHIM" ;;
+      esac
+      ;;
+  esac
+fi
+
 # 세션 봉투(protocol 2): codex exec --json 의 JSONL 을 relay 이벤트로 번역한다.
 # 어휘가 버전마다 두 갈래라 둘 다 받고, 모르는 줄은 버린다 - 없는 이벤트는 지어내지 않는다.
 #   신: thread.started · turn.started · item.started/updated/completed · turn.completed · turn.failed · error
@@ -341,7 +366,7 @@ CX+=("$2")
 # 종결 reply 의 본문은 --output-last-message 파일이 정본이다(스키마를 몰라도 답은 나온다).
 # stdin 은 도구가 아니라 우리 것이다 - codex 는 stdin 이 파이프면 EOF 까지 읽고 멈추므로
 # 자식에게는 ignore 를 물리고(이걸 빠뜨리면 헤드리스 턴이 영원히 매달린다) 제어 채널은 여기서 받는다
-B="$B" OUT_FILE="$OUT_FILE" exec node --input-type=module -e '
+B="$B" OUT_FILE="$OUT_FILE" CODEX_BIN="$CODEX_BIN" CODEX_SHIM="$CODEX_SHIM" exec node --input-type=module -e '
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -353,7 +378,9 @@ const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "a" });
 const meta = JSON.parse(fs.readFileSync(B + "/meta.json", "utf8"));
 const stage = meta.stage ? path.resolve(meta.stage) : null;
 
-const child = spawn("codex", process.argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+// 실행 계획은 bash 가 정했다: CODEX_BIN(실행 파일) + 선택적 CODEX_SHIM(bash 로 읽는 npm shim)
+const shim = process.env.CODEX_SHIM ? [process.env.CODEX_SHIM] : [];
+const child = spawn(process.env.CODEX_BIN || "codex", [...shim, ...process.argv.slice(1)], { stdio: ["ignore", "pipe", "pipe"] });
 child.stderr.pipe(errLog);
 // 취소는 codex 까지만 닿는다. 그가 샌드박스로 띄운 셸은 자기 프로세스 그룹으로 빠져나가서
 // 그룹째 끊어도 살아남는다(실측) - 장기 명령의 뒷정리는 도구 몫이다

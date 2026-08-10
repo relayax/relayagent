@@ -163,6 +163,28 @@ if [ "$HEADLESS" = 0 ]; then
   exec "$PI" agent "$RELAY_MODEL"
 fi
 
+# Windows: node 의 spawn 은 PATH 의 확장자 없는 npm shim 이나 .cmd 를 실행하지 못하고 ENOENT 로
+# 즉사한다(#4 실측 - claude-code 어댑터와 같은 처방). 실행 계획을 여기서 정한다:
+# 오버라이드 env → 진짜 .exe 직접 → sh shim 은 bash 로 감쌈. 판정 불능은 조용히 넘기지 않는다
+PI_BIN="${RELAY_PI_BIN:-$PI}"
+PI_SHIM=""
+if [ -z "${RELAY_PI_BIN:-}" ]; then
+  case "$OSTYPE" in
+    msys*|cygwin*)
+      SHIM="$(command -v "$PI" || true)"
+      case "$SHIM" in
+        "") fail "$NEED_PI" ;;
+        /*.exe) PI_BIN="$(cygpath -w "$SHIM")" ;;
+        /*)
+          PI_BIN="$(cygpath -w "$(command -v bash)")"
+          PI_SHIM="$SHIM"
+          ;;
+        *) fail "pi 해석 불능 - command -v 가 절대경로가 아닌 값을 냈습니다: $SHIM" ;;
+      esac
+      ;;
+  esac
+fi
+
 # 이어가기 마커가 있으면 지침을 다시 싣지 않는다 (pi 가 이전 대화를 이어붙인다)
 CONT=""
 if [ -f "$B/pi-started" ]; then CONT="1"; fi
@@ -178,7 +200,7 @@ fi
 #   신(pi-agent-core): message_update(text_delta) · message_end · tool_execution_start/end
 # JSON 이 한 줄도 없으면(봉투를 모르는 구현) stdout 통짜를 종결 reply 한 줄로만 낸다.
 # stdin 은 제어 채널 - {"type":"cancel"} 이면 자식을 끊고 실패로 종결한다
-B="$B" PI="$PI" CONT="$CONT" exec node --input-type=module -e '
+B="$B" PI_BIN="$PI_BIN" PI_SHIM="$PI_SHIM" CONT="$CONT" exec node --input-type=module -e '
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import readline from "node:readline";
@@ -189,7 +211,14 @@ const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "a" });
 const args = ["agent", process.env.RELAY_MODEL, "--json"];
 if (process.env.CONT) args.push("-c");
 args.push(process.argv[1]);
-const child = spawn(process.env.PI, args, { stdio: ["ignore", "pipe", "pipe"] });
+// 실행 계획은 bash 가 정했다: PI_BIN(실행 파일) + 선택적 PI_SHIM(bash 로 읽는 npm shim)
+const shim = process.env.PI_SHIM ? [process.env.PI_SHIM] : [];
+const child = spawn(process.env.PI_BIN, [...shim, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+// spawn 실패(ENOENT 등)는 close 가 오지 않는다 - 방치하면 uncaught 로 죽어 계약이 깨진다
+child.on("error", (e) => {
+  emit({ event: "error", message: "pi 실행 실패: " + (e?.message ?? e) });
+  process.exit(1);
+});
 child.stderr.pipe(errLog);
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 

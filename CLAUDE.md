@@ -22,12 +22,12 @@ runner/                 the substrate (CLI + daemon). Plain .ts, run with --expe
   vault.ts              credentials: macOS Keychain, 0600 file fallback
   state.ts, tick.ts     ledger, logs, triggers
   conform.ts            harness/channel contract conformance
-  build.ts, login.ts
+  entry.ts              platform-neutral adapter execution (Windows runs entries via Git Bash)
+  build.ts, login.ts, validate-all.ts
 
 relay.manifest.yaml     the grammar: JSON Schema for relay.yaml, with commentary
 relay.yaml              a full worked example manifest
 packages/system         the management shell, itself a package (console, studio, harness adapters)
-packages/*              reference packages
 lib/relayjs             browser-side client used by package views
 assets/                 project logo
 ```
@@ -71,14 +71,11 @@ same commit or the change is incomplete:
 ## Verify before you claim done
 
 ```sh
-node --experimental-strip-types runner/relay.ts validate packages/system
-node --experimental-strip-types runner/relay.ts validate packages/scribe
-node --experimental-strip-types runner/relay.ts validate packages/video-studio
-node --experimental-strip-types runner/relay.ts validate packages/music-sommelier
-npx tsc --noEmit
+npm run validate    # every packages/* manifest must print a passing judgment
+npm run typecheck
 ```
 
-All four packages must print a passing judgment. CI runs exactly this.
+CI runs exactly this.
 
 ## Language
 
