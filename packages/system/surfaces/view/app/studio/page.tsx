@@ -474,7 +474,9 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
   const [desc, setDesc] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const valid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(dir.trim());
+  const dirValue = dir.trim();
+  const valid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(dirValue);
+  const invalidDir = dirValue.length > 0 && !valid;
 
   return (
     <div className="st-shell">
@@ -487,8 +489,20 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
       <div className="rc-card st-wizard">
         <div className="st-form" style={{ maxWidth: 480 }}>
           <label className="st-field">
-            <span>디렉토리 이름 (소문자, 숫자, 하이픈)</span>
-            <input autoFocus placeholder="diary" value={dir} onChange={(e) => setDir(e.target.value)} />
+            <span>디렉토리 이름 (영문 소문자, 숫자, 하이픈)</span>
+            <input
+              autoFocus
+              placeholder="diary"
+              value={dir}
+              onChange={(e) => setDir(e.target.value)}
+              aria-invalid={invalidDir}
+              aria-describedby="new-package-dir-help"
+            />
+            <div id="new-package-dir-help" className={invalidDir ? "gx-err" : "st-hint"}>
+              {invalidDir
+                ? "영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다. 한글 디렉터리 이름은 지원하지 않습니다."
+                : "패키지 식별자로 사용되므로 영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다. 한글은 지원하지 않습니다."}
+            </div>
           </label>
           <label className="st-field">
             <span>표시 이름</span>

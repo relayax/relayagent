@@ -31,7 +31,9 @@ function releasesPath(name: string): string {
 }
 
 function assertSlug(name: string): void {
-  if (!SLUG.test(name ?? "")) throw new Error(`이름 형식 위반: ${name}`);
+  if (!SLUG.test(name ?? "")) {
+    throw new Error(`패키지 디렉터리 이름은 영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다 (최대 40자, 첫 글자는 영문 소문자 또는 숫자): ${name}`);
+  }
 }
 
 // draft 파일 경로 봉인. .git 은 기판 소유 장부라 에이전트·GUI 쓰기가 닿으면 안 된다
