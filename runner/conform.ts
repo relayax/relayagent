@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnEntrySync } from "./entry.ts";
 import { loadManifest, type HarnessVariant } from "./manifest.ts";
 import type { Ledger } from "./state.ts";
 
@@ -26,7 +26,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
   // 오염 검사의 무대: 모든 동사를 임시 cwd 에서 돌리고 마지막에 잔여물을 본다
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
   const run = (args: string[], env?: NodeJS.ProcessEnv) =>
-    spawnSync(entry, args, { encoding: "utf8", timeout: 20_000, cwd: tmp, ...(env ? { env } : {}) });
+    spawnEntrySync(entry, args, { encoding: "utf8", timeout: 20_000, cwd: tmp, ...(env ? { env } : {}) });
 
   const info = run(["info"]);
   let verbs: string[] = [];

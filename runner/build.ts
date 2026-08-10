@@ -38,17 +38,22 @@ export function buildView(pkg: string, pkgPath: string, m: Manifest): BuildResul
     RELAY_BASE_PATH: `/pkg/${pkg}/view`,
     NEXT_TELEMETRY_DISABLED: "1",
   };
+  const runNpm = (args: string[]) => {
+    const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+    const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", ...args] : args;
+    return spawnSync(command, commandArgs, { cwd: src, env, encoding: "utf8", timeout: TIMEOUT });
+  };
 
   const steps: string[] = [];
   if (!fs.existsSync(path.join(src, "node_modules"))) {
-    const i = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: src, env, encoding: "utf8", timeout: TIMEOUT });
+    const i = runNpm(["install", "--no-audit", "--no-fund"]);
     if (i.status !== 0) {
       return { ok: false, out: `npm install 실패:\n${((i.stdout ?? "") + (i.stderr ?? "")).trim().slice(-600)}` };
     }
     steps.push("npm install 완료");
   }
 
-  const b = spawnSync("npm", ["run", "build"], { cwd: src, env, encoding: "utf8", timeout: TIMEOUT });
+  const b = runNpm(["run", "build"]);
   const tail = ((b.stdout ?? "") + (b.stderr ?? "")).trim().slice(-800);
   if (b.status !== 0) {
     logLine("build", { pkg, ok: false });

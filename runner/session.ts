@@ -1,9 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { API_URL, RELAY_HOME, PRINCIPAL, pkgToken, sessionDir, workspaceDir, stageDir, logLine, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
+import { spawnEntry } from "./entry.ts";
 
 
 export interface SessionInput {
@@ -181,7 +182,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
 
   if (input.interactive) {
     return await new Promise((resolve) => {
-      const child = spawn(entry, ["session"], { cwd: workdir, env, stdio: "inherit" });
+      const child = spawnEntry(entry, ["session"], { cwd: workdir, env, stdio: "inherit" });
       child.on("exit", (code) => resolve({ reply: "", code: code ?? 0 }));
     });
   }
@@ -212,13 +213,13 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 세션 봉투는 감지형이다: stdout 의 JSON 이벤트 줄은 봉투로, 그 외 줄은 구형 통짜 응답으로
   // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다
   const turn = new Promise<{ reply: string; code: number; model: string | null; usage: unknown }>((resolve, reject) => {
-    const child = spawn(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
     live.set(key, child);
     let raw = "";
     let err = "";
     let reply: { text: string; model: string | null; usage: unknown } | null = null;
     let errEvent = "";
-    const rl = readline.createInterface({ input: child.stdout });
+    const rl = readline.createInterface({ input: child.stdout! });
     rl.on("line", (line) => {
       let ev: { event?: unknown; [k: string]: unknown } | null = null;
       if (line.startsWith("{")) {
@@ -243,7 +244,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         evFiles.push({ path: ev.path, name: path.basename(ev.path) });
       }
     });
-    child.stderr.on("data", (d) => (err += d));
+    child.stderr!.on("data", (d) => (err += d));
     child.on("error", (e) => {
       live.delete(key);
       reject(e);

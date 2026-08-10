@@ -32,7 +32,7 @@
   "scripts": {
     "relay": "node --experimental-strip-types runner/relay.ts",
     "typecheck": "tsc --noEmit",
-    "validate": "for p in packages/*/; do node --experimental-strip-types runner/relay.ts validate \"$p\" || exit 1; done"
+    "validate": "node --experimental-strip-types runner/validate-all.ts"
   },
   "dependencies": {
     "yaml": "^2.5.0"

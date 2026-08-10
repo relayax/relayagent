@@ -6,6 +6,7 @@ import { saveLedger, expandHome, workspacePath, RELAY_HOME, type Grant, type Led
 import { loadManifest, judge, activeHarness, ManifestError, type Manifest, type HarnessVariant } from "./manifest.ts";
 import { buildView, type BuildResult } from "./build.ts";
 import { conformHarness } from "./conform.ts";
+import { spawnEntrySync } from "./entry.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { parse as parseYaml } from "yaml";
 
@@ -74,7 +75,7 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
     const reports: string[] = [];
     let picked: string | null = null;
     for (const v of variants) {
-      const r = spawnSync(path.join(abs, v.source, v.entry), ["setup"], { encoding: "utf8" });
+      const r = spawnEntrySync(path.join(abs, v.source, v.entry), ["setup"], { encoding: "utf8" });
       const out = ((r.stdout ?? "") + (r.stderr ?? "")).trim();
       reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}`);
       if (r.status === 0 && !picked) picked = v.name;
@@ -111,7 +112,7 @@ export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info
   const m = loadManifest(rec.path);
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
-  const r = spawnSync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v) });
+  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v) });
   // models·info·commands 는 stdout 이 JSON 계약이다. stderr(강등 사유 등)를 섞으면
   // JSON 해석이 깨져 화면의 모델 목록이 통째로 사라진다 — 진단문은 setup 에만 합친다
   const jsonVerb = verb === "models" || verb === "info" || verb === "commands";
@@ -141,12 +142,12 @@ export function probeHarness(ledger: Ledger, name: string): VariantProbe[] {
   return (m.harness?.variants ?? []).map((v) => {
     const entry = path.join(rec.path, v.source, v.entry);
     const env = llmEnv(v);
-    const info = spawnSync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env });
+    const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env });
     let j: { account?: unknown; protocol?: unknown; capabilities?: unknown; verbs?: unknown } = {};
     try {
       j = JSON.parse(info.stdout || "{}");
     } catch { /* info 비 JSON — conform 이 잡을 결함, 여기선 기본값으로 */ }
-    const setup = spawnSync(entry, ["setup"], { encoding: "utf8", timeout: 15_000, env });
+    const setup = spawnEntrySync(entry, ["setup"], { encoding: "utf8", timeout: 15_000, env });
     // setup 종료코드가 미준비의 축을 가른다: 3 = 도구 없음(설치), 그 외 비0 = 자격 없음(로그인/토큰).
     // 화면은 이 축으로 처방을 고른다 — 도구가 없는데 토큰 입력창을 띄우면 사용자를 헛돌린다
     const reason = setup.status === 0 ? "ok" : setup.status === 3 ? "no-tool" : "no-auth";
@@ -189,7 +190,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnSync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -197,7 +198,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   if (!verbs.includes("login")) {
     throw new Error(`이 하네스(${v.name})는 login 동사를 제공하지 않습니다 — 자격 연결은 relay connect llm ${v.llm?.provider ?? "<provider>"} 로 하세요`);
   }
-  const r = spawnSync(entry, ["login", ...args], { stdio: "inherit" });
+  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit" });
   return r.status ?? 1;
 }
 
@@ -213,7 +214,7 @@ export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnSync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -247,7 +248,7 @@ export function setHarness(ledger: Ledger, name: string, variant: string): { act
   // 모델 어휘는 하네스 소속이다. 이전 하네스의 모델명이 새 어댑터로 넘어가면 무의미한 --model 이 된다
   delete rec.model;
   saveLedger(ledger);
-  const r = spawnSync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8" });
+  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8" });
   return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() } };
 }
 
