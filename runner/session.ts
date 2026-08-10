@@ -1,10 +1,11 @@
 import type { ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { API_URL, RELAY_HOME, PRINCIPAL, pkgToken, sessionDir, workspaceDir, stageDir, logLine, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
-import { spawnEntry } from "./entry.ts";
+import { spawnEntry, spawnEntrySync } from "./entry.ts";
 
 
 export interface SessionInput {
@@ -103,6 +104,191 @@ export function cancelSession(pkg: string, slot: string): boolean {
   return true;
 }
 
+// ── 상주 하네스 (serve 동사) ───────────────────────────────────────────────
+// 어댑터가 info 로 serve 를 선언하면 프로세스를 턴마다 갈지 않고 상주시킨다:
+// 턴 = stdin 의 {"type":"turn"} 주입, 턴 경계 = reply/error 이벤트, 은퇴 = stdin EOF.
+// 얻는 것은 warm turn(프로세스 spawn·대화 재독·MCP 재연결이 턴마다 사라진다)이고,
+// 잃지 않는 것은 투영물 계약이다 — 상주는 언제 죽어도 다음 턴이 디스크의 대화를 잇는다.
+// 상주는 데몬 전용이다: CLI 1회 실행이 상주를 남기면 고아가 된다 (enableResidents 는 데몬만 부른다)
+let residentsEnabled = false;
+export function enableResidents(): void {
+  residentsEnabled = true;
+}
+
+interface Resident {
+  child: ChildProcess;
+  /** 상주를 가른 조립 지문 — 모델·강도·자격·설치 경로가 달라지면 낡은 상주를 은퇴시킨다 */
+  fp: string;
+  idle: ReturnType<typeof setTimeout> | null;
+  /** 진행 중 턴의 이벤트 수신자 — null 이면 유휴 */
+  sink: ((ev: { event: string; [k: string]: unknown }) => void) | null;
+  stderrTail: string;
+}
+
+const residents = new Map<string, Resident>();
+const RESIDENT_TTL_MS = (() => {
+  const v = Number(process.env.RELAY_RESIDENT_TTL_S);
+  return Number.isFinite(v) && v > 0 ? v * 1000 : 600_000;
+})();
+
+// serve 선언 조회 — info 는 어댑터 프로세스 1회 비용이라 mtime 캐시로 어댑터당 한 번만 돈다
+const serveCache = new Map<string, { mtime: number; serves: boolean }>();
+function harnessServes(entry: string): boolean {
+  let mtime: number;
+  try {
+    mtime = fs.statSync(entry).mtimeMs;
+  } catch {
+    return false;
+  }
+  const hit = serveCache.get(entry);
+  if (hit && hit.mtime === mtime) return hit.serves;
+  let serves = false;
+  try {
+    const r = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000 });
+    const j = JSON.parse(r.stdout || "{}");
+    serves = Array.isArray(j.verbs) && j.verbs.includes("serve");
+  } catch { /* info 불달 — 상주 없이 턴마다 프로세스로 */ }
+  serveCache.set(entry, { mtime, serves });
+  return serves;
+}
+
+function retireEntry(key: string, r: Resident): void {
+  if (residents.get(key) === r) residents.delete(key);
+  if (r.idle) {
+    clearTimeout(r.idle);
+    r.idle = null;
+  }
+  try {
+    r.child.stdin?.end(); // EOF = 은퇴 지시 — 봉투가 claude 를 자연 종료시킨다
+  } catch { /* 이미 닫힘 */ }
+  const term = setTimeout(() => { try { r.child.kill("SIGTERM"); } catch { /* 이미 종료 */ } }, 5000);
+  const kill = setTimeout(() => { try { r.child.kill("SIGKILL"); } catch { /* 이미 종료 */ } }, 8000);
+  term.unref?.();
+  kill.unref?.();
+  r.child.once("close", () => {
+    clearTimeout(term);
+    clearTimeout(kill);
+  });
+}
+
+/** 대화 재시작(reset)·세션 삭제의 동반 조치 — 상주가 낡은 대화를 메모리에 물고 있으면 안 된다 */
+export function retireResident(pkg: string, slot: string): boolean {
+  const key = `${pkg}/${slot}`;
+  const r = residents.get(key);
+  if (!r) return false;
+  retireEntry(key, r);
+  return true;
+}
+
+/** 설치·발행·롤백·하네스 전환의 동반 조치 — 상주는 옛 코드·옛 번들로 떠 있다 */
+export function retireResidents(pkg: string): number {
+  let n = 0;
+  for (const [key, r] of [...residents]) {
+    if (key.startsWith(pkg + "/")) {
+      retireEntry(key, r);
+      n++;
+    }
+  }
+  return n;
+}
+
+export function retireAllResidents(): void {
+  for (const [key, r] of [...residents]) retireEntry(key, r);
+}
+
+function acquireResident(key: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
+  const cur = residents.get(key);
+  if (cur && cur.fp === fp && cur.child.exitCode === null) {
+    if (cur.idle) {
+      clearTimeout(cur.idle);
+      cur.idle = null;
+    }
+    return cur;
+  }
+  if (cur) retireEntry(key, cur);
+  const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const r: Resident = { child, fp, idle: null, sink: null, stderrTail: "" };
+  child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
+  const rl = readline.createInterface({ input: child.stdout! });
+  rl.on("line", (line) => {
+    // serve 선언 어댑터의 stdout 은 봉투 전용이다 — 이벤트 아닌 줄은 소음으로 버린다
+    if (!line.startsWith("{")) return;
+    let ev: { event?: unknown } | null = null;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (ev && typeof ev.event === "string") r.sink?.(ev as { event: string });
+  });
+  child.stderr!.on("data", (d) => {
+    r.stderrTail = (r.stderrTail + String(d)).slice(-2000);
+  });
+  child.on("error", (e) => {
+    if (residents.get(key) === r) residents.delete(key);
+    r.sink?.({ event: "error", message: `하네스 상주 기동 실패: ${e}` });
+  });
+  child.on("close", (code) => {
+    rl.close();
+    if (residents.get(key) === r) residents.delete(key);
+    if (r.idle) clearTimeout(r.idle);
+    // 턴 도중의 사망은 그 턴의 실패다 — 유휴 사망(sink 없음)은 다음 턴이 새 상주로 잇는다
+    const tail = r.stderrTail.trim().split("\n").slice(-2).join(" / ");
+    r.sink?.({ event: "error", message: `하네스 상주 종료 (exit ${code})${tail ? " — " + tail : ""}` });
+  });
+  residents.set(key, r);
+  return r;
+}
+
+function residentTurn(
+  key: string,
+  entry: string,
+  env: Record<string, string>,
+  cwd: string,
+  fp: string,
+  prompt: string,
+  eventsFile: string,
+  evFiles: { path: string; name: string }[],
+): Promise<{ reply: string; code: number; model: string | null; usage: unknown }> {
+  return new Promise((resolve, reject) => {
+    const r = acquireResident(key, entry, env, cwd, fp);
+    live.set(key, r.child);
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      r.sink = null;
+      if (live.get(key) === r.child) live.delete(key);
+      if (residents.get(key) === r && r.child.exitCode === null) {
+        // 유휴 은퇴 시계 — 다음 턴의 acquire 가 푼다
+        r.idle = setTimeout(() => retireEntry(key, r), RESIDENT_TTL_MS);
+        r.idle.unref?.();
+      }
+      fn();
+    };
+    r.sink = (ev) => {
+      fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+      if (ev.event === "reply") {
+        finish(() => resolve({
+          reply: String(ev.text ?? ""),
+          code: 0,
+          model: typeof ev.model === "string" ? ev.model : null,
+          usage: ev.usage ?? null,
+        }));
+      } else if (ev.event === "error") {
+        finish(() => reject(new Error(String(ev.message ?? "하네스 오류"))));
+      } else if (ev.event === "file" && typeof ev.path === "string" && !ev.path.startsWith("/") && !ev.path.split("/").includes("..")) {
+        evFiles.push({ path: ev.path, name: path.basename(ev.path) });
+      }
+    };
+    try {
+      r.child.stdin!.write(JSON.stringify({ type: "turn", prompt }) + "\n");
+    } catch (e) {
+      finish(() => reject(e instanceof Error ? e : new Error(String(e))));
+    }
+  });
+}
+
 // ── stage 산출물 감지 ──────────────────────────────────────────────────────
 // 봉투 file 이벤트가 없는 어댑터에서도 파일 회신이 성립하는 보장선: 턴 전후 diff.
 // uploads/ 는 사용자 인바운드 무대라 제외한다
@@ -178,7 +364,15 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   if (rec.model) env.RELAY_MODEL = rec.model;
   if (rec.effort) env.RELAY_EFFORT = rec.effort;
 
-  logLine("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : "auto" });
+  // 상주 지문: 이 값이 달라지면 낡은 상주를 은퇴시키고 새로 편다.
+  // 자격은 값 대신 해시로 — 지문이 로그에 실려도 비밀이 새지 않는다
+  const cred = variant.llm?.auth?.kind === "token" && variant.llm.auth.env ? env[variant.llm.auth.env] ?? "" : "";
+  const fp = crypto.createHash("sha256")
+    .update([rec.path, agent, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
+    .digest("hex").slice(0, 16);
+  const resident = !input.interactive && residentsEnabled && harnessServes(entry);
+
+  logLine("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : resident ? "resident" : "auto" });
 
   if (input.interactive) {
     return await new Promise((resolve) => {
@@ -211,53 +405,56 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const evFiles: { path: string; name: string }[] = [];
 
   // 세션 봉투는 감지형이다: stdout 의 JSON 이벤트 줄은 봉투로, 그 외 줄은 구형 통짜 응답으로
-  // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다
-  const turn = new Promise<{ reply: string; code: number; model: string | null; usage: unknown }>((resolve, reject) => {
-    const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
-    live.set(key, child);
-    let raw = "";
-    let err = "";
-    let reply: { text: string; model: string | null; usage: unknown } | null = null;
-    let errEvent = "";
-    const rl = readline.createInterface({ input: child.stdout! });
-    rl.on("line", (line) => {
-      let ev: { event?: unknown; [k: string]: unknown } | null = null;
-      if (line.startsWith("{")) {
-        try {
-          ev = JSON.parse(line);
-        } catch { /* 봉투 아님 */ }
-      }
-      if (!ev || typeof ev.event !== "string") {
-        raw += line + "\n";
-        return;
-      }
-      fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
-      if (ev.event === "reply") {
-        reply = {
-          text: String(ev.text ?? ""),
-          model: typeof ev.model === "string" ? ev.model : null,
-          usage: ev.usage ?? null,
-        };
-      } else if (ev.event === "error") {
-        errEvent = String(ev.message ?? "");
-      } else if (ev.event === "file" && typeof ev.path === "string" && !ev.path.startsWith("/") && !ev.path.split("/").includes("..")) {
-        evFiles.push({ path: ev.path, name: path.basename(ev.path) });
-      }
+  // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다.
+  // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
+  const turn = resident
+    ? residentTurn(key, entry, env, workdir, fp, prompt, eventsFile, evFiles)
+    : new Promise<{ reply: string; code: number; model: string | null; usage: unknown }>((resolve, reject) => {
+      const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
+      live.set(key, child);
+      let raw = "";
+      let err = "";
+      let reply: { text: string; model: string | null; usage: unknown } | null = null;
+      let errEvent = "";
+      const rl = readline.createInterface({ input: child.stdout! });
+      rl.on("line", (line) => {
+        let ev: { event?: unknown; [k: string]: unknown } | null = null;
+        if (line.startsWith("{")) {
+          try {
+            ev = JSON.parse(line);
+          } catch { /* 봉투 아님 */ }
+        }
+        if (!ev || typeof ev.event !== "string") {
+          raw += line + "\n";
+          return;
+        }
+        fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+        if (ev.event === "reply") {
+          reply = {
+            text: String(ev.text ?? ""),
+            model: typeof ev.model === "string" ? ev.model : null,
+            usage: ev.usage ?? null,
+          };
+        } else if (ev.event === "error") {
+          errEvent = String(ev.message ?? "");
+        } else if (ev.event === "file" && typeof ev.path === "string" && !ev.path.startsWith("/") && !ev.path.split("/").includes("..")) {
+          evFiles.push({ path: ev.path, name: path.basename(ev.path) });
+        }
+      });
+      child.stderr!.on("data", (d) => (err += d));
+      child.on("error", (e) => {
+        live.delete(key);
+        reject(e);
+      });
+      child.on("close", (code) => {
+        live.delete(key);
+        if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage });
+        if (errEvent) return reject(new Error(errEvent));
+        const legacy = raw.trim();
+        if (code !== 0 && !legacy) return reject(new Error(`하네스 종료 코드 ${code}: ${err.slice(-500)}`));
+        resolve({ reply: legacy, code: code ?? 0, model: null, usage: null });
+      });
     });
-    child.stderr!.on("data", (d) => (err += d));
-    child.on("error", (e) => {
-      live.delete(key);
-      reject(e);
-    });
-    child.on("close", (code) => {
-      live.delete(key);
-      if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage });
-      if (errEvent) return reject(new Error(errEvent));
-      const legacy = raw.trim();
-      if (code !== 0 && !legacy) return reject(new Error(`하네스 종료 코드 ${code}: ${err.slice(-500)}`));
-      resolve({ reply: legacy, code: code ?? 0, model: null, usage: null });
-    });
-  });
 
   // 실패도 이력이다. 물음만 남기고 끝내면 다음 기동의 복구가 죽은 턴으로 오해한다
   let r: { reply: string; code: number; model: string | null; usage: unknown };

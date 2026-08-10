@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { API_PORT, PRINCIPAL, RELAY_HOME, loadLedger, tokenToPkg, stageDir, workspacePath, type Grant, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession } from "./session.ts";
+import { runSession, cancelSession, retireResident, retireResidents } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./installer.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
@@ -62,6 +62,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
       const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace });
+      retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       getTicker()?.emit("relay.package.installed", { pkg: r.name });
       // setup 과 build 결과를 여기서 버리면 "설치 성공" 이 검증 없이 참이 된다
@@ -88,7 +89,8 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const l = getLedger();
       const r = publishDraft(l, name, opts);
       if (r.published && r.path && r.manifest) {
-        // 서비스는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
+        // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
+        retireResidents(name);
         stopServices(name);
         const notes = startServices(l, name, r.path, r.manifest);
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
@@ -102,6 +104,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     releaseRollback: (name, version) => {
       const l = getLedger();
       const r = rollbackRelease(l, name, version);
+      retireResidents(name);
       stopServices(name);
       const notes = startServices(l, name, r.path, r.manifest);
       return { name: r.name, version: r.version, path: r.path, services: notes };
@@ -435,7 +438,9 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       if (hs && req.method === "POST") {
         const b = await readBody(req);
         const { setHarness } = await import("./installer.ts");
-        return void json(res, 200, setHarness(getLedger(), decodeURIComponent(hs[1]), String(b.name ?? "")));
+        const pkg = decodeURIComponent(hs[1]);
+        retireResidents(pkg); // 상주는 이전 하네스로 떠 있다
+        return void json(res, 200, setHarness(getLedger(), pkg, String(b.name ?? "")));
       }
 
       // token 자격형의 웹 연결 경로 — vault 에 provider 소속으로 앉는다
@@ -548,6 +553,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
           return void json(res, 200, { ok: true, slot });
         }
         if (sessOp[3] === "delete" && req.method === "POST") {
+          retireResident(pkg, slot); // 상주가 지워진 번들 경로를 물고 있으면 안 된다
           fs.rmSync(dir, { recursive: true, force: true });
           return void json(res, 200, { ok: true, removed: slot });
         }
@@ -558,6 +564,8 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const b = await readBody(req);
         const slot = String(b.slot ?? "console");
         const { sessionDir } = await import("./state.ts");
+        // 상주가 낡은 대화를 메모리에 물고 있으면 포인터를 지워도 대화가 이어진다 — 먼저 은퇴
+        retireResident(decodeURIComponent(reset[1]), slot);
         const marker = path.join(sessionDir(decodeURIComponent(reset[1]), slot), "bundle", "claude-session");
         if (fs.existsSync(marker)) fs.unlinkSync(marker);
         return void json(res, 200, { ok: true, slot });
