@@ -302,11 +302,40 @@ if [ $# -le 1 ] || [ -z "${2:-}" ]; then
   exec kimi "${ARGS[@]}"
 fi
 
+# Windows: node 의 spawn 은 PATH 의 확장자 없는 shim 이나 .cmd 를 실행하지 못하고 ENOENT 로
+# 즉사한다(#4 실측 — claude-code 어댑터와 같은 처방). 실행 계획을 여기서 정한다:
+# 오버라이드 env → 진짜 .exe 직접(uv tool install 은 실체 .exe 를 깐다) → sh shim 은 bash 로 감쌈.
+# 판정 불능은 조용히 넘기지 않는다 — 죽을 것이 확실한 값으로 강등하는 대신 여기서 판정한다
+KIMI_BIN="${RELAY_KIMI_BIN:-kimi}"
+KIMI_SHIM=""
+if [ -z "${RELAY_KIMI_BIN:-}" ]; then
+  case "$OSTYPE" in
+    msys*|cygwin*)
+      SHIM="$(command -v kimi || true)"
+      case "$SHIM" in
+        "")
+          echo "kimi CLI 없음: uv tool install kimi-cli" >&2
+          exit 3
+          ;;
+        /*.exe) KIMI_BIN="$(cygpath -w "$SHIM")" ;;
+        /*)
+          KIMI_BIN="$(cygpath -w "$(command -v bash)")"
+          KIMI_SHIM="$SHIM"
+          ;;
+        *)
+          echo "kimi 해석 불능 — command -v 가 절대경로가 아닌 값을 냈습니다: $SHIM" >&2
+          exit 3
+          ;;
+      esac
+      ;;
+  esac
+fi
+
 # 세션 봉투(protocol 2): kimi 의 print 모드 stream-json 을 relay 이벤트로 번역한다.
 # 줄 형식이 대화 메시지 그대로라({role:assistant|tool}) 세션 id 도 usage 도 실려 오지 않는다 —
 # session 은 우리가 준 --session 값(네이티브 id), usage 는 null 이다. 없는 장부를 지어내지 않는다.
 # stdin 은 제어 채널 — {"type":"cancel"} 이면 도구를 끊고 실패로 종결한다
-B="$B" SID="$SID" MODEL="$MODEL" exec node --input-type=module -e '
+B="$B" SID="$SID" MODEL="$MODEL" KIMI_BIN="$KIMI_BIN" KIMI_SHIM="$KIMI_SHIM" exec node --input-type=module -e '
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import readline from "node:readline";
@@ -315,13 +344,21 @@ const prompt = process.argv[1];
 const args = process.argv.slice(2);
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const errLog = fs.createWriteStream(B + "/stderr.log", { flags: "a" });
-// --print 는 --afk 를 함께 켠다(무인 승인). 승인 대기로 멈추면 headless 턴이 영영 안 끝난다
-const child = spawn("kimi", [
+// --print 는 --afk 를 함께 켠다(무인 승인). 승인 대기로 멈추면 headless 턴이 영영 안 끝난다.
+// 실행 계획은 bash 가 정했다: KIMI_BIN(실행 파일) + 선택적 KIMI_SHIM(bash 로 읽는 shim)
+const shim = process.env.KIMI_SHIM ? [process.env.KIMI_SHIM] : [];
+const child = spawn(process.env.KIMI_BIN || "kimi", [
+  ...shim,
   "--print",
   "--output-format", "stream-json",
   "-p", prompt,
   ...args,
 ], { stdio: ["ignore", "pipe", "pipe"] });
+// spawn 실패(ENOENT 등)는 close 가 오지 않는다 — 방치하면 uncaught 로 죽어 계약이 깨진다
+child.on("error", (e) => {
+  emit({ event: "error", message: "kimi 실행 실패: " + (e?.message ?? e) });
+  process.exit(1);
+});
 child.stderr.pipe(errLog);
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 
