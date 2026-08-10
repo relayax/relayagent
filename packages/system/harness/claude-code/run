@@ -299,7 +299,43 @@ fi
 # 프로세스가 살고, 다음 user 프레임이 같은 대화의 다음 턴이 되며, stdin EOF 로 자연 종료한다
 # (실측 2026-08-10, 2.1.153 — relayos-claude resident-session 실측과 동일). 턴 경계 = result.
 # 실패를 텍스트로 위장하지 않는다: 실패는 error 이벤트 + 비0 종료코드로만 낸다
-B="$B" exec node --input-type=module -e '
+# Windows: node 의 spawn 은 PATH 의 확장자 없는 npm shim(claude)이나 .cmd 를 실행하지 못하고
+# ENOENT 로 즉사한다(실측 2026-08-10, Windows 10 / Node 24). bash 는 shim 을 읽어 exec 하므로
+# 대화형(exec claude)은 살아 있지만 봉투 경로만 죽는다. 실행 계획을 여기서 정해 봉투에 넘긴다:
+#   - RELAY_CLAUDE_BIN 이 오면 그 값 그대로 (레이아웃을 아는 운영자의 이스케이프 해치, 전 플랫폼)
+#   - shim 이 진짜 .exe 면 그 절대경로를 Windows 형으로 (네이티브 인스톨러·scoop·volta)
+#   - 그 외(npm 의 sh shim)는 bash 로 감싼다 — 설치 레이아웃·패키지 내부 구조를 추측하지 않는
+#     유일한 길이다. bash 는 지금 이 스크립트를 돌리는 실행 파일이라 항상 있고 node 가 spawn 한다
+# 판정 불능을 조용히 넘기지 않는다: 죽을 것이 확실한 값으로 강등하는 대신 여기서 즉시 판정한다
+CLAUDE_BIN="${RELAY_CLAUDE_BIN:-claude}"
+CLAUDE_SHIM=""
+if [ -z "${RELAY_CLAUDE_BIN:-}" ]; then
+  case "$OSTYPE" in
+    msys*|cygwin*)
+      SHIM="$(command -v claude || true)"
+      case "$SHIM" in
+        "")
+          echo "claude CLI 없음: npm install -g @anthropic-ai/claude-code" >&2
+          exit 3
+          ;;
+        /*.exe)
+          CLAUDE_BIN="$(cygpath -w "$SHIM")"
+          ;;
+        /*)
+          CLAUDE_BIN="$(cygpath -w "$(command -v bash)")"
+          CLAUDE_SHIM="$SHIM"
+          ;;
+        *)
+          # 경로가 아닌 값(함수·alias·상대경로) — 상대 해석은 워크스페이스의 바이너리를 집을 수 있다
+          echo "claude 해석 불능 — command -v 가 절대경로가 아닌 값을 냈습니다: $SHIM" >&2
+          exit 3
+          ;;
+      esac
+      ;;
+  esac
+fi
+
+B="$B" CLAUDE_BIN="$CLAUDE_BIN" CLAUDE_SHIM="$CLAUDE_SHIM" exec node --input-type=module -e '
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -307,6 +343,10 @@ import readline from "node:readline";
 const B = process.env.B;
 const MODE = process.argv[1];          // "session" = 1턴 봉투 · "serve" = 상주(턴은 stdin 주입)
 const baseArgs = process.argv.slice(3);
+// 실행 계획은 bash 가 정했다: CLAUDE_BIN(node 가 spawn 할 실행 파일) + CLAUDE_SHIM(있으면
+// bash 로 읽는 npm shim 경로 — Windows 전용, argv 선두에 앉는다)
+const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
+const CLAUDE_SHIM = process.env.CLAUDE_SHIM ? [process.env.CLAUDE_SHIM] : [];
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 
 let meta = {};
@@ -353,12 +393,19 @@ function boot() {
     const sid = fs.readFileSync(B + "/claude-session", "utf8").trim();
     if (sid) { args.push("--resume", sid); resumedBoot = true; }
   } catch { /* 첫 대화 */ }
-  child = spawn("claude", [
+  child = spawn(CLAUDE_BIN, [
+    ...CLAUDE_SHIM,
     "-p", "--input-format", "stream-json",
     "--output-format", "stream-json", "--include-partial-messages", "--verbose",
     "--dangerously-skip-permissions",
     ...args,
   ], { stdio: ["pipe", "pipe", "pipe"] });
+  // spawn 실패(ENOENT 등)는 close 이벤트가 오지 않는다 — 방치하면 uncaught 로 죽어
+  // 계약(실패는 error 이벤트 + 비0 종료코드로만)이 깨진다. 여기서 계약대로 종결한다
+  child.on("error", (e) => {
+    emit({ event: "error", message: "claude 실행 실패: " + (e?.message ?? e) + " (bin: " + CLAUDE_BIN + ")" });
+    process.exit(1);
+  });
   child.stderr.pipe(errLog);
   const rl = readline.createInterface({ input: child.stdout });
   rl.on("line", onLine);
