@@ -33,7 +33,7 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | --- | --- |
 | パッケージ | `relay.yaml` を持つディレクトリ。マニフェストが構造とパスの正本、ツリーが内容の正本。 |
 | Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`chat`(直接対話)と `channels`(Discord、Slack などのアダプタ)は追加の扉。 |
-| Harness | パッケージに同梱され、エージェントを実行するアダプタ。システムパッケージには Claude Code、Codex、Kimi、Pi のアダプタが同梱。動詞は `session`、`setup`、`models`、`commands`、`info`(任意で `login`)。契約適合性は `relay harness-check` が判定。 |
+| Harness | パッケージに同梱され、エージェントを実行するアダプタ。システムパッケージには Claude Code、Codex、Kimi、Pi のアダプタが同梱。動詞は `session`、`setup`、`models`、`commands`、`info`(任意で `login`、および `serve` — ターンごとにプロセスを起こさず stdin でターンを受け取る常駐セッション)。契約適合性は `relay harness-check` が判定。 |
 | Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。 |
 | Scripts | 動詞。`scripts/<名前>.ts` が `async (input, ctx) => JSON` をデフォルトエクスポート。 |
 | Services | 形は 3 つだけ。`source`(自分の身体、コンテナまたはプロセス)、`url`(リモート MCP エンドポイント、資格情報はここだけに付く)、`dir`(ファイル資源)。 |
@@ -136,7 +136,7 @@ my-package/
 
 まず [CONTRIBUTING.md](CONTRIBUTING.md) を読んでください。いまレバレッジが最も高い貢献:
 
-- **Harness アダプタ**:他のコーディングエージェント(Gemini CLI、Qwen Code、ローカルモデル)向けに、中立バンドルの上で動詞(`session`、`setup`、`models`、`commands`、`info`)を実装する。[packages/system/harness](packages/system/harness) の `claude-code` と `codex` アダプタがリファレンスで、`kimi` と `pi` が最小形。それぞれ 1 枚のシェルスクリプト。
+- **Harness アダプタ**:他のコーディングエージェント(Gemini CLI、Qwen Code、ローカルモデル)向けに、中立バンドルの上で動詞(`session`、`setup`、`models`、`commands`、`info`、任意で `serve` — 常駐セッション)を実装する。[packages/system/harness](packages/system/harness) の `claude-code` と `codex` アダプタがリファレンスで、`kimi` と `pi` が最小形。それぞれ 1 枚のシェルスクリプト。
 - **Surface リファレンス**:view がパッケージトークンで自分のエージェントの動詞と基板 API を呼ぶ契約を示す例。
 - **チャネルアダプタ**(Telegram、メール、ウェブウィジェット):外部アイデンティティを principal にマッピングし、`RELAY_API` 経由でディスパッチ。
 - **サービスレシピ**:主要 SaaS 向けに動作する `url` サービス宣言(auth、verify)の蓄積。

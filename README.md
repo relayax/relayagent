@@ -33,7 +33,7 @@ One package is one directory. A single manifest (`relay.yaml`) declares everythi
 | --- | --- |
 | Package | A directory with `relay.yaml`. The manifest is the source of truth for structure and paths; the tree is the source of truth for content. |
 | Surfaces | How the package faces people. The centerpiece is `view`: a web UI the package ships, built at install, hosted by the daemon at `/pkg/<name>/view/`, and wired to its own agent's verbs with the package token. `chat` (direct conversation) and `channels` (Discord, Slack, and other adapters) are additional doors. |
-| Harness | The execution adapter bundled with the package that runs its agents. The system package bundles Claude Code, Codex, Kimi, and Pi adapters. Verbs: `session`, `setup`, `models`, `commands`, `info` (plus optional `login`). Contract conformance is judged by `relay harness-check`. |
+| Harness | The execution adapter bundled with the package that runs its agents. The system package bundles Claude Code, Codex, Kimi, and Pi adapters. Verbs: `session`, `setup`, `models`, `commands`, `info` (plus optional `login`, and `serve` — a resident session that takes turns over stdin instead of one process per turn). Contract conformance is judged by `relay harness-check`. |
 | Agents | Persona (`AGENT.md`) plus skills, slash commands, and dispatch to subagents. Delivered to the harness as a neutral bundle; translation to native formats belongs to the adapter. |
 | Scripts | Verbs. `scripts/<name>.ts` default-exports `async (input, ctx) => JSON`. |
 | Services | Exactly three shapes: `source` (its own body, container or process), `url` (a remote MCP endpoint; credentials attach only here), `dir` (a file resource). |
@@ -136,7 +136,7 @@ At the root of these six principles sits one premise: **everything can be expres
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The highest-leverage contributions right now:
 
-- **Harness adapters** for other coding agents (Gemini CLI, Qwen Code, local models): implement the verbs (`session`, `setup`, `models`, `commands`, `info`) over the neutral bundle. The bundled `claude-code` and `codex` adapters in [packages/system/harness](packages/system/harness) are the reference; `kimi` and `pi` show the minimal shape. Each is a single shell script.
+- **Harness adapters** for other coding agents (Gemini CLI, Qwen Code, local models): implement the verbs (`session`, `setup`, `models`, `commands`, `info`; optional `serve` for a resident session) over the neutral bundle. The bundled `claude-code` and `codex` adapters in [packages/system/harness](packages/system/harness) are the reference; `kimi` and `pi` show the minimal shape. Each is a single shell script.
 - **Surface references**: example screens showing the contract where a view calls its own agent's verbs and the substrate API with the package token.
 - **Channel adapters** (Telegram, email, web widget): map an external identity to a principal and dispatch through `RELAY_API`.
 - **Service recipes**: working `url` service declarations (auth, verify) for popular SaaS.

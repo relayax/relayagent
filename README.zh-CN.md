@@ -33,7 +33,7 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | --- | --- |
 | 包(Package) | 带有 `relay.yaml` 的目录。清单是结构与路径的正本,目录树是内容的正本。 |
 | Surfaces | 包面向用户的方式。核心是 `view`:包自带的网页 UI,安装期构建,由守护进程托管在 `/pkg/<名称>/view/`,并凭包令牌连接到自己智能体的动词。`chat`(直接对话)与 `channels`(Discord、Slack 等适配器)是额外的门。 |
-| Harness | 随包内置、负责运行智能体的执行适配器。系统包内置 Claude Code、Codex、Kimi、Pi 适配器。动词:`session`、`setup`、`models`、`commands`、`info`(可选 `login`)。契约一致性由 `relay harness-check` 判定。 |
+| Harness | 随包内置、负责运行智能体的执行适配器。系统包内置 Claude Code、Codex、Kimi、Pi 适配器。动词:`session`、`setup`、`models`、`commands`、`info`(可选 `login`,以及 `serve` —— 常驻会话,经 stdin 注入回合,而非每回合一个进程)。契约一致性由 `relay harness-check` 判定。 |
 | Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
 | Services | 只有三种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点,凭证只挂在这里)、`dir`(文件资源)。 |
@@ -136,7 +136,7 @@ my-package/
 
 请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。当前杠杆最高的贡献方向:
 
-- **Harness 适配器**:为其他编码智能体(Gemini CLI、Qwen Code、本地模型)在中立 bundle 之上实现动词(`session`、`setup`、`models`、`commands`、`info`)。[packages/system/harness](packages/system/harness) 中的 `claude-code` 与 `codex` 适配器是参考实现,`kimi` 与 `pi` 展示最小形态。各自只是一个 shell 脚本。
+- **Harness 适配器**:为其他编码智能体(Gemini CLI、Qwen Code、本地模型)在中立 bundle 之上实现动词(`session`、`setup`、`models`、`commands`、`info`,可选 `serve` —— 常驻会话)。[packages/system/harness](packages/system/harness) 中的 `claude-code` 与 `codex` 适配器是参考实现,`kimi` 与 `pi` 展示最小形态。各自只是一个 shell 脚本。
 - **Surface 参考实现**:示例界面,展示 view 如何用包令牌调用自己智能体的动词与基板 API。
 - **频道适配器**(Telegram、邮件、网页组件):把外部身份映射为 principal,通过 `RELAY_API` 派发。
 - **服务配方**:为主流 SaaS 维护可用的 `url` 服务声明(auth、verify)。

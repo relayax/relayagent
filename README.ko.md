@@ -33,7 +33,7 @@ RelayAgent는 자기 화면을 싣고 다니는 에이전트 패키지의 개인
 | --- | --- |
 | 패키지 | `relay.yaml`을 가진 디렉토리. 매니페스트가 구조와 경로의 정본, 트리가 내용의 정본. |
 | Surfaces | 패키지가 사람을 만나는 면. 중심은 `view`: 패키지가 배송하는 웹 UI로, 설치가 빌드하고 데몬이 `/pkg/<이름>/view/`로 호스팅하며 패키지 토큰으로 자기 에이전트의 동사에 연결된다. `chat`(직접 대화)과 `channels`(Discord, Slack 등 어댑터)는 추가 문. |
-| Harness | 패키지에 동봉되어 에이전트를 실행하는 어댑터. 시스템 패키지에 Claude Code, Codex, Kimi, Pi 어댑터 동봉. 동사: `session`, `setup`, `models`, `commands`, `info`(+선택 `login`). 계약 적합성은 `relay harness-check`가 판정. |
+| Harness | 패키지에 동봉되어 에이전트를 실행하는 어댑터. 시스템 패키지에 Claude Code, Codex, Kimi, Pi 어댑터 동봉. 동사: `session`, `setup`, `models`, `commands`, `info`(+선택 `login`, `serve` — 턴마다 프로세스를 갈지 않고 stdin 으로 턴을 주입받는 상주 세션). 계약 적합성은 `relay harness-check`가 판정. |
 | Agents | 페르소나(`AGENT.md`)와 스킬, 슬래시 커맨드, 서브에이전트 dispatch. 하네스에는 중립 번들로 전달되고, 네이티브 형식으로의 번역은 전부 어댑터 소유. |
 | Scripts | 동사. `scripts/<이름>.ts`가 `async (input, ctx) => JSON`을 기본 수출. |
 | Services | 형태는 셋뿐. `source`(자기 몸, 컨테이너 또는 프로세스), `url`(원격 MCP 접점, 자격은 여기에만 앉음), `dir`(파일 자원). |
@@ -136,7 +136,7 @@ my-package/
 
 먼저 [CONTRIBUTING.md](CONTRIBUTING.md)를 읽어주세요. 지금 레버리지가 가장 높은 기여:
 
-- **하네스 어댑터**: 다른 코딩 에이전트(Gemini CLI, Qwen Code, 로컬 모델)용으로 중립 번들 위에 동사(`session`, `setup`, `models`, `commands`, `info`)를 구현. [packages/system/harness](packages/system/harness)의 `claude-code`와 `codex` 어댑터가 레퍼런스이고 `kimi`와 `pi`가 최소형입니다. 각각 셸 스크립트 하나입니다.
+- **하네스 어댑터**: 다른 코딩 에이전트(Gemini CLI, Qwen Code, 로컬 모델)용으로 중립 번들 위에 동사(`session`, `setup`, `models`, `commands`, `info`, 선택 `serve` — 상주 세션)를 구현. [packages/system/harness](packages/system/harness)의 `claude-code`와 `codex` 어댑터가 레퍼런스이고 `kimi`와 `pi`가 최소형입니다. 각각 셸 스크립트 하나입니다.
 - **Surface 레퍼런스**: view가 패키지 토큰으로 자기 에이전트의 동사와 기판 API를 부르는 계약을 보여주는 예제 화면.
 - **채널 어댑터** (Telegram, 이메일, 웹 위젯): 외부 신원을 principal로 매핑해 `RELAY_API`로 착신.
 - **서비스 레시피**: 주요 SaaS용으로 작동하는 `url` 서비스 선언(auth, verify) 모음.

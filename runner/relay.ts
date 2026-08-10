@@ -7,7 +7,7 @@ import { installPkg, removePkg, addGrant, validateDir, registryData } from "./in
 import { createApi, makeHostBridge } from "./api.ts";
 import { startServices, stopAll } from "./run.ts";
 import { Ticker } from "./tick.ts";
-import { runSession, recoverDanglingTurns, listSessionSlots } from "./session.ts";
+import { runSession, recoverDanglingTurns, listSessionSlots, enableResidents, retireAllResidents } from "./session.ts";
 import { loadManifest } from "./manifest.ts";
 import { vaultSet, credKey } from "./vault.ts";
 
@@ -53,6 +53,8 @@ async function main(): Promise<void> {
         if (alive) throw new Error(`데몬이 이미 실행 중입니다: pid ${old} (${API_URL})`);
       }
       fs.writeFileSync(pidFile, String(process.pid) + "\n");
+      // 상주 하네스는 데몬만 허용한다 — CLI 1회 실행이 상주를 남기면 고아가 된다
+      enableResidents();
       let ticker: Ticker | null = null;
       const host = makeHostBridge(() => loadLedger(), () => ticker);
       ticker = new Ticker(() => loadLedger(), host);
@@ -82,6 +84,7 @@ async function main(): Promise<void> {
       console.log(`콘솔: ${API_URL}/pkg/system/view/`);
       process.on("SIGINT", () => {
         ticker?.stop();
+        retireAllResidents();
         stopAll();
         fs.rmSync(pidFile, { force: true });
         process.exit(0);

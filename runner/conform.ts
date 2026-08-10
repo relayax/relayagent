@@ -134,6 +134,9 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
   if (verbs.includes("login")) {
     checks.push({ verb: "login", ok: true, note: "선언됨 — 대화형이라 자동 검사는 하지 않습니다" });
   }
+  if (verbs.includes("serve")) {
+    checks.push({ verb: "serve", ok: true, note: "선언됨 — 상주 세션(stdin 턴 주입). LLM 자격이 필요해 자동 검사는 하지 않습니다" });
+  }
 
   return { variant: v.name, ok: checks.every((c) => c.ok), checks };
 }
