@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { API_PORT, PRINCIPAL, RELAY_HOME, loadLedger, tokenToPkg, stageDir, workspacePath, type Grant, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents } from "./session.ts";
+import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./installer.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
@@ -305,17 +305,24 @@ function readHistory(pkg: string, slot: string, limit: number): { t: string; rol
     .filter(Boolean);
 }
 
-function listSessions(pkg: string): { sessions: { slot: string; label: string; updated: number }[] } {
+type SessionRow = { slot: string; label: string; updated: number; archived: boolean; pinned: boolean };
+
+function listSessions(pkg: string): { sessions: SessionRow[] } {
   const root = sessionsRoot(pkg);
   if (!fs.existsSync(root)) return { sessions: [] };
-  const sessions: { slot: string; label: string; updated: number }[] = [];
+  const sessions: SessionRow[] = [];
   for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!e.isDirectory() || !SLOT_RE.test(e.name)) continue;
+    // "_" 접두 슬롯은 기판 내부용(자동 제목 생성 등의 임시 세션) — 목록에 내지 않는다
+    if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
     const dir = path.join(root, e.name);
     const hist = path.join(dir, "history.jsonl");
-    const labelFile = path.join(dir, "label");
+    // 이름 우선순위: 사용자가 지은 label > 하네스가 지은 auto-label > 첫 사용자 발화
     let label = "";
-    if (fs.existsSync(labelFile)) label = fs.readFileSync(labelFile, "utf8").trim();
+    for (const f of ["label", "auto-label"]) {
+      const p = path.join(dir, f);
+      if (fs.existsSync(p)) label = fs.readFileSync(p, "utf8").trim();
+      if (label) break;
+    }
     if (!label && fs.existsSync(hist)) {
       // 이름이 없으면 첫 사용자 발화가 이름이다 (relayos-claude 세션 목록 관례)
       try {
@@ -325,9 +332,17 @@ function listSessions(pkg: string): { sessions: { slot: string; label: string; u
       }
     }
     const updated = fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs;
-    sessions.push({ slot: e.name, label: label || e.name, updated });
+    // 보관·고정 = 세션 디렉토리의 marker 파일. 이력은 그대로 두고 목록의 자리만 옮긴다
+    sessions.push({
+      slot: e.name,
+      label: label || e.name,
+      updated,
+      archived: fs.existsSync(path.join(dir, "archived")),
+      pinned: fs.existsSync(path.join(dir, "pinned")),
+    });
   }
-  sessions.sort((a, b) => b.updated - a.updated);
+  // 고정이 먼저, 그 안에서는 최근 순
+  sessions.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated - a.updated);
   return { sessions };
 }
 
@@ -520,7 +535,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         return void json(res, 200, listSessions(decodeURIComponent(sessList[1])));
       }
 
-      const sessOp = p.match(/^\/pkg\/([^/]+)\/session\/([^/]+)\/(history|label|delete|cancel|events)$/);
+      const sessOp = p.match(/^\/pkg\/([^/]+)\/session\/([^/]+)\/(history|label|delete|cancel|events|archive|pin)$/);
       if (sessOp) {
         const pkg = decodeURIComponent(sessOp[1]);
         const slot = sessOp[2];
@@ -557,6 +572,24 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
           fs.rmSync(dir, { recursive: true, force: true });
           return void json(res, 200, { ok: true, removed: slot });
         }
+        // 보관/복원 — 삭제와 달리 이력을 지우지 않는다. marker 파일 하나가 상태의 전부다
+        if (sessOp[3] === "archive" && req.method === "POST") {
+          const b = await readBody(req);
+          if (!fs.existsSync(dir)) return void json(res, 404, { error: `없는 세션: ${slot}` });
+          const marker = path.join(dir, "archived");
+          if (b.archived) fs.writeFileSync(marker, "");
+          else fs.rmSync(marker, { force: true });
+          return void json(res, 200, { ok: true, slot, archived: !!b.archived });
+        }
+        // 고정/해제 — 목록 정렬에서 맨 위로 올리는 marker. archive 와 같은 축이다
+        if (sessOp[3] === "pin" && req.method === "POST") {
+          const b = await readBody(req);
+          if (!fs.existsSync(dir)) return void json(res, 404, { error: `없는 세션: ${slot}` });
+          const marker = path.join(dir, "pinned");
+          if (b.pinned) fs.writeFileSync(marker, "");
+          else fs.rmSync(marker, { force: true });
+          return void json(res, 200, { ok: true, slot, pinned: !!b.pinned });
+        }
       }
 
       const reset = p.match(/^\/pkg\/([^/]+)\/session\/reset$/);
@@ -574,14 +607,19 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const chat = p.match(/^\/pkg\/([^/]+)\/chat$/);
       if (chat && req.method === "POST") {
         const b = await readBody(req);
+        const pkg = decodeURIComponent(chat[1]);
         const r = await runSession({
           ledger: getLedger(),
-          pkg: decodeURIComponent(chat[1]),
+          pkg,
           prompt: String(b.message ?? ""),
           slot: b.slot ? String(b.slot) : undefined,
           agent: b.agent ? String(b.agent) : undefined,
           attachments: Array.isArray(b.attachments) ? b.attachments : undefined,
         });
+        // 첫 교환이 완결된 무명 세션이면 하네스에 제목을 시킨다 — 응답을 붙들지 않는다(fire-and-forget)
+        if (b.slot && SLOT_RE.test(String(b.slot))) {
+          void autoTitleSession(getLedger(), pkg, String(b.slot)).catch(() => { /* 제목 실패는 무시 */ });
+        }
         return void json(res, 200, { reply: r.reply, model: r.model ?? null, usage: r.usage ?? null, files: r.files ?? [] });
       }
 

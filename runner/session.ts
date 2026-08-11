@@ -528,6 +528,51 @@ function deltaText(eventsFile: string): string {
   return out.trim();
 }
 
+// ── 자동 제목 — 첫 턴이 끝난 뒤 하네스에 한 줄 요약을 시켜 auto-label 로 앉힌다.
+// 사용자가 지은 이름(label 파일)이 항상 이긴다. 생성은 임시 슬롯(_title-*)에서 돌고
+// 끝나면 그 슬롯을 지운다 — 목록에는 "_" 접두 슬롯이 애초에 안 나온다(api.listSessions).
+// 실패는 조용히 삼킨다: 제목은 편의지 대화의 기능이 아니다
+const titling = new Set<string>();
+
+export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string): Promise<void> {
+  const key = `${pkg}/${slot}`;
+  if (titling.has(key)) return;
+  const dir = sessionDir(pkg, slot);
+  if (fs.existsSync(path.join(dir, "label")) || fs.existsSync(path.join(dir, "auto-label"))) return;
+  const hist = path.join(dir, "history.jsonl");
+  if (!fs.existsSync(hist)) return;
+  const msgs = fs.readFileSync(hist, "utf8").trim().split("\n")
+    .map((l) => { try { return JSON.parse(l) as { role?: string; text?: string }; } catch { return null; } })
+    .filter(Boolean) as { role?: string; text?: string }[];
+  const user = msgs.find((m) => m.role === "user");
+  const bot = msgs.find((m) => m.role === "bot");
+  if (!user || !bot) return; // 완결된 첫 교환이 있어야 제목이 선다
+  titling.add(key);
+  const tmp = `_title-${slot}`.slice(0, 64);
+  try {
+    const prompt = [
+      "아래 대화에 어울리는 제목을 짓는 작업이다. 도구를 쓰지 말고 즉시 답하라.",
+      "요구: 한국어 20자 이내의 명사구 한 줄. 따옴표나 마침표, '제목:' 같은 접두어 없이 제목 텍스트만 출력하라.",
+      "",
+      "사용자: " + String(user.text ?? "").slice(0, 500),
+      "어시스턴트: " + String(bot.text ?? "").slice(0, 500),
+    ].join("\n");
+    const r = await runSession({ ledger, pkg, prompt, slot: tmp });
+    const title = String(r.reply ?? "")
+      .split("\n").map((s) => s.trim()).filter(Boolean)[0]
+      ?.replace(/^["'`「『]+|["'`」』.]+$/g, "").slice(0, 40) ?? "";
+    // 생성 도중 사용자가 직접 이름을 지었을 수 있다 — 그때는 버린다
+    if (title && !fs.existsSync(path.join(dir, "label"))) {
+      fs.writeFileSync(path.join(dir, "auto-label"), title);
+    }
+  } catch { /* 제목 실패는 대화에 영향을 주지 않는다 */ } finally {
+    titling.delete(key);
+    // 상주 하네스가 켜져 있으면 제목 턴이 임시 슬롯의 상주를 남긴다 — TTL 을 기다리지 않고 은퇴시킨다
+    retireResident(pkg, tmp);
+    fs.rmSync(sessionDir(pkg, tmp), { recursive: true, force: true });
+  }
+}
+
 /** 한 패키지가 가진 세션 슬롯 목록 — 복구는 슬롯 단위로 돈다 */
 export function listSessionSlots(pkg: string): string[] {
   const root = path.join(RELAY_HOME, "sessions", pkg);
