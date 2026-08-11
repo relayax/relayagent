@@ -50,6 +50,10 @@ export interface SessionInfo {
   slot: string;
   label: string;
   updated: number;
+  /** 보관함에 들어간 세션 — 이력은 유지, 기본 목록에서만 빠진다 */
+  archived: boolean;
+  /** 고정된 세션 — 목록 맨 위로 정렬된다 */
+  pinned: boolean;
 }
 
 export interface HarnessVariantInfo {
@@ -97,6 +101,10 @@ export interface ChatClient {
     create(): { slot: string };
     rename(slot: string, label: string): Promise<{ ok: true } | { error: ChatError }>;
     remove(slot: string): Promise<{ ok: true } | { error: ChatError }>;
+    /** 보관(on=true)/복원(on=false) — 이력은 그대로, 목록의 자리만 옮긴다 */
+    archive(slot: string, on: boolean): Promise<{ ok: true; archived: boolean } | { error: ChatError }>;
+    /** 고정(on=true)/해제(on=false) — 목록 맨 위로 */
+    pin(slot: string, on: boolean): Promise<{ ok: true; pinned: boolean } | { error: ChatError }>;
   };
   harness: {
     models(): Promise<{ models: string[]; current: string | null } | { error: ChatError }>;
