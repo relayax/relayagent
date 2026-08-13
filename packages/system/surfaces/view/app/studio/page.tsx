@@ -31,7 +31,7 @@ import type { Manifest } from "@/lib/types";
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리를 쓴다.
 // 모든 편집은 draft 로 간다 — 설치본(live)을 만지는 화면 경로는 없다.
 
-type LogLine = { kind: "ok" | "err" | "info"; text: string };
+type LogLine = { kind: "ok" | "err" | "info"; text: string; href?: string };
 type Dialog = null | "commit" | "publish" | "releases" | "discard";
 
 export default function StudioPage() {
@@ -61,8 +61,8 @@ function Studio() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const say = useCallback((kind: LogLine["kind"], text: string) => {
-    setLog((l) => [{ kind, text }, ...l].slice(0, 200));
+  const say = useCallback((kind: LogLine["kind"], text: string, href?: string) => {
+    setLog((l) => [{ kind, text, href }, ...l].slice(0, 200));
   }, []);
 
   const nav = useCallback(
@@ -241,27 +241,13 @@ function Studio() {
       say("ok", `구움: ${r.ref}@${r.version} · 파일 ${r.files}개 · ${(r.size / 1024).toFixed(0)}KB`);
       say("ok", `봉인 ${r.digest}`);
       say("ok", `선반: ${r.shelf}`);
-      say("ok", `내보내려면 [내보내기] — 또는 ${location.origin}/store/export/${r.file}`);
+      say("ok", `↓ 파일로 받기 — ${r.file}`, `/store/export/${encodeURIComponent(r.file)}`);
       if (r.excluded.length) {
         say("err", `선언 밖이라 빠진 파일 ${r.excluded.length}개 — 매니페스트에 없으면 봉투에도 없다`);
         for (const f of r.excluded.slice(0, 10)) say("err", `  · ${f}`);
       }
     } catch (e) {
       say("err", `굽기 실패: ${String(e instanceof Error ? e.message : e)}`);
-    }
-  }
-
-  // 내보내기 — 구운 봉투를 파일로 받는다. 스토어를 거치지 않고 손으로 건네는 길이라
-  // 받는 쪽은 콘솔의 [봉투 열기](/store/import)로 연다. export 와 import 가 한 쌍이다.
-  async function exportPkg() {
-    if (!pkg) return;
-    setConsoleOpen(true);
-    try {
-      const r = await packPkg(pkg);
-      say("ok", `구움: ${r.ref}@${r.version} — 내려받는 중`);
-      window.location.href = `/store/export/${encodeURIComponent(r.file)}`;
-    } catch (e) {
-      say("err", `내보내기 실패: ${String(e instanceof Error ? e.message : e)}`);
     }
   }
 
@@ -318,9 +304,6 @@ function Studio() {
         </button>
         <button className="rc-btn" disabled={!status?.version.live} onClick={() => void pack()}>
           굽기
-        </button>
-        <button className="rc-btn" disabled={!status?.version.live} onClick={() => void exportPkg()}>
-          내보내기
         </button>
         <button className="rc-btn" onClick={() => setDialog("releases")}>
           릴리스
@@ -451,7 +434,15 @@ function Studio() {
                 ) : null}
                 {log.map((l, x) => (
                   <div key={x} className={l.kind}>
-                    {l.text}
+                    {l.href ? (
+                      // 파일로 받기 — 버튼을 하나 더 두는 대신 결과 줄에서 바로 받는다.
+                      // 굽고 나서야 의미가 생기는 동작이라 그 자리가 제일 가깝다
+                      <a href={l.href} download style={{ color: "inherit", fontWeight: 600 }}>
+                        {l.text}
+                      </a>
+                    ) : (
+                      l.text
+                    )}
                   </div>
                 ))}
                 {!log.length && !issues?.length ? <div className="info">판정, 커밋, 배포 결과가 여기 남는다</div> : null}
