@@ -7,7 +7,7 @@ import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPk
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer } from "./session.ts";
+import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
@@ -945,7 +945,8 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const slot = sessOp[2];
         if (!SLOT_RE.test(slot)) return void json(res, 400, { error: `slot 형식 위반: ${slot}` });
         if (sessOp[3] === "history" && req.method === "GET") {
-          return void json(res, 200, { messages: readHistory(pkg, slot, 200) });
+          // busy = 이 슬롯에 진행 중 턴이 있다 — 새로고침한 화면이 진행 표시와 중지를 되찾는 근거
+          return void json(res, 200, { messages: readHistory(pkg, slot, 200), busy: isSessionBusy(pkg, slot) });
         }
         // 진행 중 턴의 봉투 이벤트 — 위젯이 폴링해 delta·tool 진행과 파일 칩을 그린다.
         // from = 이미 받은 줄 수: 도구 결과 본문이 실리는 protocol 3 에서 매 폴링이

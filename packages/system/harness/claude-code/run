@@ -620,6 +620,8 @@ const onLine = (line) => {
       try { args = JSON.stringify(b.input ?? {}); } catch { /* 직렬화 불능 입력 — args 없이 */ }
       emit({
         event: "tool", status: "start", id: b.id, name: b.name,
+        // 서브에이전트(위임받은 쪽)의 도구 호출은 위임 tool_use 를 부모로 단다 — 화면이 중첩으로 그린다
+        ...(j.parent_tool_use_id ? { parent: j.parent_tool_use_id } : {}),
         ...(d ? { detail: String(d).slice(0, 200) } : {}),
         ...(args && args !== "{}" ? { args: args.slice(0, ARGS_CAP) } : {}),
       });
