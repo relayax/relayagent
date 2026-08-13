@@ -624,12 +624,13 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
           slot: b.slot ? String(b.slot) : undefined,
           agent: b.agent ? String(b.agent) : undefined,
           attachments: Array.isArray(b.attachments) ? b.attachments : undefined,
+          scene: b.scene ? String(b.scene) : undefined,
         });
         // 첫 교환이 완결된 무명 세션이면 하네스에 제목을 시킨다 — 응답을 붙들지 않는다(fire-and-forget)
         if (b.slot && SLOT_RE.test(String(b.slot))) {
           void autoTitleSession(getLedger(), pkg, String(b.slot)).catch(() => { /* 제목 실패는 무시 */ });
         }
-        return void json(res, 200, { reply: r.reply, model: r.model ?? null, usage: r.usage ?? null, files: r.files ?? [] });
+        return void json(res, 200, { reply: r.reply, model: r.model ?? null, usage: r.usage ?? null, context: r.context ?? null, files: r.files ?? [] });
       }
 
       // ── 파일 주고받기 — stage 가 유일한 무대다 ─────────────────────────

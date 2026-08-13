@@ -18,6 +18,8 @@ await chat.send("오늘 하루 정리해줘");        // { reply } 또는 { erro
 
 - 모든 호출은 throw 하지 않는다. 실패는 `{ error: { code, message } }` 로 돌아온다.
 - busy 중의 send 는 버리지 않고 줄 세운다. 같은 slot 에 세션이 동시에 뜨면 충돌하기 때문.
+- 화면 맥락은 `send(질문, { scene: 스냅샷 })` 으로 싣는다. 합성은 기판 몫이다 —
+  세션 프롬프트에 서문으로 붙고, 말풍선과 이력에는 질문 원문만 남는다 (첨부와 같은 계약).
 - 하네스 설정 표면: `chat.harness.models() / setModel() / setup() / info() / commands() / variants() / setVariant()`
 
 위젯을 UI 째로 심으려면:

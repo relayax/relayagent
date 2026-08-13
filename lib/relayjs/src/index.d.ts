@@ -87,7 +87,14 @@ export interface ChatClient {
   on(ev: "reset" | "meta" | "history", fn: (arg?: unknown) => void): () => void;
   send(
     text: string,
-    opts?: { attachments?: { path: string; name?: string }[]; agent?: string; display?: string },
+    opts?: {
+      attachments?: { path: string; name?: string }[];
+      agent?: string;
+      /** 화면 맥락 스냅샷 — 합성은 기판 몫. 프롬프트 서문으로 붙고 이력에는 원문만 남는다 */
+      scene?: string;
+      /** 화면용 원문 — text 에 손으로 맥락을 섞는 특수한 경우에만 (이력에 맥락이 남는다) */
+      display?: string;
+    },
   ): Promise<{ reply: string } | { error: ChatError }>;
   /** 진행 중 턴 중단 — 봉투 cancel 제어 1순위, 기판이 신호 그물을 겹친다 */
   cancel(): Promise<{ ok: boolean } | { error: ChatError }>;
