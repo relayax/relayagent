@@ -18,6 +18,7 @@ import {
   draftValidate,
   draftWrite,
   fetchSchema,
+  packPkg,
   type DraftStatus,
   type PublishOutcome,
 } from "@/lib/studio";
@@ -229,6 +230,41 @@ function Studio() {
     }
   }
 
+  // 굽기 — 배포본을 봉투로 만들어 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다.
+  // 파일을 내려받게 하지 않는다: 봉인이 함께 계산된 채로 선반에 남아야 등재 화면이
+  // 그것을 그대로 읽어 올릴 수 있다. 손으로 옮기면 그 사이에 어긋날 자리가 생긴다.
+  async function pack() {
+    if (!pkg) return;
+    setConsoleOpen(true);
+    try {
+      const r = await packPkg(pkg);
+      say("ok", `구움: ${r.ref}@${r.version} · 파일 ${r.files}개 · ${(r.size / 1024).toFixed(0)}KB`);
+      say("ok", `봉인 ${r.digest}`);
+      say("ok", `선반: ${r.shelf}`);
+      say("ok", `내보내려면 [내보내기] — 또는 ${location.origin}/store/export/${r.file}`);
+      if (r.excluded.length) {
+        say("err", `선언 밖이라 빠진 파일 ${r.excluded.length}개 — 매니페스트에 없으면 봉투에도 없다`);
+        for (const f of r.excluded.slice(0, 10)) say("err", `  · ${f}`);
+      }
+    } catch (e) {
+      say("err", `굽기 실패: ${String(e instanceof Error ? e.message : e)}`);
+    }
+  }
+
+  // 내보내기 — 구운 봉투를 파일로 받는다. 스토어를 거치지 않고 손으로 건네는 길이라
+  // 받는 쪽은 콘솔의 [봉투 열기](/store/import)로 연다. export 와 import 가 한 쌍이다.
+  async function exportPkg() {
+    if (!pkg) return;
+    setConsoleOpen(true);
+    try {
+      const r = await packPkg(pkg);
+      say("ok", `구움: ${r.ref}@${r.version} — 내려받는 중`);
+      window.location.href = `/store/export/${encodeURIComponent(r.file)}`;
+    } catch (e) {
+      say("err", `내보내기 실패: ${String(e instanceof Error ? e.message : e)}`);
+    }
+  }
+
   function onPublished(r: PublishOutcome) {
     // 배포는 눌러도 아무 일이 안 일어날 수 있다(변경 없음). 그 답이 접힌 콘솔에만 남으면
     // 사용자는 눌렀는지조차 알 수 없으므로, 결과가 나오면 콘솔을 연다
@@ -279,6 +315,12 @@ function Studio() {
         </button>
         <button className="rc-btn accent" onClick={() => setDialog("publish")}>
           배포
+        </button>
+        <button className="rc-btn" disabled={!status?.version.live} onClick={() => void pack()}>
+          굽기
+        </button>
+        <button className="rc-btn" disabled={!status?.version.live} onClick={() => void exportPkg()}>
+          내보내기
         </button>
         <button className="rc-btn" onClick={() => setDialog("releases")}>
           릴리스

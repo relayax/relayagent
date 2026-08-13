@@ -10,7 +10,7 @@ import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortNam
 import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
-import { readMarketIndex } from "./pack.ts";
+import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
 import { saveLedger } from "./state.ts";
 import { startServices, stopServices } from "./run.ts";
@@ -25,6 +25,8 @@ const ASSETS_DIR = path.join(RUNNER_DIR, "..", "lib", "relayjs", "src");
 // 릴리스 전개는 이미 디스크에 있으므로 만료되어도 잃는 것은 없다 — 다시 prepare 하면 재사용된다
 const prepared = new Map<string, { p: Prepared; at: number }>();
 const PREPARE_TTL = 10 * 60_000;
+/** 손으로 가져오는 봉투의 상한 — 원격 다운로드와 같은 선 */
+const MAX_IMPORT = 200 * 1024 * 1024;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -87,7 +89,39 @@ dd code{font:11.5px ui-monospace,Menlo,monospace}
 button,.btn{flex:1;text-align:center;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:11px;font:600 13.5px inherit;cursor:pointer;text-decoration:none;display:block}
 button.go{background:var(--accent);border-color:var(--accent);color:#fff}
 .note{font-size:11.5px;color:var(--faint);text-align:center;margin:12px 0 0}
+.warn{background:#fdf3e7;color:#9a5b06;border-radius:9px;padding:10px 12px;font-size:12.5px;margin-bottom:12px}
+.drop{border:1.5px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;color:var(--soft);font-size:13px;cursor:pointer}
+.drop.on{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{display:block;font-size:14px;color:var(--ink);margin-bottom:4px}
 </style></head><body>`;
+
+/** 가져오기 — 손에 든 봉투를 여는 문 */
+function importPage(res: http.ServerResponse): void {
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(`${SHELL}<div class="card">
+<h1>봉투 열기</h1>
+<p>받은 <code>.relay</code> 파일을 놓으면 무엇을 요구하는지 먼저 보여 드립니다. 설치는 동의한 뒤에 시작합니다.</p>
+<div class="drop" id="d"><b>여기에 파일을 놓거나 클릭</b>.relay 봉투</div>
+<input type="file" id="f" accept=".relay" style="display:none">
+<p class="note" id="st"></p>
+<script>
+var d=document.getElementById("d"),f=document.getElementById("f"),st=document.getElementById("st");
+function send(file){
+  if(!file){return}
+  st.textContent="여는 중… "+file.name;
+  fetch("/store/import",{method:"POST",body:file}).then(function(r){return r.json()}).then(function(j){
+    if(j.id){location.href="/store/install/consent?id="+encodeURIComponent(j.id)}
+    else{st.textContent=j.error||"열지 못했습니다"}
+  }).catch(function(e){st.textContent=String(e)});
+}
+d.onclick=function(){f.click()};
+f.onchange=function(){send(f.files[0])};
+d.ondragover=function(e){e.preventDefault();d.className="drop on"};
+d.ondragleave=function(){d.className="drop"};
+d.ondrop=function(e){e.preventDefault();d.className="drop";send(e.dataTransfer.files[0])};
+</script>
+</div></body></html>`);
+}
 
 /** 한 줄짜리 결과·오류 화면 */
 function installPage(res: http.ServerResponse, code: number, title: string, detail: string, ok = false): void {
@@ -99,8 +133,12 @@ function installPage(res: http.ServerResponse, code: number, title: string, deta
   );
 }
 
-/** 동의 관문 — 여기까지는 아무것도 실행되지 않았다 */
-function consentPage(res: http.ServerResponse, prep: Prepared): void {
+/**
+ * 동의 관문 — 여기까지는 아무것도 실행되지 않았다.
+ * sideloaded: 스토어를 거치지 않고 손으로 받은 봉투. 봉인은 계산했지만 대조할 정본이 없어
+ * "이 값이 맞는가"를 확인해 줄 곳이 없다. 그 차이를 화면이 숨기지 않는다.
+ */
+function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = false): void {
   const d = prep.disclosure;
   const rows: string[] = [];
   for (const f of d.folders) rows.push(`<div><dt>폴더</dt><dd><code>${esc(f.path)}</code> 를 만들고 읽고 씁니다</dd></div>`);
@@ -122,7 +160,10 @@ function consentPage(res: http.ServerResponse, prep: Prepared): void {
     `${SHELL}<div class="card">
 <h1>${esc(prep.manifest.display_name ?? prep.name)} 설치</h1>
 <p class="sub">${esc(prep.ref)} · ${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p>
-<div class="seal">봉인 확인됨 · <code>${esc(prep.digest)}</code></div>
+${sideloaded
+      ? `<div class="warn">스토어를 거치지 않은 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
+<div class="seal">봉인값 · <code>${esc(prep.digest)}</code></div>`
+      : `<div class="seal">봉인 확인됨 · <code>${esc(prep.digest)}</code></div>`}
 <h2>이 에이전트가 요구하는 것</h2>
 <dl>${rows.join("") || `<div><dt>—</dt><dd>따로 요구하는 것이 없습니다</dd></div>`}</dl>
 ${nots.length ? `<div class="nots">이 패키지는 ${esc(nots.join(", "))}.</div>` : ""}
@@ -191,6 +232,27 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),
+    // 굽기 — 설치본을 봉투 하나로 만들어 선반에 앉힌다.
+    // 파일을 사람 손에 쥐여 주지 않는 것이 요점이다: 봉인(sha256)과 요구 범위가 함께
+    // 계산된 상태로 선반에 남고, 등재 화면이 그 선반을 읽는다. 손으로 옮기는 순간
+    // "빌더가 준 것"과 "스토어가 받은 것"이 어긋날 자리가 생긴다.
+    pack: (name) => {
+      const rec = getLedger().packages[name];
+      if (!rec) throw new Error(`설치되지 않은 패키지입니다: ${name}`);
+      const r = packDir(rec.path);
+      const shelf = updateMarketIndex(rec.path, r);
+      return {
+        ref: r.ref,
+        version: r.version,
+        file: path.basename(r.file),
+        size: r.size,
+        digest: r.digest,
+        files: r.included.length,
+        // 선언 밖이라 빠진 파일 — 빌더가 "왜 안 들어갔지"를 묻기 전에 먼저 보여준다
+        excluded: r.excluded,
+        shelf,
+      };
+    },
     releaseList: (name) => listReleases(getLedger(), name),
     releaseRollback: (name, version) => {
       const l = getLedger();
@@ -569,6 +631,53 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const file = path.join(artifactsDir(), marketAsset[1]);
         if (!fs.existsSync(file)) return void json(res, 404, { error: "없는 자산" });
         return void streamFile(file, res);
+      }
+
+      // ── 손으로 주고받기: 내보내기와 가져오기 ───────────────────
+      // 스토어를 거치지 않는 경로다. 폐쇄망 납품이나 "친구에게 하나 줄게"가 여기 산다.
+      // 내보낸 봉투에는 봉인이 함께 들어 있지만, 대조할 정본이 없다 — 그래서 가져오기
+      // 화면은 "스토어를 거치지 않았다"고 분명히 말한다. 믿음의 근거가 다르기 때문이다.
+      const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay)$/);
+      if (exportFile && req.method === "GET") {
+        const file = path.join(artifactsDir(), exportFile[1]);
+        if (!fs.existsSync(file)) return void json(res, 404, { error: "선반에 없는 봉투 — 먼저 구우세요" });
+        res.writeHead(200, {
+          "content-type": "application/octet-stream",
+          "content-length": String(fs.statSync(file).size),
+          "content-disposition": `attachment; filename="${exportFile[1]}"`,
+        });
+        return void fs.createReadStream(file).pipe(res);
+      }
+      if (p === "/store/import" && req.method === "GET") return void importPage(res);
+      if (p === "/store/import" && req.method === "POST") {
+        // 몸통이 곧 봉투 바이트다 — multipart 를 파싱하지 않으려고 raw 로 받는다
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const c of req) {
+          size += (c as Buffer).length;
+          if (size > MAX_IMPORT) return void json(res, 413, { error: "봉투가 너무 큽니다 (200MB 상한)" });
+          chunks.push(c as Buffer);
+        }
+        if (!size) return void json(res, 400, { error: "빈 파일입니다" });
+        const tmp = path.join(stageDir("import"), `${Date.now()}.relay`);
+        fs.writeFileSync(tmp, Buffer.concat(chunks));
+        try {
+          const prep = prepareArtifact(getLedger(), tmp);
+          prepared.set(prep.id, { p: prep, at: Date.now() });
+          return void json(res, 200, { id: prep.id });
+        } catch (e) {
+          return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        } finally {
+          fs.rmSync(tmp, { force: true }); // 전개는 릴리스 자리에 끝났다 — 임시 봉투는 남길 이유가 없다
+        }
+      }
+      // 준비된 설치의 동의 관문을 id 로 다시 연다 (가져오기가 쓴다 — 스토어 경로는 곧장 그린다)
+      if (p === "/store/install/consent" && req.method === "GET") {
+        const held = prepared.get(url.searchParams.get("id") ?? "");
+        if (!held || Date.now() - held.at > PREPARE_TTL) {
+          return void installPage(res, 410, "준비가 만료되었습니다", "봉투를 다시 열어 주세요.");
+        }
+        return void consentPage(res, held.p, true);
       }
 
       // ── 설치 2단 관문: 준비(정적) -> 동의 -> 활성(실행) ────────

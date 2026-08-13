@@ -112,6 +112,11 @@ export default function Console() {
         <Link className="rc-btn accent" style={{ textAlign: "center", textDecoration: "none" }} href="/studio/?new=1">
           + 패키지 만들기
         </Link>
+        {/* 받은 봉투를 여는 문. 스튜디오의 [내보내기]와 한 쌍이다 —
+            스토어를 거치지 않고 손으로 주고받는 길 */}
+        <a className="rc-btn" style={{ textAlign: "center", textDecoration: "none" }} href="/store/import">
+          봉투 열기
+        </a>
       </div>
 
       <div className="col">
