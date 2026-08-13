@@ -492,7 +492,9 @@ function afterSettle() {
     inject(p);
     return;
   }
-  if (closing) retire();
+  // 드레인 중이면 미완 작업이 다 끝나고 continuation 까지 배달된 뒤에야 내려간다.
+  // stdin 을 먼저 닫으면 CLI 버전에 따라 마지막 continuation 이 유실된다(실측 2.1.222)
+  if (closing && tasks.size === 0) retire();
 }
 
 // ── control 채널 (CLI stdout 의 control_request) ─────────────────────────────
@@ -560,6 +562,11 @@ function onSystem(j) {
     tasks.delete(j.task_id);
     sawTaskDone = true;
     emit({ event: "task", id: j.task_id, status: "done", ok: j.status === "completed" });
+    // 드레인 중 마지막 작업이 끝났다 — continuation 이 곧 열린다. 안 여는 구현 대비 유예 후 은퇴
+    if (closing && tasks.size === 0) {
+      const t = setTimeout(() => { if (closing && !turn && tasks.size === 0) retire(); }, 30000);
+      t.unref?.();
+    }
   }
 }
 
@@ -725,6 +732,8 @@ try {
   });
   ctl.on("close", () => {
     if (turn && !turn.done) { closing = true; return; }
+    // 유휴지만 미완 백그라운드가 있다 — claude 의 stdin 은 열어 둔 채(상주 유지) 드레인한다
+    if (MODE === "serve" && tasks.size > 0) { closing = true; return; }
     retire();
   });
   ctl.on("error", () => { /* 제어 채널 없음 — 신호로만 취소된다 */ });
