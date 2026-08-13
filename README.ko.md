@@ -33,7 +33,7 @@ RelayAgent는 자기 화면을 싣고 다니는 에이전트 패키지의 개인
 | --- | --- |
 | 패키지 | `relay.yaml`을 가진 디렉토리. 매니페스트가 구조와 경로의 정본, 트리가 내용의 정본. |
 | Surfaces | 패키지가 사람을 만나는 면. 중심은 `view`: 패키지가 배송하는 웹 UI로, 설치가 빌드하고 데몬이 `/pkg/<이름>/view/`로 호스팅하며 패키지 토큰으로 자기 에이전트의 동사에 연결된다. `chat`(직접 대화)과 `channels`(Discord, Slack 등 어댑터)는 추가 문. |
-| Harness | 패키지에 동봉되어 에이전트를 실행하는 어댑터. 시스템 패키지에 Claude Code, Codex, Kimi, Pi 어댑터 동봉. 동사: `session`, `setup`, `models`, `commands`, `info`(+선택 `login`, `serve` — 턴마다 프로세스를 갈지 않고 stdin 으로 턴을 주입받는 상주 세션). 계약 적합성은 `relay harness-check`가 판정. |
+| Harness | 패키지에 동봉되어 에이전트를 실행하는 어댑터. 시스템 패키지에 Claude Code, Codex, Kimi, Pi 어댑터 동봉. 동사: `session`, `setup`, `models`, `commands`, `info`(+선택 `login`, `serve` — 턴마다 프로세스를 갈지 않고 stdin 으로 턴을 주입받는 상주 세션). 계약 적합성은 `relay harness-check`가 판정하고, 계약 전문은 [docs/harness-protocol.md](docs/harness-protocol.md)에 있습니다. |
 | Agents | 페르소나(`AGENT.md`)와 스킬, 슬래시 커맨드, 서브에이전트 dispatch. 하네스에는 중립 번들로 전달되고, 네이티브 형식으로의 번역은 전부 어댑터 소유. |
 | Scripts | 동사. `scripts/<이름>.ts`가 `async (input, ctx) => JSON`을 기본 수출. |
 | Services | 형태는 셋뿐. `source`(자기 몸, 컨테이너 또는 프로세스), `url`(원격 MCP 접점, 자격은 여기에만 앉음), `dir`(파일 자원). |

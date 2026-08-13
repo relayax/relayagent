@@ -117,18 +117,30 @@ export function enableResidents(): void {
 
 interface Resident {
   child: ChildProcess;
+  pkg: string;
+  slot: string;
   /** 상주를 가른 조립 지문 — 모델·강도·자격·설치 경로가 달라지면 낡은 상주를 은퇴시킨다 */
   fp: string;
   idle: ReturnType<typeof setTimeout> | null;
   /** 진행 중 턴의 이벤트 수신자 — null 이면 유휴 */
   sink: ((ev: { event: string; [k: string]: unknown }) => void) | null;
   stderrTail: string;
+  /** 봉투가 알린 미완 백그라운드 작업(task 이벤트) — 유휴 은퇴와 강제 종료를 유예하는 근거 */
+  tasks: Set<string>;
+  /** 마지막 봉투 이벤트 시각 — 스톨 워치독의 근거 */
+  lastEvent: number;
 }
 
 const residents = new Map<string, Resident>();
 const RESIDENT_TTL_MS = (() => {
   const v = Number(process.env.RELAY_RESIDENT_TTL_S);
   return Number.isFinite(v) && v > 0 ? v * 1000 : 600_000;
+})();
+// 스톨 워치독 — 턴 진행 중 무이벤트가 이 시간을 넘으면 고착으로 판정하고 취소를 넣는다.
+// 없으면 wedge 된 턴이 슬롯을 영구 busy 로 만들어 다음 메시지가 전부 튕긴다
+const STALL_MS = (() => {
+  const v = Number(process.env.RELAY_TURN_STALL_S);
+  return Number.isFinite(v) && v > 0 ? v * 1000 : 1_200_000;
 })();
 
 // serve 선언 조회 — info 는 어댑터 프로세스 1회 비용이라 mtime 캐시로 어댑터당 한 번만 돈다
@@ -152,7 +164,7 @@ function harnessServes(entry: string): boolean {
   return serves;
 }
 
-function retireEntry(key: string, r: Resident): void {
+function retireEntry(key: string, r: Resident, force = false): void {
   if (residents.get(key) === r) residents.delete(key);
   if (r.idle) {
     clearTimeout(r.idle);
@@ -161,6 +173,9 @@ function retireEntry(key: string, r: Resident): void {
   try {
     r.child.stdin?.end(); // EOF = 은퇴 지시 — 봉투가 claude 를 자연 종료시킨다
   } catch { /* 이미 닫힘 */ }
+  // 미완 백그라운드가 있으면 드레인이다 — 도구가 작업 완주까지 살았다가 스스로 내려온다(실측).
+  // 강제 시계는 드레인이 아닐 때와 데몬 종료(force)에만 건다
+  if (!force && r.tasks.size > 0) return;
   const term = setTimeout(() => { try { r.child.kill("SIGTERM"); } catch { /* 이미 종료 */ } }, 5000);
   const kill = setTimeout(() => { try { r.child.kill("SIGKILL"); } catch { /* 이미 종료 */ } }, 8000);
   term.unref?.();
@@ -193,10 +208,48 @@ export function retireResidents(pkg: string): number {
 }
 
 export function retireAllResidents(): void {
-  for (const [key, r] of [...residents]) retireEntry(key, r);
+  for (const [key, r] of [...residents]) retireEntry(key, r, true);
 }
 
-function acquireResident(key: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
+/** ask(질문) 회송 — 위젯 답변을 진행 중 봉투의 제어 채널로 넣는다 */
+export function deliverAnswer(pkg: string, slot: string, id: string, answers: unknown): boolean {
+  const child = live.get(`${pkg}/${slot}`);
+  if (!child?.stdin) return false;
+  try {
+    child.stdin.write(JSON.stringify({ type: "answer", id, answers }) + "\n");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 유휴 은퇴 시계 — 미완 백그라운드가 있으면 은퇴 대신 재무장한다(드레인)
+function armIdle(key: string, r: Resident): void {
+  r.idle = setTimeout(() => {
+    r.idle = null;
+    if (residents.get(key) !== r) return;
+    if (r.tasks.size > 0) return armIdle(key, r);
+    retireEntry(key, r);
+  }, RESIDENT_TTL_MS);
+  r.idle.unref?.();
+}
+
+// 유휴 이벤트 — 주입 없는 자발 턴(백그라운드 continuation)의 배달.
+// reply 는 이력에 bot 메시지로 앉히고, 나머지는 진행 장부에 남겨 위젯이 줍게 한다
+function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): void {
+  try {
+    fs.appendFileSync(path.join(sessionDir(r.pkg, r.slot), "events.jsonl"), JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+  } catch { /* 세션 디렉토리가 지워짐 — 기록만 포기 */ }
+  if (ev.event === "reply") {
+    appendBot(r.pkg, r.slot, String(ev.text ?? ""), {
+      model: typeof ev.model === "string" ? ev.model : null,
+      usage: ev.usage ?? null,
+    });
+  }
+}
+
+function acquireResident(pkg: string, slot: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
+  const key = `${pkg}/${slot}`;
   const cur = residents.get(key);
   if (cur && cur.fp === fp && cur.child.exitCode === null) {
     if (cur.idle) {
@@ -207,19 +260,27 @@ function acquireResident(key: string, entry: string, env: Record<string, string>
   }
   if (cur) retireEntry(key, cur);
   const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  const r: Resident = { child, fp, idle: null, sink: null, stderrTail: "" };
+  const r: Resident = { child, pkg, slot, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now() };
   child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
     // serve 선언 어댑터의 stdout 은 봉투 전용이다 — 이벤트 아닌 줄은 소음으로 버린다
     if (!line.startsWith("{")) return;
-    let ev: { event?: unknown } | null = null;
+    let ev: { event?: unknown; [k: string]: unknown } | null = null;
     try {
       ev = JSON.parse(line);
     } catch {
       return;
     }
-    if (ev && typeof ev.event === "string") r.sink?.(ev as { event: string });
+    if (!ev || typeof ev.event !== "string") return;
+    r.lastEvent = Date.now();
+    // 백그라운드 원장 — 턴 중이든 유휴든 항상 접는다. 유휴 은퇴·강제 종료 유예의 근거다
+    if (ev.event === "task" && typeof ev.id === "string" && ev.id) {
+      if (ev.status === "started") r.tasks.add(ev.id);
+      else r.tasks.delete(ev.id);
+    }
+    if (r.sink) r.sink(ev as { event: string });
+    else idleEvent(r, ev as { event: string });
   });
   child.stderr!.on("data", (d) => {
     r.stderrTail = (r.stderrTail + String(d)).slice(-2000);
@@ -241,7 +302,8 @@ function acquireResident(key: string, entry: string, env: Record<string, string>
 }
 
 function residentTurn(
-  key: string,
+  pkg: string,
+  slot: string,
   entry: string,
   env: Record<string, string>,
   cwd: string,
@@ -251,18 +313,29 @@ function residentTurn(
   evFiles: { path: string; name: string }[],
 ): Promise<{ reply: string; code: number; model: string | null; usage: unknown }> {
   return new Promise((resolve, reject) => {
-    const r = acquireResident(key, entry, env, cwd, fp);
+    const key = `${pkg}/${slot}`;
+    const r = acquireResident(pkg, slot, entry, env, cwd, fp);
     live.set(key, r.child);
+    r.lastEvent = Date.now();
+    // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
+    const stall = setInterval(() => {
+      if (Date.now() - r.lastEvent < STALL_MS) return;
+      logLine("sessions", { pkg, slot, stall_s: Math.round((Date.now() - r.lastEvent) / 1000) });
+      try {
+        r.child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
+      } catch { /* 이미 닫힘 */ }
+    }, 60_000);
+    stall.unref?.();
     let settled = false;
     const finish = (fn: () => void): void => {
       if (settled) return;
       settled = true;
+      clearInterval(stall);
       r.sink = null;
       if (live.get(key) === r.child) live.delete(key);
       if (residents.get(key) === r && r.child.exitCode === null) {
         // 유휴 은퇴 시계 — 다음 턴의 acquire 가 푼다
-        r.idle = setTimeout(() => retireEntry(key, r), RESIDENT_TTL_MS);
-        r.idle.unref?.();
+        armIdle(key, r);
       }
       fn();
     };
@@ -408,16 +481,27 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다.
   // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
   const turn = resident
-    ? residentTurn(key, entry, env, workdir, fp, prompt, eventsFile, evFiles)
+    ? residentTurn(input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
     : new Promise<{ reply: string; code: number; model: string | null; usage: unknown }>((resolve, reject) => {
       const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
       live.set(key, child);
       let raw = "";
       let err = "";
+      let lastLine = Date.now();
+      // 스톨 워치독 — 봉투가 취소 제어를 받는 어댑터라면 고착 턴이 여기서 풀린다
+      const stall = setInterval(() => {
+        if (Date.now() - lastLine < STALL_MS) return;
+        logLine("sessions", { pkg: input.pkg, slot, stall_s: Math.round((Date.now() - lastLine) / 1000) });
+        try {
+          child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
+        } catch { /* 이미 닫힘 */ }
+      }, 60_000);
+      stall.unref?.();
       let reply: { text: string; model: string | null; usage: unknown } | null = null;
       let errEvent = "";
       const rl = readline.createInterface({ input: child.stdout! });
       rl.on("line", (line) => {
+        lastLine = Date.now();
         let ev: { event?: unknown; [k: string]: unknown } | null = null;
         if (line.startsWith("{")) {
           try {
@@ -443,10 +527,12 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       });
       child.stderr!.on("data", (d) => (err += d));
       child.on("error", (e) => {
+        clearInterval(stall);
         live.delete(key);
         reject(e);
       });
       child.on("close", (code) => {
+        clearInterval(stall);
         live.delete(key);
         if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage });
         if (errEvent) return reject(new Error(errEvent));

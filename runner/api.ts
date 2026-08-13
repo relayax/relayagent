@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { API_PORT, PRINCIPAL, RELAY_HOME, loadLedger, tokenToPkg, stageDir, workspacePath, type Grant, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession } from "./session.ts";
+import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./installer.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
@@ -535,7 +535,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         return void json(res, 200, listSessions(decodeURIComponent(sessList[1])));
       }
 
-      const sessOp = p.match(/^\/pkg\/([^/]+)\/session\/([^/]+)\/(history|label|delete|cancel|events|archive|pin)$/);
+      const sessOp = p.match(/^\/pkg\/([^/]+)\/session\/([^/]+)\/(history|label|delete|cancel|events|answer|archive|pin)$/);
       if (sessOp) {
         const pkg = decodeURIComponent(sessOp[1]);
         const slot = sessOp[2];
@@ -543,18 +543,27 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (sessOp[3] === "history" && req.method === "GET") {
           return void json(res, 200, { messages: readHistory(pkg, slot, 200) });
         }
-        // 진행 중 턴의 봉투 이벤트 — 위젯이 폴링해 delta·tool 진행과 파일 칩을 그린다
+        // 진행 중 턴의 봉투 이벤트 — 위젯이 폴링해 delta·tool 진행과 파일 칩을 그린다.
+        // from = 이미 받은 줄 수: 도구 결과 본문이 실리는 protocol 3 에서 매 폴링이
+        // 전체 장부를 다시 나르지 않게 한다 (미지정 = 전체, 구 위젯 호환)
         if (sessOp[3] === "events" && req.method === "GET") {
           const file = path.join(sessionsRoot(pkg), slot, "events.jsonl");
-          if (!fs.existsSync(file)) return void json(res, 200, { events: [] });
-          const events = fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => {
+          if (!fs.existsSync(file)) return void json(res, 200, { events: [], from: 0 });
+          const lines = fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean);
+          const from = Math.min(lines.length, Math.max(0, Number(url.searchParams.get("from") ?? 0) || 0));
+          const events = lines.slice(from).map((l) => {
             try {
               return JSON.parse(l);
             } catch {
               return null;
             }
           }).filter(Boolean);
-          return void json(res, 200, { events });
+          return void json(res, 200, { events, from: lines.length });
+        }
+        // ask(질문) 회송 — 위젯 답변을 진행 중 봉투의 제어 채널로 전달한다
+        if (sessOp[3] === "answer" && req.method === "POST") {
+          const b = await readBody(req);
+          return void json(res, 200, { ok: deliverAnswer(pkg, slot, String(b.id ?? ""), Array.isArray(b.answers) ? b.answers : []) });
         }
         // 취소: 봉투 stdin 제어가 1순위, 신호가 그물 (session.cancelSession)
         if (sessOp[3] === "cancel" && req.method === "POST") {
