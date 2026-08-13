@@ -44,7 +44,7 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
         {pkg.ring === 0 ? " · ring-0" : ""}
       </div>
       <div>{m.description ?? ""}</div>
-      {pkg.error ? <div className="banner">판정 실패: {pkg.error}</div> : null}
+      {pkg.error ? <div className="banner">검사 실패: {pkg.error}</div> : null}
       {error ? <div className="banner">{error}</div> : null}
 
       <section style={{ display: "flex", gap: 8 }}>

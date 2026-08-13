@@ -89,6 +89,27 @@ export function draftList(): Promise<{ drafts: DraftEntry[] }> {
   return callScript("draft-list", {});
 }
 
+export interface PackOutcome {
+  ref: string;
+  version: string;
+  file: string;
+  size: number;
+  digest: string;
+  files: number;
+  /** 매니페스트 선언 밖이라 봉투에 담기지 않은 파일들 */
+  excluded: string[];
+  shelf: string;
+}
+
+/**
+ * 굽기 — 배포된 설치본을 봉투 하나로 만들어 선반에 앉힌다.
+ * 파일을 내려받게 하지 않는 것이 요점이다: 봉인과 요구 범위가 함께 계산된 채로 선반에
+ * 남고, 스토어 등재 화면이 그 선반을 읽는다.
+ */
+export function packPkg(name: string): Promise<PackOutcome> {
+  return callScript("pkg-pack", { name });
+}
+
 export function releaseList(name: string): Promise<{ releases: Release[] }> {
   return callScript("release-list", { name });
 }

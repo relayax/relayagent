@@ -24,6 +24,8 @@ export interface HostBridge {
   draftPublish(name: string, opts?: { version?: string }): unknown;
   draftDiscard(name: string): unknown;
   draftList(): unknown;
+  /** 봉투 굽기 — 설치본을 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다 */
+  pack(name: string): unknown;
   releaseList(name: string): unknown;
   releaseRollback(name: string, version: string): unknown;
 }

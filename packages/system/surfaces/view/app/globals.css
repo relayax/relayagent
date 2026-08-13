@@ -353,3 +353,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .lv-row.busy { opacity: 0.55; pointer-events: none; }
 .lv-in { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--rc-line-soft); }
 .lv-in input { flex: 1; }
+
+/* 스튜디오 툴바의 묶음 구분 — 성질이 다른 버튼 사이에만 선다.
+   되돌리기·초기화가 자주 누르는 버튼과 붙어 있으면 언젠가 잘못 눌린다 */
+.st-div { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--rc-line); flex: none; }

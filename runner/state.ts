@@ -35,6 +35,22 @@ function ensureLayout(): void {
   if (!fs.existsSync(v)) fs.writeFileSync(v, LAYOUT_VERSION + "\n");
 }
 
+/**
+ * 설치 출처. 아티팩트(.relay)나 레지스트리에서 온 패키지의 신원 — 장부 키(설치 이름)는
+ * 로컬 사정으로 바뀔 수 있으므로 ref 가 정본이다. 업데이트 대상 판정과 이름 충돌 해소,
+ * 유출 추적이 전부 이 기록을 본다. 로컬 디렉토리 설치는 origin 이 없다.
+ */
+export interface PkgOrigin {
+  /** 레지스트리 URL. 파일 직접 설치는 null */
+  registry: string | null;
+  /** 패키지 정식 이름 (@scope/name) */
+  ref: string;
+  version: string;
+  /** 아티팩트 sha256 — 받은 것이 올린 그것이라는 증명 */
+  digest: string;
+  installedAt: string;
+}
+
 export interface PkgRecord {
   path: string;
   /** 폴더 결재의 기록 — 세션 cwd 의 절대경로. 미기록 = 기본 ~/Relay/<이름> */
@@ -45,6 +61,7 @@ export interface PkgRecord {
   effort?: string;
   harness?: string;
   dirBindings?: Record<string, string>;
+  origin?: PkgOrigin;
 }
 
 export interface Grant {
@@ -100,6 +117,27 @@ export function workspacePath(l: Ledger, pkg: string): string {
 
 export function workspaceDir(l: Ledger, pkg: string): string {
   const d = workspacePath(l, pkg);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+// artifacts = 로컬 마켓 선반. relay pack 이 구운 .relay 아티팩트와 index.json 이 앉는다.
+// 레지스트리가 생기면 이 선반의 index 가 원격 index 로 바뀔 뿐, 설치 경로는 같다
+export function artifactsDir(): string {
+  const d = path.join(RELAY_HOME, "artifacts");
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+// 스토어 인덱스 URL. 기본값 = 빈 문자열(원격 없음, 로컬 선반만) — OSS 는 스토어 없이 완결된 놀이터다.
+// 스토어 연결은 원하는 쪽이 켠다: 데스크탑 앱이 번들 데몬에 주입하거나, RELAY_STORE_INDEX 로 직접 지정.
+// 클라이언트는 이 설정과 인덱스 version 계약만 안다 — C2C 호환 규율 1
+const DEFAULT_STORE_INDEX = "";
+export const STORE_INDEX_URL = (process.env.RELAY_STORE_INDEX ?? DEFAULT_STORE_INDEX).trim();
+
+// 다운로드 캐시. digest 를 파일명 키로 쓰므로 불변이다 — 같은 봉인은 다시 받지 않는다
+export function artifactCacheDir(): string {
+  const d = path.join(RELAY_HOME, "cache", "artifacts");
   fs.mkdirSync(d, { recursive: true });
   return d;
 }

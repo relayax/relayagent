@@ -8,7 +8,8 @@ async function post(path: string, body: unknown): Promise<any> {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error ?? `${res.status} ${path}`);
+  // 에러 응답의 본문(need_key 등)을 버리지 않는다 — 호출부가 처방을 고르는 근거다
+  if (!res.ok) throw Object.assign(new Error(data?.error ?? `${res.status} ${path}`), { data, status: res.status });
   return data;
 }
 
@@ -110,3 +111,6 @@ export function setModel(pkg: string, model: string | null): Promise<{ ok: boole
 export function loginHarness(pkg: string, sw = false): Promise<{ launched: boolean; command: string; note: string }> {
   return post(`/pkg/${encodeURIComponent(pkg)}/harness/login`, { switch: sw });
 }
+
+// 마켓 화면은 OSS 콘솔에서 걷어냈다 (스토어 UI 는 데스크탑 앱의 몫).
+// 설치 2단 관문의 데몬 API(/install/prepare · /install/activate)는 프로토콜로 살아 있다.
