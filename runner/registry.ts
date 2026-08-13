@@ -129,6 +129,32 @@ export async function downloadArtifact(indexUrl: string, entry: StoreEntry): Pro
 export class RedeemError extends Error {}
 
 /**
+ * 티켓 다운로드 — 웹에서 로그인한 사람이 끊어 준 5분짜리 1회용 통행증으로 봉투를 받는다.
+ * 키를 대신하는 물건이라, 이 데몬은 여전히 계정을 모른다: 아는 것은 티켓 문자열뿐이다.
+ *
+ * 받아올 주소를 인자로 받지 않는 것이 이 함수의 요점이다. 링크가 URL 을 실어 오면
+ * 아무 웹페이지나 데몬에게 "이 주소에서 받아 설치하라"를 시킬 수 있다 — 그래서 주소는
+ * 언제나 내 인덱스(indexUrl)의 오리진에서 조립한다.
+ */
+export async function redeemWithTicket(indexUrl: string, entry: StoreEntry, ticket: string): Promise<string> {
+  const hit = cacheHit(entry.digest);
+  if (hit) return hit; // 이미 받은 봉투는 내 것 — 재설치에 티켓을 태우지 않는다
+  if (!/^[A-Za-z0-9._~-]{16,4096}$/.test(ticket)) throw new RedeemError("티켓 형식이 올바르지 않습니다");
+  const u = new URL(`api/dl/${ticket}`, indexUrl);
+  assertSafeUrl(u);
+  try {
+    return await fetchVerified(u, entry);
+  } catch (e) {
+    // 만료·재사용은 스토어가 410 으로 답한다 — 사용자에게는 "다시 받으세요"가 처방이다
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/응답 410/.test(msg)) {
+      throw new RedeemError("설치 링크가 만료되었거나 이미 사용되었습니다 — 스토어의 내 서재에서 다시 받으세요");
+    }
+    throw e;
+  }
+}
+
+/**
  * 유료 아티팩트: 키 제시 -> 임시 URL -> 다운로드. redeem 은 다운로드의 문일 뿐이라
  * 받은 뒤의 봉인 대조·캐시·설치는 무료와 완전히 같은 길을 지난다.
  * 키가 틀리거나 폐기됐으면 RedeemError — 호출부가 "키를 다시" 처방으로 구분한다.

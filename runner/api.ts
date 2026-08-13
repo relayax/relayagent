@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPkg, stageDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
-import { fetchStoreIndex, downloadArtifact, redeemArtifact, cacheHit, RedeemError } from "./registry.ts";
+import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer } from "./session.ts";
@@ -57,11 +57,94 @@ function json(res: http.ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+// ── 스토어에서 건너온 설치의 화면 ──────────────────────────────────────────────
+// 콘솔(Next 앱)이 아니라 데몬이 직접 굽는다. 이유는 둘이다: 굽는 단계 없이 고칠 수 있고,
+// 걷어낸 마켓 표면을 되살리지 않으면서 필요한 문 하나만 세울 수 있다.
+
+function esc(s: unknown): string {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+const SHELL = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Relay 설치</title><style>
+:root{--bg:#f5f6f7;--card:#fff;--ink:#16181b;--soft:#5c6570;--faint:#98a1aa;--line:#e6e9ec;--accent:#0f766e;--accent-strong:#115e59;--accent-soft:rgba(13,148,136,.1)}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;-webkit-font-smoothing:antialiased;word-break:keep-all}
+.card{max-width:440px;margin:8vh auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px 30px 24px}
+h1{margin:0 0 4px;font-size:19px;font-weight:800;letter-spacing:-.02em}
+.sub{margin:0 0 18px;font:12px ui-monospace,Menlo,monospace;color:var(--faint)}
+p{color:var(--soft);font-size:13px;margin:0 0 12px}
+.seal{display:flex;gap:8px;align-items:center;background:var(--accent-soft);color:var(--accent-strong);border-radius:9px;padding:9px 12px;font-size:12px;margin-bottom:16px}
+.seal code{font:10.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
+h2{font-size:12.5px;font-weight:700;margin:0 0 8px}
+dl{border:1px solid var(--line);border-radius:10px;padding:2px 14px;margin:0 0 14px}
+dl>div{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+dl>div:last-child{border-bottom:0}
+dt{flex:none;width:42px;color:var(--faint);font-weight:700;font-size:11px;padding-top:1px}
+dd{margin:0;color:var(--soft);overflow-wrap:anywhere}
+dd code{font:11.5px ui-monospace,Menlo,monospace}
+.nots{font-size:12.5px;color:var(--soft);background:#eef0f2;border-radius:9px;padding:10px 12px;margin-bottom:18px}
+.row{display:flex;gap:9px}
+button,.btn{flex:1;text-align:center;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:11px;font:600 13.5px inherit;cursor:pointer;text-decoration:none;display:block}
+button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.note{font-size:11.5px;color:var(--faint);text-align:center;margin:12px 0 0}
+</style></head><body>`;
+
+/** 한 줄짜리 결과·오류 화면 */
+function installPage(res: http.ServerResponse, code: number, title: string, detail: string, ok = false): void {
+  res.writeHead(code, { "content-type": "text/html; charset=utf-8" });
+  res.end(
+    `${SHELL}<div class="card"><h1>${esc(title)}</h1><p>${esc(detail)}</p>` +
+      (ok ? `<a class="btn" href="/pkg/system/view/">콘솔 열기</a>` : "") +
+      `</div></body></html>`,
+  );
+}
+
+/** 동의 관문 — 여기까지는 아무것도 실행되지 않았다 */
+function consentPage(res: http.ServerResponse, prep: Prepared): void {
+  const d = prep.disclosure;
+  const rows: string[] = [];
+  for (const f of d.folders) rows.push(`<div><dt>폴더</dt><dd><code>${esc(f.path)}</code> 를 만들고 읽고 씁니다</dd></div>`);
+  for (const l of d.llm) rows.push(`<div><dt>LLM</dt><dd>${esc(l.provider)} 계정으로 돕니다 (${esc(l.auth)})</dd></div>`);
+  for (const n of d.network) rows.push(`<div><dt>외부</dt><dd><code>${esc(n.url)}</code> 로 나갑니다</dd></div>`);
+  for (const w of d.wakeups) rows.push(`<div><dt>자동</dt><dd>${esc(w.when)} 에 스스로 깨어납니다</dd></div>`);
+  if (d.host.length) rows.push(`<div><dt>호스트</dt><dd>${esc(d.host.join(" · "))}</dd></div>`);
+  if (d.borrows.length) rows.push(`<div><dt>빌림</dt><dd>${esc(d.borrows.join(" · "))}</dd></div>`);
+  if (d.spawns.length) rows.push(`<div><dt>프로세스</dt><dd>${esc(d.spawns.join(" · "))}</dd></div>`);
+  if (d.denied.length) rows.push(`<div><dt>담장</dt><dd>${esc(d.denied.join(", "))} 에는 닿지 않습니다</dd></div>`);
+
+  const nots: string[] = [];
+  if (!d.network.length) nots.push("인터넷으로 나가지 않고");
+  if (!d.wakeups.length) nots.push("스스로 깨어나지 않고");
+  if (!d.borrows.length) nots.push("다른 패키지의 능력을 빌리지 않습니다");
+
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(
+    `${SHELL}<div class="card">
+<h1>${esc(prep.manifest.display_name ?? prep.name)} 설치</h1>
+<p class="sub">${esc(prep.ref)} · ${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p>
+<div class="seal">봉인 확인됨 · <code>${esc(prep.digest)}</code></div>
+<h2>이 에이전트가 요구하는 것</h2>
+<dl>${rows.join("") || `<div><dt>—</dt><dd>따로 요구하는 것이 없습니다</dd></div>`}</dl>
+${nots.length ? `<div class="nots">이 패키지는 ${esc(nots.join(", "))}.</div>` : ""}
+<form method="post" action="/store/install/confirm" class="row">
+  <input type="hidden" name="id" value="${esc(prep.id)}">
+  <a class="btn" href="/pkg/system/view/">취소</a>
+  <button class="go" type="submit">동의하고 설치</button>
+</form>
+<p class="note">동의하기 전까지 이 패키지의 코드는 한 줄도 실행되지 않았습니다</p>
+</div></body></html>`,
+  );
+}
+
 async function readBody(req: http.IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return {};
+  // 설치 동의는 자바스크립트 없는 폼에서 온다 — 그 몸통은 JSON 이 아니다
+  if (/^application\/x-www-form-urlencoded/.test(String(req.headers["content-type"] ?? ""))) {
+    return Object.fromEntries(new URLSearchParams(raw));
+  }
   return JSON.parse(raw);
 }
 
@@ -395,6 +478,54 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         }
       }
 
+      // ── 스토어에서 건너오는 설치 ───────────────────────────────
+      // 웹에는 로그인이 있고 여기에는 없다. 그 사이를 5분짜리 1회용 티켓이 건넌다:
+      // 스토어가 자격을 확인해 티켓을 끊고, 브라우저가 주소창 이동으로 그것을 이리 넘긴다.
+      // (https 페이지에서 로컬로 fetch 하는 길은 막혀 있지만 이동은 열려 있다)
+      //
+      // 이 GET 은 화면만 띄운다. 봉투를 받아 봉인을 대조하고 전개하는 데까지가 전부 정적이고,
+      // 실행은 사람이 동의 버튼을 누른 뒤 /store/install/confirm 에서 시작한다.
+      if (p === "/store/install" && req.method === "GET") {
+        const ref = url.searchParams.get("ref") ?? "";
+        const want = url.searchParams.get("v");
+        const ticket = url.searchParams.get("ticket") ?? "";
+        if (!STORE_INDEX_URL) return void installPage(res, 503, "스토어가 설정되지 않았습니다", "RELAY_STORE_INDEX 를 설정한 뒤 다시 시도하세요.");
+        if (!ref || !ticket) return void installPage(res, 400, "설치 링크가 올바르지 않습니다", "스토어의 내 서재에서 다시 눌러 주세요.");
+        try {
+          const idx = await fetchStoreIndex(STORE_INDEX_URL);
+          const entry = idx.entries.find((e) => e.ref === ref);
+          if (!entry) return void installPage(res, 404, "스토어에 없는 패키지입니다", ref);
+          // 링크가 가리키는 판과 인덱스의 판이 어긋나면 멈춘다 — 낡은 링크로 엉뚱한 봉인을
+          // 대조하다 실패하느니, 무엇이 어긋났는지 말해 주는 편이 낫다
+          if (want && want !== entry.version) {
+            return void installPage(res, 409, "새 판이 나왔습니다", `링크는 ${want}, 스토어는 ${entry.version} 입니다. 내 서재에서 다시 눌러 주세요.`);
+          }
+          const abs = await redeemWithTicket(STORE_INDEX_URL, entry, ticket);
+          const prep = prepareArtifact(getLedger(), abs, { digest: entry.digest, registry: STORE_INDEX_URL });
+          prepared.set(prep.id, { p: prep, at: Date.now() });
+          for (const [id, v] of prepared) if (Date.now() - v.at > PREPARE_TTL) prepared.delete(id);
+          return void consentPage(res, prep);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const code = e instanceof RedeemError ? 410 : 500;
+          return void installPage(res, code, "설치를 시작하지 못했습니다", msg);
+        }
+      }
+      if (p === "/store/install/confirm" && req.method === "POST") {
+        const b = await readBody(req);
+        const held = prepared.get(String(b.id ?? ""));
+        if (!held || Date.now() - held.at > PREPARE_TTL) {
+          return void installPage(res, 410, "준비가 만료되었습니다", "스토어의 내 서재에서 다시 눌러 주세요.");
+        }
+        prepared.delete(held.p.id);
+        try {
+          const r = activatePrepared(getLedger(), held.p);
+          return void installPage(res, 200, `${held.p.manifest.display_name ?? held.p.name} 설치 완료`, `${r.name} 로 설치되었습니다. 콘솔에서 바로 쓸 수 있습니다.`, true);
+        } catch (e) {
+          return void installPage(res, 500, "설치에 실패했습니다", e instanceof Error ? e.message : String(e));
+        }
+      }
+
       // ── 마켓: 로컬 선반 + 원격 스토어 병합 ─────────────────────
       // 같은 ref 가 양쪽에 있으면 로컬이 이긴다 — 선반은 "발행 직전의 내 사본"이라
       // 개발 중 오버라이드가 자연스럽다. 설치 여부는 origin.ref 로 대조.
@@ -461,7 +592,18 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
             const entry = idx.entries.find((e) => e.ref === ref);
             if (!entry) return void json(res, 404, { error: `스토어에 없는 패키지: ${ref}` });
             const paidCache = entry.price != null && !entry.url ? cacheHit(entry.digest) : null;
-            if (paidCache) {
+            const ticket = b.ticket ? String(b.ticket) : null;
+            if (ticket) {
+              // 티켓 설치 — 웹에서 로그인한 사람이 끊어 준 1회용 통행증.
+              // 무료·유료를 가리지 않는다: 자격 판단은 스토어에서 이미 끝났고,
+              // 여기서는 봉인 대조만 남는다 (키를 대신하는 새 경로)
+              try {
+                abs = await redeemWithTicket(STORE_INDEX_URL, entry, ticket);
+              } catch (e) {
+                if (e instanceof RedeemError) return void json(res, 410, { error: e.message, ref: entry.ref });
+                throw e;
+              }
+            } else if (paidCache) {
               // 이미 받은 봉투는 내 것 — 키를 묻지 않는다. 키를 묻는 순간부터는 반드시 검증한다
               abs = paidCache;
             } else if (entry.price != null && !entry.url) {
