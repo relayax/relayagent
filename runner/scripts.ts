@@ -13,7 +13,8 @@ export interface HostBridge {
   grants(): Grant[];
   grant(g: Grant): unknown;
   validate(dir: string): unknown;
-  dispatch(provider: string, mission: string, payload: string): Promise<string>;
+  /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다 */
+  dispatch(provider: string, mission: string, payload: string, consumer?: string): Promise<string>;
   // 수정 레이어 (draft.ts). 설치본은 실행 중이라 직접 만지지 않는다 — 편집은 draft, 반영은 publish
   draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[] }): unknown;
   draftRead(name: string, file?: string): unknown;
@@ -84,7 +85,7 @@ export function makeCtx(
     },
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
-      return hostBridge.dispatch(provider, mission, payload);
+      return hostBridge.dispatch(provider, mission, payload, pkg);
     },
     host: rec.ring === 0 ? hostBridge ?? undefined : undefined,
   };
