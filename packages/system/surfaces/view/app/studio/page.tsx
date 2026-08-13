@@ -287,25 +287,35 @@ function Studio() {
         {changedCount ? <span className="rc-chip">수정 {changedCount}건</span> : <span className="rc-chip gray">변경 없음</span>}
         {status?.lastCommit ? <span className="st-commit">기록: {status.lastCommit.message}</span> : null}
         <span className="st-sp" />
-        {/* 배포본으로 가는 문. 기판이 직접 서빙하는 경로라 여기는 Link 가 아니라 생짜 a 가 맞다
-            (앱 내부 경로였다면 basePath 때문에 Link 여야 한다) */}
-        {status?.installed && pkg ? (
-          <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${pkg}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다">
-            실행본 열기
-          </a>
-        ) : null}
+        {/* 버튼은 성질로 묶는다. 왼쪽에서 오른쪽이 곧 작업 순서다:
+              고치는 동안 반복하는 것 → 결과를 내고 확인하는 것 → 되돌리는 것.
+            되돌리기·초기화를 맨 끝에 두는 것은 파괴적이기 때문이다 — 자주 누르는
+            버튼 옆에 두면 언젠가 잘못 눌린다 */}
         <button className="rc-btn" title="선언한 것과 실제 파일이 맞는지 봅니다 — 고치지는 않습니다" onClick={() => void validate()}>
           검사
         </button>
         <button className="rc-btn" title="지금까지 고친 것을 되돌릴 수 있는 지점으로 남깁니다" disabled={!changedCount} onClick={() => setDialog("commit")}>
           기록
         </button>
+
+        <span className="st-div" aria-hidden="true" />
+
         <button className="rc-btn accent" title="고친 것을 실제로 돌아가는 판으로 바꿉니다" onClick={() => setDialog("publish")}>
           적용
         </button>
+        {/* 실행본으로 가는 문. 기판이 직접 서빙하는 경로라 여기는 Link 가 아니라 생짜 a 가 맞다
+            (앱 내부 경로였다면 basePath 때문에 Link 여야 한다) */}
+        {status?.installed && pkg ? (
+          <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${pkg}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다">
+            실행본 열기
+          </a>
+        ) : null}
         <button className="rc-btn" title="남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다" disabled={!status?.version.live} onClick={() => void pack()}>
           내보내기
         </button>
+
+        <span className="st-div" aria-hidden="true" />
+
         <button className="rc-btn" title="예전 판 목록을 보고 그때로 돌립니다" onClick={() => setDialog("releases")}>
           되돌리기
         </button>
