@@ -17,12 +17,12 @@ case "$VERB" in
     LOGIN="$LOGIN" EFFORT="$EFFORT" node --input-type=module -e '
 let a = {};
 try { a = JSON.parse(process.env.LOGIN || "{}"); } catch { /* 형식이 바뀌면 계정 미상으로 강등 */ }
-const caps = ["cancel", "vision", "resume"];
+const caps = ["cancel", "vision", "resume", "ask", "tasks"];
 if (process.env.EFFORT === "1") caps.push("effort");
 process.stdout.write(JSON.stringify({
   name: "claude-code",
   provider: "anthropic",
-  protocol: 2,
+  protocol: 3,
   verbs: ["session", "serve", "setup", "login", "models", "commands", "info"],
   capabilities: caps,
   account: a.loggedIn ? { email: a.email ?? null, plan: a.subscriptionType ?? null, method: a.authMethod ?? null } : null,
@@ -291,13 +291,14 @@ if [ "$VERB" = "session" ] && { [ $# -le 1 ] || [ -z "${2:-}" ]; }; then
   exec claude "${ARGS[@]}"
 fi
 
-# 세션 봉투(protocol 2): claude 의 stream-json 을 relay 이벤트로 번역한다.
-# 두 모드가 한 봉투다 — session <프롬프트> 는 1턴 뒤 은퇴하고, serve 는 상주하며
-# stdin 으로 턴({"type":"turn","prompt":…})을 받는다. 어느 쪽이든 stdin 은 제어 채널이라
-# {"type":"cancel"} 수신 시 도구를 끊고 실패 종결을 낸다.
+# 세션 봉투(protocol 3): claude 의 stream-json 을 relay 이벤트로 번역한다. 계약 정본은
+# docs/harness-protocol.md. 두 모드가 한 봉투다 — session <프롬프트> 는 1턴 뒤 은퇴하고,
+# serve 는 상주하며 stdin 으로 턴({"type":"turn","prompt":…})을 받는다. stdin 은 제어 채널이라
+# {"type":"cancel"} 은 도구를 끊고, {"type":"answer"} 는 대기 중 질문(ask)을 회송한다.
 # 상주의 물리적 근거: -p --input-format stream-json 에서 stdin 을 열어두면 result 후에도
 # 프로세스가 살고, 다음 user 프레임이 같은 대화의 다음 턴이 되며, stdin EOF 로 자연 종료한다
-# (실측 2026-08-10, 2.1.153 — relayos-claude resident-session 실측과 동일). 턴 경계 = result.
+# (실측 2026-08-10, 2.1.153). 턴 경계 = result. 백그라운드 작업(run_in_background)은 완료 시
+# 입력 없이 자발 재기동을 만들고, EOF 후에도 도구가 스스로 완주까지 드레인한다(실측 2026-08-12).
 # 실패를 텍스트로 위장하지 않는다: 실패는 error 이벤트 + 비0 종료코드로만 낸다
 # Windows: node 의 spawn 은 PATH 의 확장자 없는 npm shim(claude)이나 .cmd 를 실행하지 못하고
 # ENOENT 로 즉사한다(실측 2026-08-10, Windows 10 / Node 24). bash 는 shim 을 읽어 exec 하므로
@@ -364,24 +365,56 @@ function translateSlash(prompt) {
 }
 
 const WRITERS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const tools = new Map();          // tool_use_id -> { name, file } (end 이벤트 짝맞춤용)
-let model = null;                 // 본류가 실제로 말한 모델
+const ARGS_CAP = 2048;     // tool start 의 args(JSON) 상한 — events 장부가 무한히 살찌지 않게
+const RESULT_CAP = 8192;   // tool end 의 result 상한 — 위젯 펼침 카드용, 전문은 도구 몫
+const tools = new Map();   // tool_use_id -> { name, file }
+let model = null;          // 본류가 실제로 말한 모델
 
-// 턴 상태 — 상주에서는 턴마다 새로 시작한다. null = 유휴(주입 없는 프레임은 관할 밖)
-let turn = null;                  // { prompt, said, filed:Set, restarted, done }
+// 턴 상태 — kind: "injected"(주입) | "task"(백그라운드 완료의 자발 continuation).
+// null = 유휴. 자발 턴은 sawTaskDone 게이트를 통과한 본류 프레임에서만 열린다
+let turn = null;           // { kind, prompt?, said, filed:Set, restarted, done, ctxIn }
+let pendingInject = null;  // 자발 턴 진행 중 도착한 주입 — 자발 정산 뒤 발사 (교차 배선 방지)
 
-// 죽은 resume 포인터는 복구 대상이다. 가리키던 대화는 도구 보존기간 정리나 워크스페이스(cwd)
-// 이동으로 사라질 수 있고, 그때 도구는 이 문구와 함께 대화 없이 즉사한다(실측 2026-08-09,
-// 2.1.153). resume 의 계약은 "있으면 잇고, 없으면 새로"다 — 없는 과거가 현재 턴을 죽이면
-// 그 슬롯은 사람이 포인터 파일을 지워 줄 때까지 영영 실패를 반복한다
+// usage 티커 — 입력은 message_start(캐시 포함), 출력은 완결 프레임 합(정확) +
+// 완결 사이 스트리밍 문자수/4(추정). 완결 도착 시 추정분을 0 으로 스냅한다.
+// thinking 델타도 문자수로 태운다 — 장고 구간에 티커가 죽어 보이지 않게
+let tickIn = 0;
+let tickOutExact = 0;
+let tickEstChars = 0;
+let tickTimer = null;
+function tickUsage() {
+  if (tickTimer) return;
+  tickTimer = setTimeout(() => {
+    tickTimer = null;
+    emit({ event: "usage", input: tickIn, output: tickOutExact + Math.round(tickEstChars / 4) });
+  }, 250);
+  tickTimer.unref?.();
+}
+function resetTick() {
+  if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
+  tickIn = 0;
+  tickOutExact = 0;
+  tickEstChars = 0;
+}
+
+// 백그라운드 원장 — 드레인(은퇴 유예)과 task 이벤트의 근거
+const tasks = new Map();   // task_id -> note
+let sawTaskDone = false;   // 자발 턴 승격 게이트 — 유령 턴 방지 (relayos 실측 계보)
+
+// 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약)
+let ask = null;            // { reqId, input, timer }
+
+// 죽은 resume 포인터는 복구 대상이다. 계약은 "있으면 잇고, 없으면 새로" — 없는 과거가
+// 현재 턴을 죽이면 그 슬롯은 영영 실패를 반복한다 (실측 2026-08-09, 2.1.153)
 const RESUME_GONE = "No conversation found with session ID";
 
-let child = null;                 // claude 프로세스 — 첫 턴에 부트, 이후 stdin 주입
-let resumedBoot = false;          // 이번 부트가 --resume 인가
-let restarting = false;           // 이번 부트가 죽은 포인터로 끝남 — 닫히면 새 세션으로 다시 편다
-let restarted = false;            // 재시도는 봉투 수명당 정확히 한 번
+let child = null;
+let resumedBoot = false;
+let restarting = false;
+let restarted = false;
 let cancelled = false;
-let closing = false;              // 은퇴 진행 — 1턴 종결 또는 제어 채널 EOF
+let closing = false;
+let retired = false;       // retire 는 한 번만 — 정산 경로와 EOF 경로가 겹칠 수 있다
 let killTimer = null;
 
 function boot() {
@@ -398,10 +431,12 @@ function boot() {
     "-p", "--input-format", "stream-json",
     "--output-format", "stream-json", "--include-partial-messages", "--verbose",
     "--dangerously-skip-permissions",
+    // ask 의 물리적 근거: skip-permissions 아래서도 AskUserQuestion 만은 이 채널의
+    // control_request 로 올라온다 (실측 2026-08-12, 2.1.153)
+    "--permission-prompt-tool", "stdio",
     ...args,
   ], { stdio: ["pipe", "pipe", "pipe"] });
-  // spawn 실패(ENOENT 등)는 close 이벤트가 오지 않는다 — 방치하면 uncaught 로 죽어
-  // 계약(실패는 error 이벤트 + 비0 종료코드로만)이 깨진다. 여기서 계약대로 종결한다
+  // spawn 실패(ENOENT 등)는 close 이벤트가 오지 않는다 — 계약대로 여기서 종결한다
   child.on("error", (e) => {
     emit({ event: "error", message: "claude 실행 실패: " + (e?.message ?? e) + " (bin: " + CLAUDE_BIN + ")" });
     process.exit(1);
@@ -416,7 +451,8 @@ relay("SIGTERM");
 relay("SIGINT");
 
 function inject(prompt, opts = {}) {
-  turn = { prompt, said: "", filed: new Set(), restarted: !!opts.restarted, done: false };
+  turn = { kind: "injected", prompt, said: "", filed: new Set(), restarted: !!opts.restarted, done: false, ctxIn: 0 };
+  resetTick();
   if (!child) boot();
   child.stdin.write(JSON.stringify({
     type: "user",
@@ -424,53 +460,183 @@ function inject(prompt, opts = {}) {
   }) + "\n");
 }
 
-// 은퇴: stream-json 입력 종료 = claude 자연 종료. 8초 안에 안 내려오면 강제
+function openSpont() {
+  turn = { kind: "task", said: "", filed: new Set(), restarted: false, done: false, ctxIn: 0 };
+  resetTick();
+}
+
+// 은퇴: stream-json 입력 종료 = claude 자연 종료. 상주에서 미완 백그라운드가 있으면
+// 드레인이다 — 도구가 작업 완주까지 살았다가 스스로 내려오므로(실측) 강제 시계를 걸지 않는다.
+// 1턴 모드는 relayos one-off 계약을 따라 정산 즉시 내려간다(백그라운드 연속은 상주 전용)
 function retire() {
+  if (retired) {
+    if (!child) process.exit(process.exitCode ?? 0);
+    return;
+  }
+  retired = true;
   closing = true;
   if (!child) process.exit(process.exitCode ?? 0);
   try { child.stdin.end(); } catch { /* 이미 닫힘 */ }
-  killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* 이미 종료 */ } }, 8000);
-  killTimer.unref?.();
+  if (MODE !== "serve" || tasks.size === 0) {
+    killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* 이미 종료 */ } }, 8000);
+    killTimer.unref?.();
+  }
+}
+
+function afterSettle() {
+  turn = null;
+  if (MODE === "session") return retire();
+  if (pendingInject != null) {
+    const p = pendingInject;
+    pendingInject = null;
+    inject(p);
+    return;
+  }
+  if (closing) retire();
+}
+
+// ── control 채널 (CLI stdout 의 control_request) ─────────────────────────────
+function controlRespond(reqId, payload) {
+  try {
+    child.stdin.write(JSON.stringify({
+      type: "control_response",
+      response: { subtype: "success", request_id: reqId, response: payload },
+    }) + "\n");
+  } catch { /* 이미 닫힘 */ }
+}
+
+function askSettle(answers, denyMsg) {
+  if (!ask) return;
+  const a = ask;
+  ask = null;
+  clearTimeout(a.timer);
+  if (!answers || !answers.length) {
+    controlRespond(a.reqId, { behavior: "deny", message: denyMsg ?? "사용자가 응답을 취소했습니다 — 질문 없이 진행하세요." });
+    return;
+  }
+  const map = {};
+  for (const p of answers) {
+    if (p && typeof p.question === "string" && p.question) {
+      map[p.question] = Array.isArray(p.selected) ? p.selected.join(", ") : String(p.selected ?? "");
+    }
+  }
+  controlRespond(a.reqId, { behavior: "allow", updatedInput: { ...a.input, answers: map } });
+}
+
+function onControlRequest(j) {
+  const req = j.request ?? {};
+  const reqId = j.request_id;
+  if (!reqId) return;
+  if (req.subtype === "can_use_tool" && req.tool_name === "AskUserQuestion") {
+    if (ask) {
+      controlRespond(reqId, { behavior: "deny", message: "이미 대기 중인 질문이 있습니다 — 한 번에 하나씩 질문하세요." });
+      return;
+    }
+    ask = {
+      reqId,
+      input: req.input ?? {},
+      timer: setTimeout(() => askSettle(null, "사용자가 10분 내에 응답하지 않았습니다 — 합리적인 기본값으로 진행하거나 다음 턴에서 다시 확인하세요."), 600000),
+    };
+    ask.timer.unref?.();
+    emit({ event: "ask", id: reqId, questions: Array.isArray(req.input?.questions) ? req.input.questions : [] });
+    return;
+  }
+  if (req.subtype === "can_use_tool") {
+    // skip-permissions 아래선 도착하지 않는 게 정상 — 도착해도 무인 턴 계약(전부 허용)을 유지한다
+    const payload = { behavior: "allow" };
+    if (req.input != null) payload.updatedInput = req.input;
+    controlRespond(reqId, payload);
+    return;
+  }
+  // 미지의 control 요청 — 빈 성공 회신 (무응답이면 CLI 가 대기 행으로 굳는다, relayos 실측)
+  controlRespond(reqId, {});
+}
+
+function onSystem(j) {
+  if (j.subtype === "task_started" && j.task_id) {
+    tasks.set(j.task_id, j.description ?? "");
+    emit({ event: "task", id: j.task_id, status: "started", ...(j.description ? { note: String(j.description).slice(0, 200) } : {}) });
+  } else if (j.subtype === "task_notification" && j.task_id) {
+    tasks.delete(j.task_id);
+    sawTaskDone = true;
+    emit({ event: "task", id: j.task_id, status: "done", ok: j.status === "completed" });
+  }
 }
 
 const onLine = (line) => {
   let j;
   try { j = JSON.parse(line); } catch { return; }
+
+  // control 프레임은 대화 스트림이 아니다 — 턴 귀속 없이 여기서 소화한다
+  if (j.type === "control_request") return void onControlRequest(j);
+  if (typeof j.type === "string" && j.type.startsWith("control_")) return;
+  if (j.type === "system") return void onSystem(j);
+
+  // 유휴에 흘러오는 본류 프레임 = 백그라운드 완료의 자발 턴(continuation).
+  // 선행 task 완료 신호가 있을 때만 턴으로 승격한다 — 잔류 프레임의 유령 턴 방지
+  if (!turn) {
+    if (MODE !== "serve" || !sawTaskDone) return;
+    sawTaskDone = false;
+    openSpont();
+  }
+
   // 중간 텍스트는 부분 청크에서 뽑는다. 서브에이전트(parent_tool_use_id 있음)의 말은
-  // 본류 답변이 아니므로 흘리지 않는다 — 섞으면 두 대화가 한 줄기로 보인다.
-  // thinking_delta 도 버린다: 사고는 사용자에게 낼 중간 텍스트가 아니다.
-  // 유휴(turn 없음)에 흘러오는 프레임은 이 봉투가 주입한 턴이 아니다 — 중계하지 않는다
+  // 본류 답변이 아니므로 흘리지 않는다. thinking 은 화면에 내지 않지만 토큰은 태운다
   if (j.type === "stream_event") {
-    if (!turn || j.parent_tool_use_id != null) return;
+    if (j.parent_tool_use_id != null) return;
     const e = j.event;
-    if (e?.type === "content_block_delta" && e.delta?.type === "text_delta" && e.delta.text) {
+    if (e?.type === "message_start" && e.message?.usage) {
+      const u = e.message.usage;
+      tickIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+      tickUsage();
+    } else if (e?.type === "content_block_delta" && e.delta?.type === "text_delta" && e.delta.text) {
       turn.said += e.delta.text;
+      tickEstChars += e.delta.text.length;
+      tickUsage();
       emit({ event: "delta", text: e.delta.text });
+    } else if (e?.type === "content_block_delta" && e.delta?.type === "thinking_delta" && e.delta.thinking) {
+      tickEstChars += String(e.delta.thinking).length;
+      tickUsage();
     }
     return;
   }
   if (j.type === "assistant") {
     if (j.parent_tool_use_id == null && j.message?.model) model = j.message.model;
-    if (!turn) return;
-    // 텍스트 블록은 여기서 다시 내지 않는다 — 위 부분 청크와 겹친다
+    // 완결 프레임 — 출력을 정확값으로 스냅하고, 문맥 점유(ctxIn)는 마지막 본류 프레임의
+    // usage 가 정본이다. result.usage 는 툴 왕복마다 cache_read 가 누적돼 점유량이 아니다
+    if (j.parent_tool_use_id == null && j.message?.usage) {
+      const u = j.message.usage;
+      tickOutExact += u.output_tokens ?? 0;
+      tickEstChars = 0;
+      turn.ctxIn = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+      tickUsage();
+    }
     for (const b of j.message?.content ?? []) {
       if (b.type !== "tool_use") continue;
       const file = [b.input?.file_path, b.input?.notebook_path].find((x) => typeof x === "string");
       tools.set(b.id, { name: b.name, file });
       const d = b.input?.command ?? file ?? b.input?.path ?? b.input?.pattern ?? b.input?.skill ?? b.input?.description ?? "";
-      emit({ event: "tool", name: b.name, status: "start", ...(d ? { detail: String(d).slice(0, 200) } : {}) });
+      let args = "";
+      try { args = JSON.stringify(b.input ?? {}); } catch { /* 직렬화 불능 입력 — args 없이 */ }
+      emit({
+        event: "tool", status: "start", id: b.id, name: b.name,
+        ...(d ? { detail: String(d).slice(0, 200) } : {}),
+        ...(args && args !== "{}" ? { args: args.slice(0, ARGS_CAP) } : {}),
+      });
     }
   } else if (j.type === "user") {
-    if (!turn) return;
     for (const b of j.message?.content ?? []) {
       if (b.type !== "tool_result" || !tools.has(b.tool_use_id)) continue;
       const t = tools.get(b.tool_use_id);
       tools.delete(b.tool_use_id);
-      emit({ event: "tool", name: t.name, status: "end" });
-      // 무대 산출물은 성공한 쓰기에서만 알린다. 기판도 턴 전후 diff 로 잡지만 그건 종결 뒤라
-      // 진행 중 화면에는 늦다 — 이 이벤트가 그 사이를 메운다
+      const body = typeof b.content === "string" ? b.content
+        : Array.isArray(b.content) ? b.content.filter((x) => x?.type === "text").map((x) => x.text ?? "").join("\n") : "";
+      emit({
+        event: "tool", status: "end", id: b.tool_use_id, name: t.name, ok: b.is_error !== true,
+        ...(body ? { result: String(body).slice(0, RESULT_CAP) } : {}),
+      });
+      // 무대 산출물은 성공한 쓰기에서만 알린다 — 진행 중 화면과 종결 뒤 diff 사이를 메운다
       if (b.is_error === true || !t.file || !stage || !WRITERS.has(t.name)) continue;
-      // 무대 하위의 파일만 — 무대 자신은 파일이 아니므로 sep 까지 붙여 본다
       const abs = path.resolve(t.file);
       if (!abs.startsWith(stage + path.sep)) continue;
       const rel = path.relative(stage, abs);
@@ -479,32 +645,26 @@ const onLine = (line) => {
       emit({ event: "file", path: rel });
     }
   } else if (j.type === "result") {
-    if (!turn || turn.done) return;  // 주입 없는 result — 이 봉투의 관할이 아니다
-    // 죽은 resume 포인터의 실패 결과가 실어 오는 session_id 는 대화 없이 지어낸 즉석 값이다
-    // (실측: num_turns 0). 이것을 종결로 받아 저장하면 다음 턴이 또 그 즉석 값을 resume 해
-    // 같은 실패를 반복한다 — 종결로 받지 않고, 프로세스를 내린 뒤 새 세션으로 다시 시도한다
+    if (!turn || turn.done) return;
+    // 죽은 resume 포인터의 실패 결과 — 종결로 받지 않고 새 세션으로 다시 시도한다
     if (j.is_error && resumedBoot && !restarted
       && (Array.isArray(j.errors) ? j.errors : []).some((e) => String(e).includes(RESUME_GONE))) {
       restarting = true;
       child.kill("SIGTERM");
       return;
     }
-    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다. 이것을 종결로 받으면
-    // 화면에 "(빈 응답)" 이 찍히고, 그 뒤에 오는 진짜 답은 종결에 막혀 통째로 버려진다
+    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다
     if (!j.is_error && !String(j.result ?? "").trim() && !turn.said.trim() && !j.usage) return;
     turn.done = true;
+    resetTick();
     if (j.session_id) fs.writeFileSync(B + "/claude-session", j.session_id);
-    // 본문이 비면 흘려보낸 중간 텍스트로 대신한다 — 도구만 돌고 끝난 턴도 말은 남는다
     const text = String(j.result ?? "").trim() || turn.said.trim();
     if (j.is_error) {
       emit({ event: "error", message: text.trim() || ("claude 실패 (" + (j.subtype ?? "사유 없음") + ")") });
-      // 상주는 실패 종결 뒤에도 산다 — 대화는 디스크에 있고 다음 턴이 재시도 기회다
       if (MODE === "session") { process.exitCode = 1; retire(); }
-      else { turn = null; if (closing) retire(); }
+      else afterSettle();
       return;
     }
-    // 장부는 도구가 준 것만 옮긴다. 모델 이름은 본류 assistant 가 말한 값이 정본이고,
-    // 없을 때만 modelUsage 에서 출력 토큰이 가장 많은 항목으로 대신한다
     const mu = j.modelUsage && typeof j.modelUsage === "object" ? j.modelUsage : {};
     const name = model
       ?? Object.entries(mu).sort((a, b) => (b[1]?.outputTokens ?? 0) - (a[1]?.outputTokens ?? 0))[0]?.[0]
@@ -512,7 +672,7 @@ const onLine = (line) => {
     const u = j.usage ?? {};
     emit({
       event: "reply",
-      // 재시작 턴은 이전 문맥 없이 답한 것이다 — 그 사실을 본문 머리에 남긴다
+      ...(turn.kind === "task" ? { origin: "task" } : {}),
       text: turn.restarted ? "(이전 대화가 하네스에서 만료되어 새 대화로 시작했습니다.)\n\n" + text : text,
       session: j.session_id ?? null,
       model: name,
@@ -521,14 +681,14 @@ const onLine = (line) => {
         output: u.output_tokens ?? 0,
         context_window: (name && mu[name]?.contextWindow) ?? null,
       },
+      // 점유율 게이지의 정본 — 마지막 본류 프레임의 usage. result.usage 는 누적이라 부푼다
+      context: { input: turn.ctxIn || null, window: (name && mu[name]?.contextWindow) ?? null },
     });
-    if (MODE === "session") retire();
-    else { turn = null; if (closing) retire(); }
+    afterSettle();
   }
 };
 
-// 제어 채널. 기판이 취소를 stdin 으로 먼저 보내고 신호는 그물로 쓴다.
-// serve 모드는 같은 채널로 턴을 받는다 — 한 번에 한 턴(동시 주입은 기판 live 가드가 막는다)
+// 제어 채널: turn(상주 주입) · cancel(중단) · answer(ask 회송). EOF = 은퇴 지시
 let ctl = null;
 try {
   ctl = readline.createInterface({ input: process.stdin });
@@ -538,21 +698,29 @@ try {
     if (c?.type === "cancel") {
       if (cancelled) return;
       cancelled = true;
+      askSettle(null); // 대기 중 질문도 함께 접는다 — 회신 없이 죽으면 CLI 가 대기 행으로 남는다
       if (!child) process.exit(130);
       child.kill("SIGTERM");
-      // 도구가 정리에 실패해도 턴은 끝나야 한다
       killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* 이미 종료 */ } }, 3000);
       killTimer.unref?.();
       return;
     }
+    if (c?.type === "answer") {
+      if (ask && (!c.id || c.id === ask.reqId)) askSettle(Array.isArray(c.answers) ? c.answers : null);
+      return;
+    }
     if (c?.type === "turn" && MODE === "serve") {
       if (closing || cancelled) return;
-      if (turn) { process.stderr.write("relay 봉투: 턴 진행 중 — 새 턴 무시\n"); return; }
       if (typeof c.prompt !== "string" || !c.prompt.trim()) return;
+      if (turn) {
+        // 자발 턴 진행 중의 주입은 큐잉한다(교차 배선 방지). 주입 턴 위의 주입은 기판이 막는다
+        if (turn.kind === "task" && pendingInject == null) pendingInject = c.prompt;
+        else process.stderr.write("relay 봉투: 턴 진행 중 — 새 턴 무시\n");
+        return;
+      }
       inject(c.prompt);
     }
   });
-  // 제어 채널 EOF = 기판의 은퇴 지시(유휴) 또는 기판 사망 — 진행 중 턴은 끝까지 배달하고 내린다
   ctl.on("close", () => {
     if (turn && !turn.done) { closing = true; return; }
     retire();
@@ -562,9 +730,9 @@ try {
 
 function onClaudeClose(code) {
   if (killTimer) clearTimeout(killTimer);
+  askSettle(null);
   let tail = "";
   try { tail = fs.readFileSync(B + "/stderr.log", "utf8").trim().split("\n").slice(-3).join(" / "); } catch { /* 로그 없음 */ }
-  // result 마커 없이 죽는 구현 대비 — stderr 꼬리에서도 죽은 포인터를 판정한다
   if (!restarting && !cancelled && !closing && turn && !turn.done
     && resumedBoot && !restarted && tail.includes(RESUME_GONE)) {
     restarting = true;
