@@ -224,13 +224,14 @@ function Studio() {
       const r = await draftValidate(pkg);
       setIssues(r.ok ? [] : r.issues);
       setConsoleOpen(!r.ok);
-      say(r.ok ? "ok" : "err", r.ok ? "판정 통과" : `판정 실패 ${r.issues.length}건`);
+      say(r.ok ? "ok" : "err", r.ok ? "검사 통과" : `검사에 걸린 곳 ${r.issues.length}건`);
     } catch (e) {
       say("err", String(e instanceof Error ? e.message : e));
     }
   }
 
-  // 굽기 — 배포본을 봉투로 만들어 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다.
+  // 내보내기 — 실행본을 봉투로 만들어 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다.
+  // (코드와 문서는 '굽기·봉투'라는 말을 쓴다. 화면만 일상어로 옮긴 것은 의도한 분리다)
   // 파일을 내려받게 하지 않는다: 봉인이 함께 계산된 채로 선반에 남아야 등재 화면이
   // 그것을 그대로 읽어 올릴 수 있다. 손으로 옮기면 그 사이에 어긋날 자리가 생긴다.
   async function pack() {
@@ -238,16 +239,16 @@ function Studio() {
     setConsoleOpen(true);
     try {
       const r = await packPkg(pkg);
-      say("ok", `구움: ${r.ref}@${r.version} · 파일 ${r.files}개 · ${(r.size / 1024).toFixed(0)}KB`);
+      say("ok", `만들었습니다: ${r.ref}@${r.version} · 파일 ${r.files}개 · ${(r.size / 1024).toFixed(0)}KB`);
       say("ok", `봉인 ${r.digest}`);
-      say("ok", `선반: ${r.shelf}`);
+      say("ok", `스토어에 올릴 준비가 됐습니다 · ${r.shelf}`);
       say("ok", `↓ 파일로 받기 — ${r.file}`, `/store/export/${encodeURIComponent(r.file)}`);
       if (r.excluded.length) {
         say("err", `선언 밖이라 빠진 파일 ${r.excluded.length}개 — 매니페스트에 없으면 봉투에도 없다`);
         for (const f of r.excluded.slice(0, 10)) say("err", `  · ${f}`);
       }
     } catch (e) {
-      say("err", `굽기 실패: ${String(e instanceof Error ? e.message : e)}`);
+      say("err", `내보내기 실패: ${String(e instanceof Error ? e.message : e)}`);
     }
   }
 
@@ -256,10 +257,10 @@ function Studio() {
     // 사용자는 눌렀는지조차 알 수 없으므로, 결과가 나오면 콘솔을 연다
     setConsoleOpen(true);
     if (!r.published) {
-      say("info", `배포 안 함: ${r.note}`);
+      say("info", `적용하지 않았습니다: ${r.note}`);
       return;
     }
-    say("ok", `배포됨: ${r.name}@${r.version}${r.fresh ? " (첫 설치)" : ""}`);
+    say("ok", `적용됨: ${r.name}@${r.version}${r.fresh ? " (첫 설치)" : ""}`);
     if (r.build) say(r.build.ok ? "info" : "err", `view 빌드: ${r.build.out}`);
     for (const s of r.services ?? []) say("info", s);
     setIssues([]);
@@ -284,32 +285,32 @@ function Studio() {
           {status?.version.draft && status.version.draft !== status.version.live ? ` · draft v${status.version.draft}` : ""}
         </span>
         {changedCount ? <span className="rc-chip">수정 {changedCount}건</span> : <span className="rc-chip gray">변경 없음</span>}
-        {status?.lastCommit ? <span className="st-commit">커밋: {status.lastCommit.message}</span> : null}
+        {status?.lastCommit ? <span className="st-commit">기록: {status.lastCommit.message}</span> : null}
         <span className="st-sp" />
         {/* 배포본으로 가는 문. 기판이 직접 서빙하는 경로라 여기는 Link 가 아니라 생짜 a 가 맞다
             (앱 내부 경로였다면 basePath 때문에 Link 여야 한다) */}
         {status?.installed && pkg ? (
-          <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${pkg}/view/`} target="_blank" rel="noreferrer">
-            배포본 열기
+          <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${pkg}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다">
+            실행본 열기
           </a>
         ) : null}
-        <button className="rc-btn" onClick={() => void validate()}>
-          판정
+        <button className="rc-btn" title="선언한 것과 실제 파일이 맞는지 봅니다 — 고치지는 않습니다" onClick={() => void validate()}>
+          검사
         </button>
-        <button className="rc-btn" disabled={!changedCount} onClick={() => setDialog("commit")}>
-          커밋
+        <button className="rc-btn" title="지금까지 고친 것을 되돌릴 수 있는 지점으로 남깁니다" disabled={!changedCount} onClick={() => setDialog("commit")}>
+          기록
         </button>
-        <button className="rc-btn accent" onClick={() => setDialog("publish")}>
-          배포
+        <button className="rc-btn accent" title="고친 것을 실제로 돌아가는 판으로 바꿉니다" onClick={() => setDialog("publish")}>
+          적용
         </button>
-        <button className="rc-btn" disabled={!status?.version.live} onClick={() => void pack()}>
-          굽기
+        <button className="rc-btn" title="남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다" disabled={!status?.version.live} onClick={() => void pack()}>
+          내보내기
         </button>
-        <button className="rc-btn" onClick={() => setDialog("releases")}>
-          릴리스
+        <button className="rc-btn" title="예전 판 목록을 보고 그때로 돌립니다" onClick={() => setDialog("releases")}>
+          되돌리기
         </button>
-        <button className="rc-btn" onClick={() => setDialog("discard")}>
-          폐기
+        <button className="rc-btn" title="고치던 내용을 지웁니다 — 되돌릴 수 없습니다" onClick={() => setDialog("discard")}>
+          초기화
         </button>
       </div>
 
@@ -414,7 +415,7 @@ function Studio() {
                     판정 {issues.length}건
                   </span>
                 ) : (
-                  <span className="rc-chip">판정 통과</span>
+                  <span className="rc-chip">검사 통과</span>
                 )
               ) : null}
               {!consoleOpen && log[0] ? <span className={`st-last ${log[0].kind}`}>{log[0].text}</span> : null}
@@ -445,7 +446,7 @@ function Studio() {
                     )}
                   </div>
                 ))}
-                {!log.length && !issues?.length ? <div className="info">판정, 커밋, 배포 결과가 여기 남는다</div> : null}
+                {!log.length && !issues?.length ? <div className="info">검사·기록·적용 결과가 여기 남습니다</div> : null}
               </div>
             ) : null}
           </div>

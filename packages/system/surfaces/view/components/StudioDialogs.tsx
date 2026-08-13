@@ -30,7 +30,7 @@ export function CommitDialog({ pkg, onDone, onClose }: { pkg: string; onDone: (l
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <Overlay title="커밋" onClose={onClose}>
+    <Overlay title="기록" onClose={onClose}>
       <div className="gx-mbody">
         <div className="gx-field">
           <span>메시지</span>
@@ -50,7 +50,7 @@ export function CommitDialog({ pkg, onDone, onClose }: { pkg: string; onDone: (l
             setErr(null);
             try {
               const r = await draftCommit(pkg, msg.trim());
-              onDone(r.committed ? `커밋됨: ${msg.trim()} (${r.hash?.slice(0, 7)})` : `커밋 안 함: ${r.note}`);
+              onDone(r.committed ? `기록됨: ${msg.trim()} (${r.hash?.slice(0, 7)})` : `기록할 변경이 없습니다: ${r.note}`);
               onClose();
             } catch (e) {
               setErr(String(e instanceof Error ? e.message : e));
@@ -59,7 +59,7 @@ export function CommitDialog({ pkg, onDone, onClose }: { pkg: string; onDone: (l
             }
           }}
         >
-          커밋
+          기록
         </button>
       </div>
     </Overlay>
@@ -103,19 +103,19 @@ export function PublishDialog({
   const ok = ready && issues!.length === 0;
 
   return (
-    <Overlay title={`배포: ${pkg}`} onClose={onClose}>
+    <Overlay title={`적용: ${pkg}`} onClose={onClose}>
       <div className="gx-mbody">
-        {!ready && !err ? <div className="gx-hint">판정과 diff 를 모으는 중…</div> : null}
+        {!ready && !err ? <div className="gx-hint">검사와 변경 내역을 모으는 중…</div> : null}
         {issues?.length ? (
           <div className="gx-field">
-            <span>판정 실패 — 고쳐야 배포할 수 있다</span>
+            <span>검사에 걸렸습니다 — 고쳐야 적용할 수 있습니다</span>
             <div className="gx-err">{issues.map((i) => "- " + i).join("\n")}</div>
           </div>
         ) : null}
-        {ready && ok ? <div className="gx-hint gx-setup-ok">판정 통과</div> : null}
+        {ready && ok ? <div className="gx-hint gx-setup-ok">검사 통과</div> : null}
         {changes ? (
           <div className="gx-field">
-            <span>미커밋 변경 {changes.length}건 {changes.length ? "(배포가 함께 커밋한다)" : ""}</span>
+            <span>기록하지 않은 변경 {changes.length}건 {changes.length ? "(적용할 때 함께 기록됩니다)" : ""}</span>
             {changes.length ? (
               <div className="st-changes">
                 {changes.map((c) => (
@@ -134,7 +134,7 @@ export function PublishDialog({
           </div>
         ) : null}
         <div className="gx-field">
-          <span>버전 (비우면 자동 — 현재 {draftVersion ?? "?"}, 릴리스가 이미 있으면 patch 범프)</span>
+          <span>버전 (비우면 자동 — 지금 {draftVersion ?? "?"}, 이전 판이 있으면 끝자리를 올립니다)</span>
           <input value={version} placeholder="자동" onChange={(e) => setVersion(e.target.value)} />
         </div>
         {err ? <div className="gx-err">{err}</div> : null}
@@ -160,7 +160,7 @@ export function PublishDialog({
             }
           }}
         >
-          {busy ? "배포 중…" : "배포"}
+          {busy ? "적용 중…" : "적용"}
         </button>
       </div>
     </Overlay>
@@ -182,7 +182,7 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
   }, [pkg]);
 
   return (
-    <Overlay title={`릴리스: ${pkg}`} onClose={onClose}>
+    <Overlay title={`되돌리기: ${pkg}`} onClose={onClose}>
       <div className="gx-mbody">
         {releases ? (
           <div className="lv">
@@ -217,7 +217,7 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
                 ) : null}
               </div>
             ))}
-            {!releases.length ? <div className="empty">릴리스 없음 — 배포하면 여기 쌓인다</div> : null}
+            {!releases.length ? <div className="empty">아직 이전 판이 없습니다 — 적용할 때마다 여기 쌓입니다</div> : null}
           </div>
         ) : (
           <div className="gx-hint">불러오는 중…</div>
@@ -237,11 +237,13 @@ export function DiscardDialog({ pkg, installed, onDone, onClose }: { pkg: string
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <Overlay title="draft 폐기" onClose={onClose}>
+    <Overlay title="초기화 — 되돌릴 수 없습니다" onClose={onClose}>
       <div className="gx-mbody">
         <div className="gx-hint">
-          {pkg} 의 draft 와 그 편집 이력을 지운다. 되돌릴 수 없다.
-          {installed ? " 설치본(live)은 그대로 남는다 — 다시 열면 설치본 사본으로 새 draft 가 생긴다." : " 이 패키지는 아직 발행된 적이 없어 작업 전체가 사라진다."}
+          <b>{pkg} 에서 고치던 내용과 그 이력이 모두 지워집니다. 복구할 수 없습니다.</b>
+          {installed
+            ? " 지금 돌아가는 판은 그대로 남습니다 — 다시 열면 그 판의 사본으로 새로 시작합니다."
+            : " 이 패키지는 아직 한 번도 적용된 적이 없어, 작업한 것 전부가 사라집니다."}
         </div>
         {err ? <div className="gx-err">{err}</div> : null}
       </div>
@@ -265,7 +267,7 @@ export function DiscardDialog({ pkg, installed, onDone, onClose }: { pkg: string
             }
           }}
         >
-          폐기
+          초기화
         </button>
       </div>
     </Overlay>

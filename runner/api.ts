@@ -99,9 +99,9 @@ button.go{background:var(--accent);border-color:var(--accent);color:#fff}
 function importPage(res: http.ServerResponse): void {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(`${SHELL}<div class="card">
-<h1>봉투 열기</h1>
-<p>받은 <code>.relay</code> 파일을 놓으면 무엇을 요구하는지 먼저 보여 드립니다. 설치는 동의한 뒤에 시작합니다.</p>
-<div class="drop" id="d"><b>여기에 파일을 놓거나 클릭</b>.relay 봉투</div>
+<h1>불러오기</h1>
+<p>받은 에이전트 파일(<code>.relay</code>)을 놓으면 무엇을 요구하는지 먼저 보여 드립니다. 설치는 동의한 뒤에 시작합니다.</p>
+<div class="drop" id="d"><b>여기에 파일을 놓거나 클릭</b>.relay 파일</div>
 <input type="file" id="f" accept=".relay" style="display:none">
 <p class="note" id="st"></p>
 <script>
