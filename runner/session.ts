@@ -17,6 +17,8 @@ export interface SessionInput {
   interactive?: boolean;
   /** workspace 상대경로. 업로드 라우트가 발급한 참조만 유효하다 */
   attachments?: { path: string; name?: string }[];
+  /** 화면 맥락 스냅샷 — 프롬프트 서문으로만 붙는다. 이력의 user text 는 원문으로 남는다 (첨부와 같은 계약) */
+  scene?: string;
 }
 
 export interface SessionResult {
@@ -24,8 +26,11 @@ export interface SessionResult {
   code: number;
   /** 봉투 reply 이벤트가 알려준 실제 사용 모델 (별칭 해석 결과) */
   model?: string | null;
-  /** 봉투 reply 이벤트의 토큰 장부 {input, output, context_window} — 위젯의 컨텍스트 게이지용 */
+  /** 봉투 reply 이벤트의 토큰 장부 {input, output, context_window} — 턴의 청구 합계다 */
   usage?: unknown;
+  /** 봉투 reply 의 context {input, window} — 대화 점유량. 게이지는 usage 가 아니라 이걸 쓴다
+      (usage.input 은 툴 왕복마다 캐시 읽기가 누적돼 점유율로 쓰면 부푼다) */
+  context?: unknown;
   /** 이 턴이 stage 에 내놓은 파일들 (봉투 file 이벤트 + stage diff 합집합) */
   files?: { path: string; name: string }[];
 }
@@ -244,6 +249,7 @@ function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): vo
     appendBot(r.pkg, r.slot, String(ev.text ?? ""), {
       model: typeof ev.model === "string" ? ev.model : null,
       usage: ev.usage ?? null,
+      context: ev.context ?? null,
     });
   }
 }
@@ -311,7 +317,7 @@ function residentTurn(
   prompt: string,
   eventsFile: string,
   evFiles: { path: string; name: string }[],
-): Promise<{ reply: string; code: number; model: string | null; usage: unknown }> {
+): Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }> {
   return new Promise((resolve, reject) => {
     const key = `${pkg}/${slot}`;
     const r = acquireResident(pkg, slot, entry, env, cwd, fp);
@@ -347,6 +353,7 @@ function residentTurn(
           code: 0,
           model: typeof ev.model === "string" ? ev.model : null,
           usage: ev.usage ?? null,
+          context: ev.context ?? null,
         }));
       } else if (ev.event === "error") {
         finish(() => reject(new Error(String(ev.message ?? "하네스 오류"))));
@@ -455,9 +462,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   }
 
   const atts = safeAttachments(input.attachments);
-  const prompt = atts.length
-    ? `첨부 파일 — Read 도구로 읽어라:\n${atts.map((a) => "- " + path.join(stage, a.path)).join("\n")}\n\n${input.prompt ?? ""}`
-    : input.prompt ?? "";
+  // 서문 합성은 기판 몫이다 — 화면 맥락(scene)도 첨부도 프롬프트에만 붙고 이력에는 원문만 남는다
+  const scene = String(input.scene ?? "").trim();
+  const prompt = (scene ? `[화면 맥락 — 사용자가 지금 보고 있는 화면]\n${scene}\n\n` : "")
+    + (atts.length ? `첨부 파일 — Read 도구로 읽어라:\n${atts.map((a) => "- " + path.join(stage, a.path)).join("\n")}\n\n` : "")
+    + (input.prompt ?? "");
 
   // 한 슬롯에 턴은 하나다. 돌고 있는데 또 넣으면 두 프로세스가 같은 하네스 세션을
   // --resume 으로 함께 물어 답이 통째로 비는 일이 생긴다. 조용히 비우느니 막고 알린다.
@@ -482,7 +491,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
   const turn = resident
     ? residentTurn(input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
-    : new Promise<{ reply: string; code: number; model: string | null; usage: unknown }>((resolve, reject) => {
+    : new Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }>((resolve, reject) => {
       const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
       live.set(key, child);
       let raw = "";
@@ -497,7 +506,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         } catch { /* 이미 닫힘 */ }
       }, 60_000);
       stall.unref?.();
-      let reply: { text: string; model: string | null; usage: unknown } | null = null;
+      let reply: { text: string; model: string | null; usage: unknown; context: unknown } | null = null;
       let errEvent = "";
       const rl = readline.createInterface({ input: child.stdout! });
       rl.on("line", (line) => {
@@ -518,6 +527,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
             text: String(ev.text ?? ""),
             model: typeof ev.model === "string" ? ev.model : null,
             usage: ev.usage ?? null,
+            context: ev.context ?? null,
           };
         } else if (ev.event === "error") {
           errEvent = String(ev.message ?? "");
@@ -534,16 +544,16 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       child.on("close", (code) => {
         clearInterval(stall);
         live.delete(key);
-        if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage });
+        if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage, context: reply.context });
         if (errEvent) return reject(new Error(errEvent));
         const legacy = raw.trim();
         if (code !== 0 && !legacy) return reject(new Error(`하네스 종료 코드 ${code}: ${err.slice(-500)}`));
-        resolve({ reply: legacy, code: code ?? 0, model: null, usage: null });
+        resolve({ reply: legacy, code: code ?? 0, model: null, usage: null, context: null });
       });
     });
 
   // 실패도 이력이다. 물음만 남기고 끝내면 다음 기동의 복구가 죽은 턴으로 오해한다
-  let r: { reply: string; code: number; model: string | null; usage: unknown };
+  let r: { reply: string; code: number; model: string | null; usage: unknown; context?: unknown };
   try {
     r = await turn;
   } catch (e) {
@@ -559,7 +569,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
 
   const seen = new Set(evFiles.map((f) => f.path));
   const files = [...evFiles, ...stageDiffFiles(stage, stageBefore).filter((f) => !seen.has(f.path))];
-  appendBot(input.pkg, slot, r.reply, { model: r.model, usage: r.usage, files });
+  appendBot(input.pkg, slot, r.reply, { model: r.model, usage: r.usage, context: r.context, files });
   return { ...r, files };
 }
 
@@ -587,7 +597,7 @@ function appendBot(
   pkg: string,
   slot: string,
   reply: string,
-  extra: { model?: string | null; usage?: unknown; files?: { path: string; name: string }[] } = {},
+  extra: { model?: string | null; usage?: unknown; context?: unknown; files?: { path: string; name: string }[] } = {},
 ): void {
   writeRecord(pkg, slot, {
     t: new Date().toISOString(),
@@ -595,6 +605,7 @@ function appendBot(
     text: reply.slice(0, HISTORY_TEXT_CAP),
     ...(extra.model ? { model: extra.model } : {}),
     ...(extra.usage ? { usage: extra.usage } : {}),
+    ...(extra.context ? { context: extra.context } : {}),
     ...(extra.files?.length ? { files: extra.files } : {}),
   });
 }
