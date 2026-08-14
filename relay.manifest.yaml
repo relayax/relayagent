@@ -160,7 +160,9 @@ properties:
                   봉투    착신 message 는 <channel source="<채널이름>" ...>원문</channel>
                           태그로 감싼다. 발화자 닉네임·대화 키·시각 등 라우팅 맥락은 속성으로
                           싣는다 — 그룹 대화는 한 slot 에 발화자가 여럿이라 닉네임은 매 착신마다
-                          실어야 세션이 회신 상대를 오인하지 않는다.
+                          실어야 세션이 회신 상대를 오인하지 않는다. user 속성(플랫폼의 발화자
+                          안정 식별자)은 필수다 — 개인 기판은 게이트에만 쓰지만, org 기판은
+                          이 값으로 발신자를 principal 에 결부한다(결부는 권위 소관).
                   착신    POST {RELAY_API}/pkg/{RELAY_NAME}/chat · Authorization: Bearer
                           {RELAY_TOKEN} · body {message, slot, attachments?}. 동기 호출 —
                           턴이 종결되면 {reply, model, usage, files} 가 온다.

@@ -148,7 +148,8 @@ async function onEvent(ev: any): Promise<void> {
       log({ attachment: String(f.name), error: String(e) });
     }
   }
-  const envelope = `<channel source="${CHANNEL}" nick="${escapeXml(user)}" conversation="${escapeXml(conversation)}" ts="${ev.ts}">${escapeXml(text)}</channel>`;
+  // user = 발화자 안정 식별자 — org 기판의 principal 결부 축(개인 기판은 게이트에만 쓴다)
+  const envelope = `<channel source="${CHANNEL}" user="${escapeXml(user)}" nick="${escapeXml(user)}" conversation="${escapeXml(conversation)}" ts="${ev.ts}">${escapeXml(text)}</channel>`;
 
   enqueue(slot, async () => {
     try {
