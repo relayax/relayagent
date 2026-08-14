@@ -321,7 +321,7 @@ function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: strin
 
 async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge): Promise<unknown> {
   // 인가 판정은 권위 이음새를 지난다 — "누구로서(consumer), 무엇을(provider/tool), 어떤 자격으로"
-  const grant = authority.grantForTool(consumer, provider, tool);
+  const grant = await authority.grantForTool(consumer, provider, tool);
   if (!grant) throw new Error(`E_NO_GRANT: ${consumer} -> ${provider}/${tool}`);
   const rec = ledger.packages[provider];
   const m = loadManifest(rec.path);
@@ -368,7 +368,7 @@ async function handleMcp(ledger: Ledger, authority: Authority, host: HostBridge,
       if (a2a) {
         const m = loadManifest(ledger.packages[a2a[1]].path);
         const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
-        const grant = authority.grantForMission(pkg, a2a[1], mission);
+        const grant = await authority.grantForMission(pkg, a2a[1], mission);
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
         result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)), pkg);
       } else if (edge) {
@@ -843,7 +843,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       if (mcp && req.method === "POST") {
         const pkg = decodeURIComponent(mcp[1]);
         const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-        const owner = authority.packageForToken(token);
+        const owner = await authority.packageForToken(token);
         if (owner !== pkg) return void json(res, 401, { error: "토큰 불일치" });
         const agent = url.searchParams.get("agent") ?? landingAgentName(loadManifest(getLedger().packages[pkg].path)) ?? "";
         return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res));
