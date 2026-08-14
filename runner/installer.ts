@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { saveLedger, expandHome, workspacePath, RELAY_HOME, type Grant, type Ledger, type PkgOrigin } from "./state.ts";
 import { loadManifest, judge, activeHarness, disclosure, ManifestError, type Disclosure, type Manifest, type HarnessVariant } from "./manifest.ts";
+import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, type BuildResult } from "./build.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "./entry.ts";
@@ -187,6 +188,8 @@ export interface Prepared {
   registry: string | null;
   manifest: Manifest;
   disclosure: Disclosure;
+  /** 발행 키 사인이 검증됐는가 — null = 무서명(미고정 기판에서만 허용) */
+  signed: boolean;
 }
 
 /**
@@ -197,13 +200,32 @@ export interface Prepared {
 export function prepareArtifact(
   ledger: Ledger,
   file: string,
-  opts: { name?: string; digest?: string; registry?: string | null } = {},
+  opts: { name?: string; digest?: string; registry?: string | null; signature?: EnvelopeSignature } = {},
 ): Prepared {
   const abs = path.resolve(expandHome(file));
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error(`없는 아티팩트: ${file}`);
   const digest = sha256File(abs);
   if (opts.digest && opts.digest !== digest) {
     throw new Error(`봉인 불일치: 기대 ${opts.digest}\n  실제 ${digest} — 아티팩트를 다시 받으세요`);
+  }
+  // 서명 — 봉인(무결)과 다른 축(발행 주체). 사이드카(<file>.sig) 또는 스토어 엔트리로 온다.
+  // RELAY_PUBKEYS 로 발행 키를 고정한 기판은 무서명·미지 키·불일치 전부 fail-loud,
+  // 미고정 기판은 있으면 검증해 표시만 한다(사이드로드 동의 화면의 정직함).
+  let signature = opts.signature;
+  if (!signature && fs.existsSync(abs + ".sig")) {
+    try {
+      signature = JSON.parse(fs.readFileSync(abs + ".sig", "utf8"));
+    } catch { /* 깨진 사이드카 — 무서명으로 취급(고정 기판이면 아래서 거부) */ }
+  }
+  const pinned = pinnedKeys();
+  let signed = false;
+  if (pinned) {
+    if (!signature) throw new Error("서명 없는 봉투 — 이 기판은 RELAY_PUBKEYS 로 발행 키를 고정했습니다");
+    if (!pinned.includes(signature.pub)) throw new Error("고정 키셋에 없는 발행 키 — 봉투를 신뢰할 수 없습니다");
+    if (!verifyDigest(digest, signature)) throw new Error("서명 검증 실패 — 봉인과 사인이 맞지 않습니다");
+    signed = true;
+  } else if (signature) {
+    signed = verifyDigest(digest, signature);
   }
   const staging = fs.mkdtempSync(path.join(RELAY_HOME, "run", "prepare-"));
   try {
@@ -246,6 +268,7 @@ export function prepareArtifact(
       registry: opts.registry ?? null,
       manifest: m,
       disclosure: disclosure(m),
+      signed,
     };
   } catch (e) {
     fs.rmSync(staging, { recursive: true, force: true });

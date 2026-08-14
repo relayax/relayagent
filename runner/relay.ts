@@ -257,6 +257,21 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "keygen": {
+      // 발행 키 — 개인 키는 vault, 공개 키는 배포 대상에게 전달(설치 기판이 RELAY_PUBKEYS 로 고정)
+      const { keygen, SIGNING_VAULT_KEY } = await import("./sign.ts");
+      const { vaultGet: vg } = await import("./vault.ts");
+      if (vg(SIGNING_VAULT_KEY) && !has("force")) {
+        throw new Error("발행 키가 이미 있습니다 — 교체하려면 --force (이전 키로 서명된 봉투는 옛 공개 키로만 검증됩니다)");
+      }
+      const k = keygen();
+      vaultSet(SIGNING_VAULT_KEY, k.privatePem);
+      console.log("발행 키 생성됨 (vault: signing/ed25519). 이후 relay pack 이 자동으로 서명합니다.");
+      console.log("공개 키 (설치 기판의 RELAY_PUBKEYS 에 고정할 값):");
+      console.log(k.publicB64);
+      break;
+    }
+
     case "connect": {
       const [pkg, service] = args;
       if (!pkg || !service) throw new Error("사용법: relay connect <패키지> <서비스>");

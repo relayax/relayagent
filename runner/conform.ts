@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { spawnEntrySync } from "./entry.ts";
 import { loadManifest, type HarnessVariant } from "./manifest.ts";
 import type { Ledger } from "./state.ts";
@@ -150,7 +151,8 @@ export function conformChannel(pkgPath: string, c: { name: string; source: strin
   const entry = path.resolve(pkgPath, c.source, c.entry);
   const checks: ConformResult["checks"] = [];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
-  const r = spawnEntrySync(entry, [], {
+  // 채널 entry 는 하네스(실행 파일)와 달리 기판이 node 로 스폰하는 계약이다 — run.ts startChannels 와 동일 스폰
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", entry], {
     encoding: "utf8",
     timeout: 15_000,
     cwd: tmp,

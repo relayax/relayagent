@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPkg, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
+import { API_PORT, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
@@ -16,6 +16,7 @@ import { saveLedger } from "./state.ts";
 import { startServices, startChannels, stopServices } from "./run.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
+import { localAuthority, type Authority } from "./authority.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
@@ -162,10 +163,10 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
     `${SHELL}<div class="card">
 <h1>${esc(prep.manifest.display_name ?? prep.name)} 설치</h1>
 <p class="sub">${esc(prep.ref)} · ${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p>
-${sideloaded
-      ? `<div class="warn">스토어를 거치지 않은 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
+${sideloaded && !prep.signed
+      ? `<div class="warn">스토어를 거치지 않은 무서명 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
 <div class="seal">봉인값 · <code>${esc(prep.digest)}</code></div>`
-      : `<div class="seal">봉인 확인됨 · <code>${esc(prep.digest)}</code></div>`}
+      : `<div class="seal">${prep.signed ? "서명·봉인 확인됨" : "봉인 확인됨"} · <code>${esc(prep.digest)}</code></div>`}
 <h2>이 에이전트가 요구하는 것</h2>
 <dl>${rows.join("") || `<div><dt>—</dt><dd>따로 요구하는 것이 없습니다</dd></div>`}</dl>
 ${nots.length ? `<div class="nots">이 패키지는 ${esc(nots.join(", "))}.</div>` : ""}
@@ -317,18 +318,19 @@ function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: strin
   return tools;
 }
 
-async function callEdgeTool(ledger: Ledger, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge): Promise<unknown> {
-  const grant = ledger.grants.find((g) => g.consumer === consumer && g.provider === provider && (g.tools ?? []).includes(tool));
+async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge): Promise<unknown> {
+  // 인가 판정은 권위 이음새를 지난다 — "누구로서(consumer), 무엇을(provider/tool), 어떤 자격으로"
+  const grant = authority.grantForTool(consumer, provider, tool);
   if (!grant) throw new Error(`E_NO_GRANT: ${consumer} -> ${provider}/${tool}`);
   const rec = ledger.packages[provider];
   const m = loadManifest(rec.path);
   const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
   if (urlSvc) return await mcpCall(urlSvc.url, tool, args);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, { principal: PRINCIPAL }, host);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, { principal: authority.principal() }, host);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 
-async function handleMcp(ledger: Ledger, host: HostBridge, pkg: string, agent: string, body: any, res: http.ServerResponse): Promise<void> {
+async function handleMcp(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, body: any, res: http.ServerResponse): Promise<void> {
   const { id, method, params } = body;
   const reply = (result: unknown) => json(res, 200, { jsonrpc: "2.0", id, result });
   const fail = (message: string) => json(res, 200, { jsonrpc: "2.0", id, error: { code: -32000, message } });
@@ -364,15 +366,15 @@ async function handleMcp(ledger: Ledger, host: HostBridge, pkg: string, agent: s
       if (a2a) {
         const m = loadManifest(ledger.packages[a2a[1]].path);
         const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
-        const grant = ledger.grants.find((g) => g.consumer === pkg && g.provider === a2a[1] && g.mission === mission);
+        const grant = authority.grantForMission(pkg, a2a[1], mission);
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
         result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)), pkg);
       } else if (edge) {
-        result = await callEdgeTool(ledger, pkg, edge[1], edge[2], args, host);
+        result = await callEdgeTool(ledger, authority, pkg, edge[1], edge[2], args, host);
       } else {
         // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
         if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
-        result = await runScript(ledger, pkg, name, args, { principal: PRINCIPAL, agent }, host);
+        result = await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host);
       }
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
       return reply({ content: [{ type: "text", text }], isError: false });
@@ -515,6 +517,8 @@ function listSessions(pkg: string): { sessions: SessionRow[] } {
 }
 
 export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker): http.Server {
+  // 권위 이음새 — 1인 기판은 로컬 권위. 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
+  const authority = localAuthority(getLedger);
   const server = http.createServer(async (req, res) => {
     try {
       // URL 파싱은 try 안에서 — "//" 같은 기형 경로의 파싱 예외가 밖으로 새면
@@ -837,10 +841,10 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       if (mcp && req.method === "POST") {
         const pkg = decodeURIComponent(mcp[1]);
         const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-        const owner = tokenToPkg(getLedger(), token);
+        const owner = authority.packageForToken(token);
         if (owner !== pkg) return void json(res, 401, { error: "토큰 불일치" });
         const agent = url.searchParams.get("agent") ?? landingAgentName(loadManifest(getLedger().packages[pkg].path)) ?? "";
-        return void (await handleMcp(getLedger(), host, pkg, agent, await readBody(req), res));
+        return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res));
       }
 
       const hs = p.match(/^\/pkg\/([^/]+)\/harness$/);
@@ -1129,7 +1133,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);
       if (script && req.method === "POST") {
         const b = await readBody(req);
-        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: PRINCIPAL }, host);
+        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host);
         return void json(res, 200, { result });
       }
 

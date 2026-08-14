@@ -17,6 +17,17 @@ surfaces:
   chat:
     mode: direct
     greeting: "설치된 패키지와 연결 상태를 묻거나, 새 에이전트 패키지를 만들어 보세요."
+  channels:
+    # 참조 어댑터(의존성 0 — 네이티브 WebSocket/fetch). 자격을 연결하지 않으면 스폰 즉시
+    # 안내를 남기고 조용히 물러난다: relay connect system discord (봇 토큰) ·
+    # relay connect system slack ("xapp-... xoxb-..."). 게이트는 기본 닫힘 —
+    # RELAY_DISCORD_ALLOW / RELAY_SLACK_ALLOW (쉼표 구분 사용자 id)로 발화자를 허용한다.
+    - name: discord
+      source: channels/discord
+      entry: index.ts
+    - name: slack
+      source: channels/slack
+      entry: index.ts
 
 harness:
   variants:
