@@ -3,11 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPkg, stageDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
+import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPkg, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer } from "./session.ts";
+import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
@@ -262,14 +262,19 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const notes = startServices(l, name, r.path, r.manifest);
       return { name: r.name, version: r.version, path: r.path, services: notes };
     },
-    dispatch: async (providerRef, mission, payload) => {
+    dispatch: async (providerRef, mission, payload, consumer) => {
       const ledger = getLedger();
       const provider = resolveProvider(ledger, providerRef);
       if (!provider) throw new Error(`provider 미설치: ${providerRef}`);
       const m = loadManifest(ledger.packages[provider].path);
       if (!(m.missions ?? []).some((x) => x.name === mission)) throw new Error(`미선언 미션: ${mission}`);
-      const prompt = `[미션 수신: ${mission}]\n${payload}`;
-      const r = await runSession({ ledger, pkg: provider, prompt, slot: `mission-${mission}` });
+      // 첫 줄은 위임 마커다 — 수신 대화의 화면이 이 마커를 발신자 아이콘 카드로 렌더한다
+      const prompt = `[미션 수신: ${mission}${consumer ? ` ← ${consumer}` : ""}]\n${payload}`;
+      const slot = `mission-${mission}`;
+      // 위임 대화도 세션 목록의 시민이다 — 이름이 없으면 마커 원문이 라벨 행세를 해서 흉하다
+      const labelFile = path.join(sessionDir(provider, slot), "label");
+      if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `⇄ ${consumer ?? "외부"} → ${mission}`);
+      const r = await runSession({ ledger, pkg: provider, prompt, slot });
       return r.reply;
     },
   };
@@ -353,7 +358,7 @@ async function handleMcp(ledger: Ledger, host: HostBridge, pkg: string, agent: s
         const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
         const grant = ledger.grants.find((g) => g.consumer === pkg && g.provider === a2a[1] && g.mission === mission);
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
-        result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)));
+        result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)), pkg);
       } else if (edge) {
         result = await callEdgeTool(ledger, pkg, edge[1], edge[2], args, host);
       } else {
@@ -940,7 +945,8 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const slot = sessOp[2];
         if (!SLOT_RE.test(slot)) return void json(res, 400, { error: `slot 형식 위반: ${slot}` });
         if (sessOp[3] === "history" && req.method === "GET") {
-          return void json(res, 200, { messages: readHistory(pkg, slot, 200) });
+          // busy = 이 슬롯에 진행 중 턴이 있다 — 새로고침한 화면이 진행 표시와 중지를 되찾는 근거
+          return void json(res, 200, { messages: readHistory(pkg, slot, 200), busy: isSessionBusy(pkg, slot) });
         }
         // 진행 중 턴의 봉투 이벤트 — 위젯이 폴링해 delta·tool 진행과 파일 칩을 그린다.
         // from = 이미 받은 줄 수: 도구 결과 본문이 실리는 protocol 3 에서 매 폴링이

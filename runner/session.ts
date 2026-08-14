@@ -216,6 +216,11 @@ export function retireAllResidents(): void {
   for (const [key, r] of [...residents]) retireEntry(key, r, true);
 }
 
+/** 진행 중 턴 여부 — 화면이 새로고침 뒤에도 서버의 진행 상태(와 중지 버튼)를 되찾게 한다 */
+export function isSessionBusy(pkg: string, slot: string): boolean {
+  return live.has(`${pkg}/${slot}`);
+}
+
 /** ask(질문) 회송 — 위젯 답변을 진행 중 봉투의 제어 채널로 넣는다 */
 export function deliverAnswer(pkg: string, slot: string, id: string, answers: unknown): boolean {
   const child = live.get(`${pkg}/${slot}`);
