@@ -257,6 +257,29 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "oauth": {
+      const [pkg, service] = args;
+      if (!pkg || !service) throw new Error("사용법: relay oauth <패키지> <서비스> — auth.kind: oauth 인 url 서비스의 인가 흐름");
+      const rec = ledger.packages[pkg];
+      if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
+      const m = loadManifest(rec.path);
+      const svc = (m.services ?? []).find((s) => s.name === service);
+      if (!svc || !("url" in svc) || svc.url == null) throw new Error(`url 서비스 아님: ${service}`);
+      if (svc.auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${svc.auth?.kind ?? "none"}) — token 형은 relay connect`);
+      const { runOAuthFlow } = await import("./oauth.ts");
+      const bundle = await runOAuthFlow(svc.url, svc.auth, {
+        clientId: async () => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          const v = await new Promise<string>((resolve) => rl.question("등록된 앱의 client_id: ", resolve));
+          rl.close();
+          return v;
+        },
+      });
+      vaultSet(credKey(pkg, service), JSON.stringify(bundle));
+      console.log(`연결됨: ${credKey(pkg, service)} (vault — access${bundle.refresh_token ? "+refresh" : ""}${bundle.expires_at ? ", 자동 회전" : ""})`);
+      break;
+    }
+
     case "keygen": {
       // 발행 키 — 개인 키는 vault, 공개 키는 배포 대상에게 전달(설치 기판이 RELAY_PUBKEYS 로 고정)
       const { keygen, SIGNING_VAULT_KEY } = await import("./sign.ts");

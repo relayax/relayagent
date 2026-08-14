@@ -17,6 +17,7 @@ import { startServices, startChannels, stopServices } from "./run.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
+import { serviceAuthHeader } from "./oauth.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
@@ -325,7 +326,8 @@ async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: stri
   const rec = ledger.packages[provider];
   const m = loadManifest(rec.path);
   const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
-  if (urlSvc) return await mcpCall(urlSvc.url, tool, args);
+  // provider 의 자격으로 나간다 — ctx.service 와 같은 해석(token·oauth 회전). 무자격 호출이던 구멍의 답
+  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(provider, urlSvc.name, urlSvc.auth));
   if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, { principal: authority.principal() }, host);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }

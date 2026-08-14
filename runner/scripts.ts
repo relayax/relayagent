@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expandHome, type Grant, type Ledger } from "./state.ts";
 import { vaultGet, credKey } from "./vault.ts";
+import { serviceAuthHeader } from "./oauth.ts";
 import { loadManifest, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 
 export interface HostBridge {
@@ -102,9 +103,8 @@ export function makeCtx(
       const svc = (m.services ?? []).find((s) => s.name === name);
       if (!svc || !("url" in svc) || svc.url == null) throw new Error(`url 서비스 아님: ${name}`);
       const u = svc as Extract<ServiceDecl, { url: string }>;
-      const cred = u.auth?.kind === "token" ? vaultGet(credKey(pkg, name)) : null;
-      const authHeader = cred ? `Bearer ${cred}` : undefined;
-      return { url: u.url, call: (tool, args) => mcpCall(u.url, tool, args, authHeader) };
+      // 자격은 호출 시점 해석 — oauth 번들은 만료 60초 전 자동 회전한다(oauth.ts)
+      return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(pkg, name, u.auth)) };
     },
     // 커넥터 계약 자격은 요청 시점 pull 이다 — env 상주가 없어야 회전·revoke 가 다음 호출부터 즉시 선다
     credential: () => (m.auth && m.auth.kind !== "none" ? vaultGet(credKey(pkg, shortName(pkg))) : null),
