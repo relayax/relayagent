@@ -34,10 +34,12 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | 包(Package) | 带有 `relay.yaml` 的目录。清单是结构与路径的正本,目录树是内容的正本。 |
 | Surfaces | 包面向用户的方式。核心是 `view`:包自带的网页 UI,安装期构建,由守护进程托管在 `/pkg/<名称>/view/`,并凭包令牌连接到自己智能体的动词。`chat`(直接对话)与 `channels`(Discord、Slack 等适配器)是额外的门。 |
 | Harness | 随包内置、负责运行智能体的执行适配器。系统包内置 Claude Code、Codex、Kimi、Pi 适配器。动词:`session`、`setup`、`models`、`commands`、`info`(可选 `login`,以及 `serve` —— 常驻会话,经 stdin 注入回合,而非每回合一个进程)。契约一致性由 `relay harness-check` 判定,完整契约见 [docs/harness-protocol.md](docs/harness-protocol.md)。 |
-| Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。 |
+| Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
 | Services | 只有三种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点,凭证只挂在这里)、`dir`(文件资源)。 |
-| Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。 |
+| Connector | 无躯体连接器——动词直接调用外部 REST API 的包。顶层 `auth` 只声明凭证的形态,值存放在 vault 中,动词在调用时通过 `ctx.credential()` 取用。与 `url` 服务互斥。 |
+| Storage | `storage.buckets`——文件桶门面。个人基板只做判定,执行归组织基板所有。与服务的 `disk` 是不同的轴。 |
+| Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。`delivery: <频道>:<会话键>` 让该回合在对应会话的 slot 中运行,并把回复经频道适配器发出。 |
 | Missions | 包向其他包提供的问答能力。 |
 | Edges | 对其他包的 tools 或 mission 的依赖声明。声明是申请,激活靠授权。 |
 | Workspace | 包的文件夹授权:会话的 cwd,在安装时确定(默认 `~/Relay/<名称>`)并记入台账。 |

@@ -4,6 +4,8 @@ version: 0.1.0
 display_name: "주문 비서"
 description: "카드 한 줄. 지도, 카탈로그, 설치 화면이 이 문장을 그대로 쓴다."
 icon: assets/icon.svg
+publisher: "@local"          # 발행 주체 좌표 — 스토어 리스팅·정산이 읽는다 (선택)
+released_at: "2026-08-14"    # 발행일 — 스토어 리스팅 메타 (선택)
 
 surfaces:
   view:
@@ -43,6 +45,7 @@ hooks:
 
 agents:
   - name: orders
+    default: true            # main 슬롯 착지점 (최대 1) — 미선언이면 "짧은 이름과 같은 에이전트" 관례
     persona: agents/orders/AGENT.md
     skills: agents/orders/skills
     commands: agents/orders/commands
@@ -97,8 +100,10 @@ services:
 
 triggers:
   - id: daily-digest
+    label: "아침 요약"
     when: { cron: "0 9 * * *", tz: "Asia/Seoul" }
-    then: { agent: orders, prompt: "어제 처리량을 요약해 주세요." }
+    # delivery = 선톡 좌표 <채널이름>:<대화키> — 턴이 그 대화의 slot 에서 돌고 reply 가 채널로 발신된다
+    then: { agent: orders, prompt: "어제 처리량을 요약해 주세요.", delivery: "discord:orders-daily" }
   - id: on-install
     when: { event: relay.package.installed, debounce_ms: 60000 }
     then: { agent: orders, prompt: "설치 직후 초기 설정 상태를 점검해 주세요.", route: "/orders" }
@@ -115,6 +120,11 @@ edges:
     tools: [search, fetch]
   - provider: "@local/devteam"
     mission: product-context
+
+storage:                     # 파일 버킷 파사드 — 1인 기판은 판정만, org 기판이 집행 (services[].disk 와 다른 축)
+  buckets:
+    - name: uploads
+      policy: owner-only
 
 org:
   per_user:

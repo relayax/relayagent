@@ -90,6 +90,46 @@ function startSourceService(
   return "";
 }
 
+// 채널 어댑터(surfaces.channels) — 외부 대화 표면을 잇는 상주 글루. 서비스와 같은
+// children 테이블에 앉으므로 stopServices/stopAll/runningServices 가 함께 덮는다.
+// 자격도 서비스와 같은 이름공간(credKey)을 공유한다 — 이름 충돌은 판정이 막는다.
+// 재접속·게이트·직렬화는 어댑터 소유(relay.manifest.yaml surfaces.channels 계약),
+// 기판은 스폰과 기록만 한다. 종료를 되살리지 않는 것도 계약이다: 프로세스 종료 = 실패.
+export function startChannels(l: Ledger, pkg: string, pkgPath: string, m: Manifest): string[] {
+  const notes: string[] = [];
+  for (const c of m.surfaces?.channels ?? []) {
+    const key = `${pkg}/${c.name}`;
+    if (children.has(key)) continue;
+    const env = baseEnv(l, pkg);
+    env.RELAY_CHANNEL = c.name;
+    Object.assign(env, serviceAuthEnv(pkg, c.name));
+    const entry = path.join(pkgPath, c.source, c.entry);
+    // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다
+    const child = spawn("node", ["--experimental-strip-types", entry], {
+      cwd: path.join(pkgPath, c.source),
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdout?.on("data", (d) => logLine("channels", { pkg, channel: c.name, out: String(d).trim() }));
+    child.stderr?.on("data", (d) => logLine("channels", { pkg, channel: c.name, err: String(d).trim() }));
+    child.on("exit", (code) => {
+      children.delete(key);
+      logLine("channels", { pkg, channel: c.name, exit: code });
+    });
+    children.set(key, child);
+    notes.push(`${key}: 채널 어댑터 기동 (pid ${child.pid})`);
+  }
+  return notes;
+}
+
+/** 발신 — 어댑터 stdin 에 줄 단위 JSON post 를 쓴다. 채널이 안 떠 있으면 false: 부르는 쪽이 로그로 남긴다 */
+export function postToChannel(pkg: string, channel: string, msg: { conversation: string; text: string; files?: string[] }): boolean {
+  const child = children.get(`${pkg}/${channel}`);
+  if (!child?.stdin?.writable) return false;
+  child.stdin.write(JSON.stringify({ type: "post", ...msg }) + "\n");
+  return true;
+}
+
 function serviceAuthEnv(pkg: string, service: string): Record<string, string> {
   const out: Record<string, string> = {};
   const cred = vaultGet(credKey(pkg, service));

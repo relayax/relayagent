@@ -1,5 +1,6 @@
 import { logLine, type Ledger } from "./state.ts";
 import { loadManifest, type Manifest, type TriggerDecl } from "./manifest.ts";
+import { postToChannel } from "./run.ts";
 import { runSession } from "./session.ts";
 import { runScript, type HostBridge } from "./scripts.ts";
 import { PRINCIPAL } from "./state.ts";
@@ -110,9 +111,18 @@ export class Ticker {
       return;
     }
     if (t.then.agent && t.then.prompt) {
-      runSession({ ledger, pkg, agent: t.then.agent, prompt: t.then.prompt, slot: `trigger-${t.id}` }).catch((e) =>
-        logLine("triggers", { pkg, trigger: t.id, error: String(e) }),
-      );
+      // delivery = 선톡 좌표 '<채널>:<대화키>'. 그 대화의 slot 에서 턴을 돌려야 사용자의
+      // 후속 발화가 같은 slot 에 착신되어 대화가 이어진다 (채널 계약 '발신' 절)
+      const dm = t.then.delivery ? /^([a-z0-9][a-z0-9-]{0,39}):(.+)$/.exec(t.then.delivery) : null;
+      const slot = dm ? `${dm[1]}-${dm[2]}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64) : `trigger-${t.id}`;
+      runSession({ ledger, pkg, agent: t.then.agent, prompt: t.then.prompt, slot })
+        .then((r) => {
+          if (!dm) return;
+          if (!postToChannel(pkg, dm[1], { conversation: dm[2], text: r.reply, files: r.files?.map((f) => f.path) })) {
+            logLine("triggers", { pkg, trigger: t.id, error: `발신 실패 — 채널 미기동: ${dm[1]}` });
+          }
+        })
+        .catch((e) => logLine("triggers", { pkg, trigger: t.id, error: String(e) }));
     }
   }
 }

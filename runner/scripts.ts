@@ -36,6 +36,8 @@ export interface ScriptCtx {
   caller: { principal: string; agent?: string };
   dir(name: string): string;
   service(name: string): { call(tool: string, args: unknown): Promise<unknown>; url: string };
+  /** 커넥터 계약(최상위 auth)의 자격 — vault 의 패키지 짧은 이름 슬롯을 요청 시점에 읽는다. 미연결·미선언 = null */
+  credential(): string | null;
   dispatch(provider: string, mission: string, payload: string): Promise<string>;
   host?: HostBridge;
 }
@@ -63,6 +65,27 @@ export async function mcpCall(url: string, tool: string, args: unknown, authHead
   return parsed.result;
 }
 
+// host_methods 선언 = ring-0 브리지의 캡. 미선언이면 전체(ring-0 결재가 유일한 경계 — 현행 호환),
+// 선언하면 목록 밖 메서드는 거부한다. 메서드 이름 좌표는 host.<동사_스네이크> (draftPublish → host.draft_publish)
+const hostKey = (method: string): string => "host." + method.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
+
+function capHost(bridge: HostBridge, declared: string[] | undefined): HostBridge {
+  if (!declared || !declared.length) return bridge;
+  const allowed = new Set(declared);
+  return new Proxy(bridge, {
+    get(target, prop) {
+      const v = (target as unknown as Record<string | symbol, unknown>)[prop];
+      if (typeof v !== "function" || typeof prop !== "string") return v;
+      if (!allowed.has(hostKey(prop))) {
+        return () => {
+          throw new Error(`host_methods 미선언 메서드: ${hostKey(prop)}`);
+        };
+      }
+      return (v as (...a: unknown[]) => unknown).bind(target);
+    },
+  });
+}
+
 export function makeCtx(
   ledger: Ledger,
   pkg: string,
@@ -83,11 +106,13 @@ export function makeCtx(
       const authHeader = cred ? `Bearer ${cred}` : undefined;
       return { url: u.url, call: (tool, args) => mcpCall(u.url, tool, args, authHeader) };
     },
+    // 커넥터 계약 자격은 요청 시점 pull 이다 — env 상주가 없어야 회전·revoke 가 다음 호출부터 즉시 선다
+    credential: () => (m.auth && m.auth.kind !== "none" ? vaultGet(credKey(pkg, shortName(pkg))) : null),
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
       return hostBridge.dispatch(provider, mission, payload, pkg);
     },
-    host: rec.ring === 0 ? hostBridge ?? undefined : undefined,
+    host: rec.ring === 0 && hostBridge ? capHost(hostBridge, m.host_methods) : undefined,
   };
 }
 

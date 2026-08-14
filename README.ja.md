@@ -34,10 +34,12 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | パッケージ | `relay.yaml` を持つディレクトリ。マニフェストが構造とパスの正本、ツリーが内容の正本。 |
 | Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`chat`(直接対話)と `channels`(Discord、Slack などのアダプタ)は追加の扉。 |
 | Harness | パッケージに同梱され、エージェントを実行するアダプタ。システムパッケージには Claude Code、Codex、Kimi、Pi のアダプタが同梱。動詞は `session`、`setup`、`models`、`commands`、`info`(任意で `login`、および `serve` — ターンごとにプロセスを起こさず stdin でターンを受け取る常駐セッション)。契約適合性は `relay harness-check` が判定し、契約の全文は [docs/harness-protocol.md](docs/harness-protocol.md) にあります。 |
-| Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。 |
+| Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。`default: true` がランディングエージェント。 |
 | Scripts | 動詞。`scripts/<名前>.ts` が `async (input, ctx) => JSON` をデフォルトエクスポート。 |
 | Services | 形は 3 つだけ。`source`(自分の身体、コンテナまたはプロセス)、`url`(リモート MCP エンドポイント、資格情報はここだけに付く)、`dir`(ファイル資源)。 |
-| Triggers | cron またはイベント。プロンプトでエージェントを起こすか、スクリプトを headless で実行。 |
+| Connector | 身体のないコネクタ——動詞が外部 REST API を直接呼ぶパッケージ。トップレベル `auth` は資格情報の形だけを宣言し、値は vault に置かれ、動詞が呼び出し時に `ctx.credential()` で取り出す。`url` サービスとは同時宣言不可。 |
+| Storage | `storage.buckets`——ファイルバケットのファサード。個人基板は判定のみ、執行は組織基板の責務。サービスの `disk` とは別の軸。 |
+| Triggers | cron またはイベント。プロンプトでエージェントを起こすか、スクリプトを headless で実行。`delivery: <チャネル>:<会話キー>` はその会話の slot でターンを回し、返信をチャネルアダプタから送出する。 |
 | Missions | パッケージが他のパッケージに提供する質疑応答能力。 |
 | Edges | 他パッケージの tools や mission への依存宣言。宣言は申請であり、有効化は承認。 |
 | Workspace | パッケージのフォルダ承認。セッションの cwd で、インストール時に決まり(デフォルト `~/Relay/<名前>`)台帳に残る。 |

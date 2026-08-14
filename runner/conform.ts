@@ -141,9 +141,47 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
   return { variant: v.name, ok: checks.every((c) => c.ok), checks };
 }
 
+/**
+ * 채널 어댑터 계약 적합성 — RELAY_CONFORM=1 스폰 문(schema surfaces.channels '검사' 절).
+ * 어댑터는 외부 연결 없이 자기 서술 JSON 한 줄을 내고 0 으로 종료해야 한다.
+ * 자격·네트워크가 필요한 착신·발신 왕복은 여기서 못 본다 — 리뷰와 스모크가 맡는다.
+ */
+export function conformChannel(pkgPath: string, c: { name: string; source: string; entry: string }): ConformResult {
+  const entry = path.resolve(pkgPath, c.source, c.entry);
+  const checks: ConformResult["checks"] = [];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
+  const r = spawnEntrySync(entry, [], {
+    encoding: "utf8",
+    timeout: 15_000,
+    cwd: tmp,
+    env: { ...process.env, RELAY_CONFORM: "1", RELAY_NAME: "conform", RELAY_CHANNEL: c.name, RELAY_API: "http://127.0.0.1:0", RELAY_TOKEN: "conform" },
+  });
+  try {
+    const lines = String(r.stdout ?? "").trim().split("\n").filter(Boolean);
+    const j = JSON.parse(lines[lines.length - 1] ?? "");
+    checks.push({
+      verb: "conform",
+      ok: r.status === 0 && typeof j.name === "string" && j.name.length > 0,
+      note: r.status !== 0 ? `exit ${r.status}` : !j.name ? "name 누락" : `${j.name}${j.protocol ? ` · protocol ${j.protocol}` : ""}`,
+    });
+  } catch {
+    checks.push({ verb: "conform", ok: false, note: "RELAY_CONFORM=1 에서 자기 서술 JSON 한 줄을 내고 0 으로 종료해야 합니다" });
+  }
+  let leftover: string[] = [];
+  try {
+    leftover = fs.readdirSync(tmp);
+  } catch { /* 이미 제거됨 */ }
+  checks.push({ verb: "오염", ok: leftover.length === 0, note: leftover.length ? `cwd 에 파일을 남김: ${leftover.join(", ")}` : "cwd 깨끗" });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return { variant: `channel:${c.name}`, ok: checks.every((x) => x.ok), checks };
+}
+
 export function conformPkg(ledger: Ledger, name: string): ConformResult[] {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  return (m.harness?.variants ?? []).map((v) => conformHarness(rec.path, v));
+  return [
+    ...(m.harness?.variants ?? []).map((v) => conformHarness(rec.path, v)),
+    ...(m.surfaces?.channels ?? []).map((c) => conformChannel(rec.path, c)),
+  ];
 }

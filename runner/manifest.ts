@@ -17,6 +17,10 @@ export interface Manifest {
   display_name: string;
   description: string;
   icon?: string;
+  /** 발행 주체 좌표(@scope) — 스토어 리스팅·정산이 읽는다 */
+  publisher?: string;
+  /** 발행일 YYYY-MM-DD — 스토어 리스팅 메타 */
+  released_at?: string;
   requires?: RequiresDecl;
   surfaces: {
     view?: { source: string; out?: string };
@@ -28,12 +32,18 @@ export interface Manifest {
     workdir?: string;
   };
   hooks?: { deny?: string[] };
-  agents?: { name: string; persona: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[] }[];
+  /** 커넥터 계약 — 몸(서비스) 없는 커넥터의 자격 형태. url 서비스와 동시 선언 불가 */
+  auth?: AuthDecl;
+  agents?: { name: string; persona: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
   edges?: { provider: string; tools?: string[]; mission?: string }[];
+  /** ring-0 host 브리지 게이트 선언 — host.* 캡. 미선언 = 전체(ring-0 결재가 경계) */
+  host_methods?: string[];
+  /** 파일 버킷 파사드 — 1인 기판은 판정만, 집행은 org 기판 소유 */
+  storage?: { buckets?: { name: string; policy?: string }[] };
   org?: unknown;
 }
 
@@ -59,10 +69,13 @@ export interface AuthDecl {
   verify?: { url: string; headers?: Record<string, string> };
   client?: string;
   oauth_client?: unknown;
+  /** org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시 */
+  service?: string;
 }
 
 export interface TriggerDecl {
   id: string;
+  label?: string;
   when: { cron?: string; tz?: string; event?: string; filter?: Record<string, unknown>; debounce_ms?: number };
   then: { agent?: string; prompt?: string; route?: string; delivery?: string; script?: string };
 }
@@ -70,6 +83,48 @@ export interface TriggerDecl {
 const NAME = /^@[a-z0-9-]+\/[a-z0-9][a-z0-9-]{1,39}$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const PROVIDER = /^@[a-z0-9-]+\/[a-z0-9][a-z0-9-]{1,39}(@[^\s@]+)?$/;
+const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const SIZE = /^\d+(Mi|Gi)$/;
+
+// 판정기가 아는 최상위 어휘의 전부. 미지 키는 거부한다 — 조용히 받으면 같은 manifest 가
+// 기판마다 다른 뜻이 되는 방언의 문이 열린다. 확장(org 의미)은 org 블록 한 곳으로만 들어온다
+const TOP_KEYS = new Set([
+  "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at",
+  "requires", "surfaces", "harness", "hooks", "auth", "agents", "scripts", "services",
+  "triggers", "missions", "edges", "host_methods", "storage", "org",
+]);
+const STORAGE_POLICIES = new Set(["org-member", "owner-only", "role-based"]);
+
+/** 트리거 cron 문법 — tick.ts 의 매처가 이해하는 그대로(5필드, *|*\/n|a-b|숫자, 콤마 목록).
+ *  판정 없이 받으면 오타 난 cron 이 영원히 침묵한다 — 발화하지 않는 트리거는 에러를 내지 않는다 */
+export function validCron(expr: string): boolean {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  return parts.every((f) =>
+    f.split(",").every((part) => part === "*" || /^\*\/[1-9]\d*$/.test(part) || /^\d+-\d+$/.test(part) || /^\d+$/.test(part)),
+  );
+}
+
+/** auth 블록 공용 판정 — services[].auth · harness llm.auth · 최상위 auth 가 같은 어휘를 쓴다 */
+function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[]): void {
+  if (!a) return;
+  if (!["none", "token", "oauth"].includes(a.kind)) {
+    issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
+    return;
+  }
+  if (a.env != null && (a.kind !== "token" || !/^[A-Z][A-Z0-9_]*$/.test(a.env))) {
+    issues.push(`${label}.env: token 형의 대문자 env 이름만: ${a.env}`);
+  }
+  if (a.client != null && (a.kind !== "oauth" || !["dcr", "registered"].includes(a.client))) {
+    issues.push(`${label}.client: oauth 형의 dcr|registered 만: ${a.client}`);
+  }
+  if (a.verify != null && typeof (a.verify as { url?: unknown }).url !== "string") {
+    issues.push(`${label}.verify.url: 필수`);
+  }
+  if (a.service != null && !SLUG.test(a.service)) {
+    issues.push(`${label}.service 형식 위반(slug): ${a.service}`);
+  }
+}
 
 export class ManifestError extends Error {
   issues: string[];
@@ -105,11 +160,20 @@ export function judge(m: Manifest, pkgPath?: string): void {
   };
 
   if (m.schema !== "relay/v1") issues.push(`schema: relay/v1 필요`);
+  for (const k of Object.keys(m as unknown as Record<string, unknown>)) {
+    if (!TOP_KEYS.has(k)) issues.push(`미지 최상위 키: ${k}`);
+  }
   for (const f of ["name", "version", "display_name", "description"] as const) {
     if (typeof m[f] !== "string" || m[f].trim() === "") issues.push(`${f}: 필수`);
   }
   if (m.name && !NAME.test(m.name)) issues.push(`name 형식 위반: ${m.name}`);
+  if (m.version && typeof m.version === "string" && !SEMVER.test(m.version)) issues.push(`version 형식 위반(semver): ${m.version}`);
+  if (m.publisher != null && !/^@[a-z0-9-]+$/.test(String(m.publisher))) issues.push(`publisher 형식 위반(@scope): ${m.publisher}`);
+  if (m.released_at != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(m.released_at))) issues.push(`released_at 형식 위반(YYYY-MM-DD): ${m.released_at}`);
   if (!m.surfaces || typeof m.surfaces !== "object") issues.push("surfaces: 필수");
+  for (const k of Object.keys(m.surfaces ?? {})) {
+    if (!["view", "chat", "channels"].includes(k)) issues.push(`미지 surfaces 키: ${k}`);
+  }
 
   if (m.icon) mustExist(m.icon, "icon");
 
@@ -143,9 +207,17 @@ export function judge(m: Manifest, pkgPath?: string): void {
   if (view) {
     if (!view.source || badPath(view.source)) issues.push("surfaces.view.source: 상대경로 필수");
     else mustExist(view.source, "surfaces.view.source");
+    if (view.out != null && badPath(view.out)) issues.push("surfaces.view.out: 상대경로 필수");
   }
+  const chat = m.surfaces?.chat;
+  if (chat && !["direct", "none"].includes(chat.mode as string)) {
+    issues.push(`surfaces.chat.mode 닫힌집합 위반(direct|none): ${chat.mode}`);
+  }
+  const chNames = new Set<string>();
   for (const c of m.surfaces?.channels ?? []) {
     if (!SLUG.test(c.name ?? "")) issues.push(`channels 이름 형식 위반: ${c.name}`);
+    if (chNames.has(c.name)) issues.push(`channels 이름 중복: ${c.name}`);
+    chNames.add(c.name);
     if (!c.source || !c.entry) issues.push(`channels[${c.name}]: source + entry 필수`);
     else mustExist(path.join(c.source, c.entry), `channels[${c.name}].entry`);
     if (c.icon) mustExist(c.icon, `channels[${c.name}].icon`);
@@ -163,7 +235,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (v.icon) mustExist(v.icon, `harness.variants[${v.name}].icon`);
     if (v.llm) {
       if (!SLUG.test(v.llm.provider ?? "")) issues.push(`harness.variants[${v.name}].llm.provider 형식 위반: ${v.llm.provider}`);
-      if (v.llm.auth?.kind && !["none", "token", "oauth"].includes(v.llm.auth.kind)) issues.push(`harness.variants[${v.name}].llm.auth.kind 닫힌집합 위반: ${v.llm.auth.kind}`);
+      judgeAuth(v.llm.auth, `harness.variants[${v.name}].llm.auth`, issues);
       if (v.llm.icon) mustExist(v.llm.icon, `harness.variants[${v.name}].llm.icon`);
     }
   }
@@ -185,10 +257,13 @@ export function judge(m: Manifest, pkgPath?: string): void {
   const agents = m.agents ?? [];
   const agentNames = new Set<string>();
   const scriptNames = pkgPath && m.scripts?.source ? listScripts(pkgPath, m) : null;
+  const defaults = agents.filter((a) => a.default === true);
+  if (defaults.length > 1) issues.push(`agents[].default 는 최대 1: ${defaults.map((a) => a.name).join(", ")}`);
   for (const a of agents) {
     if (!SLUG.test(a.name ?? "")) issues.push(`agent 이름 형식 위반: ${a.name}`);
     if (agentNames.has(a.name)) issues.push(`agent 이름 중복: ${a.name}`);
     agentNames.add(a.name);
+    if (a.default != null && typeof a.default !== "boolean") issues.push(`agents[${a.name}].default: boolean 만`);
     if (!a.persona) issues.push(`agents[${a.name}].persona: 필수`);
     else mustExist(a.persona, `agents[${a.name}].persona`);
     if (a.skills) mustExist(a.skills, `agents[${a.name}].skills`);
@@ -231,23 +306,98 @@ export function judge(m: Manifest, pkgPath?: string): void {
       if (!s.dockerfile && !s.entry) issues.push(`services[${s.name}]: dockerfile(컨테이너 형) 또는 entry(프로세스 형) 필수`);
       if (s.dockerfile) mustExist(path.join(s.source, s.dockerfile), `services[${s.name}].dockerfile`);
       if (s.entry) mustExist(path.join(s.source, s.entry), `services[${s.name}].entry`);
+      if (s.disk != null && !SIZE.test(s.disk)) issues.push(`services[${s.name}].disk 형식 위반(<n>Mi|Gi): ${s.disk}`);
+      if (s.resources?.memory != null && !SIZE.test(s.resources.memory)) issues.push(`services[${s.name}].resources.memory 형식 위반(<n>Mi|Gi): ${s.resources.memory}`);
+      if (s.resources?.cpu != null && !(typeof s.resources.cpu === "number" && s.resources.cpu > 0)) issues.push(`services[${s.name}].resources.cpu: 0 초과 숫자만(코어 수)`);
+    }
+    if ("url" in s && s.url != null) {
+      if (!/^https?:\/\//.test(s.url)) issues.push(`services[${s.name}].url: http(s) URL 필요`);
+      for (const t of s.tools ?? []) if (!SLUG.test(t)) issues.push(`services[${s.name}].tools 형식 위반: ${t}`);
+      judgeAuth(s.auth, `services[${s.name}].auth`, issues);
     }
     if ("dir" in s && s.dir != null && badPath(s.dir, true)) issues.push(`services[${s.name}].dir: 상대경로 또는 ~ 경로만`);
   }
+  // 커넥터 계약 — 몸 없는 커넥터의 자격 형태 선언. url 서비스(자격이 서비스 소속)와는
+  // 계약 출처가 겹치므로 동시 선언을 거부한다: 계약 출처는 한 곳이어야 결재가 한 곳에 선다
+  if (m.auth) {
+    judgeAuth(m.auth, "auth", issues);
+    if (m.auth.kind === "none") issues.push("auth: 커넥터 계약에 none 은 무의미 — 블록을 제거하세요");
+    if ((m.services ?? []).some((s) => "url" in s && s.url != null)) {
+      issues.push("auth: url 서비스와 최상위 auth 동시 선언 불가 — 계약 출처는 한 곳");
+    }
+  }
+  // 채널은 서비스와 자격 이름공간(credKey)을 공유한다 — 이름이 겹치면 vault 키가 충돌한다
+  for (const n of chNames) {
+    if (svcNames.has(n)) issues.push(`channels[${n}]: services 와 이름 충돌 — 자격 이름공간을 공유합니다`);
+  }
 
+  const triggerIds = new Set<string>();
   for (const t of m.triggers ?? []) {
     if (!SLUG.test(t.id ?? "")) issues.push(`trigger id 형식 위반: ${t.id}`);
+    if (triggerIds.has(t.id)) issues.push(`trigger id 중복: ${t.id}`);
+    triggerIds.add(t.id);
+    if (t.label != null && (typeof t.label !== "string" || !t.label.trim())) issues.push(`triggers[${t.id}].label: 비어 있지 않은 문자열만`);
     const whenForms = [t.when?.cron, t.when?.event].filter((x) => x != null).length;
     if (whenForms !== 1) issues.push(`triggers[${t.id}].when: cron | event 중 하나`);
+    if (t.when?.cron != null) {
+      if (!validCron(t.when.cron)) issues.push(`triggers[${t.id}].when.cron 문법 위반(5필드 · *|*/n|a-b|숫자, 콤마): ${t.when.cron}`);
+      if (t.when.tz != null) {
+        try {
+          new Date().toLocaleString("en-US", { timeZone: t.when.tz });
+        } catch {
+          issues.push(`triggers[${t.id}].when.tz 미지 시간대: ${t.when.tz}`);
+        }
+      }
+      // debounce·filter 는 event 형 소속이다 — cron 에 붙으면 조용히 무시되므로 판정으로 막는다
+      if (t.when.debounce_ms != null) issues.push(`triggers[${t.id}].when.debounce_ms: event 형 전용`);
+      if (t.when.filter != null) issues.push(`triggers[${t.id}].when.filter: event 형 전용`);
+    }
+    if (t.when?.event != null && t.when.tz != null) issues.push(`triggers[${t.id}].when.tz: cron 형 전용`);
     const thenForms = [t.then?.agent, t.then?.script].filter((x) => x != null).length;
     if (thenForms !== 1) issues.push(`triggers[${t.id}].then: agent | script 중 하나`);
     if (t.then?.agent && !agentNames.has(t.then.agent)) issues.push(`triggers[${t.id}].then.agent 미선언: ${t.then.agent}`);
     if (t.then?.agent && !t.then?.prompt) issues.push(`triggers[${t.id}].then.prompt: agent 형이면 필수`);
+    if (t.then?.script && (t.then.route != null || t.then.delivery != null)) issues.push(`triggers[${t.id}].then.route/delivery: agent 형 전용`);
+    if (t.then?.route != null && !/^\//.test(t.then.route)) issues.push(`triggers[${t.id}].then.route: / 시작 경로만`);
+    if (t.then?.delivery != null) {
+      const dm = /^([a-z0-9][a-z0-9-]{0,39}):(.+)$/.exec(t.then.delivery);
+      if (!dm) issues.push(`triggers[${t.id}].then.delivery 형식 위반(<채널이름>:<대화키>): ${t.then.delivery}`);
+      else if (!chNames.has(dm[1])) issues.push(`triggers[${t.id}].then.delivery 미선언 채널: ${dm[1]}`);
+    }
+  }
+
+  const missionNames = new Set<string>();
+  for (const mi of m.missions ?? []) {
+    if (typeof mi?.name !== "string" || !mi.name.trim()) issues.push("missions[].name: 필수");
+    else if (missionNames.has(mi.name)) issues.push(`mission 이름 중복: ${mi.name}`);
+    else missionNames.add(mi.name);
   }
 
   for (const e of m.edges ?? []) {
     if (!PROVIDER.test(e.provider ?? "")) issues.push(`edge provider 형식 위반: ${e.provider}`);
     if (e.tools != null && e.mission != null) issues.push(`edges[${e.provider}]: tools 와 mission 동시 선언 불가`);
+    for (const t of e.tools ?? []) if (!SLUG.test(t)) issues.push(`edges[${e.provider}].tools 형식 위반: ${t}`);
+    if (e.mission != null && (typeof e.mission !== "string" || !e.mission.trim())) issues.push(`edges[${e.provider}].mission: 비어 있지 않은 문자열만`);
+  }
+
+  if (m.host_methods != null) {
+    if (!Array.isArray(m.host_methods) || m.host_methods.length === 0) issues.push("host_methods: 비어 있지 않은 목록");
+    for (const hm of Array.isArray(m.host_methods) ? m.host_methods : []) {
+      if (typeof hm !== "string" || !/^host\.[a-z0-9]+([._][a-z0-9]+)*$/.test(hm)) issues.push(`host_methods 형식 위반(host.*): ${hm}`);
+    }
+  }
+
+  if (m.storage != null) {
+    for (const k of Object.keys(m.storage)) if (k !== "buckets") issues.push(`미지 storage 키: ${k}`);
+    const buckets = m.storage.buckets;
+    if (!Array.isArray(buckets) || buckets.length === 0) issues.push("storage.buckets: 비어 있지 않은 목록");
+    const bNames = new Set<string>();
+    for (const b of Array.isArray(buckets) ? buckets : []) {
+      if (!SLUG.test(b?.name ?? "")) issues.push(`storage.buckets 이름 형식 위반: ${b?.name}`);
+      else if (bNames.has(b.name)) issues.push(`storage.buckets 이름 중복: ${b.name}`);
+      else bNames.add(b.name);
+      if (b?.policy != null && !STORAGE_POLICIES.has(b.policy)) issues.push(`storage.buckets[${b?.name}].policy 닫힌집합 위반(org-member|owner-only|role-based): ${b?.policy}`);
+    }
   }
 
   if (issues.length) throw new ManifestError(issues);
@@ -259,6 +409,10 @@ export function activeHarness(m: Manifest, selected?: string): HarnessVariant | 
 }
 
 export function landingAgentName(m: Manifest): string | null {
+  // 명시 선언이 관례보다 먼저다: default: true 가 main 슬롯 착지점.
+  // 미선언이면 "패키지 짧은 이름과 같은 에이전트" 관례 — 명시 선언은 이 관례의 상위 호환이다
+  const explicit = (m.agents ?? []).find((a) => a.default === true);
+  if (explicit) return explicit.name;
   const short = shortName(m.name);
   return (m.agents ?? []).some((a) => a.name === short) ? short : null;
 }
@@ -327,6 +481,10 @@ export interface Disclosure {
   spawns: string[];
   /** channels — 외부 대화 문 */
   channels: string[];
+  /** 최상위 auth — 몸 없는 커넥터 계약의 자격 형태 (없으면 null) */
+  connector: string | null;
+  /** host_methods — 기판 host 브리지 게이트 선언 */
+  hostMethods: string[];
   /** 요구 범위. 위험이 아니라 넓이 — 화면 미터가 이 값을 그린다 */
   risk: "low" | "medium" | "high";
 }
@@ -360,15 +518,18 @@ export function disclosure(m: Manifest): Disclosure {
     `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
+  const connector = m.auth?.kind ?? null;
+  const hostMethods = m.host_methods ?? [];
 
   // 요구 범위 판정. high = 사용자 시야 밖에서 움직일 수 있는 선언(자동 실행, 외부 접점,
-  // 자기 프로세스, 타 패키지 차용). medium = 호스트나 대화 표면을 넓게 쓰는 선언. 나머지 low
+  // 자기 프로세스, 타 패키지 차용, 기판 host 브리지). medium = 호스트나 대화 표면을 넓게
+  // 쓰는 선언. 나머지 low
   const risk: Disclosure["risk"] =
-    wakeups.length || network.length || spawns.length || borrows.length
+    wakeups.length || network.length || spawns.length || borrows.length || connector || hostMethods.length
       ? "high"
       : host.length || channels.length || (m.hooks?.deny?.length ?? 0)
         ? "medium"
         : "low";
 
-  return { folders, network, wakeups, llm, host, denied: m.hooks?.deny ?? [], borrows, spawns, channels, risk };
+  return { folders, network, wakeups, llm, host, denied: m.hooks?.deny ?? [], borrows, spawns, channels, connector, hostMethods, risk };
 }

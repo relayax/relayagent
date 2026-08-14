@@ -33,6 +33,14 @@ properties:
     minLength: 1
   icon:
     type: string
+  publisher:
+    description: 발행 주체 좌표 (@scope). 스토어 리스팅·정산이 읽는다 — 개인 기판은 표시 외 소비 없음
+    type: string
+    pattern: '^@[a-z0-9-]+$'
+  released_at:
+    description: 발행일 YYYY-MM-DD. 스토어 리스팅 메타 — 개인 기판은 표시 외 소비 없음
+    type: string
+    pattern: '^\d{4}-\d{2}-\d{2}$'
   requires:
     description: |
       호스트 환경 요구 = 설치 관문. validate 는 형태만 판정하고, 설치가 실체를 판정해
@@ -185,6 +193,10 @@ properties:
                   실패    비 200 을 침묵으로 뭉개지 마라 — 외부에도 실패로 알린다. 단 내부
                           사정(토큰·경로·스택)은 싣지 않는다. RELAY_TOKEN 과 자격은 외부
                           대화에 절대 노출 금지.
+                  검사    기판 적합성 검사(relay harness-check)는 RELAY_CONFORM=1 로 entry 를
+                          스폰한다. 어댑터는 이때 외부 연결 없이 자기 서술 JSON 한 줄
+                          {"name":"...","protocol":1} 을 stdout 에 내고 0 으로 종료한다 —
+                          자격·네트워크 없이 계약 준수를 기계로 판정하기 위한 문이다.
                 env = RELAY_NAME, RELAY_CHANNEL(이 채널 이름), RELAY_API, RELAY_TOKEN.
                 봇 토큰 류 자격은 vault 에 채널 이름 소속으로 앉아(relay connect <패키지>
                 <채널이름>) RELAY_CRED_<이름> 으로 주입된다 — 코드·매니페스트에 박지 마라.
@@ -321,8 +333,20 @@ properties:
           pattern: '^(~($|/)|/)'
           not:
             pattern: '(^|/)\.\.(/|$)'
+  auth:
+    description: |
+      커넥터 계약 — 몸(서비스) 없는 커넥터 패키지의 자격 형태 선언. upstream 이 REST API 라
+      스크립트(패키지 동사)가 직접 접속하는 패키지는 이 블록이 계약의 전부다. 자격 값은
+      vault 에 패키지 짧은 이름 소속으로 앉고(relay connect <패키지> <짧은이름>), 동사는
+      ctx.credential() 로 요청 시점에 꺼낸다 — env 상주 없음. 호스티드 MCP URL 을 주는
+      커넥터는 이 블록이 아니라 url 서비스(auth 는 서비스 소속)가 정본 — 동시 선언은
+      거부된다(계약 출처는 한 곳). per-user 자격 축(조직 구성원 각자 계정)은 여기가 아니라
+      org.per_user.accounts 소관이다 — 개인용/기업용 문법이 갈라지지 않게 하는 자리.
+    $ref: '#/$defs/auth'
   agents:
-    description: 착지점 = 패키지 짧은 이름과 같은 에이전트. persona 는 agents/<name>/AGENT.md
+    description: |
+      착지점 = default: true 선언 에이전트, 미선언이면 패키지 짧은 이름과 같은 에이전트 관례.
+      persona 는 agents/<name>/AGENT.md
     type: array
     items:
       type: object
@@ -331,6 +355,9 @@ properties:
       properties:
         name:
           $ref: '#/$defs/slug'
+        default:
+          description: main 슬롯 착지점 — 최대 1. 명시 선언은 "짧은 이름과 같은 에이전트" 관례의 상위 호환
+          type: boolean
         persona:
           description: 페르소나 마크다운 파일
           $ref: '#/$defs/relpath'
@@ -374,6 +401,10 @@ properties:
       properties:
         id:
           $ref: '#/$defs/slug'
+        label:
+          description: 표시명 (선택) — 화면 목록이 id 대신 그린다
+          type: string
+          minLength: 1
         when:
           oneOf:
             - type: object
@@ -457,6 +488,40 @@ properties:
         mission:
           type: string
           minLength: 1
+  host_methods:
+    description: |
+      기판 host 브리지 게이트 선언 — 이 패키지의 동사가 부를 수 있는 host.* 메서드의 캡.
+      선언은 캡이고 집행은 기판 소유다: ring-0 설치 결재가 문을 열고, 선언이 있으면 목록 밖
+      메서드는 거부된다(미선언 = 전체, ring-0 결재가 유일한 경계 — 현행 호환). 고지서에
+      실린다. 개인 기판의 메서드 이름은 host.<동사_스네이크>(예 host.draft_publish),
+      org 기판은 host.<도메인>.<동사>(예 host.members.list) — 두 표기 모두 이 문법 안이다.
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: '^host\.[a-z0-9]+([._][a-z0-9]+)*$'
+  storage:
+    description: |
+      파일 버킷 파사드 선언. services[].disk(몸 디스크)와 전혀 다른 축이다.
+      1인 기판은 v1 에서 판정만 하고 집행하지 않는다(추후 로컬 구현 여지). org 기판은
+      storage-api 로 버킷을 보장한다. 정책은 닫힌 프리셋 — 자유 문자열이 되는 순간
+      기판마다 다른 뜻이 된다.
+    type: object
+    additionalProperties: false
+    required: [buckets]
+    properties:
+      buckets:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name:
+              $ref: '#/$defs/slug'
+            policy:
+              enum: [org-member, owner-only, role-based]
   org:
     description: org 기판이 호스팅할 때만 읽는 확장. 1인 기판과 등록 노드에서는 무시된다
     type: object
@@ -467,7 +532,7 @@ properties:
         additionalProperties: false
         properties:
           accounts:
-            description: 자격 축. url/dir 서비스 이름 또는 edge provider 좌표
+            description: 자격 축. url/dir 서비스 이름, edge provider 좌표, 또는 커넥터 계약(최상위 auth)의 패키지 짧은 이름
             type: array
             items:
               type: string
@@ -527,6 +592,10 @@ $defs:
           env:
             type: string
             pattern: '^[A-Z][A-Z0-9_]*$'
+          service:
+            description: org 기판 자격 브로커의 서비스 키 (예 google-drive) — 브로커 없는 기판은 무시
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
           help:
             type: object
             additionalProperties: false
@@ -554,6 +623,10 @@ $defs:
             const: oauth
           client:
             enum: [dcr, registered]
+          service:
+            description: org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
           oauth_client:
             type: object
             additionalProperties: false

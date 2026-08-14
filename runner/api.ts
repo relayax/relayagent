@@ -13,7 +13,7 @@ import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
 import { saveLedger } from "./state.ts";
-import { startServices, stopServices } from "./run.ts";
+import { startServices, startChannels, stopServices } from "./run.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
 
@@ -148,6 +148,8 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
   if (d.host.length) rows.push(`<div><dt>호스트</dt><dd>${esc(d.host.join(" · "))}</dd></div>`);
   if (d.borrows.length) rows.push(`<div><dt>빌림</dt><dd>${esc(d.borrows.join(" · "))}</dd></div>`);
   if (d.spawns.length) rows.push(`<div><dt>프로세스</dt><dd>${esc(d.spawns.join(" · "))}</dd></div>`);
+  if (d.connector) rows.push(`<div><dt>자격</dt><dd>커넥터 계약 (${esc(d.connector)}) — 값은 vault, 연결은 설치 후</dd></div>`);
+  if (d.hostMethods.length) rows.push(`<div><dt>기판</dt><dd>host 브리지 <code>${esc(d.hostMethods.join(", "))}</code></dd></div>`);
   if (d.denied.length) rows.push(`<div><dt>담장</dt><dd>${esc(d.denied.join(", "))} 에는 닿지 않습니다</dd></div>`);
 
   const nots: string[] = [];
@@ -196,6 +198,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
+      startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       getTicker()?.emit("relay.package.installed", { pkg: r.name });
       // setup 과 build 결과를 여기서 버리면 "설치 성공" 이 검증 없이 참이 된다
       return { name: r.name, setup: r.setup ?? null, build: r.build ?? null };
@@ -224,7 +227,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
         retireResidents(name);
         stopServices(name);
-        const notes = startServices(l, name, r.path, r.manifest);
+        const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
         return { ...r, manifest: undefined, services: notes };
       }
@@ -259,7 +262,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const r = rollbackRelease(l, name, version);
       retireResidents(name);
       stopServices(name);
-      const notes = startServices(l, name, r.path, r.manifest);
+      const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
       return { name: r.name, version: r.version, path: r.path, services: notes };
     },
     dispatch: async (providerRef, mission, payload, consumer) => {
@@ -280,11 +283,11 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
   };
 }
 
-function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: string; description: string }[] {
+// 세션이 부를 수 있는 동사의 유일한 진리 — 목록(tools/list)과 집행(tools/call)이 같은 집합을
+// 봐야 한다. 목록에만 스코프를 걸면 이름을 아는 세션이 아무 동사나 부른다 (선언 = 캡 원칙 위반)
+function sessionScriptSet(ledger: Ledger, pkg: string, agent: string): Set<string> {
   const rec = ledger.packages[pkg];
   const m = loadManifest(rec.path);
-  const tools: { name: string; description: string }[] = [];
-
   const agentsInPlay = [agent, ...((m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [])];
   const allScripts = listScripts(rec.path, m);
   const inScope = new Set<string>();
@@ -293,7 +296,12 @@ function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: strin
     if (!scope) continue;
     for (const s of allScripts) if (scope(s)) inScope.add(s);
   }
-  for (const s of inScope) tools.push({ name: s, description: `${pkg} 패키지의 ${s} 동사` });
+  return inScope;
+}
+
+function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: string; description: string }[] {
+  const tools: { name: string; description: string }[] = [];
+  for (const s of sessionScriptSet(ledger, pkg, agent)) tools.push({ name: s, description: `${pkg} 패키지의 ${s} 동사` });
 
   for (const g of ledger.grants.filter((g) => g.consumer === pkg)) {
     if (g.mission) {
@@ -362,6 +370,8 @@ async function handleMcp(ledger: Ledger, host: HostBridge, pkg: string, agent: s
       } else if (edge) {
         result = await callEdgeTool(ledger, pkg, edge[1], edge[2], args, host);
       } else {
+        // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
+        if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
         result = await runScript(ledger, pkg, name, args, { principal: PRINCIPAL, agent }, host);
       }
       const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
@@ -764,7 +774,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const l = getLedger();
         const r = activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
         stopServices(held.p.name); // 업데이트라면 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다
-        const notes = startServices(l, held.p.name, held.p.dir, held.p.manifest);
+        const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest)];
         ticker.emit(held.p.fresh ? "relay.package.installed" : "relay.package.published", { pkg: held.p.name, version: held.p.version });
         return void json(res, 200, { name: r.name, fresh: held.p.fresh, version: held.p.version, setup: r.setup ?? null, build: r.build ?? null, services: notes });
       }

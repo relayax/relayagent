@@ -5,7 +5,7 @@ import readline from "node:readline";
 import { API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, workspacePath, PRINCIPAL } from "./state.ts";
 import { installPkg, removePkg, addGrant, validateDir, registryData } from "./installer.ts";
 import { createApi, makeHostBridge } from "./api.ts";
-import { startServices, stopAll } from "./run.ts";
+import { startServices, startChannels, stopAll } from "./run.ts";
 import { Ticker } from "./tick.ts";
 import { runSession, recoverDanglingTurns, listSessionSlots, enableResidents, retireAllResidents } from "./session.ts";
 import { loadManifest } from "./manifest.ts";
@@ -45,6 +45,8 @@ function printDisclosure(d: import("./manifest.ts").Disclosure, name: string): s
   for (const w of d.wakeups) lines.push(`    자동    ${w.when} 에 스스로 깨어납니다 (${w.id})`);
   for (const s of d.spawns) lines.push(`    실행    ${s} 를 띄웁니다`);
   for (const b of d.borrows) lines.push(`    차용    ${b} — 활성화는 별도 결재(grant)`);
+  if (d.connector) lines.push(`    자격    커넥터 계약 (${d.connector}) — relay connect ${name} ${name.split("/").pop()} 로 연결`);
+  if (d.hostMethods.length) lines.push(`    기판    host 브리지 선언: ${d.hostMethods.join(", ")}`);
   if (d.host.length) lines.push(`    호스트  ${d.host.join(", ")} 가 있어야 합니다`);
   if (d.denied.length) lines.push(`    담장    ${d.denied.join(", ")} 에는 닿지 않겠다고 선언했습니다`);
   const nots: string[] = [];
@@ -94,7 +96,8 @@ async function main(): Promise<void> {
       }
       for (const [name, rec] of Object.entries(l.packages)) {
         try {
-          const notes = startServices(l, name, rec.path, loadManifest(rec.path));
+          const m = loadManifest(rec.path);
+          const notes = [...startServices(l, name, rec.path, m), ...startChannels(l, name, rec.path, m)];
           for (const n of notes) console.log(n);
         } catch (e) {
           console.error(`${name}: 서비스 기동 실패 - ${e}`);
