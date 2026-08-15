@@ -9,6 +9,7 @@ import { vaultGet, vaultSet } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy } from "./session.ts";
 import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
+import { mcpDispatch, type McpIO } from "./mcp.ts";
 import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
@@ -332,37 +333,14 @@ async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: stri
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 
-async function handleMcp(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, body: any, res: http.ServerResponse): Promise<void> {
-  const { id, method, params } = body;
-  const reply = (result: unknown) => json(res, 200, { jsonrpc: "2.0", id, result });
-  const fail = (message: string) => json(res, 200, { jsonrpc: "2.0", id, error: { code: -32000, message } });
-
-  if (method === "initialize") {
-    return reply({
-      protocolVersion: params?.protocolVersion ?? "2024-11-05",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "relay", version: "0.1.0" },
-    });
-  }
-  if (String(method ?? "").startsWith("notifications/")) {
-    res.writeHead(202).end();
-    return;
-  }
-  if (method === "ping") return reply({});
-  if (method === "tools/list") {
-    return reply({
-      tools: sessionTools(ledger, pkg, agent).map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: { type: "object", additionalProperties: true },
-      })),
-    });
-  }
-  if (method === "tools/call") {
-    const name = String(params?.name ?? "");
-    const args = params?.arguments ?? {};
-    try {
-      let result: unknown;
+// 1인 기판의 문 이음새 구현(mcp.ts McpIO) — 프로토콜 합성은 mcpDispatch 한 벌이고, 여기는
+// "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
+// handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
+// (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
+function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string): McpIO {
+  return {
+    tools: () => sessionTools(ledger, pkg, agent),
+    call: async (name, args) => {
       const a2a = name.match(/^a2a__([a-z0-9-]+)__(.+)$/);
       const edge = name.match(/^edge__([a-z0-9-]+)__(.+)$/);
       if (a2a) {
@@ -370,21 +348,32 @@ async function handleMcp(ledger: Ledger, authority: Authority, host: HostBridge,
         const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
         const grant = await authority.grantForMission(pkg, a2a[1], mission);
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
-        result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)), pkg);
-      } else if (edge) {
-        result = await callEdgeTool(ledger, authority, pkg, edge[1], edge[2], args, host);
-      } else {
-        // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
-        if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
-        result = await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host);
+        return await host.dispatch(a2a[1], mission, String(args.payload ?? JSON.stringify(args)), pkg);
       }
-      const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-      return reply({ content: [{ type: "text", text }], isError: false });
-    } catch (e) {
-      return reply({ content: [{ type: "text", text: String(e) }], isError: true });
-    }
+      if (edge) return await callEdgeTool(ledger, authority, pkg, edge[1], edge[2], args, host);
+      // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
+      if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
+      return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host);
+    },
+  };
+}
+
+async function handleMcp(
+  ledger: Ledger,
+  authority: Authority,
+  host: HostBridge,
+  pkg: string,
+  agent: string,
+  body: any,
+  res: http.ServerResponse,
+  io: McpIO = localMcpIO(ledger, authority, host, pkg, agent),
+): Promise<void> {
+  const r = await mcpDispatch(io, body ?? {});
+  if (r === null) {
+    res.writeHead(202).end();
+    return;
   }
-  return fail(`지원하지 않는 메서드: ${method}`);
+  json(res, 200, r);
 }
 
 function pkgCommands(ledger: Ledger, pkg: string): { name: string; description: string; tty: boolean }[] {
