@@ -27,6 +27,25 @@ Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_
 `RELAY_EFFORT`. `RELAY_*` is the substrate-to-adapter namespace; adapters must not mint their own
 `RELAY_*` names except documented operator escape hatches (`RELAY_<CLI>_BIN`).
 
+## The bundle
+
+`RELAY_BUNDLE` is the assembled neutral bundle: `persona.md`, `skills/`, `commands/`,
+`agents/<sub>.md` (delegate persona bodies), and `meta.json`. Translation into the native CLI
+format is the adapter's job, and every translation artifact lands inside the bundle — never in
+the user's config directory or the cwd.
+
+`meta.json`: `{pkg, agent, slot?, workspace, stage, hooks: {deny[]}, agents[], mcp, mcpServers?}`.
+The MCP doors:
+
+| Field | Shape | Contract |
+|---|---|---|
+| `mcp` | `{url, authorization}` | The substrate's single MCP door. `authorization` is the literal `Authorization` header value (may be empty). Adapters mount it under the server name `relay`. |
+| `mcpServers` | `{<name>: {url, authorization?, headers?}}` | Additive — multiple doors. Each entry is one HTTP MCP server mounted under `<name>` exactly as given, so native tool names become `mcp__<name>__*` and the embedder controls the vocabulary its surfaces match on. `authorization` is the `Authorization` header value; `headers` is an opaque map of extra HTTP headers for doors that authenticate under other header names. Entries without a `url` are outside the contract and must be dropped, not guessed at. |
+
+When `mcpServers` is present and non-empty the adapter prefers it and ignores `mcp`; absent, the
+single `mcp` door applies unchanged. Embedders that emit `mcpServers` should keep emitting `mcp`
+too, so older adapters keep their single door.
+
 ## The session envelope
 
 `session <prompt>` and `serve` share one envelope. stdout is a JSONL event stream; stdin is a JSONL
@@ -45,7 +64,7 @@ as legacy plain output (protocol 1).
 | `task` | `id`, `status: "done"`, `ok` | That background task settled. |
 | `ask` | `id`, `questions` | The model asked the user a question (requires capability `ask`). Answer via the `answer` control line; the adapter must resolve unanswered asks itself (timeout with a sensible default) — an unanswered ask must never hang the turn forever. |
 | `file` | `path` (stage-relative) | A successful write landed in the file-exchange stage. |
-| `reply` | `text`, `session`, `model`, `usage {input, output, context_window}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `origin: "task"` marks a spontaneous continuation (below). |
+| `reply` | `text`, `session`, `model`, `usage {input, output, context_window, cache_read?, cache_creation?, cost_usd?}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `usage.input` stays cache-inclusive for compatibility; `cache_read` / `cache_creation` break the cached tokens out (non-cache input = `input − cache_read − cache_creation`) and `cost_usd` is the CLI's own cost ledger when it reports one — all three additive. `origin: "task"` marks a spontaneous continuation (below). |
 | `error` | `message` | Turn failure. Exactly one of `reply`/`error` settles a turn. Failures are never disguised as text. |
 
 ### Control (substrate → adapter, stdin)
