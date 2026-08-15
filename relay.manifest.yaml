@@ -501,7 +501,7 @@ properties:
     minItems: 1
     items:
       type: string
-      pattern: '^host\.[a-z0-9]+([._][a-z0-9]+)*$'
+      pattern: '^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$'
   storage:
     description: |
       파일 버킷 파사드 선언. services[].disk(몸 디스크)와 전혀 다른 축이다.

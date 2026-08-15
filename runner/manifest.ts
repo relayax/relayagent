@@ -383,7 +383,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
   if (m.host_methods != null) {
     if (!Array.isArray(m.host_methods) || m.host_methods.length === 0) issues.push("host_methods: 비어 있지 않은 목록");
     for (const hm of Array.isArray(m.host_methods) ? m.host_methods : []) {
-      if (typeof hm !== "string" || !/^host\.[a-z0-9]+([._][a-z0-9]+)*$/.test(hm)) issues.push(`host_methods 형식 위반(host.*): ${hm}`);
+      if (typeof hm !== "string" || !/^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$/.test(hm)) issues.push(`host_methods 형식 위반(host.*): ${hm}`);
     }
   }
 
