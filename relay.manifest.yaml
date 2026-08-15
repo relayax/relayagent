@@ -41,6 +41,10 @@ properties:
     description: 발행일 YYYY-MM-DD. 스토어 리스팅 메타 — 개인 기판은 표시 외 소비 없음
     type: string
     pattern: '^\d{4}-\d{2}-\d{2}$'
+  changelog:
+    description: 판 변경 기록(마크다운) — 스토어 리스팅·업그레이드 화면 메타. 저작은 보통 CHANGELOG.md 를 발행이 합성한다
+    type: string
+    minLength: 1
   requires:
     description: |
       호스트 환경 요구 = 설치 관문. validate 는 형태만 판정하고, 설치가 실체를 판정해

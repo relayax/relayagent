@@ -21,6 +21,8 @@ export interface Manifest {
   publisher?: string;
   /** 발행일 YYYY-MM-DD — 스토어 리스팅 메타 */
   released_at?: string;
+  /** 판 변경 기록(마크다운) — 스토어 리스팅·업그레이드 화면 메타 */
+  changelog?: string;
   requires?: RequiresDecl;
   surfaces: {
     view?: { source: string; out?: string };
@@ -89,7 +91,7 @@ const SIZE = /^\d+(Mi|Gi)$/;
 // 판정기가 아는 최상위 어휘의 전부. 미지 키는 거부한다 — 조용히 받으면 같은 manifest 가
 // 기판마다 다른 뜻이 되는 방언의 문이 열린다. 확장(org 의미)은 org 블록 한 곳으로만 들어온다
 const TOP_KEYS = new Set([
-  "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at",
+  "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog",
   "requires", "surfaces", "harness", "hooks", "auth", "agents", "scripts", "services",
   "triggers", "missions", "edges", "host_methods", "storage", "org",
 ]);
