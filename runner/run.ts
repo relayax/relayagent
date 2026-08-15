@@ -1,26 +1,66 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { API_PORT, API_URL, expandHome, logLine, pkgToken, type Ledger } from "./state.ts";
+import { API_URL, expandHome, logLine, pkgToken, type Ledger } from "./state.ts";
 import { vaultGet, credKey } from "./vault.ts";
 import type { Manifest, ServiceDecl } from "./manifest.ts";
 
 const children = new Map<string, ChildProcess>();
 
-function baseEnv(l: Ledger, pkg: string): Record<string, string> {
+// 실행 이음새 — 스폰의 권위·환경 반쪽을 모듈 좌표(./state.ts·./vault.ts)가 아니라 인자로
+// 받는 주입점. 권위 이음새(authority-contract.ts)의 실행측 자매다: 저 계약이 "누구로서,
+// 무엇을, 어떤 자격으로"에 답한다면, 이 이음새는 그 답을 스폰 자식의 env 로 나르는 손이다.
+// 1인 기판은 localIO(장부·vault·홈 로그)가 기본값으로 꽂히고, 임베더(조직 기판)는 같은 형의
+// 자기 구현을 넘긴다 — 소스 패치·번들 좌표 치환 없이. 익명의 제3자 임베더 테스트: 이 형은
+// 특정 조직 기판을 모른다. 토큰이 문자열 하나, 자격이 (스코프→값), 로그가 (스트림, 한 줄)
+// 인 것 — 어느 답도 밖의 형상을 요구하지 않는다.
+export interface RunnerIO {
+  /** 실행 단위(패키지)의 신원 토큰 — 자식 env RELAY_TOKEN */
+  token(pkg: string): string;
+  /** 스코프 좌표(credKey 형상 `<pkg>/<이름>`)의 자격 값. 없으면 null. 동기 계약 —
+   *  원격 권위(자격이 네트워크 왕복)는 스폰 전 선발급을 임베더가 소유한다 */
+  credential(scope: string): string | null;
+  /** 실행 기록 한 줄 — stream 은 장부 축(services|channels) */
+  log(stream: string, data: unknown): void;
+  /** 자식이 보는 기판 문 주소 — 자식 env RELAY_API */
+  apiUrl: string;
+}
+
+/** 1인 기판의 기본 이음새 — 장부 HMAC 토큰·vault·RELAY_HOME 파일 로그. */
+export function localIO(l: Ledger): RunnerIO {
+  return {
+    token: (pkg) => pkgToken(l, pkg),
+    credential: vaultGet,
+    log: logLine,
+    apiUrl: API_URL,
+  };
+}
+
+function baseEnv(io: RunnerIO, pkg: string): Record<string, string> {
   return {
     ...process.env as Record<string, string>,
     RELAY_NAME: pkg,
-    RELAY_API: API_URL,
-    RELAY_TOKEN: pkgToken(l, pkg),
+    RELAY_API: io.apiUrl,
+    RELAY_TOKEN: io.token(pkg),
   };
+}
+
+/** 컨테이너 자식의 기판 문 주소 — loopback 좌표만 host.docker.internal 로 번역한다. */
+function containerApiUrl(io: RunnerIO): string {
+  try {
+    const u = new URL(io.apiUrl);
+    if (u.hostname === "127.0.0.1" || u.hostname === "localhost") u.hostname = "host.docker.internal";
+    return u.origin;
+  } catch {
+    return io.apiUrl;
+  }
 }
 
 function dockerAvailable(): boolean {
   return spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 }
 
-export function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manifest): string[] {
+export function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manifest, io: RunnerIO = localIO(l)): string[] {
   const notes: string[] = [];
   for (const s of m.services ?? []) {
     if ("dir" in s && s.dir != null) {
@@ -30,22 +70,22 @@ export function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manife
     }
     if ("url" in s && s.url != null) continue;
     if (!("source" in s) || s.source == null) continue;
-    notes.push(startSourceService(l, pkg, pkgPath, s));
+    notes.push(startSourceService(io, pkg, pkgPath, s));
   }
   return notes.filter(Boolean);
 }
 
 function startSourceService(
-  l: Ledger,
+  io: RunnerIO,
   pkg: string,
   pkgPath: string,
   s: Extract<ServiceDecl, { source: string }>,
 ): string {
   const key = `${pkg}/${s.name}`;
   if (children.has(key)) return "";
-  const env = baseEnv(l, pkg);
+  const env = baseEnv(io, pkg);
   if (s.port) env.PORT = String(s.port);
-  const authEnv = serviceAuthEnv(pkg, s.name);
+  const authEnv = serviceAuthEnv(io, pkg, s.name);
   Object.assign(env, authEnv);
 
   if (s.entry) {
@@ -55,11 +95,11 @@ function startSourceService(
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    child.stdout?.on("data", (d) => logLine("services", { pkg, service: s.name, out: String(d).trim() }));
-    child.stderr?.on("data", (d) => logLine("services", { pkg, service: s.name, err: String(d).trim() }));
+    child.stdout?.on("data", (d) => io.log("services", { pkg, service: s.name, out: String(d).trim() }));
+    child.stderr?.on("data", (d) => io.log("services", { pkg, service: s.name, err: String(d).trim() }));
     child.on("exit", (code) => {
       children.delete(key);
-      logLine("services", { pkg, service: s.name, exit: code });
+      io.log("services", { pkg, service: s.name, exit: code });
     });
     children.set(key, child);
     return `${key}: 프로세스 기동 (pid ${child.pid})`;
@@ -79,7 +119,7 @@ function startSourceService(
     // manifest 표기(Mi/Gi)를 docker 표기(m/g)로 번역한다
     if (s.resources?.memory) args.push("--memory", s.resources.memory.replace(/Mi$/, "m").replace(/Gi$/, "g"));
     if (s.resources?.cpu) args.push("--cpus", String(s.resources.cpu));
-    for (const [k, v] of Object.entries({ RELAY_NAME: pkg, RELAY_API: `http://host.docker.internal:${API_PORT}`, RELAY_TOKEN: pkgToken(l, pkg), ...serviceAuthEnv(pkg, s.name) })) {
+    for (const [k, v] of Object.entries({ RELAY_NAME: pkg, RELAY_API: containerApiUrl(io), RELAY_TOKEN: io.token(pkg), ...serviceAuthEnv(io, pkg, s.name) })) {
       args.push("-e", `${k}=${v}`);
     }
     if (s.disk) {
@@ -99,14 +139,14 @@ function startSourceService(
 // 자격도 서비스와 같은 이름공간(credKey)을 공유한다 — 이름 충돌은 판정이 막는다.
 // 재접속·게이트·직렬화는 어댑터 소유(relay.manifest.yaml surfaces.channels 계약),
 // 기판은 스폰과 기록만 한다. 종료를 되살리지 않는 것도 계약이다: 프로세스 종료 = 실패.
-export function startChannels(l: Ledger, pkg: string, pkgPath: string, m: Manifest): string[] {
+export function startChannels(l: Ledger, pkg: string, pkgPath: string, m: Manifest, io: RunnerIO = localIO(l)): string[] {
   const notes: string[] = [];
   for (const c of m.surfaces?.channels ?? []) {
     const key = `${pkg}/${c.name}`;
     if (children.has(key)) continue;
-    const env = baseEnv(l, pkg);
+    const env = baseEnv(io, pkg);
     env.RELAY_CHANNEL = c.name;
-    Object.assign(env, serviceAuthEnv(pkg, c.name));
+    Object.assign(env, serviceAuthEnv(io, pkg, c.name));
     const entry = path.join(pkgPath, c.source, c.entry);
     // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다
     const child = spawn("node", ["--experimental-strip-types", entry], {
@@ -114,11 +154,11 @@ export function startChannels(l: Ledger, pkg: string, pkgPath: string, m: Manife
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    child.stdout?.on("data", (d) => logLine("channels", { pkg, channel: c.name, out: String(d).trim() }));
-    child.stderr?.on("data", (d) => logLine("channels", { pkg, channel: c.name, err: String(d).trim() }));
+    child.stdout?.on("data", (d) => io.log("channels", { pkg, channel: c.name, out: String(d).trim() }));
+    child.stderr?.on("data", (d) => io.log("channels", { pkg, channel: c.name, err: String(d).trim() }));
     child.on("exit", (code) => {
       children.delete(key);
-      logLine("channels", { pkg, channel: c.name, exit: code });
+      io.log("channels", { pkg, channel: c.name, exit: code });
     });
     children.set(key, child);
     notes.push(`${key}: 채널 어댑터 기동 (pid ${child.pid})`);
@@ -134,9 +174,9 @@ export function postToChannel(pkg: string, channel: string, msg: { conversation:
   return true;
 }
 
-function serviceAuthEnv(pkg: string, service: string): Record<string, string> {
+function serviceAuthEnv(io: RunnerIO, pkg: string, service: string): Record<string, string> {
   const out: Record<string, string> = {};
-  const cred = vaultGet(credKey(pkg, service));
+  const cred = io.credential(credKey(pkg, service));
   if (cred) out[`RELAY_CRED_${service.toUpperCase().replace(/-/g, "_")}`] = cred;
   return out;
 }
