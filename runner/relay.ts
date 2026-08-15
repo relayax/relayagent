@@ -35,6 +35,26 @@ function has(name: string): boolean {
   return args.includes("--" + name);
 }
 
+/** 반복 가능한 플래그 수집 (--bind a=b --bind c=d) */
+function flagAll(name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) if (args[i] === "--" + name && args[i + 1]) out.push(args[i + 1]);
+  return out;
+}
+
+/** dir 서비스 결재 파싱 — <서비스이름>=<경로> */
+function parseBindings(): Record<string, string> | undefined {
+  const list = flagAll("bind");
+  if (!list.length) return undefined;
+  const out: Record<string, string> = {};
+  for (const b of list) {
+    const i = b.indexOf("=");
+    if (i <= 0) throw new Error(`--bind 형식: <dir서비스>=<경로>: ${b}`);
+    out[b.slice(0, i)] = b.slice(i + 1);
+  }
+  return out;
+}
+
 /** 권한 고지서를 터미널 문장으로. 안 하는 것도 문장으로 적는다 — 없는 항목과 안 보여준 항목은 다르다 */
 function printDisclosure(d: import("./manifest.ts").Disclosure, name: string): string {
   const lines: string[] = ["", "  설치하면 이렇게 됩니다"];
@@ -166,7 +186,7 @@ async function main(): Promise<void> {
             break;
           }
         }
-        const r = activatePrepared(ledger, p, { ring0: has("ring0"), workspace: flag("workspace") });
+        const r = activatePrepared(ledger, p, { ring0: has("ring0"), workspace: flag("workspace"), bindings: parseBindings() });
         console.log(`${p.fresh ? "설치됨" : "업데이트됨"}: ${r.name} (${p.ref}@${p.version}, workspace: ${workspacePath(ledger, r.name)})`);
         if (r.setup && !r.setup.ok) console.error(`  하네스 setup 실패: ${r.setup.out}`);
         if (r.build) console.log(`  view 빌드됨: ${r.build.out}`);
@@ -174,7 +194,7 @@ async function main(): Promise<void> {
         break;
       }
 
-      const viaApi = await tryApi("/install", { path: target, ring0: has("ring0"), workspace: flag("workspace") });
+      const viaApi = await tryApi("/install", { path: target, ring0: has("ring0"), workspace: flag("workspace"), bindings: parseBindings() });
       if (viaApi && !(viaApi as any).error) {
         console.log(`설치됨(daemon): ${JSON.stringify(viaApi)}`);
         break;
@@ -183,6 +203,7 @@ async function main(): Promise<void> {
         ring0: has("ring0"),
         name: flag("name"),
         workspace: flag("workspace"),
+        bindings: parseBindings(),
       });
       // workspace 는 폴더 결재다 — 설치 출력이 그 결재를 사용자 눈앞에 남긴다
       console.log(`설치됨: ${r.name} (${r.manifest.name}@${r.manifest.version}, workspace: ${workspacePath(ledger, r.name)}${ledger.packages[r.name].ring === 0 ? ", ring-0" : ""})`);
@@ -464,7 +485,7 @@ async function main(): Promise<void> {
           "relay - 개인 기판 씨앗",
           "",
           "  relay daemon                          기판 기동 (API, 서비스, 트리거, 콘솔)",
-          "  relay install <dir|.relay|@scope/name> [--store url] [--key k]  패키지 설치 (디렉토리·봉투·스토어 ref)",
+          "  relay install <dir|.relay|@scope/name> [--store url] [--key k] [--bind svc=path]  패키지 설치",
           "  relay ls | rm <이름>                   목록 | 제거",
           "  relay validate <dir>                  manifest 판정",
           "  relay draft <이름>                     수정 레이어 열기 (설치본 사본, ~/.relay/drafts)",

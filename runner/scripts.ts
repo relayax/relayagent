@@ -8,7 +8,7 @@ import { loadManifest, shortName, type Manifest, type ServiceDecl } from "./mani
 
 export interface HostBridge {
   registry(): unknown;
-  install(dir: string, opts?: { ring0?: boolean; workspace?: string }): unknown;
+  install(dir: string, opts?: { ring0?: boolean; workspace?: string; bindings?: Record<string, string> }): unknown;
   build(name: string): unknown;
   remove(name: string): unknown;
   grants(): Grant[];

@@ -18,6 +18,22 @@ export interface InstallOpts {
   ring0?: boolean;
   /** 폴더 결재 — 세션 cwd. 미지정 = 기본 ~/Relay/<이름>. 이 지정이 GUI 폴더 선택의 CLI 형태다 */
   workspace?: string;
+  /** dir 서비스 결재 — 선언(신청)을 실제 폴더에 바인딩한다: {서비스이름: 경로}.
+   *  "선언은 신청, 활성화는 결재" 의 결재 쓰기 경로(relay install --bind <svc>=<path>). */
+  bindings?: Record<string, string>;
+}
+
+/** dir 서비스 바인딩 검증 — 선언된 dir 서비스만, 경로는 ~ 또는 절대. 결재가 선언을 초과하지 않게 */
+function judgeBindings(m: Manifest, bindings: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!bindings || !Object.keys(bindings).length) return undefined;
+  const dirSvcs = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
+  const out: Record<string, string> = {};
+  for (const [name, p] of Object.entries(bindings)) {
+    if (!dirSvcs.has(name)) throw new ManifestError([`--bind ${name}: 선언된 dir 서비스가 아닙니다 — 결재는 선언을 초과할 수 없습니다`]);
+    if (!/^(~($|\/)|\/)/.test(p) || p.split("/").includes("..")) throw new ManifestError([`--bind ${name}: ~ 또는 절대경로만(.. 금지): ${p}`]);
+    out[name] = p;
+  }
+  return out;
 }
 
 export interface InstallResult {
@@ -90,11 +106,14 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   // 재설치는 결재·설정(ring, workspace, model, effort, harness, dirBindings)을 보존한다.
   // 레코드를 통째로 갈면 ring-0 이 조용히 증발한다 — draft.ts 의 publishDraft 와 같은 계약
   const prev = ledger.packages[name];
+  const bindings = judgeBindings(m, opts.bindings);
   ledger.packages[name] = {
     ...(prev ?? {}),
     path: abs,
     ...(opts.workspace ? { workspace: path.resolve(expandHome(opts.workspace)) } : {}),
     ...(opts.ring0 ? { ring: 0 as const } : {}),
+    // dir 결재는 누적 병합 — 재설치가 기존 결재를 증발시키지 않는다(ring 보존과 같은 계약)
+    ...(bindings ? { dirBindings: { ...(prev?.dirBindings ?? {}), ...bindings } } : {}),
   };
   saveLedger(ledger);
   let setup: { ok: boolean; out: string } | undefined;
@@ -299,16 +318,19 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
     installedAt: new Date().toISOString(),
   };
   const existing = ledger.packages[p.name];
+  const bindings = judgeBindings(m, opts.bindings);
   if (existing) {
     existing.path = p.dir;
     existing.origin = origin;
     if (opts.workspace) existing.workspace = path.resolve(expandHome(opts.workspace));
+    if (bindings) existing.dirBindings = { ...(existing.dirBindings ?? {}), ...bindings };
   } else {
     ledger.packages[p.name] = {
       path: p.dir,
       origin,
       ...(opts.workspace ? { workspace: path.resolve(expandHome(opts.workspace)) } : {}),
       ...(opts.ring0 ? { ring: 0 as const } : {}),
+      ...(bindings ? { dirBindings: bindings } : {}),
     };
   }
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 재선출한다

@@ -75,6 +75,10 @@ function startSourceService(
     spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
     const args = ["run", "-d", "--name", name];
     if (s.port) args.push("-p", `${s.port}:${s.port}`);
+    // resources 집행 — 선언이 판정만 되고 조용히 무시되면 "같은 문법 다른 뜻"이 된다.
+    // manifest 표기(Mi/Gi)를 docker 표기(m/g)로 번역한다
+    if (s.resources?.memory) args.push("--memory", s.resources.memory.replace(/Mi$/, "m").replace(/Gi$/, "g"));
+    if (s.resources?.cpu) args.push("--cpus", String(s.resources.cpu));
     for (const [k, v] of Object.entries({ RELAY_NAME: pkg, RELAY_API: `http://host.docker.internal:${API_PORT}`, RELAY_TOKEN: pkgToken(l, pkg), ...serviceAuthEnv(pkg, s.name) })) {
       args.push("-e", `${k}=${v}`);
     }

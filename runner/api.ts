@@ -197,7 +197,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
   return {
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
-      const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace });
+      const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
@@ -658,7 +658,9 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       // 스토어를 거치지 않는 경로다. 폐쇄망 납품이나 "친구에게 하나 줄게"가 여기 산다.
       // 내보낸 봉투에는 봉인이 함께 들어 있지만, 대조할 정본이 없다 — 그래서 가져오기
       // 화면은 "스토어를 거치지 않았다"고 분명히 말한다. 믿음의 근거가 다르기 때문이다.
-      const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay)$/);
+      // .sig 사이드카도 내보낸다 — 손으로 옮기는 봉투가 서명을 잃지 않게(받는 쪽이 .relay 옆에
+      // 두면 prepareArtifact 가 읽는다). 봉투와 사이드카는 같은 선반 봉인 아래 있다
+      const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay(?:\.sig)?)$/);
       if (exportFile && req.method === "GET") {
         const file = path.join(artifactsDir(), exportFile[1]);
         if (!fs.existsSync(file)) return void json(res, 404, { error: "선반에 없는 봉투 — 먼저 구우세요" });
@@ -827,7 +829,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       }
       if (p === "/install" && req.method === "POST") {
         const b = await readBody(req);
-        const r = host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined });
+        const r = host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined, bindings: b.bindings && typeof b.bindings === "object" ? b.bindings : undefined });
         return void json(res, 200, r);
       }
       const buildRoute = p.match(/^\/pkg\/([^/]+)\/build$/);
