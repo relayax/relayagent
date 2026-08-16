@@ -107,8 +107,12 @@ Rules:
   can disagree with itself.
 - **Absent meta is not an error.** A verb without `meta` behaves exactly as before, so adding the
   convention regresses nothing.
-- **Unknown keys are ignored.** `meta` is code, not a manifest: it is an advertisement, not a
-  declaration the substrate judges against reality.
+- **Unknown keys are ignored, not stripped.** `meta` is code, not a manifest: it is an
+  advertisement, not a declaration the substrate judges against reality. The substrate reads the
+  three keys above, judges nothing else, and passes the rest through untouched — so an embedder's
+  own publish gate can define further keys and read them off the same loader without upstream
+  knowing its vocabulary. Those keys mean nothing here; naming them in this contract would be how
+  one substrate's dialect becomes everyone's grammar.
 - **Schemas are advertised, never validated.** A validator is a dependency, and the zero-dependency
   rule outranks type advertisement. Judging the input stays the verb body's job.
 - **Listing never runs a verb.** `tools/list` imports the module to read `meta` and never calls the

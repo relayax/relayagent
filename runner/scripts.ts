@@ -50,6 +50,8 @@ export interface ScriptMeta {
   input?: Record<string, unknown>;
   /** tools/list 에는 아직 싣지 않는다 — MCP 2025-03-26 에 outputSchema 자리가 없다 */
   output?: Record<string, unknown>;
+  /** 기판이 모르는 키 — 판정도 삭제도 하지 않고 그대로 통과시킨다(임베더 게이트의 어휘 자리) */
+  [key: string]: unknown;
 }
 
 export interface ScriptCtx {
@@ -222,12 +224,16 @@ export async function scriptMeta(ledger: Ledger, pkg: string, name: string): Pro
   }
   const raw = mod.meta;
   if (!raw || typeof raw !== "object") return null;
-  // 미지 키는 무시한다 — meta 는 코드지 manifest 가 아니다(선언-실체 판정 대상이 아니라 광고다).
-  // meta.name 을 적어도 여기서 조용히 버려진다: 이름의 정본은 파일명 하나다
   const meta = raw as Record<string, unknown>;
-  const out: ScriptMeta = {};
-  if (typeof meta.description === "string") out.description = meta.description;
-  if (meta.input && typeof meta.input === "object") out.input = meta.input as Record<string, unknown>;
-  if (meta.output && typeof meta.output === "object") out.output = meta.output as Record<string, unknown>;
+  // 미지 키는 무시하되 지우지는 않는다 — 무시는 "판정하지 않는다"이지 "없앤다"가 아니다.
+  // meta 는 코드지 manifest 라서(선언-실체 판정 대상이 아니라 광고다) 기판이 모르는 키를
+  // 임베더의 게이트가 자기 어휘로 읽을 수 있어야 한다. 여기서 걸러 버리면 같은 로더를
+  // 재사용하는 위층이 자기 키를 조용히 잃는다 — 이 리포가 싫어하는 바로 그 유실이다.
+  const out = { ...meta } as ScriptMeta;
+  // 기판이 실제로 읽는 세 키만 형을 좁힌다: 형이 어긋나면 없는 것으로 친다(광고는 판정이 아니다)
+  if (typeof meta.description !== "string") delete out.description;
+  if (!meta.input || typeof meta.input !== "object") delete out.input;
+  if (!meta.output || typeof meta.output !== "object") delete out.output;
+  // meta.name 은 통과하되 아무도 읽지 않는다 — 이름의 정본은 파일명 하나다
   return out;
 }
