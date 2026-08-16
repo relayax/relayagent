@@ -69,6 +69,8 @@ export interface Grant {
   provider: string;
   tools?: string[];
   mission?: string;
+  /** components 소비 결재 — 집행점이 런타임이 아니라 view 빌드(installer 해석)라 기록이 곧 활성 */
+  components?: boolean;
 }
 
 export interface Ledger {

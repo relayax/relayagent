@@ -26,6 +26,8 @@ export interface Manifest {
   requires?: RequiresDecl;
   surfaces: {
     view?: { source: string; out?: string };
+    /** 컴포넌트 수출 — source = npm 패키지(package.json name = 매니페스트 name). 소비는 edges[].components */
+    components?: { source: string };
     chat?: { mode: "direct" | "none"; greeting?: string };
     channels?: { name: string; source: string; entry: string; icon?: string }[];
   };
@@ -41,7 +43,7 @@ export interface Manifest {
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
-  edges?: { provider: string; tools?: string[]; mission?: string }[];
+  edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean }[];
   /** ring-0 host 브리지 게이트 선언 — host.* 캡. 미선언 = 전체(ring-0 결재가 경계) */
   host_methods?: string[];
   /** 파일 버킷 파사드 — 1인 기판은 판정만, 집행은 org 기판 소유 */
@@ -174,7 +176,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
   if (m.released_at != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(m.released_at))) issues.push(`released_at 형식 위반(YYYY-MM-DD): ${m.released_at}`);
   if (!m.surfaces || typeof m.surfaces !== "object") issues.push("surfaces: 필수");
   for (const k of Object.keys(m.surfaces ?? {})) {
-    if (!["view", "chat", "channels"].includes(k)) issues.push(`미지 surfaces 키: ${k}`);
+    if (!["view", "components", "chat", "channels"].includes(k)) issues.push(`미지 surfaces 키: ${k}`);
   }
 
   if (m.icon) mustExist(m.icon, "icon");
@@ -210,6 +212,30 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!view.source || badPath(view.source)) issues.push("surfaces.view.source: 상대경로 필수");
     else mustExist(view.source, "surfaces.view.source");
     if (view.out != null && badPath(view.out)) issues.push("surfaces.view.out: 상대경로 필수");
+  }
+  const comp = m.surfaces?.components;
+  if (comp) {
+    if (!comp.source || badPath(comp.source)) issues.push("surfaces.components.source: 상대경로 필수");
+    else {
+      mustExist(comp.source, "surfaces.components.source");
+      // 수출 실체는 npm 패키지고, 소비자 package.json 의 의존 키가 곧 좌표다 — npm 이름과
+      // 매니페스트 이름이 갈리면 해석이 성립하지 않으므로 여기서 fail-loud 로 잡는다
+      const pjFull = at(path.join(comp.source, "package.json"));
+      if (pjFull) {
+        if (!fs.existsSync(pjFull)) {
+          issues.push(`surfaces.components: ${comp.source}/package.json 없음 — 수출 실체는 npm 패키지다`);
+        } else {
+          try {
+            const pj = JSON.parse(fs.readFileSync(pjFull, "utf8")) as { name?: unknown };
+            if (pj?.name !== m.name) {
+              issues.push(`surfaces.components: package.json name(${String(pj?.name)}) ≠ 매니페스트 name(${m.name}) — 소비자 의존 키가 곧 좌표라 같아야 합니다`);
+            }
+          } catch (e) {
+            issues.push(`surfaces.components: ${comp.source}/package.json 파싱 실패: ${e}`);
+          }
+        }
+      }
+    }
   }
   const chat = m.surfaces?.chat;
   if (chat && !["direct", "none"].includes(chat.mode as string)) {
@@ -377,9 +403,11 @@ export function judge(m: Manifest, pkgPath?: string): void {
 
   for (const e of m.edges ?? []) {
     if (!PROVIDER.test(e.provider ?? "")) issues.push(`edge provider 형식 위반: ${e.provider}`);
-    if (e.tools != null && e.mission != null) issues.push(`edges[${e.provider}]: tools 와 mission 동시 선언 불가`);
+    const forms = [e.tools != null, e.mission != null, e.components != null].filter(Boolean).length;
+    if (forms > 1) issues.push(`edges[${e.provider}]: tools · mission · components 동시 선언 불가`);
     for (const t of e.tools ?? []) if (!SLUG.test(t)) issues.push(`edges[${e.provider}].tools 형식 위반: ${t}`);
     if (e.mission != null && (typeof e.mission !== "string" || !e.mission.trim())) issues.push(`edges[${e.provider}].mission: 비어 있지 않은 문자열만`);
+    if (e.components != null && e.components !== true) issues.push(`edges[${e.provider}].components: true 만`);
   }
 
   if (m.host_methods != null) {
@@ -455,6 +483,7 @@ export function declaredPaths(m: Manifest): DeclaredPath[] {
 
   file(m.icon);
   dir(m.surfaces?.view?.source); // out(빌드 산출물)은 pack 이 뺀다
+  dir(m.surfaces?.components?.source); // node_modules 는 pack 상수 제외
   for (const c of m.surfaces?.channels ?? []) { dir(c.source); file(c.icon); }
   for (const v of m.harness?.variants ?? []) { dir(v.source); file(v.icon); file(v.llm?.icon); }
   for (const a of m.agents ?? []) { file(a.persona); dir(a.skills); dir(a.commands); }
@@ -517,7 +546,7 @@ export function disclosure(m: Manifest): Disclosure {
   for (const b of m.requires?.binaries ?? []) host.push(b.name);
   for (const a of m.requires?.apps ?? []) host.push(`${a.name}.app`);
   const borrows = (m.edges ?? []).map((e) =>
-    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
+    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
   const connector = m.auth?.kind ?? null;

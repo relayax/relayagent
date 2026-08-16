@@ -468,12 +468,13 @@ async function main(): Promise<void> {
 
     case "grant": {
       const [consumer, provider] = args;
-      if (!consumer || !provider) throw new Error("사용법: relay grant <consumer> <provider> [--tools a,b] [--mission m]");
+      if (!consumer || !provider) throw new Error("사용법: relay grant <consumer> <provider> [--tools a,b] [--mission m] [--components]");
       addGrant(ledger, {
         consumer,
         provider,
         tools: flag("tools")?.split(","),
         mission: flag("mission"),
+        ...(has("components") ? { components: true } : {}),
       });
       console.log(`결재됨: ${consumer} -> ${provider}`);
       break;

@@ -10,6 +10,7 @@ description: |
     agents/<name>/AGENT.md           agents[].persona. 스킬 = agents[].skills/<skill>/SKILL.md
     scripts/<이름>.ts                scripts.source 아래 동사. 기본 수출 async 함수 (input, ctx) => 결과 JSON (+ 선택 meta 수출)
     surfaces/view/                   surfaces.view.source (+ out 선언 시 발행이 빌드해 <source>/<out> 서빙)
+    surfaces/components/             surfaces.components.source — 다른 패키지 view 가 소비하는 npm 패키지(package.json + 소스)
     channels/<name>/                 channels[].source + entry
     harness/<name>/                  harness.source + entry + dockerfile(선택)
     services/<name>/                 services[].source + dockerfile(컨테이너 형) 또는 entry(프로세스 형)
@@ -119,6 +120,25 @@ properties:
               화면은 /pkg/<설치이름>/view/ 아래로 서빙되고 설치 이름은 설치 시점에 정해지므로,
               기판이 그 접두사를 RELAY_BASE_PATH 로 주입한다. 프레임워크의 basePath 를 여기에 맞춰라
               (Next.js: basePath: process.env.RELAY_BASE_PATH). 재빌드는 relay build <패키지>
+            $ref: '#/$defs/relpath'
+      components:
+        description: |
+          컴포넌트 수출 — source 가 npm 패키지(package.json + 소스) 그 자체다. 다른 패키지의
+          view 가 edges[].components 선언으로 이 소스를 소비한다: 기판이 설치·발행 시점에
+          npm pack 으로 tgz 를 굽고 소비 view 의 package.json "*" 의존을 file: 로 고정한다 —
+          레지스트리 없음. 규율 셋:
+            좌표    package.json name 은 매니페스트 name 과 같아야 한다(판정 fail-loud) —
+                    소비자 package.json 의 의존 키가 곧 이 좌표다.
+            싱글턴  react 나 UI 킷 같은 공유 라이브러리는 peerDependencies 로만 선언한다.
+                    dependencies 로 안으면 tgz 전개본이 자기 사본을 갖게 되어 소비 view 와
+                    React 인스턴스·context 가 갈린다(조용히 깨지는 축).
+            중첩    컴포넌트 패키지가 다른 패키지의 components 를 소비하는 것은 계약 밖이다 —
+                    해석 순서·순환 게이트를 만드느니 한 단계가 규율이다.
+        type: object
+        additionalProperties: false
+        required: [source]
+        properties:
+          source:
             $ref: '#/$defs/relpath'
       chat:
         type: object
@@ -484,14 +504,21 @@ properties:
         description:
           type: string
   edges:
-    description: 선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다
+    description: |
+      선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다.
+      소비물은 셋 중 하나다(동시 선언 불가): tools(동사, 런타임 결재) · mission(질의,
+      런타임 결재) · components(제공자의 surfaces.components 를 view 빌드 의존으로 —
+      집행점이 런타임이 아니라 빌드라, 활성화는 빌드 해석 성공이 곧 결재 기록이다)
     type: array
     items:
       type: object
       additionalProperties: false
       required: [provider]
       not:
-        required: [tools, mission]
+        anyOf:
+          - required: [tools, mission]
+          - required: [tools, components]
+          - required: [mission, components]
       properties:
         provider:
           $ref: '#/$defs/provider'
@@ -502,6 +529,9 @@ properties:
         mission:
           type: string
           minLength: 1
+        components:
+          description: provider 의 surfaces.components 소스를 이 패키지 view 의 빌드 의존으로 소비 — true 만
+          const: true
   host_methods:
     description: |
       기판 host 브리지 게이트 선언 — 이 패키지의 동사가 부를 수 있는 host.* 메서드의 캡.

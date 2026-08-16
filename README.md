@@ -32,7 +32,7 @@ One package is one directory. A single manifest (`relay.yaml`) declares everythi
 | Concept | Meaning |
 | --- | --- |
 | Package | A directory with `relay.yaml`. The manifest is the source of truth for structure and paths; the tree is the source of truth for content. |
-| Surfaces | How the package faces people. The centerpiece is `view`: a web UI the package ships, built at install, hosted by the daemon at `/pkg/<name>/view/`, and wired to its own agent's verbs with the package token. `chat` (direct conversation) and `channels` (Discord, Slack, and other adapters) are additional doors. |
+| Surfaces | How the package faces people. The centerpiece is `view`: a web UI the package ships, built at install, hosted by the daemon at `/pkg/<name>/view/`, and wired to its own agent's verbs with the package token. `chat` (direct conversation) and `channels` (Discord, Slack, and other adapters) are additional doors. `components` exports an npm package (source + `package.json`) that other packages' views consume as a build dependency via a components edge — the substrate packs it into a tgz at install, no registry involved. |
 | Harness | The execution adapter bundled with the package that runs its agents. The system package bundles Claude Code, Codex, Kimi, and Pi adapters. Verbs: `session`, `setup`, `models`, `commands`, `info` (plus optional `login`, and `serve` — a resident session that takes turns over stdin instead of one process per turn). Contract conformance is judged by `relay harness-check`; the full contract lives in [docs/harness-protocol.md](docs/harness-protocol.md). |
 | Agents | Persona (`AGENT.md`) plus skills, slash commands, and dispatch to subagents. Delivered to the harness as a neutral bundle; translation to native formats belongs to the adapter. `default: true` marks the landing agent. |
 | Scripts | Verbs. `scripts/<name>.ts` default-exports `async (input, ctx) => JSON`. |
@@ -41,7 +41,7 @@ One package is one directory. A single manifest (`relay.yaml`) declares everythi
 | Storage | `storage.buckets` — a file-bucket facade. Judged on a personal substrate, enforced by an org substrate. A different axis from a service's `disk`. |
 | Triggers | Cron or event. Fires an agent with a prompt, or runs a script headless. `delivery: <channel>:<key>` runs the turn in that conversation's slot and posts the reply out through the channel adapter. |
 | Missions | Q&A capabilities a package offers to other packages. |
-| Edges | Declared dependencies on another package's tools or mission. Declaration is an application; activation is a grant. |
+| Edges | Declared dependencies on another package's tools, mission, or components. Declaration is an application; activation is a grant — for components the enforcement point is the view build, so a successful build resolution is what records the grant. |
 | Workspace | The folder grant of a package: the cwd of its sessions, chosen at install (default `~/Relay/<name>`), recorded in the ledger. |
 | Hooks | Session fences. `hooks.deny` lists paths the session's tool calls must not touch; adapters translate it into native hooks. The substrate always merges its own home (`~/.relay`) in. |
 | Grants | Approvals recorded in the ledger. A grant can never exceed a declaration. |

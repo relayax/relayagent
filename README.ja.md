@@ -32,7 +32,7 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | 概念 | 意味 |
 | --- | --- |
 | パッケージ | `relay.yaml` を持つディレクトリ。マニフェストが構造とパスの正本、ツリーが内容の正本。 |
-| Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`chat`(直接対話)と `channels`(Discord、Slack などのアダプタ)は追加の扉。 |
+| Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`chat`(直接対話)と `channels`(Discord、Slack などのアダプタ)は追加の扉。`components` は npm パッケージ(ソース + `package.json`)をエクスポートし、他パッケージの view が components edge でビルド依存として消費する——基盤がインストール時に tgz へ固め、レジストリは介在しない。 |
 | Harness | パッケージに同梱され、エージェントを実行するアダプタ。システムパッケージには Claude Code、Codex、Kimi、Pi のアダプタが同梱。動詞は `session`、`setup`、`models`、`commands`、`info`(任意で `login`、および `serve` — ターンごとにプロセスを起こさず stdin でターンを受け取る常駐セッション)。契約適合性は `relay harness-check` が判定し、契約の全文は [docs/harness-protocol.md](docs/harness-protocol.md) にあります。 |
 | Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。`default: true` がランディングエージェント。 |
 | Scripts | 動詞。`scripts/<名前>.ts` が `async (input, ctx) => JSON` をデフォルトエクスポート。 |
@@ -41,7 +41,7 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | Storage | `storage.buckets`——ファイルバケットのファサード。個人基板は判定のみ、執行は組織基板の責務。サービスの `disk` とは別の軸。 |
 | Triggers | cron またはイベント。プロンプトでエージェントを起こすか、スクリプトを headless で実行。`delivery: <チャネル>:<会話キー>` はその会話の slot でターンを回し、返信をチャネルアダプタから送出する。 |
 | Missions | パッケージが他のパッケージに提供する質疑応答能力。 |
-| Edges | 他パッケージの tools や mission への依存宣言。宣言は申請であり、有効化は承認。 |
+| Edges | 他パッケージの tools・mission・components への依存宣言。宣言は申請であり、有効化は承認——components は実行点が view ビルドにあるため、ビルド解決の成功がそのまま承認の記録になる。 |
 | Workspace | パッケージのフォルダ承認。セッションの cwd で、インストール時に決まり(デフォルト `~/Relay/<名前>`)台帳に残る。 |
 | Hooks | セッションの柵。`hooks.deny` がセッションのツール呼び出しが触れてはならないパスを宣言し、アダプタがネイティブフックへ翻訳する。基板は自分の家(`~/.relay`)を常にマージする。 |
 | Grants | 台帳に残る承認。承認は宣言を超えられない。 |

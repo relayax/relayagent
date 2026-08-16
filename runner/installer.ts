@@ -101,6 +101,9 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   // conform 은 setup 실패를 위반으로 세지 않는다 — 여기서 막히는 것은 잘못 만든 어댑터뿐이다.
   // 장부 기록 전에 던져야 거부된 패키지가 등재된 채 남지 않는다(judgeRequires 와 같은 자리)
   judgeConform(abs, m);
+  // components edge 는 빌드 의존 — 미해결(미설치 provider·제공 선언 없음·범위 밖)이면
+  // 장부 기록 전에 fail-loud (judgeRequires 와 같은 자리)
+  const components = resolveComponentEdges(ledger, m);
   const name = opts.name ?? path.basename(abs);
 
   // 재설치는 결재·설정(ring, workspace, model, effort, harness, dirBindings)을 보존한다.
@@ -126,7 +129,9 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
     saveLedger(ledger);
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[name].harness}\n` + elected.out };
   }
-  const build = buildView(name, abs, m);
+  const build = buildView(name, abs, m, components.deps);
+  // 빌드 성공 = components 소비가 실제로 구워졌다 — 그때만 결재가 장부에 앉는다
+  if (build?.ok) recordComponentGrants(ledger, name, components);
   return { name, manifest: m, setup, build };
 }
 
@@ -305,7 +310,8 @@ export function prepareArtifact(
 export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts = {}): InstallResult {
   const m = p.manifest;
   judgeConform(p.dir, m);
-  const build = buildView(p.name, p.dir, m);
+  const components = resolveComponentEdges(ledger, m);
+  const build = buildView(p.name, p.dir, m, components.deps);
   if (build && !build.ok) {
     throw new Error(`view 빌드 실패 — 설치를 중단합니다 (릴리스는 ${p.dir} 에 남아 있습니다):\n${build.out}`);
   }
@@ -343,6 +349,8 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[p.name].harness}\n` + elected.out };
   }
   saveLedger(ledger);
+  // 장부 등재 뒤에 결재를 앉힌다 — addGrant 는 consumer 의 장부 실재를 요구한다
+  if (build?.ok !== false) recordComponentGrants(ledger, p.name, components);
   return { name: p.name, manifest: m, setup, build: build ?? undefined };
 }
 
@@ -350,7 +358,10 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  return buildView(name, rec.path, m) ?? { ok: true, out: "surfaces.view.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
+  const components = resolveComponentEdges(ledger, m);
+  const build = buildView(name, rec.path, m, components.deps);
+  if (build?.ok) recordComponentGrants(ledger, name, components); // 재빌드 자가치유 — addGrant 는 중복 무해
+  return build ?? { ok: true, out: "surfaces.view.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
 }
 
 // token 자격형은 자격이 기판 손(vault)에 있다 — 동사 실행에도 세션과 같은 주입을 해줘야
@@ -518,14 +529,110 @@ export function removePkg(ledger: Ledger, name: string): void {
 
 const bareRef = (ref: string) => ref.replace(/@[^/@]+$/, "");
 
+// ── components edge 해석 — 빌드 의존의 활성화 ────────────────────────────────
+// edges[].components 는 런타임 판정점이 없다(소비가 view 에 구워진다). 그래서 활성화 지점이
+// 빌드다: 여기서 제공 선언·버전 범위를 판정하고 tgz 를 구워 buildView 에 넘기며, 빌드가
+// 성공하면 결재가 장부에 앉는다. 실패는 전부 fail-loud — 선언 없는 소비, 미설치 provider,
+// 범위 밖 버전이 조용히 빌드에 스며들지 않는다.
+
+/** 최소 semver 비교 — prerelease 무시(범위 판정에 충분) */
+function cmpSemver(a: string, b: string): number {
+  const pa = a.split("-")[0].split(".").map(Number);
+  const pb = b.split("-")[0].split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
+}
+
+/** provider 좌표 범위 절 판정. 레지스트리 해석기가 없는 기판이라 어휘를 닫는다 — 미지 문법은 fail-loud */
+function satisfiesRange(version: string, range: string | null): boolean {
+  if (!range || range === "*") return true;
+  const norm = (r: string) => {
+    const p = r.split(".").map((x) => parseInt(x, 10) || 0);
+    return `${p[0] ?? 0}.${p[1] ?? 0}.${p[2] ?? 0}`;
+  };
+  if (range.startsWith("^")) {
+    const base = norm(range.slice(1));
+    return version.split(".")[0] === base.split(".")[0] && cmpSemver(version, base) >= 0;
+  }
+  if (range.startsWith("~")) {
+    const base = norm(range.slice(1));
+    const [maj, min] = base.split(".");
+    const v = version.split(".");
+    return v[0] === maj && v[1] === min && cmpSemver(version, base) >= 0;
+  }
+  if (range.startsWith(">=")) return cmpSemver(version, norm(range.slice(2))) >= 0;
+  if (/^\d+\.\d+\.\d+/.test(range)) return cmpSemver(version, range) === 0;
+  throw new ManifestError([`components edge 범위 문법 미지원: ${range} — * · ^x.y.z · ~x.y.z · >=x.y.z · 정확 버전만`]);
+}
+
+/** 제공자의 components 소스를 npm pack 으로 굽는다 — tgz 가 소비의 유일한 형태(file: 디렉토리
+ *  심링크는 react 타입 이중 해석을 만든다). 산출은 ~/.relay/components/<제공자> 아래 */
+function packComponents(srcDir: string, providerName: string): string {
+  const dest = path.join(RELAY_HOME, "components", providerName.replace(/[^a-zA-Z0-9._-]/g, "_"));
+  fs.mkdirSync(dest, { recursive: true });
+  const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+  const args = process.platform === "win32"
+    ? ["/d", "/s", "/c", "npm.cmd", "pack", "--pack-destination", dest]
+    : ["pack", "--pack-destination", dest];
+  const r = spawnSync(command, args, { cwd: srcDir, encoding: "utf8", timeout: 120_000 });
+  if (r.status !== 0) {
+    throw new ManifestError([`components pack 실패 (${providerName}): ${((r.stdout ?? "") + (r.stderr ?? "")).trim().slice(-400)}`]);
+  }
+  const file = (r.stdout ?? "").trim().split("\n").pop()?.trim();
+  if (!file) throw new ManifestError([`components pack 산출물 이름을 얻지 못했습니다 (${providerName})`]);
+  return path.join(dest, file);
+}
+
+export interface ComponentResolution {
+  /** bare npm 이름(= provider 매니페스트 name) → 갓 구운 tgz 절대경로 — buildView 입력 */
+  deps: Record<string, string>;
+  /** 빌드 성공 뒤 장부에 앉힐 결재의 provider 설치 이름들 */
+  grants: string[];
+  notes: string[];
+}
+
+export function resolveComponentEdges(ledger: Ledger, m: Manifest): ComponentResolution {
+  const deps: Record<string, string> = {};
+  const grants: string[] = [];
+  const notes: string[] = [];
+  for (const e of m.edges ?? []) {
+    if (e.components !== true) continue;
+    const bare = bareRef(e.provider);
+    const range = e.provider.length > bare.length ? e.provider.slice(bare.length + 1) : null;
+    const installed = resolveProvider(ledger, bare);
+    if (!installed) {
+      throw new ManifestError([`components edge 미해결: ${bare} 가 설치되어 있지 않습니다 — 제공 패키지를 먼저 설치하세요`]);
+    }
+    const pm = loadManifest(ledger.packages[installed].path);
+    const src = pm.surfaces?.components?.source;
+    if (!src) {
+      throw new ManifestError([`components edge 거부: ${bare} 는 surfaces.components 를 선언하지 않습니다 — 소비는 제공 선언을 넘지 못합니다`]);
+    }
+    if (!satisfiesRange(pm.version, range)) {
+      throw new ManifestError([`components edge 버전 불일치: ${bare}@${pm.version} 는 선언 범위 ${range} 를 만족하지 않습니다`]);
+    }
+    deps[pm.name] = packComponents(path.join(ledger.packages[installed].path, src), installed);
+    grants.push(installed);
+    notes.push(`${pm.name}@${pm.version} ← ${installed}`);
+  }
+  return { deps, grants, notes };
+}
+
+/** 빌드 성공 = components 활성화 — 결재를 장부에 앉힌다(addGrant 의 선언 캡·중복 판정을 그대로 지난다) */
+function recordComponentGrants(ledger: Ledger, consumer: string, resolution: ComponentResolution): void {
+  for (const provider of resolution.grants) {
+    addGrant(ledger, { consumer, provider, components: true });
+  }
+}
+
 /** 장부에 들어가는 유일한 문. 스크립트, HTTP, CLI 가 전부 여기를 지난다 */
 export function addGrant(ledger: Ledger, g: Grant): void {
   const consumer = ledger.packages[g.consumer];
   const provider = ledger.packages[g.provider];
   if (!consumer) throw new Error(`미설치 consumer: ${g.consumer}`);
   if (!provider) throw new Error(`미설치 provider: ${g.provider}`);
-  if (g.tools?.length && g.mission) throw new Error("tools 와 mission 동시 결재 불가");
-  if (!g.tools?.length && !g.mission) throw new Error("tools 또는 mission 중 하나는 있어야 합니다");
+  const forms = [g.tools?.length ? 1 : 0, g.mission ? 1 : 0, g.components ? 1 : 0].reduce((a, b) => a + b, 0);
+  if (forms !== 1) throw new Error("tools · mission · components 중 정확히 하나를 결재해야 합니다");
 
   // 선언은 신청, 결재는 활성화. 결재는 선언을 넘지 못한다
   const lineage = loadManifest(provider.path).name;
@@ -545,11 +652,18 @@ export function addGrant(ledger: Ledger, g: Grant): void {
     const over = g.tools.filter((t) => !allowed.has(t));
     if (over.length) throw new Error(`선언 캡 초과: tools ${over.join(", ")} (선언된 tools: ${[...allowed].join(", ") || "없음"})`);
   }
+  if (g.components && !declared.some((e) => e.components === true)) {
+    throw new Error(`선언 캡 초과: components (${g.consumer} 의 edges 에 components 선언 없음)`);
+  }
 
   const dup = ledger.grants.find(
-    (x) => x.consumer === g.consumer && x.provider === g.provider && x.mission === g.mission && JSON.stringify(x.tools) === JSON.stringify(g.tools),
+    (x) =>
+      x.consumer === g.consumer && x.provider === g.provider && x.mission === g.mission &&
+      JSON.stringify(x.tools) === JSON.stringify(g.tools) && (x.components ?? false) === (g.components ?? false),
   );
-  if (!dup) ledger.grants.push({ consumer: g.consumer, provider: g.provider, tools: g.tools, mission: g.mission });
+  if (!dup) {
+    ledger.grants.push({ consumer: g.consumer, provider: g.provider, tools: g.tools, mission: g.mission, ...(g.components ? { components: true } : {}) });
+  }
   saveLedger(ledger);
 }
 
