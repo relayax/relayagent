@@ -144,6 +144,8 @@ export function packDir(pkgDir: string, outFile?: string): PackResult {
   // 서명 — vault 에 발행 키(relay keygen)가 있으면 봉인값 위에 사인해 사이드카로 남긴다.
   // 키 없는 굽기는 무서명(현행) — 서명 요구는 설치 기판의 RELAY_PUBKEYS 고정이 결정한다
   let signature: EnvelopeSignature | undefined;
+  // §8-2 잔여: packDir 는 동기 계약(CLI pack·host.pack·등재 화면이 동기 소비)이라 비동기
+  // authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
   const signKey = vaultGet(SIGNING_VAULT_KEY);
   if (signKey) {
     signature = signDigest(signKey, digest);
@@ -155,6 +157,7 @@ export function packDir(pkgDir: string, outFile?: string): PackResult {
   walk(root, "", viewOut, all);
   const excluded = all.filter((f) => !files.has(f));
 
+  // §8-2 잔여: 위 signKey 와 같은 사유(동기 계약) — audit 이사 보류
   logLine("pack", { ref: m.name, version: m.version, digest, size: gz.length, files: included.length });
   return { file, ref: m.name, version: m.version, digest, size: gz.length, included, excluded, manifest: m, disclosure: disclosure(m), signature };
 }

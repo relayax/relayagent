@@ -178,6 +178,41 @@ export function conformChannel(pkgPath: string, c: { name: string; source: strin
   return { variant: `channel:${c.name}`, ok: checks.every((x) => x.ok), checks };
 }
 
+/**
+ * 채널 자격 검증 — RELAY_VERIFY=1 스폰 문(schema surfaces.channels '검증' 절).
+ * "저장됨 ≠ 유효": vault 에 앉은 자격을 주입해 어댑터가 실왕복 한 번(소켓·상주 없이)만
+ * 돌려 {ok, note} 를 내는지 본다. 상주 프로세스는 건드리지 않는다 — throwaway 스폰이다.
+ * 미구현 어댑터(검증 문 없이 상주로 흐름)는 15초 timeout 으로 판정 없음(null)으로 강등된다.
+ */
+export function verifyChannel(
+  pkgPath: string,
+  c: { name: string; source: string; entry: string },
+  cred: string | null,
+): { ok: boolean; note: string } {
+  if (!cred) return { ok: false, note: "자격 없음 — 먼저 연결하세요" };
+  const entry = path.resolve(pkgPath, c.source, c.entry);
+  const credEnv = `RELAY_CRED_${c.name.toUpperCase().replace(/-/g, "_")}`;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-verify-"));
+  try {
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", entry], {
+      encoding: "utf8",
+      timeout: 15_000,
+      cwd: tmp,
+      env: { ...process.env, RELAY_VERIFY: "1", RELAY_NAME: "verify", RELAY_CHANNEL: c.name, RELAY_API: "http://127.0.0.1:0", RELAY_TOKEN: "verify", [credEnv]: cred },
+    });
+    if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      return { ok: false, note: "검증 문(RELAY_VERIFY) 미구현 — 저장은 됐으나 유효 여부를 확인할 수 없습니다" };
+    }
+    const lines = String(r.stdout ?? "").trim().split("\n").filter(Boolean);
+    const j = JSON.parse(lines[lines.length - 1] ?? "");
+    return { ok: r.status === 0 && j.ok === true, note: typeof j.note === "string" ? j.note : (j.ok ? "유효" : "검증 실패") };
+  } catch {
+    return { ok: false, note: "검증 응답을 읽지 못했습니다 (RELAY_VERIFY=1 에서 {\"ok\":…} 한 줄을 내야 합니다)" };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 export function conformPkg(ledger: Ledger, name: string): ConformResult[] {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);

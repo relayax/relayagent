@@ -369,6 +369,8 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
 function llmEnv(v: HarnessVariant): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (v.llm?.auth?.kind === "token" && v.llm.auth.env) {
+    // §8-2 잔여: llmEnv 는 동기 하네스 동사 체인(harnessVerb·probeHarness·electHarness) 깊숙이
+    // 있어 비동기 authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
     const cred = vaultGet(`llm/${v.llm.provider}`);
     if (cred) env[v.llm.auth.env] = cred;
   }
@@ -447,6 +449,7 @@ export function connectHarnessToken(ledger: Ledger, name: string, tokenValue: st
   }
   const val = tokenValue.trim();
   if (!val) throw new Error("빈 토큰");
+  // §8-2 잔여: llmEnv 와 같은 사유(동기 체인) — setCredential 이사 보류
   vaultSet(`llm/${v.llm.provider}`, val);
   return harnessVerb(ledger, name, "setup");
 }

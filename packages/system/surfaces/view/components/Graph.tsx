@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddEdgeDialog, { type EdgePrefill } from "@/components/AddEdgeDialog";
 import HarnessDialog from "@/components/HarnessDialog";
+import ChannelDialog from "@/components/ChannelDialog";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
 
 const W = 1180;
@@ -143,6 +144,7 @@ export default function Graph({
   const [ghost, setGhost] = useState<{ from: string; x: number; y: number } | null>(null);
   const [dialog, setDialog] = useState<EdgePrefill | null>(null);
   const [harnessDlg, setHarnessDlg] = useState<Pkg | null>(null);
+  const [channelDlg, setChannelDlg] = useState<Pkg | null>(null);
   const persistT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panRef = useRef(pan);
   const scaleRef = useRef(scale);
@@ -470,7 +472,15 @@ export default function Graph({
                     })()
                   : null}
                 {m?.surfaces?.channels?.length ? (
-                  <span className="gx-pill dep" title={`채널 ${m.surfaces.channels.map((c) => c.name).join(" · ")}`} onPointerDown={(e) => e.stopPropagation()}>
+                  <span
+                    className="gx-pill dep"
+                    title={`채널 ${m.surfaces.channels.map((c) => c.name).join(" · ")} · 클릭해 연결·상태`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChannelDlg(p);
+                    }}
+                  >
                     {m.surfaces.channels.map((ch) =>
                       ch.icon ? (
                         <img key={ch.name} src={`/pkg/${encodeURIComponent(p.name)}/asset/${ch.icon}`} alt={ch.name} />
@@ -567,6 +577,9 @@ export default function Graph({
       ) : null}
       {harnessDlg ? (
         <HarnessDialog pkg={harnessDlg} onClose={() => setHarnessDlg(null)} onChanged={onChanged} />
+      ) : null}
+      {channelDlg ? (
+        <ChannelDialog pkg={channelDlg} onClose={() => setChannelDlg(null)} onChanged={onChanged} />
       ) : null}
     </div>
   );

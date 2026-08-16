@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { approveGrant, short } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { approveGrant, channelStatus, short, type ChannelStatusView } from "@/lib/api";
 import type { EdgeView, Pkg } from "@/lib/types";
 
 function Rows({ children }: { children: React.ReactNode[] }) {
@@ -14,6 +14,15 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
   const [error, setError] = useState<string | null>(null);
   const m = pkg.manifest ?? {};
   const mine = edges.filter((e) => e.consumer === pkg.name);
+
+  // 채널 운영 상태 — 선언(매니페스트)이 아니라 지금 살아있는지. 조작은 그래프 배지의 다이얼로그가 소유
+  const [chans, setChans] = useState<ChannelStatusView[] | null>(null);
+  useEffect(() => {
+    if (!m.surfaces?.channels?.length) return;
+    let live = true;
+    channelStatus(pkg.name).then((r) => { if (live) setChans(r.channels); }).catch(() => { if (live) setChans([]); });
+    return () => { live = false; };
+  }, [pkg.name, m.surfaces?.channels?.length]);
 
   async function approve(e: EdgeView) {
     setError(null);
@@ -96,6 +105,32 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
           ))}
         </Rows>
       </section>
+
+      {m.surfaces?.channels?.length ? (
+        <section>
+          <div className="rc-label">채널 (외부 대화)</div>
+          <Rows>
+            {(m.surfaces.channels ?? []).map((c) => {
+              const st = chans?.find((x) => x.name === c.name);
+              const chip = !st
+                ? { cls: "rc-chip gray", label: "확인 중" }
+                : !st.hasCred
+                  ? { cls: "rc-chip gray", label: "자격 없음" }
+                  : st.lastError
+                    ? { cls: "rc-chip", label: "오류" }
+                    : st.running
+                      ? { cls: "rc-chip", label: "연결됨" }
+                      : { cls: "rc-chip gray", label: "저장됨" };
+              return (
+                <div className="row" key={c.name}>
+                  <span className="grow">{c.name}</span>
+                  <span className={chip.cls}>{chip.label}</span>
+                </div>
+              );
+            })}
+          </Rows>
+        </section>
+      ) : null}
 
       <section>
         <div className="rc-label">미션 (a2a 수신)</div>

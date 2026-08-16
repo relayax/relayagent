@@ -79,6 +79,8 @@ export function buildView(pkg: string, pkgPath: string, m: Manifest, components?
     const b = runNpm(["run", "build"]);
     const tail = ((b.stdout ?? "") + (b.stderr ?? "")).trim().slice(-800);
     if (b.status !== 0) {
+      // §8-2 잔여: buildView 는 동기 설치 파이프라인(installer·draft) 깊숙이 있어 authority 주입이
+      // installPkg·activatePrepared·publishDraft 전 시그니처 연쇄를 일으킨다 — audit 이사는 보류
       logLine("build", { pkg, ok: false });
       return { ok: false, out: [...steps, tail].join("\n") };
     }
@@ -87,6 +89,7 @@ export function buildView(pkg: string, pkgPath: string, m: Manifest, components?
     if (!fs.existsSync(outDir)) {
       return { ok: false, out: `빌드는 통과했지만 산출 디렉토리가 없습니다: ${view.source}/${view.out}` };
     }
+    // §8-2 잔여: 위와 같은 사유
     logLine("build", { pkg, ok: true, base: env.RELAY_BASE_PATH });
     return { ok: true, out: [...steps, `${view.source}/${view.out} 빌드됨 (basePath ${env.RELAY_BASE_PATH})`].join("\n") };
   } finally {

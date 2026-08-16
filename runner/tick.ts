@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { RELAY_HOME, logLine, type Ledger } from "./state.ts";
+import { RELAY_HOME, type Ledger } from "./state.ts";
 import { loadManifest, type Manifest, type TriggerDecl } from "./manifest.ts";
 import { postToChannel } from "./run.ts";
 import { runSession } from "./session.ts";
 import { runScript, type HostBridge } from "./scripts.ts";
-import { PRINCIPAL } from "./state.ts";
+import { localAuthority } from "./authority.ts";
+import type { Authority } from "./authority-contract.ts";
 
 function fieldMatch(expr: string, value: number): boolean {
   return expr.split(",").some((part) => {
@@ -38,14 +39,18 @@ export class Ticker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private getLedger: () => Ledger;
   private hostBridge: HostBridge;
+  // 권위 이음새 — 발화 감사(audit)와 발화 신원(principal)이 이 문을 지난다. 발화·스윕은 동기
+  // 문맥이라 감사는 fire-and-forget 소비 계열이다(실패는 미처리 거부로 표면화)
+  private authority: Authority;
   // 발화 장부의 디스크 사본 — 같은 분(minute) 안의 데몬 재시작이 이중 발화하지 않고,
   // 데몬이 꺼져 있던 동안의 미발화(misfire)가 침묵하지 않게 한다. 트리거가 안 울리는 것은
   // 에러를 내지 않는 실패라 장부 없이는 아무도 모른다.
   private stateFile = path.join(RELAY_HOME, "triggers.json");
 
-  constructor(getLedger: () => Ledger, hostBridge: HostBridge) {
+  constructor(getLedger: () => Ledger, hostBridge: HostBridge, authority: Authority = localAuthority(getLedger)) {
     this.getLedger = getLedger;
     this.hostBridge = hostBridge;
+    this.authority = authority;
   }
 
   start(): void {
@@ -70,7 +75,7 @@ export class Ticker {
     try {
       fs.writeFileSync(this.stateFile, JSON.stringify({ fired: Object.fromEntries(this.fired), last_sweep: now.toISOString() }));
     } catch (e) {
-      logLine("triggers", { error: `발화 장부 저장 실패: ${e}` });
+      void this.authority.audit("triggers", { error: `발화 장부 저장 실패: ${e}` });
     }
   }
 
@@ -102,7 +107,7 @@ export class Ticker {
           if (cronMatch(t.when.cron, d, t.when.tz) && this.fired.get(`${pkg}/${t.id}`) !== d.toISOString().slice(0, 16)) missed++;
         }
         if (missed > 0) {
-          logLine("triggers", { pkg, trigger: t.id, missed, note: `데몬 미기동 구간(${s.last_sweep} ~) 미발화 — 따라잡기 실행 없음` });
+          void this.authority.audit("triggers", { pkg, trigger: t.id, missed, note: `데몬 미기동 구간(${s.last_sweep} ~) 미발화 — 따라잡기 실행 없음` });
         }
       }
     }
@@ -160,11 +165,11 @@ export class Ticker {
   }
 
   private fire(pkg: string, t: TriggerDecl): void {
-    logLine("triggers", { pkg, trigger: t.id });
+    void this.authority.audit("triggers", { pkg, trigger: t.id });
     const ledger = this.getLedger();
     if (t.then.script) {
-      runScript(ledger, pkg, t.then.script, { trigger: t.id }, { principal: PRINCIPAL }, this.hostBridge).catch((e) =>
-        logLine("triggers", { pkg, trigger: t.id, error: String(e) }),
+      runScript(ledger, pkg, t.then.script, { trigger: t.id }, { principal: this.authority.principal() }, this.hostBridge, this.authority).catch((e) =>
+        void this.authority.audit("triggers", { pkg, trigger: t.id, error: String(e) }),
       );
       return;
     }
@@ -173,14 +178,14 @@ export class Ticker {
       // 후속 발화가 같은 slot 에 착신되어 대화가 이어진다 (채널 계약 '발신' 절)
       const dm = t.then.delivery ? /^([a-z0-9][a-z0-9-]{0,39}):(.+)$/.exec(t.then.delivery) : null;
       const slot = dm ? `${dm[1]}-${dm[2]}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64) : `trigger-${t.id}`;
-      runSession({ ledger, pkg, agent: t.then.agent, prompt: t.then.prompt, slot })
+      runSession({ ledger, pkg, authority: this.authority, agent: t.then.agent, prompt: t.then.prompt, slot })
         .then((r) => {
           if (!dm) return;
           if (!postToChannel(pkg, dm[1], { conversation: dm[2], text: r.reply, files: r.files?.map((f) => f.path) })) {
-            logLine("triggers", { pkg, trigger: t.id, error: `발신 실패 — 채널 미기동: ${dm[1]}` });
+            void this.authority.audit("triggers", { pkg, trigger: t.id, error: `발신 실패 — 채널 미기동: ${dm[1]}` });
           }
         })
-        .catch((e) => logLine("triggers", { pkg, trigger: t.id, error: String(e) }));
+        .catch((e) => void this.authority.audit("triggers", { pkg, trigger: t.id, error: String(e) }));
     }
   }
 }

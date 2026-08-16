@@ -7,7 +7,8 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { vaultGet, vaultSet, credKey } from "./vault.ts";
+import { credKey } from "./vault.ts";
+import type { Authority } from "./authority-contract.ts";
 import type { AuthDecl } from "./manifest.ts";
 
 export interface OAuthBundle {
@@ -152,9 +153,10 @@ export async function runOAuthFlow(serviceUrl: string, auth: AuthDecl, opts: OAu
   }
 }
 
-/** 자격 소비 — 만료 60초 전이면 회전해 저장하고 Bearer 를 돌려준다. 번들 없음 = null */
-export async function oauthHeader(pkg: string, service: string): Promise<string | null> {
-  const raw = vaultGet(credKey(pkg, service));
+/** 자격 소비 — 만료 60초 전이면 회전해 저장하고 Bearer 를 돌려준다. 번들 없음 = null.
+ *  자격의 읽기·쓰기는 권위 이음새(authority.credential/setCredential)를 지난다 */
+export async function oauthHeader(authority: Authority, pkg: string, service: string): Promise<string | null> {
+  const raw = await authority.credential(credKey(pkg, service));
   if (!raw) return null;
   let b: OAuthBundle;
   try {
@@ -169,17 +171,17 @@ export async function oauthHeader(pkg: string, service: string): Promise<string 
       client_id: b.client_id,
     });
     b = toBundle(tok, b.token_endpoint, b.client_id, b);
-    vaultSet(credKey(pkg, service), JSON.stringify(b));
+    await authority.setCredential(credKey(pkg, service), JSON.stringify(b));
   }
   return `Bearer ${b.access_token}`;
 }
 
 /** 서비스 자격 헤더 — token(생 토큰)과 oauth(번들·회전)를 한 자리에서 푼다 */
-export async function serviceAuthHeader(pkg: string, service: string, auth: AuthDecl | undefined): Promise<string | undefined> {
+export async function serviceAuthHeader(authority: Authority, pkg: string, service: string, auth: AuthDecl | undefined): Promise<string | undefined> {
   if (auth?.kind === "token") {
-    const c = vaultGet(credKey(pkg, service));
+    const c = await authority.credential(credKey(pkg, service));
     return c ? `Bearer ${c}` : undefined;
   }
-  if (auth?.kind === "oauth") return (await oauthHeader(pkg, service)) ?? undefined;
+  if (auth?.kind === "oauth") return (await oauthHeader(authority, pkg, service)) ?? undefined;
   return undefined;
 }

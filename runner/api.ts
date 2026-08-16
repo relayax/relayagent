@@ -5,24 +5,53 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { API_PORT, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
-import { vaultGet, vaultSet } from "./vault.ts";
+import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy } from "./session.ts";
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
-import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
+import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
 import { saveLedger } from "./state.ts";
-import { startServices, startChannels, stopServices } from "./run.ts";
+import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, localIO } from "./run.ts";
+import { verifyChannel } from "./conform.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
 import { serviceAuthHeader } from "./oauth.ts";
+import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, UPLOADS_DIR, UPLOADS_PREFIX, SLOT_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
 const ASSETS_DIR = path.join(RUNNER_DIR, "..", "lib", "relayjs", "src");
+
+// 채널 로그에서 밖으로 나갈 문자열의 비밀을 지운다 — 토큰과 사용자 절대경로. fail-loud 하되
+// 자격은 외부에 노출하지 않는다는 계약(schema surfaces.channels '실패' 절)의 집행이다
+function scrubSecrets(s: string): string {
+  return s
+    .replace(/xox[a-z]-[A-Za-z0-9-]+/gi, "xox•-…")
+    .replace(/xapp-[A-Za-z0-9-]+/gi, "xapp-…")
+    .replace(/xoxe[.-][A-Za-z0-9.-]+/gi, "xoxe-…")
+    .replace(/\/(Users|home)\/[^\s"']+/g, "…");
+}
+
+// 채널 상태의 '최근 오류' — channels.jsonl 을 뒤에서부터 훑어 이 채널의 가장 최근 사건을 본다.
+// err(경고 제외) 또는 비정상 exit 이 최근이면 그 사연을, out/정상 exit 이 최근이면 건강(null)
+function channelLastError(pkg: string, channel: string): string | null {
+  const file = path.join(RELAY_HOME, "logs", "channels.jsonl");
+  if (!fs.existsSync(file)) return null;
+  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let j: { pkg?: string; channel?: string; err?: string; out?: string; exit?: number | null };
+    try { j = JSON.parse(lines[i]); } catch { continue; }
+    if (j.pkg !== pkg || j.channel !== channel) continue;
+    if (j.err && !/ExperimentalWarning|trace-warnings/.test(j.err)) return scrubSecrets(j.err);
+    if (j.exit != null && j.exit !== 0) return `프로세스 종료 (exit ${j.exit})`;
+    if (j.out || j.exit === 0) return null; // 최근 사건이 건강하면 오류 없음
+  }
+  return null;
+}
 
 // 준비된 설치의 대기석. 고지서를 본 화면만 activate 에 닿도록 짧은 토큰으로 잇는다.
 // 릴리스 전개는 이미 디스크에 있으므로 만료되어도 잃는 것은 없다 — 다시 prepare 하면 재사용된다
@@ -194,7 +223,9 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
   return JSON.parse(raw);
 }
 
-export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null): HostBridge {
+// 권위 이음새를 인자로 받는다 — 결재(grant)·장부 조회가 이 문을 지나야 조직 임베드가
+// 브리지를 그대로 두고 권위 구현만 갈아 끼운다 (조립 지점: relay.ts daemon · createApi)
+export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority): HostBridge {
   return {
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
@@ -211,9 +242,9 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       removePkg(getLedger(), name);
       return { removed: name };
     },
-    grants: () => getLedger().grants,
-    grant: (g) => {
-      addGrant(getLedger(), g);
+    grants: () => authority.grants() as Promise<Grant[]>,
+    grant: async (g) => {
+      await authority.recordGrant(g);
       return { ok: true };
     },
     validate: (dir) => validateDir(dir),
@@ -275,12 +306,12 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const m = loadManifest(ledger.packages[provider].path);
       if (!(m.missions ?? []).some((x) => x.name === mission)) throw new Error(`미선언 미션: ${mission}`);
       // 첫 줄은 위임 마커다 — 수신 대화의 화면이 이 마커를 발신자 아이콘 카드로 렌더한다
-      const prompt = `[미션 수신: ${mission}${consumer ? ` ← ${consumer}` : ""}]\n${payload}`;
+      const prompt = `${a2aMissionMarker(mission, consumer)}\n${payload}`;
       const slot = `mission-${mission}`;
       // 위임 대화도 세션 목록의 시민이다 — 이름이 없으면 마커 원문이 라벨 행세를 해서 흉하다
       const labelFile = path.join(sessionDir(provider, slot), "label");
       if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `⇄ ${consumer ?? "외부"} → ${mission}`);
-      const r = await runSession({ ledger, pkg: provider, prompt, slot });
+      const r = await runSession({ ledger, pkg: provider, authority, prompt, slot });
       return r.reply;
     },
   };
@@ -305,22 +336,23 @@ function sessionScriptSet(ledger: Ledger, pkg: string, agent: string): Set<strin
 // 서술·입력 형의 정본은 동사 자신이다 — 기판이 이름으로 문장을 지어내면 tools/list 가 세션에게
 // 아무것도 알려주지 못한다(이름을 두 번 읽는 셈). meta 를 수출한 동사는 그 서술과 JSON Schema 를
 // 싣고, 수출하지 않은 동사는 현행 그대로 자동 서술 + 개방 스키마(mcp.ts 폴백)로 선다.
-async function sessionTools(ledger: Ledger, pkg: string, agent: string): Promise<McpToolInfo[]> {
+async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, agent: string): Promise<McpToolInfo[]> {
   const tools: McpToolInfo[] = [];
   for (const s of sessionScriptSet(ledger, pkg, agent)) {
     const meta = await scriptMeta(ledger, pkg, s);
     tools.push({ name: s, description: meta?.description ?? `${pkg} 패키지의 ${s} 동사`, inputSchema: meta?.input });
   }
 
-  for (const g of ledger.grants.filter((g) => g.consumer === pkg)) {
+  // 인가 장부 조회도 권위 이음새를 지난다 — 목록(tools/list)과 집행(grantForTool)이 같은 문을 본다
+  for (const g of (await authority.grants()).filter((g) => g.consumer === pkg)) {
     if (g.mission) {
       tools.push({
-        name: `a2a__${g.provider}__${g.mission.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+        name: a2aToolName(g.provider, g.mission),
         description: `a2a 위임: ${g.provider} 의 ${g.mission} 미션. arguments: { payload: string }`,
       });
     }
     for (const t of g.tools ?? []) {
-      tools.push({ name: `edge__${g.provider}__${t}`, description: `edge 소비: ${g.provider} 의 ${t}` });
+      tools.push({ name: edgeToolName(g.provider, t), description: `edge 소비: ${g.provider} 의 ${t}` });
     }
   }
   return tools;
@@ -342,8 +374,8 @@ async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: stri
   //   agent 이름은 consumer 패키지의 어휘다: provider 는 이것을 자기 에이전트로 읽으면 안 된다.
   //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
   const identity = { principal: authority.principal(), agent };
-  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(provider, urlSvc.name, urlSvc.auth), identity);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host);
+  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 
@@ -353,21 +385,21 @@ async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: stri
 // (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
 function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string): McpIO {
   return {
-    tools: () => sessionTools(ledger, pkg, agent),
+    tools: () => sessionTools(ledger, authority, pkg, agent),
     call: async (name, args) => {
-      const a2a = name.match(/^a2a__([a-z0-9-]+)__(.+)$/);
-      const edge = name.match(/^edge__([a-z0-9-]+)__(.+)$/);
+      const a2a = parseA2aToolName(name);
+      const edge = parseEdgeToolName(name);
       if (a2a) {
-        const m = loadManifest(ledger.packages[a2a[1]].path);
-        const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
-        const grant = await authority.grantForMission(pkg, a2a[1], mission);
-        if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
-        return await host.dispatch(a2a[1], mission, String(args.payload ?? JSON.stringify(args)), pkg);
+        const m = loadManifest(ledger.packages[a2a.provider].path);
+        const mission = (m.missions ?? []).find((x) => sanitizeToolSegment(x.name) === a2a.rest)?.name ?? a2a.rest;
+        const grant = await authority.grantForMission(pkg, a2a.provider, mission);
+        if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a.provider}/${mission}`);
+        return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
       }
-      if (edge) return await callEdgeTool(ledger, authority, pkg, edge[1], edge[2], args, host, agent);
+      if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent);
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
       if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
-      return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host);
+      return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host, authority);
     },
   };
 }
@@ -457,8 +489,8 @@ function streamFile(file: string, res: http.ServerResponse): void {
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
 // 이력의 정본은 세션 디렉토리의 history.jsonl (session.ts 가 쌓는다).
-// 목록·전환·복원은 기판이 답한다 — 하네스의 자체 세션 저장과는 별개의 축이다
-const SLOT_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+// 목록·전환·복원은 기판이 답한다 — 하네스의 자체 세션 저장과는 별개의 축이다.
+// slot 문법 정본은 protocol.ts SLOT_RE 다 (클라 쪽 이중 정의는 Phase 2 에서 은퇴)
 
 function sessionsRoot(pkg: string): string {
   return path.join(RELAY_HOME, "sessions", pkg);
@@ -521,9 +553,8 @@ function listSessions(pkg: string): { sessions: SessionRow[] } {
   return { sessions };
 }
 
-export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker): http.Server {
-  // 권위 이음새 — 1인 기판은 로컬 권위. 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
-  const authority = localAuthority(getLedger);
+// 권위 이음새 — 1인 기판은 로컬 권위(기본값). 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
+export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker, authority: Authority = localAuthority(getLedger)): http.Server {
   const server = http.createServer(async (req, res) => {
     try {
       // URL 파싱은 try 안에서 — "//" 같은 기형 경로의 파싱 예외가 밖으로 새면
@@ -743,7 +774,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
               abs = paidCache;
             } else if (entry.price != null && !entry.url) {
               // 유료 — 키가 다운로드의 문을 연다. 키는 vault 에 앉아 재설치 때 다시 묻지 않는다
-              const key = (b.key ? String(b.key) : null) ?? vaultGet(`store-key/${entry.ref}`);
+              const key = (b.key ? String(b.key) : null) ?? await authority.credential(`store-key/${entry.ref}`);
               if (!key) {
                 return void json(res, 402, { error: `유료 패키지입니다 (₩${entry.price.toLocaleString()})`, need_key: true, ref: entry.ref, price: entry.price });
               }
@@ -755,7 +786,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
                 }
                 throw e;
               }
-              vaultSet(`store-key/${entry.ref}`, key.trim()); // redeem 을 통과한 키만 보관한다
+              await authority.setCredential(`store-key/${entry.ref}`, key.trim()); // redeem 을 통과한 키만 보관한다
             } else {
               abs = await downloadArtifact(STORE_INDEX_URL, entry);
             }
@@ -821,13 +852,14 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const { parse } = await import("yaml");
         return void json(res, 200, parse(fs.readFileSync(SCHEMA_FILE, "utf8")));
       }
+      // 결재 문은 하나다 — HTTP 결재도 권위 이음새(recordGrant/removeGrant)를 지난다
       if (p === "/grants" && req.method === "POST") {
         const g = (await readBody(req)) as Grant;
-        addGrant(getLedger(), g);
+        await authority.recordGrant(g);
         return void json(res, 200, { ok: true });
       }
       if (p === "/grants/remove" && req.method === "POST") {
-        removeGrant(getLedger(), (await readBody(req)) as Grant);
+        await authority.removeGrant((await readBody(req)) as Grant);
         return void json(res, 200, { ok: true });
       }
       if (p === "/install" && req.method === "POST") {
@@ -891,6 +923,50 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         return void json(res, 200, { ok: setup.ok, setup });
       }
 
+      // ── 채널 운영면 — 하네스 설정 다이얼로그의 자매. 저작(스튜디오)이 아니라 운영(콘솔)이다 ──
+      // 상태 조회: 상주 pid·자격 존재·최근 오류를 합친다. 자격 값은 절대 싣지 않는다(hasCred 만)
+      const chs = p.match(/^\/pkg\/([^/]+)\/channels$/);
+      if (chs && req.method === "GET") {
+        const l = getLedger();
+        const pkg = decodeURIComponent(chs[1]);
+        const rec = l.packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const m = loadManifest(rec.path);
+        const channels = [];
+        for (const c of m.surfaces?.channels ?? []) {
+          const pid = channelPid(pkg, c.name);
+          channels.push({ name: c.name, icon: c.icon ?? null, running: pid != null, pid, hasCred: (await authority.credential(credKey(pkg, c.name))) != null, lastError: channelLastError(pkg, c.name) });
+        }
+        return void json(res, 200, { channels });
+      }
+
+      // connect(자격 저장) · verify(실왕복 판정) · restart(채널 하나 갈아타기) — relayos connections 3동사의 OSS 축소
+      const cop = p.match(/^\/pkg\/([^/]+)\/channel\/([^/]+)\/(connect|verify|restart)$/);
+      if (cop && req.method === "POST") {
+        const l = getLedger();
+        const pkg = decodeURIComponent(cop[1]);
+        const channel = decodeURIComponent(cop[2]);
+        const rec = l.packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const m = loadManifest(rec.path);
+        const c = (m.surfaces?.channels ?? []).find((x) => x.name === channel);
+        if (!c) return void json(res, 404, { error: `없는 채널: ${channel}` });
+        if (cop[3] === "connect") {
+          const b = await readBody(req);
+          const cred = String(b.cred ?? "").trim();
+          if (!cred) return void json(res, 400, { error: "빈 자격" });
+          await authority.setCredential(credKey(pkg, channel), cred); // 저장만 — 유효 판정은 verify 소관("저장됨 ≠ 유효")
+          return void json(res, 200, { ok: true });
+        }
+        if (cop[3] === "verify") {
+          return void json(res, 200, verifyChannel(rec.path, c, await authority.credential(credKey(pkg, channel))));
+        }
+        // restart — 옛 상주를 죽이고 다시 스폰한다(새 자격 반영). 정체 가드가 겹침 레이스를 막는다
+        stopChannel(pkg, channel);
+        const note = startOneChannel(pkg, rec.path, c, localIO(l));
+        return void json(res, 200, { ok: true, running: channelPid(pkg, channel) != null, note });
+      }
+
       // 대화형 로그인 발화. 인증 자체는 터미널(TTY)이 소유하고 기판은 그 창을 열어 줄 뿐이다
       // 로그인 두 갈래: headless(pty 중계 — 브라우저 안에서 끝난다)와 terminal(창을 여는 폴백)
       const hl = p.match(/^\/pkg\/([^/]+)\/harness\/login$/);
@@ -900,7 +976,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (b.mode === "terminal") {
           return void json(res, 200, { mode: "terminal", ...launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch }) });
         }
-        return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, { switch: !!b.switch }) });
+        return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, authority, { switch: !!b.switch }) });
       }
       const hlr = p.match(/^\/pkg\/([^/]+)\/harness\/login\/(read|input|stop)$/);
       if (hlr) {
@@ -1046,6 +1122,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const r = await runSession({
           ledger: getLedger(),
           pkg,
+          authority,
           prompt: String(b.message ?? ""),
           slot: b.slot ? String(b.slot) : undefined,
           agent: b.agent ? String(b.agent) : undefined,
@@ -1060,7 +1137,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       }
 
       // ── 파일 주고받기 — stage 가 유일한 무대다 ─────────────────────────
-      // 업로드: 바이트를 사이드밴드로 스트리밍해 stage/uploads 에 앉힌다 (JSON body 비경유).
+      // 업로드: 바이트를 사이드밴드로 스트리밍해 stage 의 인바운드 무대(UPLOADS_DIR)에 앉힌다 (JSON body 비경유).
       // 반환된 상대경로가 첨부 참조가 되고, 세션이 프롬프트 앞에 절대경로로 붙인다.
       // workspace 가 아니라 stage 인 이유: workspace 는 ~ 처럼 넓게 결재될 수 있고,
       // HTTP 로 드나드는 파일의 범위는 그와 무관하게 좁아야 한다
@@ -1070,7 +1147,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (!getLedger().packages[pkg]) return void json(res, 404, { error: `미설치 패키지: ${pkg}` });
         const rawName = String(url.searchParams.get("name") ?? "file");
         const name = (rawName.split(/[\\/]/).pop() ?? "file").replace(/^\.+/, "_").slice(0, 128) || "file";
-        const dir = path.join(stageDir(pkg), "uploads");
+        const dir = path.join(stageDir(pkg), UPLOADS_DIR);
         fs.mkdirSync(dir, { recursive: true });
         let target = path.join(dir, name);
         if (fs.existsSync(target)) {
@@ -1093,7 +1170,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         });
         req.pipe(ws);
         ws.on("finish", () => {
-          if (!failed) json(res, 200, { path: "uploads/" + path.basename(target), size, name: path.basename(target) });
+          if (!failed) json(res, 200, { path: UPLOADS_PREFIX + path.basename(target), size, name: path.basename(target) });
         });
         ws.on("error", (e) => {
           if (!failed) json(res, 500, { error: String(e) });
@@ -1140,7 +1217,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);
       if (script && req.method === "POST") {
         const b = await readBody(req);
-        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host);
+        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority);
         return void json(res, 200, { result });
       }
 

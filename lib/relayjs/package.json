@@ -10,6 +10,13 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     },
+    "./client": {
+      "types": "./src/index.d.ts",
+      "default": "./src/client.ts"
+    },
+    "./transport": "./src/chat/transport.ts",
+    "./envelope-reducer": "./src/chat/envelope-reducer.ts",
+    "./sse": "./src/sse.ts",
     "./core": {
       "types": "./src/index.d.ts",
       "default": "./src/core.js"
@@ -20,12 +27,28 @@
     },
     "./next-preset.mjs": "./next-preset.mjs"
   },
+  "x-exports-note": "신 표면 = client(계약 v1 SDK)·transport(wire)·envelope-reducer·sse (TS 원본 — view 빌드가 transpile 소비). core·widget 은 구 wire 소비분 — Phase 2 컷(구 wire 삭제 커밋)에서 exports 와 함께 제거된다. '.' 의 default(index.js→core.js 재수출)도 그 컷에서 client 로 재지향.",
   "files": [
     "src",
     "next-preset.mjs"
   ],
+  "scripts": {
+    "build:chat": "node chat-build.mjs",
+    "build:chat:dev": "node chat-build.mjs --dev"
+  },
   "dependencies": {
     "tailwind-merge": "^3.0.0"
+  },
+  "devDependencies": {
+    "@assistant-ui/react": "^0.11.0",
+    "@assistant-ui/react-markdown": "^0.11.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "0.24.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0"
   },
   "sideEffects": [
     "./src/widget.js"

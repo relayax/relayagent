@@ -1,8 +1,9 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { API_URL, expandHome, logLine, pkgToken, type Ledger } from "./state.ts";
+import { API_URL, expandHome, type Ledger } from "./state.ts";
 import { vaultGet, credKey } from "./vault.ts";
+import { localAuthority } from "./authority.ts";
 import type { Manifest, ServiceDecl } from "./manifest.ts";
 
 const children = new Map<string, ChildProcess>();
@@ -26,12 +27,18 @@ export interface RunnerIO {
   apiUrl: string;
 }
 
-/** 1인 기판의 기본 이음새 — 장부 HMAC 토큰·vault·RELAY_HOME 파일 로그. */
+/** 1인 기판의 기본 이음새 — 장부 HMAC 토큰·vault·RELAY_HOME 파일 로그.
+ *  신원·감사는 권위 이음새(localAuthority)를 지난다 */
 export function localIO(l: Ledger): RunnerIO {
+  const authority = localAuthority(() => l);
   return {
-    token: (pkg) => pkgToken(l, pkg),
+    token: (pkg) => authority.packageToken(pkg),
+    // §8-2 잔여: RunnerIO.credential 은 동기 계약(원격 권위는 스폰 전 선발급을 임베더가 소유)이라
+    // 비동기 authority.credential 로 감쌀 수 없다 — 로컬 기본값은 vault 직독으로 남는다
     credential: vaultGet,
-    log: logLine,
+    // 소비 계열 감사 — 스폰 콜백(동기 문맥)의 기록이라 fire-and-forget. 실패는 미처리 거부로
+    // 표면화된다(조용히 삼키지 않는다)
+    log: (stream, data) => void authority.audit(stream, data as Record<string, unknown>),
     apiUrl: API_URL,
   };
 }
@@ -142,28 +149,57 @@ function startSourceService(
 export function startChannels(l: Ledger, pkg: string, pkgPath: string, m: Manifest, io: RunnerIO = localIO(l)): string[] {
   const notes: string[] = [];
   for (const c of m.surfaces?.channels ?? []) {
-    const key = `${pkg}/${c.name}`;
-    if (children.has(key)) continue;
-    const env = baseEnv(io, pkg);
-    env.RELAY_CHANNEL = c.name;
-    Object.assign(env, serviceAuthEnv(io, pkg, c.name));
-    const entry = path.join(pkgPath, c.source, c.entry);
-    // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다
-    const child = spawn("node", ["--experimental-strip-types", entry], {
-      cwd: path.join(pkgPath, c.source),
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    child.stdout?.on("data", (d) => io.log("channels", { pkg, channel: c.name, out: String(d).trim() }));
-    child.stderr?.on("data", (d) => io.log("channels", { pkg, channel: c.name, err: String(d).trim() }));
-    child.on("exit", (code) => {
-      children.delete(key);
-      io.log("channels", { pkg, channel: c.name, exit: code });
-    });
-    children.set(key, child);
-    notes.push(`${key}: 채널 어댑터 기동 (pid ${child.pid})`);
+    const note = startOneChannel(pkg, pkgPath, c, io);
+    if (note) notes.push(note);
   }
   return notes;
+}
+
+/** 채널 어댑터 하나를 스폰한다. 이미 떠 있으면 빈 문자열(중복 스폰 금지). GUI 의 채널 단위
+ *  재기동(stopChannel 뒤 이 함수)과 startChannels 의 루프가 같은 스폰을 공유한다. */
+export function startOneChannel(
+  pkg: string,
+  pkgPath: string,
+  c: { name: string; source: string; entry: string },
+  io: RunnerIO,
+): string {
+  const key = `${pkg}/${c.name}`;
+  if (children.has(key)) return "";
+  const env = baseEnv(io, pkg);
+  env.RELAY_CHANNEL = c.name;
+  Object.assign(env, serviceAuthEnv(io, pkg, c.name));
+  const entry = path.join(pkgPath, c.source, c.entry);
+  // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다
+  const child = spawn("node", ["--experimental-strip-types", entry], {
+    cwd: path.join(pkgPath, c.source),
+    env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", (d) => io.log("channels", { pkg, channel: c.name, out: String(d).trim() }));
+  child.stderr?.on("data", (d) => io.log("channels", { pkg, channel: c.name, err: String(d).trim() }));
+  child.on("exit", (code) => {
+    // 정체 가드 — 재기동(stop→start)이 겹치면 죽는 옛 프로세스의 exit 이 새 child 를
+    // 맵에서 지울 수 있다. 지금 맵이 가리키는 게 나일 때만 지운다 (session.ts residents 관용구)
+    if (children.get(key) === child) children.delete(key);
+    io.log("channels", { pkg, channel: c.name, exit: code });
+  });
+  children.set(key, child);
+  return `${key}: 채널 어댑터 기동 (pid ${child.pid})`;
+}
+
+/** 채널 하나만 죽인다 (GUI 재기동·자격 교체의 앞단). 프로세스 형만 — 채널은 컨테이너가 없다 */
+export function stopChannel(pkg: string, channel: string): void {
+  const key = `${pkg}/${channel}`;
+  const child = children.get(key);
+  if (child) {
+    child.kill();
+    children.delete(key);
+  }
+}
+
+/** 상주 pid — 떠 있으면 pid, 아니면 null. GUI 상태 표시의 running 근거 */
+export function channelPid(pkg: string, channel: string): number | null {
+  return children.get(`${pkg}/${channel}`)?.pid ?? null;
 }
 
 /** 발신 — 어댑터 stdin 에 줄 단위 JSON post 를 쓴다. 채널이 안 떠 있으면 false: 부르는 쪽이 로그로 남긴다 */

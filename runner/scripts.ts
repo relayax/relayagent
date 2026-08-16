@@ -2,8 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expandHome, type Grant, type Ledger } from "./state.ts";
-import { vaultGet, credKey } from "./vault.ts";
+import { credKey } from "./vault.ts";
 import { serviceAuthHeader } from "./oauth.ts";
+import { localAuthority } from "./authority.ts";
+import type { Authority } from "./authority-contract.ts";
 import { loadManifest, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 
 export interface HostBridge {
@@ -11,8 +13,9 @@ export interface HostBridge {
   install(dir: string, opts?: { ring0?: boolean; workspace?: string; bindings?: Record<string, string> }): unknown;
   build(name: string): unknown;
   remove(name: string): unknown;
-  grants(): Grant[];
-  grant(g: Grant): unknown;
+  grants(): Promise<Grant[]>;
+  /** 결재는 권위 이음새의 단일 문(authority.recordGrant)을 지난다 — 비동기 계약 */
+  grant(g: Grant): Promise<unknown>;
   validate(dir: string): unknown;
   /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다 */
   dispatch(provider: string, mission: string, payload: string, consumer?: string): Promise<string>;
@@ -139,6 +142,9 @@ export function makeCtx(
   pkg: string,
   caller: CallerIdentity,
   hostBridge: HostBridge | null,
+  authority: Authority,
+  /** runScript 가 authority.credential 로 선발급한 커넥터 자격 — ctx.credential 의 동기 계약(verb-contract) 유지용 */
+  connectorCred: string | null,
   io: ServiceIO = localServiceIO,
 ): ScriptCtx {
   const rec = ledger.packages[pkg];
@@ -163,15 +169,17 @@ export function makeCtx(
       // source 형은 문법에 auth 자리가 없어 이음새가 주는 것뿐이다(없으면 없는 대로).
       if ("url" in svc && svc.url != null) {
         const u = svc as Extract<ServiceDecl, { url: string }>;
-        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(pkg, name, u.auth), caller) };
+        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller) };
       }
       const src = svc as Extract<ServiceDecl, { source: string }>;
       const body = io.body(pkg, name, src.port ?? null);
       if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
       return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller) };
     },
-    // 커넥터 계약 자격은 요청 시점 pull 이다 — env 상주가 없어야 회전·revoke 가 다음 호출부터 즉시 선다
-    credential: () => (m.auth && m.auth.kind !== "none" ? vaultGet(credKey(pkg, shortName(pkg))) : null),
+    // 커넥터 계약 자격 — env 상주 없이 동사 실행 시점에 authority 를 지나 선발급된 값이다.
+    // ctx.credential 의 동기 계약(verb-contract)과 권위 이음새의 비동기 계약이 여기서 만난다:
+    // 회전·revoke 는 다음 동사 실행부터 선다 (RunnerIO.credential 의 "스폰 전 선발급"과 같은 결)
+    credential: () => connectorCred,
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
       return hostBridge.dispatch(provider, mission, payload, pkg);
@@ -187,6 +195,7 @@ export async function runScript(
   input: unknown,
   caller: CallerIdentity,
   hostBridge: HostBridge | null,
+  authority: Authority = localAuthority(() => ledger),
   io: ServiceIO = localServiceIO,
 ): Promise<unknown> {
   const rec = ledger.packages[pkg];
@@ -198,7 +207,9 @@ export async function runScript(
   const mtime = fs.statSync(file).mtimeMs;
   const mod = await import(pathToFileURL(file).href + "?t=" + mtime);
   if (typeof mod.default !== "function") throw new Error(`script 계약 위반(기본 수출 함수 아님): ${name}`);
-  const ctx = makeCtx(ledger, pkg, caller, hostBridge, io);
+  // 커넥터 자격 선발급 — ctx.credential 이 동기 계약이라 여기(비동기 문맥)서 이음새를 지난다
+  const connectorCred = m.auth && m.auth.kind !== "none" ? await authority.credential(credKey(pkg, shortName(pkg))) : null;
+  const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, connectorCred, io);
   return await mod.default(input ?? {}, ctx);
 }
 

@@ -3,14 +3,19 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, PRINCIPAL, pkgToken, sessionDir, workspaceDir, stageDir, logLine, type Ledger } from "./state.ts";
+import { API_URL, RELAY_HOME, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
 import { spawnEntry, spawnEntrySync } from "./entry.ts";
+import { localAuthority } from "./authority.ts";
+import type { Authority } from "./authority-contract.ts";
+import { UPLOADS_DIR } from "./protocol.ts";
 
 
 export interface SessionInput {
   ledger: Ledger;
   pkg: string;
+  /** 권위 이음새 — 미지정이면 1인 기판의 로컬 권위. 신원 토큰·principal·LLM 자격·감사가 이 문을 지난다 */
+  authority?: Authority;
   agent?: string;
   prompt?: string;
   slot?: string;
@@ -313,6 +318,7 @@ function acquireResident(pkg: string, slot: string, entry: string, env: Record<s
 }
 
 function residentTurn(
+  authority: Authority,
   pkg: string,
   slot: string,
   entry: string,
@@ -331,7 +337,7 @@ function residentTurn(
     // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
     const stall = setInterval(() => {
       if (Date.now() - r.lastEvent < STALL_MS) return;
-      logLine("sessions", { pkg, slot, stall_s: Math.round((Date.now() - r.lastEvent) / 1000) });
+      void authority.audit("sessions", { pkg, slot, stall_s: Math.round((Date.now() - r.lastEvent) / 1000) });
       try {
         r.child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
       } catch { /* 이미 닫힘 */ }
@@ -376,7 +382,7 @@ function residentTurn(
 
 // ── stage 산출물 감지 ──────────────────────────────────────────────────────
 // 봉투 file 이벤트가 없는 어댑터에서도 파일 회신이 성립하는 보장선: 턴 전후 diff.
-// uploads/ 는 사용자 인바운드 무대라 제외한다
+// 인바운드 무대(protocol.ts UPLOADS_DIR)는 사용자 업로드 착지라 제외한다
 function stageSnapshot(stage: string): Map<string, number> {
   const seen = new Map<string, number>();
   const walk = (dir: string, rel: string, depth: number): void => {
@@ -388,7 +394,7 @@ function stageSnapshot(stage: string): Map<string, number> {
       return;
     }
     for (const e of entries) {
-      if (rel === "" && e.name === "uploads") continue;
+      if (rel === "" && e.name === UPLOADS_DIR) continue;
       const p = path.join(dir, e.name);
       const r = rel ? rel + "/" + e.name : e.name;
       if (e.isDirectory()) walk(p, r, depth + 1);
@@ -415,10 +421,11 @@ function stageDiffFiles(stage: string, before: Map<string, number>): { path: str
 export async function runSession(input: SessionInput): Promise<SessionResult> {
   const rec = input.ledger.packages[input.pkg];
   if (!rec) throw new Error(`미설치 패키지: ${input.pkg}`);
+  const authority = input.authority ?? localAuthority(() => input.ledger);
   const m = loadManifest(rec.path);
   const agent = input.agent ?? landingAgentName(m) ?? "";
   const slot = input.slot ?? `agent-${agent || "main"}`;
-  const token = pkgToken(input.ledger, input.pkg);
+  const token = authority.packageToken(input.pkg);
 
   // cwd = workspace = 설치 때 결재된 폴더 (기본 ~/Relay/<이름>, system 은 ~ 로 결재).
   // harness.workdir 선언은 workspace 하위 상대경로로 해석한다
@@ -435,15 +442,15 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     ...process.env as Record<string, string>,
     RELAY_NAME: input.pkg,
     RELAY_AGENT: agent,
-    RELAY_PRINCIPAL: PRINCIPAL,
+    RELAY_PRINCIPAL: authority.principal(),
     RELAY_API: API_URL,
     RELAY_TOKEN: token,
     RELAY_SESSION: slot,
     RELAY_BUNDLE: bundle,
   };
   if (variant?.llm?.auth?.kind === "token" && variant.llm.auth.env) {
-    const { vaultGet } = await import("./vault.ts");
-    const cred = vaultGet(`llm/${variant.llm.provider}`);
+    // LLM 토큰 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다
+    const cred = await authority.credential(`llm/${variant.llm.provider}`);
     if (cred) env[variant.llm.auth.env] = cred;
   }
   if (rec.model) env.RELAY_MODEL = rec.model;
@@ -457,7 +464,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     .digest("hex").slice(0, 16);
   const resident = !input.interactive && residentsEnabled && harnessServes(entry);
 
-  logLine("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : resident ? "resident" : "auto" });
+  await authority.audit("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : resident ? "resident" : "auto" });
 
   if (input.interactive) {
     return await new Promise((resolve) => {
@@ -495,7 +502,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다.
   // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
   const turn = resident
-    ? residentTurn(input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
+    ? residentTurn(authority, input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
     : new Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }>((resolve, reject) => {
       const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
       live.set(key, child);
@@ -505,7 +512,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       // 스톨 워치독 — 봉투가 취소 제어를 받는 어댑터라면 고착 턴이 여기서 풀린다
       const stall = setInterval(() => {
         if (Date.now() - lastLine < STALL_MS) return;
-        logLine("sessions", { pkg: input.pkg, slot, stall_s: Math.round((Date.now() - lastLine) / 1000) });
+        void authority.audit("sessions", { pkg: input.pkg, slot, stall_s: Math.round((Date.now() - lastLine) / 1000) });
         try {
           child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
         } catch { /* 이미 닫힘 */ }

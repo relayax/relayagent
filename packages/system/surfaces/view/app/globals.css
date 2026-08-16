@@ -316,7 +316,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-pill.llm { left: 8px; }
 .gx-pill.llm img { width: 11px; height: 11px; border-radius: 3px; object-fit: contain; flex: 0 0 auto; }
 .gx-pill-tx { overflow: hidden; text-overflow: ellipsis; }
-.gx-pill.dep { right: 8px; padding: 1px 3px; gap: 2px; cursor: default; max-width: 42%; }
+.gx-pill.dep { right: 8px; padding: 1px 3px; gap: 2px; cursor: pointer; max-width: 42%; }
 .gx-pill.dep img { width: 15px; height: 15px; border-radius: 3px; object-fit: contain; }
 .gx-pill.dep i { width: 15px; height: 15px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-style: normal; font-size: 9px; font-weight: 700; background: var(--rc-ground); color: var(--rc-soft); }
 .gx-view[data-lod="far"] .gx-pill { display: none; }

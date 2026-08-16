@@ -2,14 +2,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, workspacePath, PRINCIPAL } from "./state.ts";
-import { installPkg, removePkg, addGrant, validateDir, registryData } from "./installer.ts";
+import { API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, workspacePath } from "./state.ts";
+import { installPkg, removePkg, validateDir, registryData } from "./installer.ts";
 import { createApi, makeHostBridge } from "./api.ts";
 import { startServices, startChannels, stopAll } from "./run.ts";
 import { Ticker } from "./tick.ts";
 import { runSession, recoverDanglingTurns, listSessionSlots, enableResidents, retireAllResidents } from "./session.ts";
 import { loadManifest } from "./manifest.ts";
-import { vaultSet, credKey } from "./vault.ts";
+import { credKey } from "./vault.ts";
+import { localAuthority } from "./authority.ts";
 
 const [, , cmd, ...args] = process.argv;
 
@@ -79,6 +80,8 @@ function printDisclosure(d: import("./manifest.ts").Disclosure, name: string): s
 
 async function main(): Promise<void> {
   const ledger = loadLedger();
+  // 권위 이음새 — CLI 도 데몬과 같은 문을 지난다 (자격·결재·감사). 1인 기판은 로컬 권위
+  const authority = localAuthority(() => ledger);
 
   switch (cmd) {
     case "daemon": {
@@ -98,9 +101,11 @@ async function main(): Promise<void> {
       // 상주 하네스는 데몬만 허용한다 — CLI 1회 실행이 상주를 남기면 고아가 된다
       enableResidents();
       let ticker: Ticker | null = null;
-      const host = makeHostBridge(() => loadLedger(), () => ticker);
-      ticker = new Ticker(() => loadLedger(), host);
-      createApi(() => loadLedger(), host, ticker);
+      // 데몬의 권위는 항상 신선한 장부를 본다 — CLI 1회분(위 authority)과 달리 요청마다 재적재
+      const daemonAuthority = localAuthority(() => loadLedger());
+      const host = makeHostBridge(() => loadLedger(), () => ticker, daemonAuthority);
+      ticker = new Ticker(() => loadLedger(), host, daemonAuthority);
+      createApi(() => loadLedger(), host, ticker, daemonAuthority);
       ticker.start();
       const l = loadLedger();
       // 지난 기동이 턴 도중에 끊겼다면 그 자리에 답이 없다. 서비스보다 먼저 줍는다 —
@@ -123,7 +128,7 @@ async function main(): Promise<void> {
           console.error(`${name}: 서비스 기동 실패 - ${e}`);
         }
       }
-      console.log(`relay daemon: ${API_URL} (principal: ${PRINCIPAL})`);
+      console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
       console.log(`콘솔: ${API_URL}/pkg/system/view/`);
       process.on("SIGINT", () => {
         ticker?.stop();
@@ -149,7 +154,6 @@ async function main(): Promise<void> {
           const storeUrl = flag("store") ?? STORE_INDEX_URL;
           if (!storeUrl) throw new Error("스토어가 설정되지 않았습니다 — --store <인덱스 URL> 을 붙이거나 .env 에 RELAY_STORE_INDEX 를 지정하세요");
           const { fetchStoreIndex, downloadArtifact, redeemArtifact } = await import("./registry.ts");
-          const { vaultGet, vaultSet } = await import("./vault.ts");
           const idx = await fetchStoreIndex(storeUrl);
           const entry = idx.entries.find((e) => e.ref === target);
           if (!entry) throw new Error(`스토어에 없는 패키지: ${target}`);
@@ -159,12 +163,12 @@ async function main(): Promise<void> {
           if (paidCache) {
             file = paidCache; // 이미 받은 봉투 — 키를 묻지 않는다
           } else if (entry.price != null && !entry.url) {
-            const key = flag("key") ?? vaultGet(`store-key/${entry.ref}`);
+            const key = flag("key") ?? await authority.credential(`store-key/${entry.ref}`);
             if (!key) {
               throw new Error(`유료 패키지입니다 (₩${entry.price.toLocaleString()}) — 구매 후 받은 키를 --key RELAY-... 로 넣으세요`);
             }
             file = await redeemArtifact(storeUrl, idx.redeem, entry, key);
-            vaultSet(`store-key/${entry.ref}`, key.trim());
+            await authority.setCredential(`store-key/${entry.ref}`, key.trim());
           } else {
             file = await downloadArtifact(storeUrl, entry);
           }
@@ -270,9 +274,9 @@ async function main(): Promise<void> {
       if (!pkg) throw new Error("사용법: relay run <패키지> [프롬프트]");
       const prompt = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
       if (!prompt) {
-        await runSession({ ledger, pkg, interactive: true });
+        await runSession({ ledger, pkg, authority, interactive: true });
       } else {
-        const r = await runSession({ ledger, pkg, prompt });
+        const r = await runSession({ ledger, pkg, authority, prompt });
         console.log(r.reply);
       }
       break;
@@ -296,7 +300,7 @@ async function main(): Promise<void> {
           return v;
         },
       });
-      vaultSet(credKey(pkg, service), JSON.stringify(bundle));
+      await authority.setCredential(credKey(pkg, service), JSON.stringify(bundle));
       console.log(`연결됨: ${credKey(pkg, service)} (vault — access${bundle.refresh_token ? "+refresh" : ""}${bundle.expires_at ? ", 자동 회전" : ""})`);
       break;
     }
@@ -304,12 +308,11 @@ async function main(): Promise<void> {
     case "keygen": {
       // 발행 키 — 개인 키는 vault, 공개 키는 배포 대상에게 전달(설치 기판이 RELAY_PUBKEYS 로 고정)
       const { keygen, SIGNING_VAULT_KEY } = await import("./sign.ts");
-      const { vaultGet: vg } = await import("./vault.ts");
-      if (vg(SIGNING_VAULT_KEY) && !has("force")) {
+      if (await authority.credential(SIGNING_VAULT_KEY) && !has("force")) {
         throw new Error("발행 키가 이미 있습니다 — 교체하려면 --force (이전 키로 서명된 봉투는 옛 공개 키로만 검증됩니다)");
       }
       const k = keygen();
-      vaultSet(SIGNING_VAULT_KEY, k.privatePem);
+      await authority.setCredential(SIGNING_VAULT_KEY, k.privatePem);
       console.log("발행 키 생성됨 (vault: signing/ed25519). 이후 relay pack 이 자동으로 서명합니다.");
       console.log("공개 키 (설치 기판의 RELAY_PUBKEYS 에 고정할 값):");
       console.log(k.publicB64);
@@ -322,7 +325,7 @@ async function main(): Promise<void> {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const token = await new Promise<string>((resolve) => rl.question(`${pkg}/${service} 토큰 붙여넣기: `, resolve));
       rl.close();
-      vaultSet(credKey(pkg, service), token.trim());
+      await authority.setCredential(credKey(pkg, service), token.trim());
       console.log(`저장됨: ${credKey(pkg, service)} (vault)`);
       break;
     }
@@ -469,7 +472,7 @@ async function main(): Promise<void> {
     case "grant": {
       const [consumer, provider] = args;
       if (!consumer || !provider) throw new Error("사용법: relay grant <consumer> <provider> [--tools a,b] [--mission m] [--components]");
-      addGrant(ledger, {
+      await authority.recordGrant({
         consumer,
         provider,
         tools: flag("tools")?.split(","),
