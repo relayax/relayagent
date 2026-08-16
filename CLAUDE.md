@@ -28,6 +28,7 @@ runner/                 the substrate (CLI + daemon). Plain .ts, run with --expe
 relay.manifest.yaml     the grammar: JSON Schema for relay.yaml, with commentary
 relay.yaml              a full worked example manifest
 docs/harness-protocol.md  the harness adapter contract (verbs, envelope events, control channel)
+docs/verb-contract.md     the package verb contract (default export, ctx, optional meta export)
 packages/system         the management shell, itself a package (console, studio, harness adapters)
 lib/relayjs             browser-side client used by package views
 assets/                 project logo
