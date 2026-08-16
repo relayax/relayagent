@@ -17,10 +17,12 @@
     "./widget": {
       "types": "./src/widget.d.ts",
       "default": "./src/widget.js"
-    }
+    },
+    "./next-preset.mjs": "./next-preset.mjs"
   },
   "files": [
-    "src"
+    "src",
+    "next-preset.mjs"
   ],
   "dependencies": {
     "tailwind-merge": "^3.0.0"
