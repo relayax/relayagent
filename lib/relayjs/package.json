@@ -22,6 +22,9 @@
   "files": [
     "src"
   ],
+  "dependencies": {
+    "tailwind-merge": "^3.0.0"
+  },
   "sideEffects": [
     "./src/widget.js"
   ],

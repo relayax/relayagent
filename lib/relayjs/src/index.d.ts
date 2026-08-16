@@ -129,3 +129,6 @@ export interface ChatClient {
 }
 
 export function createChat(opts: { pkg: string; slot?: string; agent?: string }): ChatClient;
+
+export type { ClassValue } from "./ui.js";
+export { cn } from "./ui.js";
