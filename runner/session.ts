@@ -10,6 +10,23 @@ import { localAuthority } from "./authority.ts";
 import type { Authority } from "./authority-contract.ts";
 import { UPLOADS_DIR } from "./protocol.ts";
 
+/** 봉투 이벤트 방청 훅 — 세션이 장부에 쓰는 이벤트를 그대로 흘린다 */
+export type EnvelopeTap = (pkg: string, slot: string, ev: { event: string; [k: string]: unknown }) => void;
+
+// 주입인 이유: 이 훅의 소비자(client-wire 의 턴 장부)가 session.ts 를 import 하므로,
+// 반대 방향 import 는 순환이 된다. 배선은 두 쪽을 다 아는 조립점(api.ts)이 한 줄로 한다
+let envelopeTap: EnvelopeTap | null = null;
+export function setEnvelopeTap(fn: EnvelopeTap | null): void {
+  envelopeTap = fn;
+}
+
+/** 방청은 세션의 일이 아니다 — 훅이 던져도 턴은 계속 간다 */
+function tap(pkg: string, slot: string, ev: { event: string; [k: string]: unknown }): void {
+  if (!envelopeTap) return;
+  try {
+    envelopeTap(pkg, slot, ev);
+  } catch { /* 방청자 사정 — 턴에 전가하지 않는다 */ }
+}
 
 export interface SessionInput {
   ledger: Ledger;
@@ -255,6 +272,7 @@ function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): vo
   try {
     fs.appendFileSync(path.join(sessionDir(r.pkg, r.slot), "events.jsonl"), JSON.stringify({ t: Date.now(), ...ev }) + "\n");
   } catch { /* 세션 디렉토리가 지워짐 — 기록만 포기 */ }
+  tap(r.pkg, r.slot, ev);
   if (ev.event === "reply") {
     appendBot(r.pkg, r.slot, String(ev.text ?? ""), {
       model: typeof ev.model === "string" ? ev.model : null,
@@ -358,6 +376,7 @@ function residentTurn(
     };
     r.sink = (ev) => {
       fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+      tap(pkg, slot, ev);
       if (ev.event === "reply") {
         finish(() => resolve({
           reply: String(ev.text ?? ""),
@@ -534,6 +553,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
           return;
         }
         fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+        // 위 가드(typeof ev.event !== "string" 조기 반환)가 이미 증명한 형 — 인덱스 시그니처라 좁혀지지 않는다
+        tap(input.pkg, slot, ev as { event: string; [k: string]: unknown });
         if (ev.event === "reply") {
           reply = {
             text: String(ev.text ?? ""),

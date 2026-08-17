@@ -2,7 +2,7 @@
   "name": "@relay/relayjs",
   "version": "0.1.0",
   "type": "module",
-  "description": "Relay FE SDK. 채팅 코어(하네스 호출 클라이언트)와 위젯. npm 임포트, file: 의존성, 기판 /assets 정적 서빙 세 경로로 소비한다.",
+  "description": "Relay FE SDK. 클라이언트 전송 계약 v1 의 SDK(client)와 채팅 위젯 번들. npm 임포트, file: 의존성, 기판 /assets 번들 서빙 세 경로로 소비한다.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "exports": {
@@ -17,17 +17,8 @@
     "./transport": "./src/chat/transport.ts",
     "./envelope-reducer": "./src/chat/envelope-reducer.ts",
     "./sse": "./src/sse.ts",
-    "./core": {
-      "types": "./src/index.d.ts",
-      "default": "./src/core.js"
-    },
-    "./widget": {
-      "types": "./src/widget.d.ts",
-      "default": "./src/widget.js"
-    },
     "./next-preset.mjs": "./next-preset.mjs"
   },
-  "x-exports-note": "신 표면 = client(계약 v1 SDK)·transport(wire)·envelope-reducer·sse (TS 원본 — view 빌드가 transpile 소비). core·widget 은 구 wire 소비분 — Phase 2 컷(구 wire 삭제 커밋)에서 exports 와 함께 제거된다. '.' 의 default(index.js→core.js 재수출)도 그 컷에서 client 로 재지향.",
   "files": [
     "src",
     "next-preset.mjs"
@@ -51,7 +42,7 @@
     "remark-gfm": "^4.0.0"
   },
   "sideEffects": [
-    "./src/widget.js"
+    "./src/chat/main.tsx"
   ],
   "keywords": [
     "relay",
