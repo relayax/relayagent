@@ -773,7 +773,12 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css))$/);
       if (asset && req.method === "GET") {
         const file = path.join(ASSETS_DIR, asset[1]);
-        if (!fs.existsSync(file)) return void json(res, 404, { error: `없는 자산: ${asset[1]}` });
+        if (!fs.existsSync(file)) {
+          // 번들은 트리에 커밋하지 않는다(빌드 산출물) — 갓 클론한 트리에는 없다.
+          // 조용한 404 로 두면 "채팅이 안 뜬다"가 원인 없이 남는다
+          const hint = fs.existsSync(ASSETS_DIR) ? "" : " — 위젯 번들이 없습니다. `npm run build:widget` 을 먼저 실행하세요";
+          return void json(res, 404, { error: `없는 자산: ${asset[1]}${hint}` });
+        }
         // 위젯은 기판과 함께 움직이는 자산이다 — 낡은 캐시가 새 기판 API 와 어긋나면 조용히 깨진다
         res.setHeader("cache-control", "no-store");
         return void streamFile(file, res);

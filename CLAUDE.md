@@ -81,6 +81,19 @@ npm run typecheck
 
 CI runs exactly this.
 
+## The chat widget is a build artifact
+
+The daemon serves the widget from `lib/relayjs/dist/` (`/assets/chat-app.{js,css}`), and that
+directory is gitignored — a fresh clone does not have it. Build it once before running a
+daemon that serves chat:
+
+```sh
+npm run build:widget   # installs lib/relayjs devDeps, then esbuild → dist/
+```
+
+Touching anything under `lib/relayjs/src/` means rebuilding: the served bundle is the artifact,
+not the source. There is no release pipeline in this repo yet, so this step is manual.
+
 ## Language
 
 Code comments and manifest commentary in this repo are written in Korean; public-facing docs
