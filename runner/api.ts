@@ -7,7 +7,7 @@ import { API_PORT, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy, setEnvelopeTap } from "./session.ts";
+import { runSession, retireResident, retireResidents, setEnvelopeTap } from "./session.ts";
 import { handleClientWire, tapSessionEvent } from "./client-wire.ts";
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
@@ -21,7 +21,7 @@ import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
 import { serviceAuthHeader } from "./oauth.ts";
-import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, UPLOADS_DIR, UPLOADS_PREFIX, SLOT_RE } from "./protocol.ts";
+import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
@@ -424,22 +424,6 @@ async function handleMcp(
   json(res, 200, r);
 }
 
-function pkgCommands(ledger: Ledger, pkg: string): { name: string; description: string; tty: boolean }[] {
-  const rec = ledger.packages[pkg];
-  if (!rec) return [];
-  const m = loadManifest(rec.path);
-  const landing = landingAgentName(m);
-  const decl = (m.agents ?? []).find((a) => a.name === landing);
-  if (!decl?.commands) return [];
-  const dir = path.join(rec.path, decl.commands);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => {
-    const body = fs.readFileSync(path.join(dir, f), "utf8");
-    const desc = body.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
-    return { name: f.replace(/\.md$/, ""), description: desc, tty: false };
-  });
-}
-
 function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerResponse): void {
   const rec = ledger.packages[pkg];
   if (!rec) return void json(res, 404, { error: `미설치 패키지: ${pkg}` });
@@ -492,70 +476,6 @@ function streamFile(file: string, res: http.ServerResponse): void {
 }
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
-// 이력의 정본은 세션 디렉토리의 history.jsonl (session.ts 가 쌓는다).
-// 목록·전환·복원은 기판이 답한다 — 하네스의 자체 세션 저장과는 별개의 축이다.
-// slot 문법 정본은 protocol.ts SLOT_RE 다 (클라 쪽 이중 정의는 Phase 2 에서 은퇴)
-
-function sessionsRoot(pkg: string): string {
-  return path.join(RELAY_HOME, "sessions", pkg);
-}
-
-function readHistory(pkg: string, slot: string, limit: number): { t: string; role: string; text: string }[] {
-  const file = path.join(sessionsRoot(pkg), slot, "history.jsonl");
-  if (!fs.existsSync(file)) return [];
-  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
-  return lines
-    .slice(-limit)
-    .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-type SessionRow = { slot: string; label: string; updated: number; archived: boolean; pinned: boolean };
-
-function listSessions(pkg: string): { sessions: SessionRow[] } {
-  const root = sessionsRoot(pkg);
-  if (!fs.existsSync(root)) return { sessions: [] };
-  const sessions: SessionRow[] = [];
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-    // "_" 접두 슬롯은 기판 내부용(자동 제목 생성 등의 임시 세션) — 목록에 내지 않는다
-    if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
-    const dir = path.join(root, e.name);
-    const hist = path.join(dir, "history.jsonl");
-    // 이름 우선순위: 사용자가 지은 label > 하네스가 지은 auto-label > 첫 사용자 발화
-    let label = "";
-    for (const f of ["label", "auto-label"]) {
-      const p = path.join(dir, f);
-      if (fs.existsSync(p)) label = fs.readFileSync(p, "utf8").trim();
-      if (label) break;
-    }
-    if (!label && fs.existsSync(hist)) {
-      // 이름이 없으면 첫 사용자 발화가 이름이다 (relayos-claude 세션 목록 관례)
-      try {
-        label = String(JSON.parse(fs.readFileSync(hist, "utf8").split("\n", 1)[0]).text ?? "").slice(0, 40);
-      } catch {
-        label = "";
-      }
-    }
-    const updated = fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs;
-    // 보관·고정 = 세션 디렉토리의 marker 파일. 이력은 그대로 두고 목록의 자리만 옮긴다
-    sessions.push({
-      slot: e.name,
-      label: label || e.name,
-      updated,
-      archived: fs.existsSync(path.join(dir, "archived")),
-      pinned: fs.existsSync(path.join(dir, "pinned")),
-    });
-  }
-  // 고정이 먼저, 그 안에서는 최근 순
-  sessions.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated - a.updated);
-  return { sessions };
-}
 
 // 권위 이음새 — 1인 기판은 로컬 권위(기본값). 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
 export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker, authority: Authority = localAuthority(getLedger)): http.Server {

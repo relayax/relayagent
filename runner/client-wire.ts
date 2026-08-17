@@ -1,10 +1,8 @@
 // client-wire.ts — 클라이언트 전송 계약 v1(docs/client-protocol.md)의 서버 반쪽.
 //
-// Phase 2 컷에서 배선 — 현재 미배선. 어떤 라우트도 api.ts 에 마운트되지 않았고,
-// tapSessionEvent 훅도 아직 아무 곳에서도 호출되지 않는다(§9-47-3 의 원자 컷이 배선한다).
-// 배선 형태(Phase 2): api.ts 핸들러 앞단에
-//   if (await handleClientWire(wire, req, res, url)) return;
-// 한 줄 + session.ts 의 봉투 이벤트 기록 지점에 tapSessionEvent(pkg, slot, ev) 한 줄.
+// 배선됨(원자 컷 §9-47-3): api.ts 가 /registry 직후 `if (await handleClientWire(...)) return;`
+// 로 마운트하고, session.ts 의 봉투 기록 지점이 setEnvelopeTap 주입을 통해 tapSessionEvent 를
+// 부른다(session→client-wire 직접 import 는 순환이라 조립점 api.ts 가 주입한다).
 //
 // http 보조(json/readBody/MIME)는 api.ts 관용구의 자체 사본이다 — api.ts 를 import 하면
 // 순환(api → installer → …)이자 배선이 되므로 금지. 컷에서 구 wire 삭제와 함께 단일화한다.

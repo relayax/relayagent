@@ -3,8 +3,8 @@
  *
  * Phase 1-b 재작성(relayos-claude docs/relayjs-convergence-plan.md §3): relayos 원본
  * (deployd /api 파사드 + 브리지 method 명 어휘)을 계약 동사 표면으로 전면 교체했다.
- * 이 파일은 아직 어디에도 배선되지 않는다 — 소비자(봉투 리듀서·신 SDK·runtime 재배선)는
- * Phase 1-c/2 의 몫이고, 구 wire·구 위젯이 그때까지 현역이다.
+ * 소비자는 신 SDK(src/client.ts)와 위젯 런타임(chat/runtime.ts)이다. 구 wire·구 위젯은
+ * 원자 컷에서 은퇴했다 — 이 전송층이 기판과 말하는 유일한 어휘다.
  *
  * 계약 근거(조항 좌표는 전부 client-protocol.md):
  *  - 좌표는 {base, root} 주입(§2-6). 마운트 문법(/pkg/·/i/)·X-Relay-Instance 헤더는
