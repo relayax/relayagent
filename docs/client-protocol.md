@@ -10,9 +10,14 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 기판↔어댑터 사이를, 이 축은 브라우저↔기판 사이를 잰다. 하네스 protocol 이 4 가 되어도
 이 계약이 자동으로 바뀌지 않고, 그 역도 같다.
 
+> **인용 규약**: `runner/*.ts` 좌표는 현 트리 실측이다. 반면 `core.js`·`widget.js` 인용은
+> **컷(2639dae)에서 삭제된 구 클라이언트**를 가리킨다 — 조항이 왜 이 모양인지를 설명하는
+> 역사 근거로만 남겼고, 그 코드는 트리에 없다. 되살릴 일이 있으면 커밋에서 꺼낸다.
+>
 > 이 문서의 wire 표기에는 두 종류가 섞여 있다. **[현행]** 은 실제 파일에서 확인한
-> 기존 엔드포인트(file:line 병기), **[신설]** 은 이 계약이 새로 정의하는 경로다.
-> 신설 경로는 현재 어느 기판에도 없다 — §9 의 컷에서 태어난다.
+> 기존 엔드포인트(file:line 병기), **[현행 v1]** 은 이 계약이 새로 정의하고 §9 의 컷
+> (2639dae)에서 OSS 데몬에 착지한 경로다 — 구현 정본은 `runner/client-wire.ts`.
+> 아직 착지하지 않은 경로(§5.7 state · §5.8 push)만 **[신설]** 로 남는다.
 
 ## 1. 지위와 범위
 
@@ -23,7 +28,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
    형태면 안 된다. org 의미(principal 바인딩, 멤버, 라이선스)는 계약에 등장하지 않고,
    기판의 문 뒤에서 해석된다(convergence.md:123-125).
 3. 계약의 소비자는 **브라우저 클라이언트**다: 코어 SDK 와 채팅 위젯(React 판 단일화 —
-   번들은 OSS 릴리스 컷에 굽고 기판이 `/assets` 로 서빙한다, runner/api.ts:806-815).
+   번들은 OSS 릴리스 컷에 굽고 기판이 `/assets` 로 서빙한다, runner/api.ts:770-780).
    패키지 view 의 동사 호출(`/api/scripts`·MCP)은 이 문서의 범위 밖이다.
 4. **권위 이음새와의 관계.** 이 계약은 문 앞의 전송만 규정한다. 문 뒤에서 "누구로서,
    무엇을, 어떤 자격으로"를 판정하는 권위 이음새는 별개 트랙이다
@@ -33,8 +38,8 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 ## 2. 계약이 규정하지 않는 것 — 인증과 좌표
 
 5. **인증은 기판 소유다.** 계약은 자격의 운반 위치(쿠키/헤더/없음)를 규정하지 않는다.
-   실측: OSS 데몬은 인증 헤더 0 — 127.0.0.1 바인딩(runner/api.ts:1155) + Host 루프백
-   검사(runner/api.ts:534-538)가 문이다. relayos deployd 는 `relay_edge` 세션 쿠키를
+   실측: OSS 데몬은 인증 헤더 0 — 127.0.0.1 바인딩(runner/api.ts:963) + Host 루프백
+   검사(runner/api.ts:492-497)가 문이다. relayos deployd 는 `relay_edge` 세션 쿠키를
    Bearer JWT 로 승격하고(runtime/deployd/api_turns.go:4, 66-67), 401 은 클라이언트가
    `POST /api/session/refresh` single-flight 후 1회 재시도한다
    (relayos lib/relayjs/src/transport.ts:41-62). 두 방식 모두 이 계약 위에서 합법이다.
@@ -46,7 +51,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
    - **root** — 문의 뿌리. 열거 동사(§5.6)가 여기 산다.
    - **base** — 대화 스코프(패키지 하나/인스턴스 하나)의 뿌리. §5 의 모든 스코프 동사는
      `{base}` 상대 경로다.
-   `/pkg/:pkg`(OSS, runner/api.ts:1042 등)나 `/i/<id>`(relayos,
+   `/pkg/:pkg`(OSS, runner/client-wire.ts:898)나 `/i/<id>`(relayos,
    runtime/deployd/upload.go:152)는 **기판의 마운트 지점일 뿐 계약이 아니다**.
    클라이언트 코드에 마운트 문법이 새면 그 클라이언트는 계약 위반이다.
    *왜: 좌표를 경로 문법으로 계약에 넣으면 두 기판 중 하나는 영원히 URL 재작성 프록시를
@@ -56,7 +61,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 
 ## 3. 개막과 판정 — capabilities 문
 
-7. **[신설]** `GET {base}/capabilities` → `{protocol: 1, capabilities: [...]}`.
+7. **[현행 v1]** `GET {base}/capabilities` → `{protocol: 1, capabilities: [...]}`.
    클라이언트는 이 호출로 개막한다.
    *왜: 클린 브레이크(§9)에는 "지금 붙은 문이 몇 세대인가"를 묻는 자리가 필요하다.
    구 기판(이 경로 404)이나 protocol 불일치는 클라이언트가 `E_PROTOCOL` 로 판정하고
@@ -104,23 +109,23 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 
 ### 5.1 턴 — 비블로킹 시작 + SSE
 
-12. **[신설]** `turn.send` = `POST {base}/turns`
+12. **[현행 v1]** `turn.send` = `POST {base}/turns`
     요청: `{session, message, agent?, attachments?: [{path, name?}], scene?}`
     응답: `202 {turn, session}` — **턴 종결을 붙들지 않는다.**
     *왜: 구 OSS `/chat` 은 턴이 끝날 때까지 단일 POST 를 붙드는 블로킹 계약이었다
-    (runner/api.ts:1042-1060, core.js:129 "폴링인 이유: /chat 은 종결까지 붙드는 단일
+    (구 wire — 삭제됨, 컷 2639dae; core.js:129 "폴링인 이유: /chat 은 종결까지 붙드는 단일
     POST"). 프록시 타임아웃·새로고침·모바일 백그라운드에 전부 취약하고, 진행은
     사이드밴드 폴링으로 때웠다. 시작과 관찰을 분리하면 관찰은 몇 번이든 다시 연다.*
     - `attachments[].path` 는 `file.upload`(§5.4)가 돌려준 불투명 참조다.
     - `scene` 은 화면 맥락 서문 — 합성은 기판 몫, 이력에는 원문만 남는다
-      (core.js:160-161 · runner/api.ts:1053 의 의미 유지).
+      (core.js:160-161 · runner/client-wire.ts:255 의 의미 유지).
     - 같은 세션에 진행 중 턴이 있으면 기판이 **직렬화(큐잉)** 한다 — 클라이언트 큐
       (core.js:116-127)는 은퇴한다. 순서는 도착순.
       *왜: 직렬화를 클라이언트가 하면 화면 두 개가 같은 세션에 붙는 순간 깨진다.
       기판만이 세션의 유일한 직렬화 지점이다.*
-13. **[신설]** `turn.stream` = `GET {base}/turns/<id>/stream` (SSE, §5.2).
+13. **[현행 v1]** `turn.stream` = `GET {base}/turns/<id>/stream` (SSE, §5.2).
     send 직후 여는 관찰 창. 이미 종결된 턴이면 장부 재생 후 즉시 settled·EOF.
-14. **[신설]** `turn.attach` = `GET {base}/turns/attach?session=<id>` (SSE).
+14. **[현행 v1]** `turn.attach` = `GET {base}/turns/attach?session=<id>` (SSE).
     그 세션의 **진행 중 턴**에 재접속한다 — 이벤트 장부를 처음부터 재생하고 라이브로
     이어진다. 진행 중 턴이 없으면 `404 {error:{code:"E_NO_TURN"}}`.
     *왜: 새로고침한 화면이 진행 중 도구 카드·delta 를 복원하는 유일한 길이다. 구 OSS 는
@@ -129,10 +134,11 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
     복구가 전부 이 동사로 수렴하고 폴링 폴백은 금지(§5.8)이므로, attach 없는 기판은 복구
     경로가 0 이 된다. 이벤트 장부 보관도 전 기판 의무인데, `turn.stream` 의 종결 턴
     재생(§5.1-13)이 이미 같은 장부를 요구하므로 attach 가 얹는 추가 비용은 사실상 없다.
-    OSS 데몬은 현행 부재(§9 컷에서 장부 보관과 함께 신설)다.
-15. **[신설]** `turn.interrupt` = `POST {base}/turns/<id>/interrupt` → `{ok}`.
+    OSS 데몬은 컷 2639dae 에서 장부 보관과 함께 착지했다
+    (client-wire.ts:564-578 · 턴 장부 148-238).
+15. **[현행 v1]** `turn.interrupt` = `POST {base}/turns/<id>/interrupt` → `{ok}`.
     봉투 cancel 제어(harness-protocol.md:75)로 전달된다.
-16. **[신설]** `turn.respond` = `POST {base}/turns/<id>/respond`
+16. **[현행 v1]** `turn.respond` = `POST {base}/turns/<id>/respond`
     요청: `{ask, answers: [{question, selected[]}]}` → `{ok}`.
     봉투 `ask` 이벤트(harness-protocol.md:65)의 회송. 빈 `answers` = 사용자 취소.
 
@@ -176,33 +182,33 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 
 ### 5.3 세션과 이력
 
-21. **[신설]** `session.list` = `GET {base}/sessions`
+21. **[현행 v1]** `session.list` = `GET {base}/sessions`
     → `{sessions: [{session, label, updated, archived, pinned}]}`.
-    정렬: 고정 우선, 그 안에서 최근순(runner/api.ts:519-520 현행 유지). 라벨 우선순위
-    (사용자 label > auto-label > 첫 발화, api.ts:494-508)는 기판 내부 규칙이다 —
+    정렬: 고정 우선, 그 안에서 최근순(runner/client-wire.ts:459 현행 유지). 라벨 우선순위
+    (사용자 label > auto-label > 첫 발화, client-wire.ts:437-449)는 기판 내부 규칙이다 —
     클라이언트는 `label` 을 그대로 그린다.
-22. **[신설]** `session.create` = `POST {base}/sessions` → `{session}`.
+22. **[현행 v1]** `session.create` = `POST {base}/sessions` → `{session}`.
     **세션 id 는 기판이 발급하는 불투명 문자열이다.** 클라이언트 로컬 발급
     (core.js:315-324 `"c-" + Date.now()`)은 은퇴한다.
-    *왜: id 발급을 클라이언트가 하면 형식(`SLOT_RE`, api.ts:461)이 사실상 클라이언트
+    *왜: id 발급을 클라이언트가 하면 형식(`SLOT_RE`, protocol.ts:72)이 사실상 클라이언트
     계약이 되고, org 기판의 영속 규칙("새 대화 즉시 영속 — 빈 대화 증발 방지",
     api_turns.go:195-196)을 표현할 자리가 없다.*
-23. **[신설]** 세션 부속 동사 — 전부 `POST {base}/sessions/<id>/<op>`:
+23. **[현행 v1]** 세션 부속 동사 — 전부 `POST {base}/sessions/<id>/<op>`:
     | op | 요청 | 응답 |
     |---|---|---|
     | `rename` | `{label}` (빈 문자열 = 자동 라벨로 복귀) | `{ok}` |
     | `archive` | `{archived: bool}` | `{ok, archived}` |
     | `pin` | `{pinned: bool}` | `{ok, pinned}` |
     | `delete` | `{}` | `{ok}` |
-    | `reset` | `{}` — 이력은 두고 하네스 대화 포인터만 끊는다 (api.ts:1030-1040 의미 유지) | `{ok}` |
+    | `reset` | `{}` — 이력은 두고 하네스 대화 포인터만 끊는다 (client-wire.ts:703-707 의미 유지) | `{ok}` |
     표의 `delete` 는 §4 의 추상 동사 `session.remove` 에 대응한다 — wire op 명만 다르다
     (부록 A 매핑과 동일).
-    archive/pin 은 이력을 지우지 않고 목록의 자리만 옮긴다(api.ts:1010-1027 의미 유지).
-24. **[신설]** `history.get` = `GET {base}/sessions/<id>/history`
+    archive/pin 은 이력을 지우지 않고 목록의 자리만 옮긴다(client-wire.ts:681-689 의미 유지).
+24. **[현행 v1]** `history.get` = `GET {base}/sessions/<id>/history`
     → `{messages: [{role, text, files?, usage?, context?, model?}], busy, turn?}`.
     `busy=true` 면 `turn` 에 진행 중 턴 id 가 실린다.
     *왜: 새로고침 복구가 폴링 없이 한 왕복으로 끝나야 한다 — busy+turn 을 보고 곧장
-    `turn.attach` 로 간다. 구 OSS 는 busy 만 주고(api.ts:968-971) 클라이언트가 3초
+    `turn.attach` 로 간다. 구 OSS 는 busy 만 주고(구 wire — 삭제됨, 컷 2639dae) 클라이언트가 3초
     폴링으로 종결을 기다렸다(core.js:253-270).*
     `role` 어휘: `user` · `bot` · `sys` (core.js:280-288 현행 유지).
 
@@ -210,7 +216,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 
 25. `file.upload` = `POST {base}/upload?name=<파일명>` — **본문이 곧 바이트다**
     (raw 스트림, JSON/base64/multipart 비경유). 응답: `{path, size, name}`.
-    [현행: OSS runner/api.ts:1067-1102 · core.js:207-238. relayos 는 3벌로 흩어진 현행
+    [현행 v1: OSS runner/client-wire.ts:712-757 · core.js:207-238. relayos 는 3벌로 흩어진 현행
     (`/api/uploads/<script>` transport.ts:100-127 · `/api/fs/upload` transport.ts:174-262 ·
     `<base>/u/_attachments` chat/runtime.ts:771-806 + upload.go:152-156)을 채팅 첨부에
     한해 이 단일 동사로 접는다 — §9.]
@@ -220,13 +226,14 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     - 반환 `path` 는 **불투명 참조**다. 클라이언트는 파싱·조립하지 않고
       `turn.send.attachments[].path` 와 `file.download` 에만 되돌려준다(§8).
     - 원본 파일시스템 경로는 절대 싣지 않는다(core.js:207-208 현행 규율 유지).
-26. **[신설]** **업로드 프로브**: `X-Upload-Probe: 1` + `X-Upload-Size: <bytes>` 헤더의
+26. **[현행 v1]** **업로드 프로브**: `X-Upload-Probe: 1` + `X-Upload-Size: <bytes>` 헤더의
     무본문 POST 는 바이트 전송 없이 인가·상한을 선판정한다(2xx = 통과).
-    relayos 쌍둥이 계약(transport.ts:106-108, 129-148)의 승격 — OSS 데몬은 신설 구현.
+    relayos 쌍둥이 계약(transport.ts:106-108, 129-148)의 승격 — OSS 데몬 구현은
+    client-wire.ts:718-724.
     *왜: 스트림 중 조기 거절은 브라우저에 '네트워크 오류'로만 보인다 — 거절 사유가
     문장으로 오려면 바이트 전에 물어야 한다.*
 27. `file.download` = `GET {base}/file/<path>` (+`?dl=1` 로 attachment 처분),
-    `HEAD` 는 실재 프로브. [현행: runner/api.ts:1104-1125 승격.]
+    `HEAD` 는 실재 프로브. [현행 v1: runner/client-wire.ts:758-780.]
 28. 업로드 진행률은 클라이언트 소관(XHR progress)이다. capability `upload-progress` 는
     "기판의 업로드 경로가 전 구간 스트리밍이라 진행 이벤트가 실제 전송을 반영한다"는
     서버측 선언이다 — 전량 버퍼링 기판은 뺀다.
@@ -237,8 +244,8 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     verbs, capabilities}}` · `harness.models` = `GET {base}/harness/models` →
     `{ok, value: [...]}` · `harness.commands` = `GET {base}/harness/commands` →
     `{ok, value: [{name, description?, tty?}]}`.
-    [현행: runner/api.ts:918-934 승격. commands 는 패키지 커맨드 + 하네스 네이티브
-    커맨드의 병합(api.ts:929-932) — 병합은 기판 몫이다.]
+    [현행 v1: runner/client-wire.ts:783-807. commands 는 패키지 커맨드 + 하네스 네이티브
+    커맨드의 병합(client-wire.ts:800-803) — 병합은 기판 몫이다.]
     조회 동사 셋은 각각 동명 capability(`harness-info` · `harness-models` ·
     `harness-commands`, §7) 뒤에 있다 — 하나로 묶지 않는다.
     *왜 동사 단위인가: 셋을 한 capability 로 묶으면 부분 구현 기판(현행 relayos:
@@ -247,16 +254,16 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     맞다 — 새 조회 동사는 새 capability 로 온다.*
 30. `harness.set` = `POST {base}/model` — `{model?}` 과/또는 `{effort?}`
     → `{ok, model, effort, known}`. `known: false` 는 경고가 아니라 판정 정보다 —
-    저장은 되고, 세션에서 어댑터가 거부하면 그 턴이 실패한다(api.ts:945-955 현행 의미).
+    저장은 되고, 세션에서 어댑터가 거부하면 그 턴이 실패한다(client-wire.ts:819-827 현행 의미).
     `effort` 필드는 capability `effort` 뒤에 있다(하네스 `effort` capability 의 투영,
     harness-protocol.md:100).
-31. 하네스 **관리** 동사(variants 전환·connect·login 중계 — runner/api.ts:857-916)는
+31. 하네스 **관리** 동사(variants 전환·connect·login 중계 — runner/api.ts:823-858 · 906-926)는
     이 계약 밖이다. 1인 기판의 콘솔 전용 표면이며, org 기판에서 하네스 관리는 문이 아니라
     권위(fleet)의 소관이다.
     *왜: 최종사용자 채팅 문에 자격 관리가 섞이면 org 기판이 그 동사들을 401 로 도배해야
     한다 — 게이트할 것과 존재하지 않아야 할 것의 구분이다.*
     계약 밖이되 방향은 있다 — 결정 G(2026-08-16): 현행 login 중계의 pty 출력 700ms 폴링
-    (runner/api.ts:908-910 · core.js:393)은 기판 소유 표면에서 SSE 스트림으로 현대화하고,
+    (runner/api.ts:918-920 · core.js:393)은 기판 소유 표면에서 SSE 스트림으로 현대화하고,
     relayos 가 실사고로 검증한 무폴링 구조화 플로(begin → 코드 붙여넣기 → complete —
     relayos lib/relayjs/src/claude-login.tsx:12-15 의 교훈)는 **하네스 어댑터 capability
     어휘의 additive 확장**으로 표현한다(어댑터가 선언하면 구조화 플로, 아니면 pty 스트림).
@@ -265,13 +272,13 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 
 ### 5.6 열거 — capability `enumerate`, root 소속
 
-32. **[신설]** `instances.list` = `GET {root}/instances` → `{instances: [{
+32. **[현행 v1]** `instances.list` = `GET {root}/instances` → `{instances: [{
     id, display_name, icon?, chat?: {greeting?}, agents: [string],
     agent: string|null, model?, effort?}]}`.
     - `id` 는 base 마운트의 키다 — 클라이언트는 이 id 로 base URL 을 얻는 기판 제공
       함수를 쓴다(§2).
     - `agent` 는 **착지 에이전트 판정 결과**다. 서버가 판정해서 싣는다(§8).
-    - OSS 는 `/registry`(runner/api.ts:543)의 데이터로 이 동사에 응답한다 — manifest
+    - OSS 는 `/registry`(runner/api.ts:502)의 데이터로 이 동사에 응답한다 — manifest
       전량 노출이 아니라 위 닫힌 shape 로 좁혀서. relayos 는 portal/nav 상당이 같은 동사
       뒤에서 응답한다(승인된 예외 1건 — 상세 경로 미확인, 정렬 시 확정).
     *왜 닫힌 shape: 구 코어는 `/registry` 의 manifest 를 클라이언트에서 파헤쳐 메타를
@@ -311,7 +318,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     `reply` · `error` — 필드 포함 전부 harness-protocol.md:55-68 이 정본이다.
     프레이밍만 JSONL(stdout)→SSE(§5.2)로 바뀐다.
     *왜: 어댑터가 만든 이벤트를 기판이 번역 없이 나른다 — 번역기가 없으면 번역 드리프트도
-    없다. 구 OSS 폴링 응답의 `events[]` 도 이미 이 봉투 원본이었다(api.ts:972-988).*
+    없다. 구 OSS 폴링 응답의 `events[]` 도 이미 이 봉투 원본이었다(구 wire — 삭제됨, 컷 2639dae).*
     이 재사용에는 명시 판정 둘이 딸린다:
     - **툴 인자 스트리밍 손실 — v1 수용.** 봉투 `tool` 이벤트의 `args` 는 ≤2KB·`detail` 은
       요약이라(harness-protocol.md:59-60) stream-json 의 `input_json_delta` 급 인자 실시간
@@ -320,8 +327,9 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
       필드를 늘리지 않는다.
     - **리플레이 원천 — 봉투 이벤트 장부는 전 기판 의무다.** `turn.stream` 의 종결 턴
       재생(§5.1-13)과 `turn.attach` 의 처음부터 재생(§5.1-14)은 턴 단위 이벤트 장부를
-      전제한다. 기판은 봉투 이벤트를 턴 단위로 영속해야 한다(OSS 데몬: events.jsonl 상당의
-      보존 — §9 컷에서 신설). 장부 없이 텍스트 이력만으로 격하 구현하는 것은 위반이다.
+      전제한다. 기판은 봉투 이벤트를 턴 단위로 영속해야 한다(OSS 데몬: 턴 단위 장부
+      `turns/<turnId>.jsonl` — client-wire.ts:148-238). 장부 없이 텍스트 이력만으로 격하
+      구현하는 것은 위반이다.
 36. 클라이언트 수명주기 이벤트 — **닫힌 목록, 이 둘뿐**:
     | 이벤트 | 필드 | 의미 |
     |---|---|---|
@@ -344,11 +352,11 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `push` | 턴 밖 SSE 이벤트 창 | `push.subscribe` | relayos ○ (/api/events) · OSS × |
 | `state` | 표면 상태 보관 | `state.get/set` | relayos ○ (host.state 상당) · OSS × |
 | `enumerate` | 인스턴스 열거 | `instances.list` | 양쪽 신설 (OSS 는 /registry 재포장) |
-| `harness-info` | 하네스 신원·capabilities 조회 | `harness.info` | OSS ○ (api.ts:918) · relayos × (현행 대응물 부재 — 정렬 시 신설 또는 미선언) |
-| `harness-models` | 모델 카탈로그 조회 | `harness.models` | OSS ○ (api.ts:918) · relayos ○ (/api/llm/models, api_turns.go:317) |
-| `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (api.ts:918, 929-932) · relayos ○ (/api/instances/commands, api_turns.go:271) |
+| `harness-info` | 하네스 신원·capabilities 조회 | `harness.info` | OSS ○ (client-wire.ts:783-807) · relayos × (현행 대응물 부재 — 정렬 시 신설 또는 미선언) |
+| `harness-models` | 모델 카탈로그 조회 | `harness.models` | OSS ○ (client-wire.ts:783-807) · relayos ○ (/api/llm/models, api_turns.go:317) |
+| `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
-| `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (api.ts:1083-1094 · upload.go) |
+| `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |
 
 38. 이 표가 어휘의 전부다. 새 capability = 이 문서의 개정이다. `turn.attach` 는 이 표에
     없다 — capability 가 아니라 필수 동사다(§5.1-14: 복구 경로의 유일한 정본이고, 장부
@@ -366,8 +374,8 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 39. **a2a 위임 마커** — `[미션 수신: <mission>[ ← <consumer>]]` + 개행, 위임 프롬프트의
     첫 줄. ` ← <consumer>` 부분은 **옵셔널**이다 — consumer 미상 위임은
     `[미션 수신: <mission>]` 형으로 온다(생산 정본: runner/protocol.ts:12-14
-    `a2aMissionMarker` — 무-consumer 분기는 protocol.ts:13, 호출부 api.ts:309;
-    consumer 는 dispatch 의 옵셔널 인자다 api.ts:302). 소비: 위젯이 발신자 카드로 렌더
+    `a2aMissionMarker` — 무-consumer 분기는 protocol.ts:13, 호출부 api.ts:311;
+    consumer 는 dispatch 의 옵셔널 인자다 api.ts:304). 소비: 위젯이 발신자 카드로 렌더
     (lib/relayjs/src/widget.js:1276-1277 의 정규식 — ← 그룹을 옵셔널로 매칭). v1 판정:
     마커 문법은 이 조항이 정본이고, 클라이언트는 여기 명세된 형태(옵셔널 분기 포함)만
     매칭한다 — 자체 변형 정규식 금지.
@@ -375,17 +383,17 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     구조 필드로 옮기면 이력 스키마 개정이 필요하다 — 그건 이 계약의 범위 밖이므로 v1 은
     문자열을 고정하는 데서 멈춘다.*
 40. **`uploads/` 접두** — 업로드 착지 참조의 접두. 정본: runner/protocol.ts:21-22
-    (`UPLOADS_DIR`/`UPLOADS_PREFIX`), 호출부 api.ts:1150, 1173.
-    기판 내부 소비: 아웃바운드 파일 스캔에서 인바운드 무대 제외(runner/session.ts:383-397).
+    (`UPLOADS_DIR`/`UPLOADS_PREFIX`), 호출부 client-wire.ts:728, 751.
+    기판 내부 소비: 아웃바운드 파일 스캔에서 인바운드 무대 제외(runner/session.ts:402-416).
     v1 판정: 이 접두는 **기판 내부 어휘**로 강등된다 — 클라이언트에게 `path` 는 불투명
     참조다(§5.4-25). 클라이언트가 `uploads/` 를 검사·조립하는 코드는 계약 위반.
 41. **툴 이름 문법** — `a2a__<pkg>__<mission>` · `edge__<pkg>__<tool>`
     (정본: runner/protocol.ts:30-33 접두 상수 · 42-48 생산 함수 · 53-66 집행 파서;
-    호출부: 생산 api.ts:350, 355 · 집행 api.ts:390-401) · `mcp__<name>__*`
+    호출부: 생산 api.ts:352, 357 · 집행 api.ts:392-403) · `mcp__<name>__*`
     (harness-protocol.md:43). 소비: 위젯의 도구 카드 라벨링(widget.js:1510-1515).
     v1 판정: 세 접두와 `__` 구분자는 계약 상수다. 클라이언트는 **표시 목적의 분해**만
     허용되고, 이름 조립·권한 추론은 금지다(집행 판정은 서버 스코프 게이트가 정본 —
-    api.ts:363-364).
+    api.ts:365-366).
 42. **착지 에이전트 판정** — 정본: runner/manifest.ts:441-448 (`default: true` 명시 선언
     > "패키지 짧은 이름과 같은 에이전트" 관례). 구 코어는 이 판정을 클라이언트에서
     재구현했다(core.js:54-66 — 주석 스스로 "기판 landingAgentName 과 같은 판정").
@@ -397,7 +405,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 ## 9. 클린 브레이크 — 호환 창 없음
 
 43. **호환 창을 두지 않는다.** 위젯은 `cache-control: no-store` 로 서빙되어
-    (runner/api.ts:812-813) 기판과 원자적으로 함께 움직인다 — 낡은 클라이언트가 새 문에
+    (runner/api.ts:777-778) 기판과 원자적으로 함께 움직인다 — 낡은 클라이언트가 새 문에
     붙는 조합이 구조적으로 없다. 구/신 wire 병존 기간, 세대 혼합, 과도기 변환기 모두 금지.
     *왜: 과도기 변환기는 영구 코드가 된다. 위젯-기판 원자성이 공짜로 주는 클린 브레이크를
     쓰지 않을 이유가 없다.*
@@ -406,13 +414,13 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 45. **제거되는 구 wire — OSS 데몬** (전부 runner/api.ts):
     | 구 경로 | 실측 | 대체 |
     |---|---|---|
-    | `POST /pkg/:pkg/chat` (블로킹) | api.ts:1118-1137 | `POST {base}/turns` + stream |
-    | `GET /pkg/:pkg/session/:slot/events` (900ms/3s 폴링) | api.ts:1051-1063 · core.js:134-154, 91-114 | `turn.stream` / `turn.attach` / `push` |
-    | `POST /pkg/:pkg/session/:slot/cancel` | api.ts:1071-1073 | `POST {base}/turns/<id>/interrupt` |
-    | `POST /pkg/:pkg/session/:slot/answer` | api.ts:1066-1069 | `POST {base}/turns/<id>/respond` |
-    | history.busy 3초 감시 폴링 | core.js:253-270 | `history.get` 의 `turn` + attach |
-    | 클라이언트 slot 발급 | core.js:315-324 | `POST {base}/sessions` |
-    | `/registry` 의 클라이언트 manifest 파싱 | core.js:49-70 | `instances.list` 닫힌 shape |
+    | `POST /pkg/:pkg/chat` (블로킹) | 구(삭제됨 — 컷 2639dae) | `POST {base}/turns` + stream |
+    | `GET /pkg/:pkg/session/:slot/events` (900ms/3s 폴링) | 구(삭제됨 — 컷 2639dae) | `turn.stream` / `turn.attach` / `push` |
+    | `POST /pkg/:pkg/session/:slot/cancel` | 구(삭제됨 — 컷 2639dae) | `POST {base}/turns/<id>/interrupt` |
+    | `POST /pkg/:pkg/session/:slot/answer` | 구(삭제됨 — 컷 2639dae) | `POST {base}/turns/<id>/respond` |
+    | history.busy 3초 감시 폴링 | 구(삭제됨 — 컷 2639dae) | `history.get` 의 `turn` + attach |
+    | 클라이언트 slot 발급 | 구(삭제됨 — 컷 2639dae) | `POST {base}/sessions` |
+    | `/registry` 의 클라이언트 manifest 파싱 | 구(삭제됨 — 컷 2639dae) | `instances.list` 닫힌 shape |
     세션 부속(`label`·`archive`·`pin`·`delete`·`history`·`sessions`)과 파일
     (`upload`·`file`)·하네스 조회는 경로 재편만 있고 의미는 승격 유지다.
 46. **폐기·정렬되는 현 wire — relayos**:
@@ -450,26 +458,26 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | 신 동사 (v1 wire) | 구 OSS wire | 현 relayos wire |
 |---|---|---|
 | `capabilities` — GET `{base}/capabilities` | 부재 | 부재 |
-| `turn.send` — POST `{base}/turns` | POST `/pkg/:pkg/chat` 블로킹 (api.ts:1118) | POST `/api/turns` (api_turns.go:164) + GET `/api/turns/stream` 단독 시작 (chat/transport.ts:69) |
-| `turn.stream` — GET `{base}/turns/<id>/stream` | GET `/session/:slot/events?from=` 900ms 폴링 (api.ts:1051 · core.js:134) | GET `/api/turns/stream` SSE (api_turns.go:154) |
+| `turn.send` — POST `{base}/turns` | POST `/pkg/:pkg/chat` 블로킹 — 삭제됨(컷 2639dae) | POST `/api/turns` (api_turns.go:164) + GET `/api/turns/stream` 단독 시작 (chat/transport.ts:69) |
+| `turn.stream` — GET `{base}/turns/<id>/stream` | GET `/session/:slot/events?from=` 900ms 폴링 — 삭제됨(컷 2639dae) | GET `/api/turns/stream` SSE (api_turns.go:154) |
 | `turn.attach` — GET `{base}/turns/attach?session=` | 부재 — history.busy 3s 폴링 (core.js:253) | GET `/api/turns/attach` SSE (api_turns.go:157) |
-| `turn.interrupt` — POST `{base}/turns/<id>/interrupt` | POST `/session/:slot/cancel` (api.ts:1071) | POST `/api/turns/<id>/interrupt` (api_turns.go:182) |
-| `turn.respond` — POST `{base}/turns/<id>/respond` | POST `/session/:slot/answer` (api.ts:1066) | POST `/api/turns/<id>/respond` (api_turns.go:180) |
-| (흡수: history.busy/turn) | GET `/session/:slot/history` 의 `busy` (api.ts:1044) | POST `/api/turns/active` (chat/transport.ts:75) |
-| `session.list` — GET `{base}/sessions` | GET `/pkg/:pkg/sessions` (api.ts:1034) | GET `/api/conversations` (api_turns.go:222) |
+| `turn.interrupt` — POST `{base}/turns/<id>/interrupt` | POST `/session/:slot/cancel` — 삭제됨(컷 2639dae) | POST `/api/turns/<id>/interrupt` (api_turns.go:182) |
+| `turn.respond` — POST `{base}/turns/<id>/respond` | POST `/session/:slot/answer` — 삭제됨(컷 2639dae) | POST `/api/turns/<id>/respond` (api_turns.go:180) |
+| (흡수: history.busy/turn) | GET `/session/:slot/history` 의 `busy` — 삭제됨(컷 2639dae) | POST `/api/turns/active` (chat/transport.ts:75) |
+| `session.list` — GET `{base}/sessions` | GET `/pkg/:pkg/sessions` — 삭제됨(컷 2639dae) | GET `/api/conversations` (api_turns.go:222) |
 | `session.create` — POST `{base}/sessions` | 클라이언트 로컬 발급 (core.js:319) | POST `/api/sessions/uuid` (api_turns.go:196) |
-| `session.rename` — POST `{base}/sessions/<id>/rename` | POST `/session/:slot/label` (api.ts:1075) | POST `/api/conversations/rename` (api_turns.go:198) |
-| `session.archive` — POST `{base}/sessions/<id>/archive` | POST `/session/:slot/archive` (api.ts:1087) | 부재(미확인) |
-| `session.pin` — POST `{base}/sessions/<id>/pin` | POST `/session/:slot/pin` (api.ts:1096) | 부재(미확인) |
-| `session.remove` — POST `{base}/sessions/<id>/delete` | POST `/session/:slot/delete` (api.ts:1081) | POST `/api/conversations/delete` (api_turns.go:199) |
-| `session.reset` — POST `{base}/sessions/<id>/reset` | POST `/pkg/:pkg/session/reset` (api.ts:1106) | POST `/api/sessions/reset` (api_turns.go:190) |
-| `history.get` — GET `{base}/sessions/<id>/history` | GET `/session/:slot/history` (api.ts:1044) | GET `/api/conversations/messages` (api_turns.go:206) |
-| `file.upload` — POST `{base}/upload?name=` (+프로브) | POST `/pkg/:pkg/upload?name=` (api.ts:1144) | 3벌: `/api/uploads/<script>` (transport.ts:127) · `/api/fs/upload` (transport.ts:221) · `<base>/u/_attachments?access_token=` (runtime.ts:804 · upload.go:156) |
-| `file.download` — GET/HEAD `{base}/file/<path>` | GET/HEAD `/pkg/:pkg/file/<path>` (api.ts:1183) | `/api/fs/download` (transport.ts:188 — deployd 등록은 api.go 판, api_turns.go:377 주석) |
-| `harness.info` — GET `{base}/harness/info` | GET `/pkg/:pkg/harness/info` (api.ts:994) | 부재 (현행 대응물 없음 — 정렬 컷에서 deployd control 중계로 신설하거나 `harness-info` 미선언, §7) |
-| `harness.models` — GET `{base}/harness/models` | GET `/pkg/:pkg/harness/models` (api.ts:994) | GET `/api/llm/models` org 전역 카탈로그 (api_turns.go:317) |
-| `harness.commands` — GET `{base}/harness/commands` | GET `/pkg/:pkg/harness/commands` (api.ts:994, 1005-1007) | GET `/api/instances/commands` (api_turns.go:271) |
-| `harness.set` — POST `{base}/model` | POST `/pkg/:pkg/model` (api.ts:1011) | POST `/api/sessions/effort`·`/model` (api_turns.go:191,193) · `/api/instances/my-llm` (api_turns.go:339) |
+| `session.rename` — POST `{base}/sessions/<id>/rename` | POST `/session/:slot/label` — 삭제됨(컷 2639dae) | POST `/api/conversations/rename` (api_turns.go:198) |
+| `session.archive` — POST `{base}/sessions/<id>/archive` | POST `/session/:slot/archive` — 삭제됨(컷 2639dae) | 부재(미확인) |
+| `session.pin` — POST `{base}/sessions/<id>/pin` | POST `/session/:slot/pin` — 삭제됨(컷 2639dae) | 부재(미확인) |
+| `session.remove` — POST `{base}/sessions/<id>/delete` | POST `/session/:slot/delete` — 삭제됨(컷 2639dae) | POST `/api/conversations/delete` (api_turns.go:199) |
+| `session.reset` — POST `{base}/sessions/<id>/reset` | POST `/pkg/:pkg/session/reset` — 삭제됨(컷 2639dae) | POST `/api/sessions/reset` (api_turns.go:190) |
+| `history.get` — GET `{base}/sessions/<id>/history` | GET `/session/:slot/history` — 삭제됨(컷 2639dae) | GET `/api/conversations/messages` (api_turns.go:206) |
+| `file.upload` — POST `{base}/upload?name=` (+프로브) | POST `/pkg/:pkg/upload?name=` — 삭제됨(컷 2639dae) | 3벌: `/api/uploads/<script>` (transport.ts:127) · `/api/fs/upload` (transport.ts:221) · `<base>/u/_attachments?access_token=` (runtime.ts:804 · upload.go:156) |
+| `file.download` — GET/HEAD `{base}/file/<path>` | GET/HEAD `/pkg/:pkg/file/<path>` — 삭제됨(컷 2639dae) | `/api/fs/download` (transport.ts:188 — deployd 등록은 api.go 판, api_turns.go:377 주석) |
+| `harness.info` — GET `{base}/harness/info` | GET `/pkg/:pkg/harness/info` — 삭제됨(컷 2639dae) | 부재 (현행 대응물 없음 — 정렬 컷에서 deployd control 중계로 신설하거나 `harness-info` 미선언, §7) |
+| `harness.models` — GET `{base}/harness/models` | GET `/pkg/:pkg/harness/models` — 삭제됨(컷 2639dae) | GET `/api/llm/models` org 전역 카탈로그 (api_turns.go:317) |
+| `harness.commands` — GET `{base}/harness/commands` | GET `/pkg/:pkg/harness/commands` — 삭제됨(컷 2639dae) | GET `/api/instances/commands` (api_turns.go:271) |
+| `harness.set` — POST `{base}/model` | POST `/pkg/:pkg/model` — 삭제됨(컷 2639dae) | POST `/api/sessions/effort`·`/model` (api_turns.go:191,193) · `/api/instances/my-llm` (api_turns.go:339) |
 | `instances.list` — GET `{root}/instances` | GET `/registry` manifest 전량 (api.ts:574 · core.js:49) | portal/nav 상당 (경로 미확인 — 정렬 시 확정) + `/api/instances/agents` @ 피커 (api_turns.go:294) |
 | `state.get/set` — GET/POST `{base}/state` | 부재 | `host.state` 상당 `/api/host` (view-alignment.md:70 — 상세 미확인) |
 | `push.subscribe` — GET `{base}/events` | 부재 — 3s 유휴 폴링 (core.js:91) | `EventSource /api/events` (transport.ts:336 · chat/transport.ts:383) |
