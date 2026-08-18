@@ -35,17 +35,21 @@ description: 채널 어댑터(외부 대화 표면 — Slack, Discord, 텔레그
 
 ## 프로세스 계약 요약
 
+기판 왕복의 정본은 **클라이언트 전송 계약 v1**(`docs/client-protocol.md`)이다.
+구 블로킹 `POST …/chat` 은 은퇴했다 — 개설과 관찰이 분리된 아래 두 동사가 그 자리다.
+
 기판이 entry 를 `node --experimental-strip-types` 로 스폰해 상주시킨다.
 
 | 축 | 계약 |
 |---|---|
 | env | `RELAY_NAME` `RELAY_CHANNEL` `RELAY_API` `RELAY_TOKEN` + `RELAY_CRED_<이름>` (vault) |
-| 착신 | `POST {RELAY_API}/pkg/{RELAY_NAME}/chat` body `{message, slot, attachments?}` — 동기, 종결 시 `{reply, model, usage, files}` |
+| 착신 | ① 개설 `POST {RELAY_API}/pkg/{RELAY_NAME}/turns` body `{message, session, attachments?}` → **202** `{turn, session}` (턴 종결을 붙들지 않는다) ② 관찰 `GET …/turns/<turn>/stream` SSE |
+| 관찰 | `data:` 한 줄 = 봉투 이벤트 JSON 하나. 어휘는 하네스 봉투 protocol 3 그대로 — `delta`·`tool`·`usage`·`task`·`ask`·`file`·`reply`·`error`. 종결은 `reply`/`error` 정확히 하나, **스트림의 끝은 수명주기 `{event:"turn",status:"settled",ok}`** 다. settled 없이 끊긴 스트림은 종결이 아니라 절단이므로 빈 답으로 위장하지 말 것 |
 | 봉투 | message 는 `<channel source="<이름>" user="<안정 식별자>" ...>원문</channel>` — **user 필수**, 닉네임·시각은 속성으로 매 착신마다 |
-| slot | `<채널이름>-<대화키>` 를 `[a-zA-Z0-9._-]{1,64}` 로 정규화. 같은 외부 대화 = 같은 slot. 사람용 이름은 `POST …/session/<slot>/label` |
-| 직렬화 | 한 slot 동시 착신 금지 — 큐잉(기본) 또는 `…/session/<slot>/cancel` 끼어들기. 다른 slot 은 병렬 자유 |
+| session | `<채널이름>-<대화키>` 를 `[a-zA-Z0-9._-]{1,64}` 로 정규화. 같은 외부 대화 = 같은 세션. 사람용 이름은 `POST …/sessions/<session>/rename` body `{label}` |
+| 직렬화 | **기판이 세션의 유일한 직렬화 지점이다** — 같은 세션의 턴은 도착순으로 줄 선다. 어댑터 큐는 계약이 아니라 발신 순서를 지키기 위한 자기 몫이고, 끼어들기는 `POST …/turns/<turn>/interrupt` |
 | dedup | at-least-once 플랫폼의 중복 이벤트 제거는 어댑터 소유 |
-| 파일 | 회신 `files` 는 stage 상대경로 → `GET …/file/<경로>` 로 받아 네이티브 첨부로. 인바운드 첨부는 `POST …/upload` 로 stage 에 앉힌 뒤 참조를 `attachments` 로 |
+| 파일 | 회신 파일은 `file` 이벤트(`path` = stage 상대경로)로 도착 → `GET …/file/<경로>` 로 받아 네이티브 첨부로. 인바운드 첨부는 `POST …/upload` 로 stage 에 앉힌 뒤 참조를 `attachments` 로 |
 | 발신 | stdin 줄 단위 JSON `{"type":"post","conversation":"…","text":"…","files":[…]?}` 수신 시 그 대화에 게시 — 트리거 선톡이 이 길로 온다 |
 | 검사 | `RELAY_CONFORM=1` 스폰 시 자기 서술 JSON 한 줄(`{"name":"…","protocol":1}`) 내고 exit 0 |
 | 검증 | `RELAY_VERIFY=1` + `RELAY_CRED_<이름>` 스폰 시 자격 실왕복 한 번(소켓·상주 없이)만 돌려 `{"ok":…,"note":"…"}` 내고 exit 0 — 저장과 유효를 가른다 |

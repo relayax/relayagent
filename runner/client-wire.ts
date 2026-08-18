@@ -177,6 +177,8 @@ interface TurnRecord {
   sinks: Set<TurnSink>;
   /** reply/error 봉투가 장부를 지나갔는가 — 지나지 않은 턴만 종결 봉투를 합성한다 */
   settledEnvelope: boolean;
+  /** 봉투 file 이벤트가 이미 알린 stage 상대경로 — 종결 시 무대 산출물 중복 고지를 막는다 */
+  announcedFiles: Set<string>;
 }
 
 const turns = new Map<string, TurnRecord>();
@@ -201,14 +203,16 @@ function appendTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
     fs.appendFileSync(t.file, line + "\n");
   } catch { /* 세션 삭제 경합 — 기록만 포기, 라이브 중계는 계속 (session.ts idleEvent 와 같은 판정) */ }
   if (ev.event === "reply" || ev.event === "error") t.settledEnvelope = true;
+  if (ev.event === "file" && typeof ev.path === "string") t.announcedFiles.add(ev.path);
   for (const s of [...t.sinks]) s.write(line);
 }
 
 /**
- * runSession 이벤트 스트림에 얹는 기록 훅 — Phase 2 컷에서 session.ts 가 봉투 이벤트를
- * 장부(events.jsonl)에 쓰는 지점마다 부른다. **현재는 어디서도 호출되지 않는다.**
- * wire 가 모르는 턴(a2a dispatch·자동 제목 등 runSession 직접 호출)의 이벤트는 여기 오지
- * 않아도 잃는 것이 없다 — 그 턴들의 관찰 창은 신 wire 밖이다.
+ * runSession 이벤트 스트림에 얹는 기록 훅 — session.ts 의 봉투 기록 지점이 부른다
+ * (배선은 api.ts createApi 의 setEnvelopeTap(tapSessionEvent) — session→client-wire 직접
+ * import 는 순환이라 조립점이 주입한다).
+ * wire 가 모르는 턴(a2a dispatch·자동 제목 등 runSession 직접 호출)의 이벤트는 여기 와도
+ * 활성 턴이 없어 버려진다 — 그 턴들의 관찰 창은 신 wire 밖이다.
  */
 export function tapSessionEvent(pkg: string, slot: string, ev: EnvelopeEvent): void {
   const t = activeTurn(pkg, slot);
@@ -254,6 +258,12 @@ async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<
       attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
       scene: body.scene ? String(body.scene) : undefined,
     });
+    // 무대 산출물 고지 — 구 wire 는 이것을 응답의 files 로 실어 보냈다(구 POST /chat).
+    // 신 wire 의 자리는 봉투 어휘의 file 이벤트다(§6-35): stage diff 로만 발견된 파일은
+    // 어댑터가 알린 적이 없으므로 여기서 알린다. settled 앞이라 재생에서도 같은 자리에 온다
+    for (const f of r.files ?? []) {
+      if (!t.announcedFiles.has(f.path)) appendTurnEvent(t, { event: "file", path: f.path });
+    }
     // 봉투 reply 가 훅(tapSessionEvent)으로 이미 지나갔으면 합성하지 않는다 — 이중 종결 방지.
     // 지나지 않은 경우(훅 미배선·구형 통짜 어댑터)는 runSession 결과로 종결 봉투를 세운다
     if (!t.settledEnvelope) {
@@ -304,6 +314,7 @@ function enqueueTurn(deps: ClientWireDeps, pkg: string, session: string, body: a
     file: path.join(dir, id + ".jsonl"),
     sinks: new Set(),
     settledEnvelope: false,
+    announcedFiles: new Set(),
   };
   fs.writeFileSync(t.file, "");
   turns.set(id, t);

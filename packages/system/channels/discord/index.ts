@@ -5,7 +5,8 @@
 // 게이트: 기본 닫힘 — RELAY_DISCORD_ALLOW(쉼표 구분 사용자 id)에 있는 발화자만 착신한다.
 //        판정 대상은 방이 아니라 발화자다(그룹에서 방 게이트는 전원 통과가 된다).
 //        그룹 채널에서는 멘션이 있을 때만 응답 범위를 좁힌다(DM 은 멘션 불요).
-// slot:  discord-<채널id> — 같은 대화 = 같은 slot. 직렬화: slot 당 큐(동시 착신 금지).
+// session: discord-<채널id> — 같은 대화 = 같은 세션. 직렬화는 기판 소유(client-protocol
+//        §5.1-12)이고, 어댑터 큐는 발신 순서를 지키기 위한 자기 몫이다.
 // 발신:  stdin 줄 단위 JSON {"type":"post","conversation":"<채널id>","text","files"?} —
 //        트리거 선톡(then.delivery)이 이 길로 온다.
 // 검사:  RELAY_CONFORM=1 이면 외부 연결 없이 자기 서술 한 줄을 내고 0 으로 종료.
@@ -36,24 +37,70 @@ function log(o: Record<string, unknown>): void {
 }
 
 // ── 기판 왕복 ────────────────────────────────────────────────────────────
-const slotQueues = new Map<string, Promise<void>>();
+const sessionQueues = new Map<string, Promise<void>>();
 
-/** slot 직렬화 — 한 slot 에 동시 착신 금지(계약). 다른 slot 끼리는 병렬. */
-function enqueue(slot: string, job: () => Promise<void>): void {
-  const prev = slotQueues.get(slot) ?? Promise.resolve();
-  const next = prev.then(job).catch((e) => log({ slot, error: String(e) }));
-  slotQueues.set(slot, next);
+/** 발신 순서 보존용 세션 큐 — 착신 직렬화 자체는 기판이 소유한다(§5.1-12). */
+function enqueue(session: string, job: () => Promise<void>): void {
+  const prev = sessionQueues.get(session) ?? Promise.resolve();
+  const next = prev.then(job).catch((e) => log({ session, error: String(e) }));
+  sessionQueues.set(session, next);
 }
 
-async function relayChat(slot: string, message: string, attachments?: string[]): Promise<{ reply: string; files: { path: string; name: string }[] }> {
-  const res = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/chat`, {
+async function relayChat(session: string, message: string, attachments?: string[]): Promise<{ reply: string; files: { path: string; name: string }[] }> {
+  const open = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/turns`, {
     method: "POST",
     headers: relayHeaders,
-    body: JSON.stringify({ message, slot, ...(attachments?.length ? { attachments } : {}) }),
+    body: JSON.stringify({ message, session, ...(attachments?.length ? { attachments } : {}) }),
   });
-  const j = (await res.json()) as { reply?: string; files?: { path: string; name: string }[]; error?: string };
-  if (!res.ok || j.error) throw new Error(j.error ?? `chat ${res.status}`);
-  return { reply: j.reply ?? "", files: j.files ?? [] };
+  const started = (await open.json()) as { turn?: string; error?: { code?: string; message?: string } };
+  if (!open.ok || !started.turn) throw new Error(started.error?.message ?? `turn ${open.status}`);
+  return observeTurn(started.turn);
+}
+
+/** 관찰 — data: 줄 하나가 봉투 이벤트 JSON 하나다(§5.2-18). 어휘는 하네스 봉투 protocol 3
+ *  그대로(§6-35): 무대 산출물은 file, 종결은 reply/error. 스트림의 끝은 수명주기 settled 다
+ *  — 종결 이벤트로 끊지 않고 settled 를 기다려야 뒤따르는 file 고지를 놓치지 않는다. */
+async function observeTurn(turn: string): Promise<{ reply: string; files: { path: string; name: string }[] }> {
+  const res = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/turns/${encodeURIComponent(turn)}/stream`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+  let reply = "";
+  let failure = "";
+  const seen = new Set<string>();
+  const files: { path: string; name: string }[] = [];
+  const dec = new TextDecoder();
+  let buf = "";
+  let settled = false;
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buf += dec.decode(chunk, { stream: true });
+    let cut: number;
+    // 프레임 경계는 빈 줄. 하트비트(:hb)처럼 data: 아닌 줄은 버린다
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        let ev: Record<string, unknown>;
+        try {
+          ev = JSON.parse(line.slice(5).trim()) as Record<string, unknown>;
+        } catch {
+          continue; // 부서진 줄 하나가 턴을 죽이지 않는다
+        }
+        if (ev.event === "file" && typeof ev.path === "string" && !seen.has(ev.path)) {
+          seen.add(ev.path);
+          files.push({ path: ev.path, name: ev.path.split("/").pop() ?? ev.path });
+        } else if (ev.event === "reply") reply = String(ev.text ?? "");
+        else if (ev.event === "error") failure = String(ev.message ?? "턴 실패");
+        else if (ev.event === "turn" && ev.status === "settled") settled = true;
+      }
+    }
+    if (settled) break;
+  }
+  if (failure) throw new Error(failure);
+  // settled 없이 끊긴 스트림 = 종결이 아니라 절단이다(§5.2-20) — 빈 답으로 위장하지 않는다
+  if (!settled) throw new Error("스트림이 종결 없이 끊겼습니다");
+  return { reply, files };
 }
 
 async function stageUpload(name: string, bytes: ArrayBuffer): Promise<string | null> {
@@ -135,7 +182,7 @@ async function onMessage(msg: any): Promise<void> {
   if (isGuild && !mentioned) return;
 
   const channelId = String(msg.channel_id);
-  const slot = `${CHANNEL}-${channelId}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+  const session = `${CHANNEL}-${channelId}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
   const nick = String(author.global_name ?? author.username ?? "unknown");
   const text = String(msg.content ?? "").replace(new RegExp(`<@!?${selfId}>`, "g"), "").trim();
 
@@ -154,13 +201,13 @@ async function onMessage(msg: any): Promise<void> {
   // user = 발화자 안정 식별자 — org 기판의 principal 결부 축(개인 기판은 게이트에만 쓴다)
   const envelope = `<channel source="${CHANNEL}" user="${escapeXml(String(author.id))}" nick="${escapeXml(nick)}" conversation="${channelId}" ts="${msg.timestamp ?? ""}">${escapeXml(text)}</channel>`;
 
-  enqueue(slot, async () => {
+  enqueue(session, async () => {
     const stopTyping = typingLoop(channelId);
     try {
-      const r = await relayChat(slot, envelope, refs);
+      const r = await relayChat(session, envelope, refs);
       await post(channelId, r.reply, r.files.map((f) => f.path));
     } catch (e) {
-      log({ slot, error: String(e) });
+      log({ session, error: String(e) });
       await post(channelId, "요청을 처리하지 못했습니다 — 잠시 후 다시 시도해 주세요.").catch(() => {});
     } finally {
       stopTyping();

@@ -48,13 +48,6 @@ export function approveGrant(g: Grant): Promise<{ ok: boolean }> {
   return post("/grants", g);
 }
 
-export function sendChat(pkg: string, message: string, slot = "console"): Promise<{ reply?: string; error?: string }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/chat`, { message, slot });
-}
-
-export function resetSession(pkg: string, slot = "console"): Promise<{ ok: boolean }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/session/reset`, { slot });
-}
 
 export async function callScript<T = any>(name: string, input: unknown): Promise<T> {
   const data = await post(`/pkg/system/script/${name}`, { input });

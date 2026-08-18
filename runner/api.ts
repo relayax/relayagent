@@ -462,17 +462,36 @@ function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerRe
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     // 정적 발행물의 라우트 관례: <경로>/index.html (trailingSlash) 또는 <경로>.html
     const idx = path.join(target, "index.html");
-    if (fs.existsSync(idx)) return void streamFile(idx, res);
+    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, res);
     const html = target + ".html";
-    if (fs.existsSync(html)) return void streamFile(html, res);
+    if (fs.existsSync(html)) return void serveViewFile(html, pkg, res);
     return void json(res, 404, { error: `없음: ${rest}` });
   }
-  streamFile(target, res);
+  serveViewFile(target, pkg, res);
 }
 
 function streamFile(file: string, res: http.ServerResponse): void {
   res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
   fs.createReadStream(file).pipe(res);
+}
+
+// 패키지 view 문서에 마운트 좌표를 심는다(client-protocol §2-6: 마운트를 아는 쪽이 주입한다).
+// 이게 없으면 /assets 번들은 base 미주입으로 자동 마운트를 포기하고(main.tsx autoFloat 의
+// fail-loud) mount() 도 뿌리 없는 상대 호출이 된다 — README §2 의 "스크립트 한 줄" 이 죽는다.
+// 정적 발행물을 손대지 않고 서빙 시점에만 얹으므로 패키지 트리는 기판 마운트를 모른 채 남는다.
+function viewContextTag(pkg: string): string {
+  const base = JSON.stringify("/pkg/" + encodeURIComponent(pkg));
+  return `<script>window.__RELAY_CONTEXT={base:${base},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
+}
+
+function serveViewFile(file: string, pkg: string, res: http.ServerResponse): void {
+  if (path.extname(file) !== ".html") return void streamFile(file, res);
+  const html = fs.readFileSync(file, "utf8");
+  const head = html.match(/<head\b[^>]*>/i);
+  // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽는다)
+  const at = head ? (head.index ?? 0) + head[0].length : 0;
+  res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
+  res.end(html.slice(0, at) + viewContextTag(pkg) + html.slice(at));
 }
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────

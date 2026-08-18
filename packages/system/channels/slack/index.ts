@@ -5,7 +5,7 @@
 //       JSON {"app":"xapp-...","bot":"xoxb-..."} 으로 붙여넣는다 → RELAY_CRED_SLACK.
 // 게이트: 기본 닫힘 — RELAY_SLACK_ALLOW(쉼표 구분 사용자 id)의 발화자만 착신.
 //        채널(그룹)에서는 앱 멘션이 있어야 응답 범위에 든다(DM 은 불요).
-// slot:  slack-<채널id>[-<스레드ts>] — 스레드는 자기 slot 으로 이어진다.
+// session: slack-<채널id>[-<스레드ts>] — 스레드는 자기 세션으로 이어진다.
 // 발신:  stdin JSON {"type":"post","conversation":"<채널id>[:<스레드ts>]","text","files"?}.
 // 검사:  RELAY_CONFORM=1 이면 외부 연결 없이 자기 서술 한 줄 + exit 0.
 import readline from "node:readline";
@@ -56,21 +56,67 @@ async function slackCall(method: string, body: Record<string, unknown>, token = 
 }
 
 // ── 기판 왕복 (discord 어댑터와 동형 — 어댑터는 자기 완결이 계약이라 공유하지 않는다) ──
-const slotQueues = new Map<string, Promise<void>>();
-function enqueue(slot: string, job: () => Promise<void>): void {
-  const prev = slotQueues.get(slot) ?? Promise.resolve();
-  slotQueues.set(slot, prev.then(job).catch((e) => log({ slot, error: String(e) })));
+const sessionQueues = new Map<string, Promise<void>>();
+function enqueue(session: string, job: () => Promise<void>): void {
+  const prev = sessionQueues.get(session) ?? Promise.resolve();
+  sessionQueues.set(session, prev.then(job).catch((e) => log({ session, error: String(e) })));
 }
 
-async function relayChat(slot: string, message: string, attachments?: string[]): Promise<{ reply: string; files: { path: string; name: string }[] }> {
-  const res = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/chat`, {
+async function relayChat(session: string, message: string, attachments?: string[]): Promise<{ reply: string; files: { path: string; name: string }[] }> {
+  const open = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/turns`, {
     method: "POST",
     headers: relayHeaders,
-    body: JSON.stringify({ message, slot, ...(attachments?.length ? { attachments } : {}) }),
+    body: JSON.stringify({ message, session, ...(attachments?.length ? { attachments } : {}) }),
   });
-  const j = (await res.json()) as { reply?: string; files?: { path: string; name: string }[]; error?: string };
-  if (!res.ok || j.error) throw new Error(j.error ?? `chat ${res.status}`);
-  return { reply: j.reply ?? "", files: j.files ?? [] };
+  const started = (await open.json()) as { turn?: string; error?: { code?: string; message?: string } };
+  if (!open.ok || !started.turn) throw new Error(started.error?.message ?? `turn ${open.status}`);
+  return observeTurn(started.turn);
+}
+
+/** 관찰 — data: 줄 하나가 봉투 이벤트 JSON 하나다(§5.2-18). 어휘는 하네스 봉투 protocol 3
+ *  그대로(§6-35): 무대 산출물은 file, 종결은 reply/error. 스트림의 끝은 수명주기 settled 다
+ *  — 종결 이벤트로 끊지 않고 settled 를 기다려야 뒤따르는 file 고지를 놓치지 않는다. */
+async function observeTurn(turn: string): Promise<{ reply: string; files: { path: string; name: string }[] }> {
+  const res = await fetch(`${API}/pkg/${encodeURIComponent(NAME)}/turns/${encodeURIComponent(turn)}/stream`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+  let reply = "";
+  let failure = "";
+  const seen = new Set<string>();
+  const files: { path: string; name: string }[] = [];
+  const dec = new TextDecoder();
+  let buf = "";
+  let settled = false;
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buf += dec.decode(chunk, { stream: true });
+    let cut: number;
+    // 프레임 경계는 빈 줄. 하트비트(:hb)처럼 data: 아닌 줄은 버린다
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        let ev: Record<string, unknown>;
+        try {
+          ev = JSON.parse(line.slice(5).trim()) as Record<string, unknown>;
+        } catch {
+          continue; // 부서진 줄 하나가 턴을 죽이지 않는다
+        }
+        if (ev.event === "file" && typeof ev.path === "string" && !seen.has(ev.path)) {
+          seen.add(ev.path);
+          files.push({ path: ev.path, name: ev.path.split("/").pop() ?? ev.path });
+        } else if (ev.event === "reply") reply = String(ev.text ?? "");
+        else if (ev.event === "error") failure = String(ev.message ?? "턴 실패");
+        else if (ev.event === "turn" && ev.status === "settled") settled = true;
+      }
+    }
+    if (settled) break;
+  }
+  if (failure) throw new Error(failure);
+  // settled 없이 끊긴 스트림 = 종결이 아니라 절단이다(§5.2-20) — 빈 답으로 위장하지 않는다
+  if (!settled) throw new Error("스트림이 종결 없이 끊겼습니다");
+  return { reply, files };
 }
 
 async function stageUpload(name: string, bytes: ArrayBuffer): Promise<string | null> {
@@ -134,7 +180,7 @@ async function onEvent(ev: any): Promise<void> {
 
   const threadTs = ev.thread_ts && ev.thread_ts !== ev.ts ? String(ev.thread_ts) : "";
   const conversation = threadTs ? `${ev.channel}:${threadTs}` : String(ev.channel);
-  const slot = `${CHANNEL}-${ev.channel}${threadTs ? "-" + threadTs : ""}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+  const session = `${CHANNEL}-${ev.channel}${threadTs ? "-" + threadTs : ""}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
   const text = String(ev.text ?? "").replace(new RegExp(`<@${selfId}>`, "g"), "").trim();
 
   const refs: string[] = [];
@@ -151,12 +197,12 @@ async function onEvent(ev: any): Promise<void> {
   // user = 발화자 안정 식별자 — org 기판의 principal 결부 축(개인 기판은 게이트에만 쓴다)
   const envelope = `<channel source="${CHANNEL}" user="${escapeXml(user)}" nick="${escapeXml(user)}" conversation="${escapeXml(conversation)}" ts="${ev.ts}">${escapeXml(text)}</channel>`;
 
-  enqueue(slot, async () => {
+  enqueue(session, async () => {
     try {
-      const r = await relayChat(slot, envelope, refs);
+      const r = await relayChat(session, envelope, refs);
       await post(conversation, r.reply, r.files.map((x) => x.path));
     } catch (e) {
-      log({ slot, error: String(e) });
+      log({ session, error: String(e) });
       await post(conversation, "요청을 처리하지 못했습니다 — 잠시 후 다시 시도해 주세요.").catch(() => {});
     }
   });
