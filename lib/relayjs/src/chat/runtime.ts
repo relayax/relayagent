@@ -312,10 +312,32 @@ function isLlmAuthError(text: string): boolean {
   return /failed to authenticate|api error:\s*401|401\s+invalid authentication/i.test(String(text || ""));
 }
 
+// isLlmNetworkError — 하네스가 LLM API 에 **닿지 못한** 연결 실패 식별(connection refused 류).
+// CLI 는 연결 오류를 내부 백오프로 수분 재시도한 끝에야 포기하므로, 사용자는 몇 분 기다린 끝에
+// 영어 원문을 본다(2026-08-17 조직 기판 prod 실사고 — 두 번째 구현체가 실사고로 얻은 개념을
+// 계약 층으로 승격한다). **실패 확정 경로에서만 부를 것** — 정상 답변이 네트워크 오류를
+// 인용(디버깅 상담)한 경우를 배너로 덮으면 안 된다.
+function isLlmNetworkError(text: string): boolean {
+  return /econnrefused|econnreset|etimedout|connection refused|connection error|fetch failed|socket hang up/i.test(
+    String(text || ""),
+  );
+}
+
 function llmAuthGuide(): string {
   return (
     "🔑 **Claude 자격이 만료되었거나 연결되어 있지 않습니다**\n\n" +
     "하네스 자격을 다시 연결한 뒤 보내주세요 — 연결 방법은 이 기판의 콘솔(또는 `relay login`)이 안내합니다."
+  );
+}
+
+// llmNetworkGuide — 연결 실패 안내. 자격 미연결이면 외부 통로도 함께 닫혀 refused 로 나타날
+// 수 있으므로 연결 확인을 1순위로 놓는다. llmAuthGuide 와 같은 이유로 **기판 중립**이다 —
+// 마운트별 동선(/connect 딥링크 등)은 그 기판의 콘솔이 안내한다(§2-6 마운트 문법 비조립).
+function llmNetworkGuide(): string {
+  return (
+    "🔌 **LLM API 에 연결하지 못했습니다**\n\n" +
+    "기판이 API 에 닿지 못해 응답을 만들지 못했어요 — 자격이 연결되어 있지 않거나 만료됐을 수 있고, " +
+    "서버의 외부 네트워크(egress) 문제일 수도 있습니다. 연결 상태를 확인한 뒤 다시 보내주세요."
   );
 }
 
@@ -1234,7 +1256,9 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         // 봉투 error 이벤트로 종결된 턴 — 사유는 리듀서가 meta.error 에 보관했다.
         const raw = (reducer.meta as { error?: string }).error || "턴 실행 실패";
         const base = friendlyTurnError(String(raw).replace(/^turn failed:\s*ERROR:\s*/i, "").trim());
-        const msg = isLlmAuthError(raw) ? base + "\n\n" + llmAuthGuide() : base;
+        // 자격(401) → 연결(refused) 순으로 분류한다. 여기는 실패 확정 경로라 오탐이 없다.
+        const guide = isLlmAuthError(raw) ? llmAuthGuide() : isLlmNetworkError(raw) ? llmNetworkGuide() : "";
+        const msg = guide ? base + "\n\n" + guide : base;
         parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + "⚠️ " + msg });
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;
