@@ -5,6 +5,14 @@
 OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현체는 이 문서에
 맞춰 정렬되며, 어느 쪽의 현행 wire 도 정본이 아니다.
 
+> **개정 이력 — 2026-08-18 (v1 초안 내 additive).** 두 번째 구현체(relayos)가 실사고로 얻은
+> 개념을 계약으로 승격했다: 재전송 수렴(§5.1-12) · `settled` 이후 무이벤트(§6-36) ·
+> delta 입자 비보장(§6-35) · 대화축 취소 `cancel-by-session`(§4·§7). protocol 정수는 **1 그대로**다
+> — 기존 클라이언트가 깨지는 변경이 없고, 새 capability 는 미선언 기판에서 그냥 부재다.
+> *왜 이 방향인가: 정본이 밖(OSS)이라는 것은 "구현체는 계약에 맞춘다"만 뜻하지 않는다.
+> 구현체가 실사고로 배운 것이 계약에 없으면 그 지식은 지역 방언으로 남고, 다음 사람이
+> "계약에 없으니 군더더기"라며 지운다. 잘 도는 개념은 지우는 게 아니라 올려야 한다.*
+
 현재 계약 버전: **1** (초안). 이 정수는 하네스 봉투의 `info.protocol`(현재 3,
 [harness-protocol.md](harness-protocol.md))과 **별개의 축**이다 — 하네스 축은
 기판↔어댑터 사이를, 이 축은 브라우저↔기판 사이를 잰다. 하네스 protocol 이 4 가 되어도
@@ -80,6 +88,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 | 축 | 동사 | capability |
 |---|---|---|
 | 턴 | `turn.send` · `turn.stream` · `turn.attach` · `turn.interrupt` · `turn.respond` | — |
+| 턴(대화축) | `turn.cancel` | cancel-by-session |
 | 세션 | `session.list` · `session.open` · `session.create` · `session.rename` · `session.archive` · `session.pin` · `session.remove` · `session.reset` | — |
 | 이력 | `history.get` | — |
 | 파일 | `file.upload`(단일 동사) · `file.download` | upload-progress |
@@ -123,6 +132,22 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
       (core.js:116-127)는 은퇴한다. 순서는 도착순.
       *왜: 직렬화를 클라이언트가 하면 화면 두 개가 같은 세션에 붙는 순간 깨진다.
       기판만이 세션의 유일한 직렬화 지점이다.*
+    - **재전송 수렴 — 직렬화의 짝 조항.** 진행 중 턴과 **같은 발화**가 다시 도착하면 기판은
+      새 턴을 만들지 않고 **진행 중 턴의 id 를 그대로 돌려준다**(202). 큐에 이미 같은 발화가
+      있으면 두 번 담지 않는다. 빈 발화도 같다.
+      *왜: 이것이 없으면 §5.2-20 의 절단 판정이 사고로 되돌아온다 — 스트림이 한 번 끊겨
+      `E_DISCONNECTED` 가 뜨면 사용자는 같은 말을 다시 보낸다. 그때 기판이 순진하게 두 번째
+      턴을 만들면 두 턴이 같은 대화를 동시에 재개하려다 하네스 세션 락에서 충돌해
+      (relayos 실측: `Session ID already in use`) **둘 다** 미완료로 끝난다. 사용자가 본 것은
+      "같은 질문이 두 번, 둘 다 실패"다. 직렬화만으로는 이 창이 안 닫힌다 — 큐가 중복을
+      성실히 실행하기 때문이다. 수렴이 그 자리를 닫는다(relayos, 2026-07).*
+    - **진행 중 턴 취소는 대화축으로도 열려 있다** — capability `cancel-by-session`
+      (§7)을 선언한 기판은 `POST {base}/turns/cancel` `{session}` → `{ok, turn?}` 을 받는다.
+      *왜: `turn.interrupt`(§5.1-15)는 턴 id 를 쥔 화면의 동사다. 그런데 채널 어댑터(슬랙·
+      디스코드)처럼 **턴 id 를 들고 다니지 않는 소비자**가 실재한다 — 그들에게 남은 길은
+      `history.get` 으로 busy+turn 을 얻고 interrupt 를 치는 2왕복인데, 그 사이에 턴이
+      바뀌면 엉뚱한 턴을 끊는다. 대화축 취소는 그 경주를 기판 안으로 넣는다. 필수가 아닌
+      이유는 1인 loopback 기판엔 그런 소비자가 없어서다.*
 13. **[현행 v1]** `turn.stream` = `GET {base}/turns/<id>/stream` (SSE, §5.2).
     send 직후 여는 관찰 창. 이미 종결된 턴이면 장부 재생 후 즉시 settled·EOF.
 14. **[현행 v1]** `turn.attach` = `GET {base}/turns/attach?session=<id>` (SSE).
@@ -320,6 +345,12 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     *왜: 어댑터가 만든 이벤트를 기판이 번역 없이 나른다 — 번역기가 없으면 번역 드리프트도
     없다. 구 OSS 폴링 응답의 `events[]` 도 이미 이 봉투 원본이었다(구 wire — 삭제됨, 컷 2639dae).*
     이 재사용에는 명시 판정 둘이 딸린다:
+    - **delta 입자는 계약이 아니다.** 기판은 연속한 `delta` 를 합쳐 보낼 수 있다
+      (harness-protocol.md §Delta coalescing — 순서·연결 보존, 비-delta 이벤트를 넘어선 병합
+      금지). 클라이언트는 토큰 단위 도착을 가정하지 않는다: 화면은 도착한 조각을 이어 붙일
+      뿐이고, "한 글자씩 흐르는가"는 기판·하네스 조합의 성질이지 계약이 주는 보장이 아니다.
+      *왜: 전송 한 홉이 비싼 기판(이벤트마다 네트워크 POST)에서는 토큰 입자가 그대로
+      어댑터 stdout 의 backpressure 가 된다 — 보고하려던 턴을 보고가 멈춰 세운다.*
     - **툴 인자 스트리밍 손실 — v1 수용.** 봉투 `tool` 이벤트의 `args` 는 ≤2KB·`detail` 은
       요약이라(harness-protocol.md:59-60) stream-json 의 `input_json_delta` 급 인자 실시간
       전개가 없다. v1 은 이 손실을 **수용**한다 — 툴 카드는 시작·대상·종결 요약으로
@@ -339,6 +370,12 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     (harness-protocol.md:68 "Exactly one of reply/error settles a turn"). 수명주기
     이벤트는 의미가 아니라 **프레이밍**(끊김 대 종결의 판별)만 담당한다 — 의미를
     중복하면 두 종결이 어긋나는 날이 온다.*
+    **`settled` 뒤로는 어떤 이벤트도 없다 — 장부 재생에서도 같다.** 어댑터가 종결 뒤에도
+    출력을 흘리는 경우(기판이 어댑터보다 먼저 정산한 턴)가 실재하는데, 그 잔여를 관찰
+    스트림에 실으면 클라이언트는 "끝났다고 했는데 계속 오는" 스트림을 보게 되고 §5.2-20 의
+    종결 판정이 무의미해진다. 기판은 종결 이후 도착분을 **관찰 스트림에서 버린다**. 장부에
+    남기는 것은 자유이되(포렌식), **재생은 `settled` 에서 끊어야 한다** — 종결 뒤 줄이 남은
+    장부를 그대로 재생하면 같은 위반이 재부착에서 재현된다(relayos 실측, 2026-08).
 37. 같은 protocol 정수 안에서 클라이언트는 미지의 `event` 값을 렌더하지 않되
     `E_PROTOCOL` 로 승격하지도 않는다(불투명 진행으로 취급).
     *왜: 하네스 축은 additive 로 성장한다(harness-protocol.md:8-9). 하네스 protocol 4 의
@@ -357,6 +394,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
 | `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |
+| `cancel-by-session` | 턴 id 없이 대화축으로 진행 턴 취소 | `turn.cancel` | relayos ○ (채널 어댑터가 소비 — POST /turns/cancel) · OSS × (턴 id 를 쥔 화면뿐) |
 
 38. 이 표가 어휘의 전부다. 새 capability = 이 문서의 개정이다. `turn.attach` 는 이 표에
     없다 — capability 가 아니라 필수 동사다(§5.1-14: 복구 경로의 유일한 정본이고, 장부

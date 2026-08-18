@@ -56,7 +56,7 @@ as legacy plain output (protocol 1).
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `delta` | `text` | Streamed fragment of the main-line answer. Subagent text must not be mixed in. |
+| `delta` | `text` | Streamed fragment of the main-line answer. Subagent text must not be mixed in. Emit at whatever granularity the CLI gives you — the substrate is allowed to coalesce (below), so do not batch on the adapter's side. |
 | `tool` | `status: "start"`, `id`, `name`, `detail?` (≤200 chars), `args?` (JSON string, ≤2 KB) | A tool call began. `id` pairs start/end; parallel calls are legal. |
 | `tool` | `status: "end"`, `id`, `name`, `ok`, `result?` (≤8 KB) | The paired call finished. `result` is a display excerpt, not the full output. |
 | `usage` | `input`, `output` | Live token ticker, throttled (≈250 ms). Estimates allowed between exact checkpoints; the final `reply.usage` is authoritative. |
@@ -93,6 +93,23 @@ as legacy plain output (protocol 1).
 - **Stall** — the substrate watches for event silence on an in-flight turn
   (`RELAY_TURN_STALL_S`, default 1200 s) and injects `cancel`. Adapters should therefore emit
   events as work happens, not in one batch at the end.
+  A substrate that *also* reclaims the execution container (kills a pod, tears down a sandbox)
+  must put that deadline **strictly after** the cancel deadline, with enough margin for the
+  adapter to settle. Reclaiming at the same threshold races the `cancel` it just sent: the
+  adapter is killed mid-settle and the user gets the substrate's guess ("stalled") instead of the
+  adapter's honest `error`. Cancel is the first layer; reclamation is the backstop for an adapter
+  that did not answer the cancel.
+- **Delta coalescing** — a substrate **may** merge consecutive `delta` events into one before
+  forwarding them onward, as long as it preserves order and concatenation (`text` joined in
+  arrival order) and does not merge across a non-`delta` event. Adapters must not depend on 1:1
+  delivery of the deltas they emit.
+  *Why this is spelled out: an adapter naturally emits one `delta` per CLI token chunk, which is
+  the right granularity at the source. But a substrate whose forwarding hop is expensive — a
+  network POST per event, worse if that POST is synchronous on the read loop — turns that
+  granularity into backpressure on the adapter's own stdout, and can stall the very turn it is
+  reporting. Merging at block boundaries is the measured remedy (relayos, 2026-08). Leaving it
+  unwritten made it look like a local hack rather than a contract-legal substrate choice, which
+  is how such remedies get deleted by the next person.*
 
 ## Declarations
 
