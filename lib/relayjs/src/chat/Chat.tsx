@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
   loadHarnessVariants,
   setHarnessVariant,
+  hasEffort,
 } from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
@@ -1556,6 +1557,16 @@ const EFFORT_TICKS: Record<string, string> = { low: "L", medium: "M", high: "H",
  *  claude-code's high). Click a dot to set an explicit level (solid); click the active explicit dot
  *  again to fall back to the default; ←/→ or ↑/↓ adjust. Persists brain-side per conversation. */
 function EffortSelector() {
+  // effort 는 하네스 어댑터 capability 의 투영이다(§7) — 안 받는 하네스(codex 등)에서 칸을
+  // 그리면 눌러도 아무 일이 없다. 기판에 물어보고, 하네스 전환 때 다시 묻는다.
+  const [supported, setSupported] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const ask = () => hasEffort().then((v) => { if (alive) setSupported(v); });
+    void ask();
+    const off = onOverridesChanged(() => { void ask(); });
+    return () => { alive = false; off(); };
+  }, []);
   const ctx = useRelayCtx();
   const [effort, setEffortState] = useState("");            // per-conversation override ("" = default)
   const [defaultEffort, setDefaultEffort] = useState("high"); // effective level when unset (from brain)
@@ -1586,6 +1597,9 @@ function EffortSelector() {
       e.preventDefault(); set(EFFORT_LEVELS[Math.max(0, shownIdx - 1)]);
     }
   };
+
+  // 미지원이면 자리 자체를 비운다. null(조회 전)에는 그리던 대로 둔다 — 첫 프레임에 깜빡이지 않게
+  if (supported === false) return null;
 
   return (
     <div className={"rc-effort" + (loaded ? "" : " rc-effort-loading")}
@@ -1684,10 +1698,15 @@ function ModelSelector() {
   // 피커 항목 — 서버 카탈로그(가족별 최신). 로드 전/미도달은 정적 폴백(modelOptions 초기값).
   const [options, setOptions] = useState(modelOptions());
   const boxRef = useRef<HTMLDivElement>(null);
+  // 카탈로그는 **하네스에 딸린다** — 마운트 때 한 번만 읽으면 하네스를 바꿔도 옛 하네스의
+  // 모델이 계속 떠 있다(실사고: Harness codex 인데 피커가 Fable·Opus·Sonnet).
+  // overrides-changed 는 하네스 전환도 실어 나른다(HarnessSelector 가 전환 뒤에 알린다).
   useEffect(() => {
     let alive = true;
-    void loadModelOptions().then((o) => { if (alive) setOptions(o); });
-    return () => { alive = false; };
+    const load = () => loadModelOptions().then((o) => { if (alive) setOptions(o); });
+    void load();
+    const off = onOverridesChanged(() => { void load(); });
+    return () => { alive = false; off(); };
   }, []);
   useEffect(() => {
     let alive = true;

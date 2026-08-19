@@ -178,6 +178,13 @@ function capsOf(ctx: RelayCtx): Promise<Set<string>> {
   return capsFor(baseOf(ctx), rootOf(ctx));
 }
 
+/** capabilities 는 **하네스에 딸린다**(effort 는 어댑터 capability 의 투영, §7). 변형을 바꾸면
+ *  집합 자체가 달라지므로 캐시를 버린다 — 안 버리면 codex 로 바꾼 화면이 claude 의 effort 칸을
+ *  계속 그리고, 그 칸은 아무 일도 하지 않는다. */
+export function invalidateCaps(): void {
+  _caps.clear();
+}
+
 // ── 로컬 대화 좌표 ↔ 서버 세션 (§5.3-22 — 클라이언트 로컬 id 발급 은퇴) ──────
 //
 // 세션 id 는 기판이 발급하는 불투명 문자열이다. 화면이 로컬에서 만드는 좌표(새 탭·sibling
@@ -666,6 +673,13 @@ export const MODEL_OPTIONS: ModelOption[] = [
 let _modelOptions: ModelOption[] = MODEL_OPTIONS;
 export function modelOptions(): ModelOption[] { return _modelOptions; }
 
+/** 이 기판·하네스가 effort 를 받는가(§7 capability effort). 화면이 칸을 그릴지 정하는 근거 —
+ *  안 받는 하네스에 강도 칸을 띄우면 눌러도 아무 일이 없는 표면이 된다. */
+export async function hasEffort(): Promise<boolean> {
+  const g = getCtx();
+  return (await capsFor(baseOf(g), rootOf(g))).has("effort");
+}
+
 /** "claude-opus-4-8" → "opus" (가족어 — 피커 큐레이션·별칭 해석의 축).
  *  카탈로그는 전체 id 만 오지 않는다 — 하네스가 **도구가 문서화한 별칭**("opus"·"fable")을
  *  그대로 내기도 한다(claude-code 어댑터: API 키 없으면 별칭만, 있으면 별칭+전체 id). 접두사
@@ -674,17 +688,25 @@ export function modelOptions(): ModelOption[] { return _modelOptions; }
  *  모르는 claude-*-5 를 권했다). 별칭은 자기 자신이 가족이다. 안내 문장 같은 비-id 만 뺀다. */
 function familyOf(id: string): string {
   const m = /^claude-([a-z]+)/.exec(id || "");
-  if (m) return m[1];
-  return /^[a-z][a-z0-9]*$/.test(id || "") ? id : "";
+  // 접두사 규칙에 안 맞는 id 는 **자기 자신이 가족**이다. 큐레이션(가족별 최신 1개)은
+  // Anthropic 카탈로그가 날짜 변형을 잔뜩 내는 것에 대한 답이지, 다른 하네스의 어휘를
+  // 지우는 규칙이 아니다 — 여기서 "" 를 돌려주면 codex 의 gpt-* 가 통째로 버려지고
+  // 화면이 claude 정적 폴백을 대신 권한다(실사고: 하네스 codex 인데 피커에 Fable).
+  return m ? m[1] : id;
 }
 
-/** id → 표시 라벨 — 카탈로그 display_name 축이 은퇴해 id 파생만 남는다("claude-" 접두 제거). */
+/** 모델 id 로 보이는가 — 어댑터는 목록 대신 안내 문장 한 줄로 강등하기도 한다(claude-code
+ *  run: "(모델 id 직접 입력 …)"). 그런 행은 고를 수 있는 항목이 아니다. */
+function isModelId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(id);
+}
+
+/** id → 표시 라벨. claude 접두와 단어 하나짜리 별칭만 다듬고, 다른 하네스의 id 는 **그대로**
+ *  둔다 — "gpt-5.6-terra" 를 "Gpt 5.6 Terra" 로 바꾸면 붙여 넣을 수 없는 이름이 된다. */
 function labelOf(id: string): string {
-  return id
-    .replace(/^claude-/, "")
-    .split("-")
-    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-    .join(" ");
+  const title = (t: string) => t.split("-").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+  if (id.startsWith("claude-")) return title(id.slice("claude-".length));
+  return /^[a-z]+$/.test(id) ? title(id) : id;
 }
 
 /**
@@ -699,7 +721,7 @@ export async function loadModelOptions(): Promise<ModelOption[]> {
   if (!(await capsFor(base, root)).has("harness-models")) return _modelOptions;
   const r = await transportFor(base, root).harness.models();
   if (isError(r)) return _modelOptions;
-  const ids = (Array.isArray(r.value) ? r.value : []).filter((v): v is string => typeof v === "string" && !!v);
+  const ids = (Array.isArray(r.value) ? r.value : []).filter((v): v is string => typeof v === "string" && isModelId(v));
   const byFamily = new Map<string, ModelOption>();
   for (const id of ids) { // 서버가 최신순 정렬 — 가족별 첫 행이 최신
     const fam = familyOf(id);
@@ -777,7 +799,11 @@ export async function loadHarnessVariants(): Promise<{ active: string | null; va
  *  다시 읽어야 한다. 미선언 이름은 기판이 400 으로 거부한다. */
 export async function setHarnessVariant(ctx: RelayCtx, harness: string): Promise<boolean> {
   const r = await wireOf(ctx).harness.set({ harness });
-  return !isError(r);
+  if (isError(r)) return false;
+  // 하네스가 바뀌면 capability 집합도 모델 카탈로그도 그 하네스 것이다 — 둘 다 버린다
+  invalidateCaps();
+  _modelOptions = MODEL_OPTIONS;
+  return true;
 }
 
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {
