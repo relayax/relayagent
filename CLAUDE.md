@@ -81,18 +81,34 @@ npm run typecheck
 
 CI runs exactly this.
 
-## The chat widget is a build artifact
+## Two build artifacts the daemon serves — both gitignored, both must be rebuilt
 
-The daemon serves the widget from `lib/relayjs/dist/` (`/assets/chat-app.{js,css}`), and that
-directory is gitignored — a fresh clone does not have it. Build it once before running a
-daemon that serves chat:
+**① The chat widget bundle.** The daemon serves it from `lib/relayjs/dist/`
+(`/assets/chat-app.{js,css}`), and that directory is gitignored — a fresh clone does not have it:
 
 ```sh
 npm run build:widget   # installs lib/relayjs devDeps, then esbuild → dist/
 ```
 
 Touching anything under `lib/relayjs/src/` means rebuilding: the served bundle is the artifact,
-not the source. There is no release pipeline in this repo yet, so this step is manual.
+not the source.
+
+**② Package view static exports.** `serveView` serves `surfaces/view/out/` when it exists.
+So editing a view's source and not rebuilding means **the daemon keeps serving the old screen** —
+and neither `typecheck` nor the manifest judgment looks at build output. This actually happened:
+the atomic cut (`2639dae`) put the new widget wiring into the console layout, `out/` was never
+rebuilt, and for two days the served document had the old wiring already gone and the new wiring
+not yet there ("the chat widget is missing").
+
+```sh
+(cd packages/<pkg>/surfaces/view && npx next build)
+```
+
+`npm run validate` now judges this: if `out/` exists and is older than any view source file, the
+package fails with the rebuild command. It stays silent when `out/` is absent — CI and fresh
+clones don't build views, and absence is not staleness.
+
+There is no release pipeline in this repo yet, so both steps are manual.
 
 ## Language
 
