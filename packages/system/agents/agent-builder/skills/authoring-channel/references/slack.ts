@@ -57,21 +57,66 @@ if (process.env.RELAY_VERIFY === "1") {
   })();
 }
 
-// ── 기판 문 — 착신·라벨·파일. 모든 대화가 이 문을 통과한다 ─────────────────────
+// ── 기판 문 — 개설·관찰·이름·파일. 모든 대화가 이 문을 통과한다 ─────────────────
+// 왕복의 정본은 클라이언트 전송 계약 v1(docs/client-protocol.md) — 개설과 관찰이 갈렸다.
+// 구 블로킹 POST …/chat 은 은퇴했다.
 const relayHeaders = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
 const pkgUrl = (p: string) => `${API}/pkg/${encodeURIComponent(NAME)}/${p}`;
 
-async function relayChat(message: string, slot: string, attachments?: string[]): Promise<{ reply?: string; files?: { path: string; name?: string }[] }> {
-  const res = await fetch(pkgUrl("chat"), {
+interface TurnResult { reply: string; files: { path: string; name?: string }[] }
+
+/** ① 개설 — 202 {turn, session}. 턴 종결을 붙들지 않는다 */
+async function relayTurn(message: string, session: string, attachments?: string[]): Promise<TurnResult> {
+  const open = await fetch(pkgUrl("turns"), {
     method: "POST",
     headers: relayHeaders,
-    body: JSON.stringify({ message, slot, ...(attachments?.length ? { attachments } : {}) }),
+    body: JSON.stringify({ message, session, ...(attachments?.length ? { attachments } : {}) }),
   });
-  if (!res.ok) throw new Error(`chat ${res.status}: ${await res.text()}`);
-  return (await res.json()) as { reply?: string; files?: { path: string; name?: string }[] };
+  const started = (await open.json().catch(() => ({}))) as { turn?: string; error?: { message?: string } };
+  if (!open.ok || !started.turn) throw new Error(started.error?.message ?? `turns ${open.status}`);
+  return observeTurn(started.turn);
 }
 
-/** 인바운드 첨부 → stage. 반환된 상대경로가 chat body 의 attachments 참조가 된다 */
+/** ② 관찰 — data: 한 줄이 봉투 이벤트 JSON 하나다. 종결은 reply/error 정확히 하나이지만
+ *  스트림의 끝은 수명주기 settled 다 — 종결 이벤트에서 끊으면 뒤따르는 file 고지를 놓친다 */
+async function observeTurn(turn: string): Promise<TurnResult> {
+  const res = await fetch(pkgUrl(`turns/${encodeURIComponent(turn)}/stream`), { headers: { authorization: `Bearer ${TOKEN}` } });
+  if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+  const files: { path: string; name?: string }[] = [];
+  const announced = new Set<string>();
+  let reply = "";
+  let failure = "";
+  let settled = false;
+  const dec = new TextDecoder();
+  let buf = "";
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buf += dec.decode(chunk, { stream: true });
+    let cut: number;
+    // 프레임 경계는 빈 줄. 하트비트(:hb)처럼 data: 아닌 줄은 버린다
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        let ev: Record<string, any>;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; } // 부서진 줄 하나가 턴을 죽이지 않는다
+        if (ev.event === "file" && typeof ev.path === "string" && !announced.has(ev.path)) {
+          announced.add(ev.path);
+          files.push({ path: ev.path, name: ev.path.split("/").pop() });
+        } else if (ev.event === "reply") reply = String(ev.text ?? "");
+        else if (ev.event === "error") failure = String(ev.message ?? "턴 실패");
+        else if (ev.event === "turn" && ev.status === "settled") settled = true;
+      }
+    }
+    if (settled) break;
+  }
+  if (failure) throw new Error(failure);
+  // settled 없이 끊긴 스트림은 종결이 아니라 절단이다 — 빈 답으로 위장하지 않는다
+  if (!settled) throw new Error("스트림이 종결 없이 끊겼습니다");
+  return { reply, files };
+}
+
+/** 인바운드 첨부 → stage. 반환된 상대경로가 개설 body 의 attachments 참조가 된다 */
 async function uploadToStage(name: string, bytes: ArrayBuffer): Promise<string | null> {
   const res = await fetch(pkgUrl(`upload?name=${encodeURIComponent(name)}`), {
     method: "POST",
@@ -82,21 +127,22 @@ async function uploadToStage(name: string, bytes: ArrayBuffer): Promise<string |
   return ((await res.json()) as { path?: string }).path ?? null;
 }
 
-const labeled = new Set<string>();
-async function labelOnce(slot: string, label: string): Promise<void> {
-  if (labeled.has(slot)) return;
-  labeled.add(slot);
+const named = new Set<string>();
+async function renameOnce(session: string, label: string): Promise<void> {
+  if (named.has(session)) return;
+  named.add(session);
   try {
-    await fetch(pkgUrl(`session/${encodeURIComponent(slot)}/label`), { method: "POST", headers: relayHeaders, body: JSON.stringify({ label }) });
-  } catch { /* 라벨은 편의다 — 실패해도 대화는 계속된다 */ }
+    await fetch(pkgUrl(`sessions/${encodeURIComponent(session)}/rename`), { method: "POST", headers: relayHeaders, body: JSON.stringify({ label }) });
+  } catch { /* 이름은 편의다 — 실패해도 대화는 계속된다 */ }
 }
 
-// ── 직렬화 — 한 slot 에 동시 착신 금지. slot 별 프라미스 사슬이 순서를 보존한다 ──
+// ── 직렬화 — 같은 세션의 턴을 줄 세우는 것은 기판이다. 이 사슬은 계약이 아니라 회신 게시
+// 순서를 이 어댑터가 스스로 지키기 위한 몫이다 ──
 const queues = new Map<string, Promise<void>>();
-function enqueue(slot: string, job: () => Promise<void>): void {
-  const prev = queues.get(slot) ?? Promise.resolve();
-  const next = prev.then(job).catch((e) => console.error(`[${slot}] 턴 실패: ${e}`));
-  queues.set(slot, next);
+function enqueue(session: string, job: () => Promise<void>): void {
+  const prev = queues.get(session) ?? Promise.resolve();
+  const next = prev.then(job).catch((e) => console.error(`[${session}] 턴 실패: ${e}`));
+  queues.set(session, next);
 }
 
 // ── dedup — 소켓모드는 at-least-once 다. ack 는 즉시 하고 여기서 중복을 버린다 ──
@@ -178,8 +224,8 @@ function handleEvent(cred: Cred, ev: Record<string, any>): void {
   let text = String(ev.text ?? "");
   if (isMention) text = text.replace(/<@[^>]+>\s*/g, "").trim();
   if (!text && !(ev.files?.length)) return;
-  const slot = `${CHANNEL}-${String(ev.channel)}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
-  enqueue(slot, async () => {
+  const session = `${CHANNEL}-${String(ev.channel)}`.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+  enqueue(session, async () => {
     // 인바운드 첨부 → stage. url_private 는 봇 토큰 인증이 필요하다 (files:read)
     const attachments: string[] = [];
     for (const f of ev.files ?? []) {
@@ -193,14 +239,14 @@ function handleEvent(cred: Cred, ev: Record<string, any>): void {
       }
     }
     const nick = await nickname(cred, user);
-    // user = 플랫폼 안정 식별자(필수), 닉네임은 매 착신마다 — 그룹은 한 slot 에 발화자가 여럿이다
+    // user = 플랫폼 안정 식별자(필수), 닉네임은 매 착신마다 — 그룹은 한 session 에 발화자가 여럿이다
     const message = `<channel source="${CHANNEL}" user="${user}" nickname="${nick}" ts="${String(ev.ts)}">${text}</channel>`;
     try {
-      const r = await relayChat(message, slot, attachments);
-      await labelOnce(slot, isDM ? `Slack DM — ${nick}` : `Slack — ${nick}`);
+      const r = await relayTurn(message, session, attachments);
+      await renameOnce(session, isDM ? `Slack DM — ${nick}` : `Slack — ${nick}`);
       await deliver(cred, String(ev.channel), r.reply, r.files);
     } catch (e) {
-      console.error(`착신 실패[${slot}]: ${e}`); // 상세는 기판 로그로
+      console.error(`착신 실패[${session}]: ${e}`); // 상세는 기판 로그로
       await postText(cred, String(ev.channel), "⚠️ 메시지를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.").catch(() => { /* 이중 실패는 로그만 */ });
     }
   });
@@ -256,7 +302,7 @@ async function main(): Promise<void> {
   console.log(`slack 어댑터 기동: ${auth.user} @ ${auth.team} (allow ${cred.allow?.length ?? 0}명)`);
   listenStdin(cred);
   // 연결 유지·재접속은 어댑터 소유 — 네트워크 단절에 크래시로 답하지 않는다.
-  // 진행 표시(타이핑 류)는 선택 축이라 이 참조 구현은 생략했다 — …/session/<slot>/events 폴링으로 얹는다
+  // 진행 표시(타이핑 류)는 선택 축이라 이 참조 구현은 생략했다 — 관찰 스트림의 delta·tool 이벤트로 얹는다
   let backoff = 1000;
   for (;;) {
     try {
