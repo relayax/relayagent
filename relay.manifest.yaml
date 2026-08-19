@@ -379,21 +379,22 @@ properties:
                 격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
                 규칙 + 훅 가드로 이중 번역한다 (가드레일이지 샌드박스가 아니다)
               $ref: '#/$defs/relpath'
-            tool:
+            binary:
               description: |
-                이 변형이 모는 도구를 **기판이 얻는 레시피**. 선언하면 기판이 자기 자리
-                (~/.relay/harness/<패키지>/<변형>/)에 설치하고, 그 하네스의 스폰에만 PATH 앞에
-                둔다 — 호스트 전역 설치가 깨져 있어도 패키지가 돈다(어댑터는 도구를 번역할 뿐
-                동봉하지 않으므로, 이 선언이 없으면 도구의 실재는 사용자 몫이다).
+                이 변형이 모는 실행 파일을 **기판이 얻는 레시피** — requires.binaries 와 같은
+                어휘("이 실행 파일이 필요하다")에 획득 방법이 붙은 형이다. 선언하면 기판이 자기
+                자리(~/.relay/harness/<패키지>/<변형>/)에 설치하고, 그 하네스의 스폰에만 PATH
+                앞에 둔다 — 호스트 전역 설치가 깨져 있어도 패키지가 돈다(어댑터는 번역할 뿐
+                동봉하지 않으므로, 이 선언이 없으면 실행 파일의 실재는 사용자 몫이다).
                 manager 는 닫힌집합이다: 매니페스트가 셸 문자열을 실행시키지 못한다.
                 매니저 자체가 없는 환경은 설치가 fail-loud 하고 **선출이 이 변형을 건너뛴다** —
                 다른 변형이 준비돼 있으면 패키지는 그대로 돈다.
               type: object
               additionalProperties: false
-              required: [bin, manager, package]
+              required: [name, manager, package]
               properties:
-                bin:
-                  description: PATH 에서 찾을 실행 파일 이름
+                name:
+                  description: PATH 에서 찾을 실행 파일 이름 (requires.binaries[].name 과 같은 축)
                   type: string
                   pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
                 manager:

@@ -128,7 +128,7 @@ that passes, so a package works as long as **one** variant is ready on this mach
 `requires.binaries` cannot express this — it demands all, and demanding `codex` would block a
 claude-only user's install.
 
-**2. The substrate, provisioned.** A variant may declare `tool: {bin, manager, package, version?}`.
+**2. The substrate, provisioned.** A variant may declare `binary: {name, manager, package, version?}` — the same vocabulary as `requires.binaries` ("this executable must exist") plus how to get it.
 Then the substrate installs that CLI under `~/.relay/harness/<pkg>/<variant>/` and puts it **first
 on PATH** for that harness's spawns. This exists because the host copy is not the package's to fix:
 a global `@openai/codex` whose native binary was missing bricked every turn, and all the substrate
@@ -147,7 +147,7 @@ When each applies:
 - **Removing a package removes its tools.** `~/.relay` must not keep CLIs for packages that are gone.
 
 `manager` is a closed set (`npm`, `uv`) so a manifest cannot hand the substrate a shell string to
-run. If the manager itself is absent, `ensureTool` fails loud with a prescription and election skips
+run. If the manager itself is absent, `ensureBinary` fails loud with a prescription and election skips
 **that variant only** — a package declaring both an npm variant and a uv variant still works with
 one of the two installed. npm is already a de-facto prerequisite here (view builds and component
 packing shell out to it); uv is not, which is why kimi degrades rather than blocking.

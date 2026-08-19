@@ -6,7 +6,7 @@ import readline from "node:readline";
 import { API_URL, RELAY_HOME, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
 import { spawnEntry, spawnEntrySync } from "./entry.ts";
-import { toolEnv } from "./toolchain.ts";
+import { binaryEnv } from "./binaries.ts";
 import { localAuthority } from "./authority.ts";
 import type { Authority } from "./authority-contract.ts";
 import { UPLOADS_DIR } from "./protocol.ts";
@@ -469,7 +469,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     RELAY_BUNDLE: bundle,
   };
   // 기판이 대는 도구가 있으면 PATH 앞에 — 호스트의 깨진 전역 설치보다 먼저 걸려야 한다
-  Object.assign(env, toolEnv(input.pkg, variant, env));
+  Object.assign(env, binaryEnv(input.pkg, variant, env));
   if (variant?.llm?.auth?.kind === "token" && variant.llm.auth.env) {
     // LLM 토큰 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다
     const cred = await authority.credential(`llm/${variant.llm.provider}`);

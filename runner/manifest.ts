@@ -62,12 +62,13 @@ export interface Manifest {
 }
 
 /**
- * 기판이 이 변형의 도구를 어떻게 얻는가 — 값이 아니라 **레시피**다.
+ * 기판이 이 변형의 실행 파일을 어떻게 얻는가 — 값이 아니라 **레시피**다.
+ * requires.binaries 와 같은 어휘("이 실행 파일이 필요하다")에 획득 방법이 붙은 형이고,
  * manager 는 닫힌집합이라 매니페스트가 셸 문자열을 실행시키지 못한다(선언은 캡).
  */
-export interface HarnessTool {
-  /** PATH 에서 찾을 실행 파일 이름 */
-  bin: string;
+export interface HarnessBinary {
+  /** PATH 에서 찾을 실행 파일 이름 — requires.binaries[].name 과 같은 축 */
+  name: string;
   manager: "npm" | "uv";
   /** 매니저의 패키지 좌표 */
   package: string;
@@ -79,7 +80,7 @@ export interface HarnessVariant {
   name: string;
   source: string;
   entry: string;
-  tool?: HarnessTool;
+  binary?: HarnessBinary;
   /** 어댑터 도구 아이콘 (패키지 상대경로 이미지) */
   icon?: string;
   llm?: { provider: string; auth?: AuthDecl; /** provider(모델) 아이콘 */ icon?: string };
@@ -316,8 +317,8 @@ export function judge(m: Manifest, pkgPath?: string): void {
   // 미지 키는 거부한다 — 최상위·surfaces·storage 와 같은 규율(194·205·465행). 조용히 받으면
   // 은퇴한 어휘가 계속 저작되고 "판정 통과" 가 그것을 승인해 준다. 실사고: dockerfile 은
   // 스키마에만 있고 판정·소비·봉투가 전부 없었는데, 워크드 예제가 그걸 가르치고 있었다.
-  const VARIANT_KEYS = new Set(["name", "source", "entry", "tool", "icon", "llm"]);
-  const TOOL_KEYS = new Set(["bin", "manager", "package", "version"]);
+  const VARIANT_KEYS = new Set(["name", "source", "entry", "binary", "icon", "llm"]);
+  const BINARY_KEYS = new Set(["name", "manager", "package", "version"]);
   const MANAGERS = new Set(["npm", "uv"]);
   const LLM_KEYS = new Set(["provider", "auth", "icon"]);
   for (const v of variants) {
@@ -325,7 +326,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
       if (!VARIANT_KEYS.has(k)) {
         issues.push(
           k === "dockerfile"
-            ? `harness.variants[${v.name}].dockerfile 는 은퇴했습니다 — 도구를 기판이 대려면 tool: { bin, manager, package } 를 선언하세요(기판이 자기 자리에 설치해 PATH 앞에 둡니다). 컨테이너는 workspace 를 마운트 뒤로 옮기고 도구를 자기 Keychain 자격에서 끊습니다`
+            ? `harness.variants[${v.name}].dockerfile 는 은퇴했습니다 — 실행 파일을 기판이 대려면 binary: { name, manager, package } 를 선언하세요(기판이 자기 자리에 설치해 PATH 앞에 둡니다). 컨테이너는 workspace 를 마운트 뒤로 옮기고 도구를 자기 Keychain 자격에서 끊습니다`
             : `미지 harness.variants 키: ${k}`,
         );
       }
@@ -339,17 +340,17 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!v.source || !v.entry) issues.push(`harness.variants[${v.name}]: source + entry 필수`);
     else mustExist(path.join(v.source, v.entry), `harness.variants[${v.name}].entry`);
     if (v.icon) mustExist(v.icon, `harness.variants[${v.name}].icon`);
-    if (v.tool) {
-      for (const k of Object.keys(v.tool)) {
-        if (!TOOL_KEYS.has(k)) issues.push(`미지 harness.variants[${v.name}].tool 키: ${k}`);
+    if (v.binary) {
+      for (const k of Object.keys(v.binary)) {
+        if (!BINARY_KEYS.has(k)) issues.push(`미지 harness.variants[${v.name}].binary 키: ${k}`);
       }
-      if (!v.tool.bin || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v.tool.bin)) {
-        issues.push(`harness.variants[${v.name}].tool.bin 형식 위반: ${v.tool.bin}`);
+      if (!v.binary.name || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v.binary.name)) {
+        issues.push(`harness.variants[${v.name}].binary.name 형식 위반: ${v.binary.name}`);
       }
-      if (!MANAGERS.has(v.tool.manager)) {
-        issues.push(`harness.variants[${v.name}].tool.manager 미지: ${v.tool.manager} (npm | uv)`);
+      if (!MANAGERS.has(v.binary.manager)) {
+        issues.push(`harness.variants[${v.name}].binary.manager 미지: ${v.binary.manager} (npm | uv)`);
       }
-      if (!v.tool.package) issues.push(`harness.variants[${v.name}].tool.package 필수`);
+      if (!v.binary.package) issues.push(`harness.variants[${v.name}].binary.package 필수`);
       // 버전 미고정은 거부하지 않는다 — 도구 어휘는 열린 집합이고 고정을 강제하면 신모델
       // CLI 를 못 쓴다. 다만 재현성을 포기하는 선언이라는 사실은 문서가 말한다.
     }

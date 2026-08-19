@@ -65,14 +65,14 @@ surfaces:
           note: Socket Mode 를 켜고 앱 레벨 토큰(xapp-)을 만든 뒤, OAuth & Permissions 에서 봇 토큰(xoxb-)을 설치하세요. 사용자 ID 는 프로필 → 더보기 → 멤버 ID 복사.
 
 harness:
-  # tool 선언 = 기판이 도구를 직접 대겠다는 뜻. 없으면 호스트 전역 설치에 기댄다(사용자 몫).
+  # binary 선언 = 실행 파일을 기판이 직접 대겠다는 뜻. 없으면 호스트 전역 설치에 기댄다(사용자 몫).
   # 버전은 고정하지 않는다: CLI 어휘가 빠르게 움직여서(models 별칭·--effort 도입) 고정하면
   # 낡은 판에 묶인다. 재현성이 필요한 저작물은 자기 매니페스트에 version 을 박으면 된다.
   variants:
     - name: claude-code
       source: harness/claude-code
       entry: run
-      tool: { bin: claude, manager: npm, package: "@anthropic-ai/claude-code" }
+      binary: { name: claude, manager: npm, package: "@anthropic-ai/claude-code" }
       icon: harness/claude-code/icon.png
       llm:
         provider: anthropic
@@ -81,7 +81,7 @@ harness:
     - name: codex
       source: harness/codex
       entry: run
-      tool: { bin: codex, manager: npm, package: "@openai/codex" }
+      binary: { name: codex, manager: npm, package: "@openai/codex" }
       icon: harness/codex/icon.png
       llm:
         provider: openai
@@ -90,7 +90,7 @@ harness:
     - name: pi
       source: harness/pi
       entry: run
-      tool: { bin: pi, manager: npm, package: "@mariozechner/pi" }
+      binary: { name: pi, manager: npm, package: "@mariozechner/pi" }
       llm:
         provider: vllm
         icon: assets/llm/vllm.svg
@@ -98,7 +98,7 @@ harness:
     - name: kimi
       source: harness/kimi
       entry: run
-      tool: { bin: kimi, manager: uv, package: kimi-cli }
+      binary: { name: kimi, manager: uv, package: kimi-cli }
       icon: harness/kimi/icon.png
       llm:
         provider: moonshot
