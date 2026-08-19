@@ -666,10 +666,16 @@ export const MODEL_OPTIONS: ModelOption[] = [
 let _modelOptions: ModelOption[] = MODEL_OPTIONS;
 export function modelOptions(): ModelOption[] { return _modelOptions; }
 
-/** "claude-opus-4-8" → "opus" (가족어 — 피커 큐레이션·별칭 해석의 축). */
+/** "claude-opus-4-8" → "opus" (가족어 — 피커 큐레이션·별칭 해석의 축).
+ *  카탈로그는 전체 id 만 오지 않는다 — 하네스가 **도구가 문서화한 별칭**("opus"·"fable")을
+ *  그대로 내기도 한다(claude-code 어댑터: API 키 없으면 별칭만, 있으면 별칭+전체 id). 접두사
+ *  규칙만 보면 별칭이 전부 가족 "" 로 떨어져 카탈로그가 통째로 버려지고 정적 폴백이 대신
+ *  보인다 — 기판이 아는 어휘와 화면이 권하는 어휘가 갈리는 자리다(실사고: 피커가 이 CLI 가
+ *  모르는 claude-*-5 를 권했다). 별칭은 자기 자신이 가족이다. 안내 문장 같은 비-id 만 뺀다. */
 function familyOf(id: string): string {
   const m = /^claude-([a-z]+)/.exec(id || "");
-  return m ? m[1] : "";
+  if (m) return m[1];
+  return /^[a-z][a-z0-9]*$/.test(id || "") ? id : "";
 }
 
 /** id → 표시 라벨 — 카탈로그 display_name 축이 은퇴해 id 파생만 남는다("claude-" 접두 제거). */
@@ -752,10 +758,13 @@ export async function loadModel(ctx: RelayCtx): Promise<ModelInfo> {
 }
 
 // setModel persists the value ("" clears → 기본). known:false 는 판정 정보 — 저장은 되고
-// 어댑터가 거부하면 그 턴이 실패한다(§5.5-30).
-export async function setModel(ctx: RelayCtx, model: string): Promise<boolean> {
+// 어댑터가 거부하면 그 턴이 실패한다(§5.5-30). 그래서 저장 성공과 **분리해서** 돌려준다:
+// 성공으로만 접으면 화면이 "바뀌었다" 고 말한 뒤 다음 턴이 조용히 실패한다.
+export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {
   const r = await wireOf(ctx).harness.set({ model: model || "" });
-  return !isError(r);
+  if (isError(r)) return { ok: false, known: null };
+  const known = (r.value as { known?: boolean | null } | undefined)?.known;
+  return { ok: true, known: known === undefined ? null : known };
 }
 
 // ---------------- attachments (file picker / drag-drop / clipboard paste) ----------------
@@ -871,9 +880,14 @@ export async function executeBuiltin(ctx: RelayCtx, name: string, arg: string): 
     if (arg === "") return "사용법: /model fable|opus|sonnet|haiku|<model-id>|default";
     const low = arg.toLowerCase();
     const val = low === "default" || low === "clear" ? "" : resolveModelAlias(low) || arg;
-    const ok = await setModel(ctx, val);
+    const r = await setModel(ctx, val);
     notifyOverridesChanged();
-    return ok ? (val ? `✓ Model → ${val} (다음 응답부터)` : "✓ Model → 기본값") : "Model 저장 실패";
+    if (!r.ok) return "Model 저장 실패";
+    if (!val) return "✓ Model → 기본값";
+    // 저장은 됐지만 하네스가 모르는 id — 다음 턴이 실패한다(§5.5-30). 성공으로 접지 않는다.
+    return r.known === false
+      ? `✓ Model → ${val} (저장됨) · ⚠ 이 하네스의 목록에 없는 id 라 다음 턴이 실패할 수 있습니다`
+      : `✓ Model → ${val} (다음 응답부터)`;
   }
   return "";
 }

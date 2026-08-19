@@ -1570,6 +1570,8 @@ function EffortSelector() {
   const shownIdx = EFFORT_LEVELS.indexOf(shownLevel as (typeof EFFORT_LEVELS)[number]);
   // ModelSelector.set 과 같은 규약 — 저장 실패를 표시하고 서버 정본으로 수렴시킨다.
   const [err, setErr] = useState(false);
+  // 저장은 됐는데 하네스 카탈로그에 없는 id — 다음 턴이 실패한다(§5.5-30). 저장 성공과 다른 축이다
+  const [unknown, setUnknown] = useState(false);
   const set = (v: string) => {
     setErr(false); setEffortState(v);
     void setEffort(ctx, v).then((ok) => { if (!ok) setErr(true); notifyOverridesChanged(); });
@@ -1590,7 +1592,7 @@ function EffortSelector() {
       <svg className="rc-effort-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M4 9.5v5M6.5 7v10M17.5 7v10M20 9.5v5M6.5 12h11" />
       </svg>
-      <span className="rc-effort-lb">Effort <span className="rc-effort-val">({label})</span>{err && <span className="rc-save-err">저장 실패</span>}</span>
+      <span className="rc-effort-lb">Effort <span className="rc-effort-val">({label})</span>{err && <span className="rc-save-err">저장 실패</span>}{!err && unknown && <span className="rc-save-err">목록에 없는 id</span>}</span>
       <div className="rc-effort-track" role="slider" tabIndex={loaded ? 0 : -1}
            aria-label="추론 강도" aria-valuemin={0} aria-valuemax={EFFORT_LEVELS.length}
            aria-valuenow={shownIdx + 1} aria-valuetext={label} onKeyDown={onKeyDown}>
@@ -1667,8 +1669,12 @@ function ModelSelector() {
         noticeTimer.current = setTimeout(() => setNotice(""), 6000);
       }
     }
-    setErr(false); setModelState(v); setOpen(false);
-    void setModel(ctx, v).then((ok) => { if (!ok) setErr(true); notifyOverridesChanged(); });
+    setErr(false); setUnknown(false); setModelState(v); setOpen(false);
+    void setModel(ctx, v).then((r) => {
+      if (!r.ok) setErr(true);
+      else if (r.known === false) setUnknown(true);
+      notifyOverridesChanged();
+    });
   };
   // 트리거는 ({shown}) 로 감싸 렌더 — 여기선 모델명만(ghost 스타일이 "기본 상태"를 표시).
   const shown = model ? labelOf(model) : (effDefault ? labelOf(effDefault) : "기본");
@@ -1698,6 +1704,11 @@ function ModelSelector() {
         </div>
       )}
       {notice && <div className="rc-model-notice" role="status">{notice}</div>}
+      {unknown && !notice && (
+        <div className="rc-model-notice" role="status">
+          저장은 됐지만 이 하네스의 모델 목록에 없는 id 입니다 — 다음 턴이 실패할 수 있습니다
+        </div>
+      )}
     </div>
   );
 }

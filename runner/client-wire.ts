@@ -96,8 +96,14 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
   }
 }
 
-function requirePkg(deps: ClientWireDeps, pkg: string): { path: string; model?: string; effort?: string; harness?: string } {
-  const rec = deps.getLedger().packages[pkg];
+/**
+ * 장부를 **인자로 받는다** — deps.getLedger() 는 요청마다 파일을 다시 읽어 매번 새 객체를 준다.
+ * 안에서 몰래 부르면 "레코드를 준 장부"와 "저장할 장부"가 갈려, 쓴 값이 조용히 버려진다:
+ * 실사고 — POST /model 이 200 {ok:true} 를 돌려주는데 원장은 그대로였다(모델이 안 바뀐다는 보고).
+ * 호출자가 자기 장부를 넘기게 해서 그 갈림이 타입에서 보이게 한다.
+ */
+function requirePkg(l: Ledger, pkg: string): { path: string; model?: string; effort?: string; harness?: string } {
+  const rec = l.packages[pkg];
   if (!rec) throw new WireError(404, "E_NO_PKG", `미설치 패키지: ${pkg}`);
   return rec;
 }
@@ -553,7 +559,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/capabilities$/,
     handler: ({ deps, res, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       // enumerate: /registry 재포장으로 구현(§5.6-32) · upload-progress: 업로드가 전 구간
       // 스트리밍이라 진행률이 실제를 반영한다(§5.4-28, 아래 upload 핸들러가 그 구현)
       const caps = ["enumerate", "upload-progress"];
@@ -573,7 +579,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/turns$/,
     handler: async ({ deps, req, res, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const b = await readBody(req);
       const session = String(b.session ?? "");
       if (!SLOT_RE.test(session)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${session}`);
@@ -587,7 +593,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/turns\/attach$/,
     handler: ({ deps, req, res, url, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const session = String(url.searchParams.get("session") ?? "");
       if (!SLOT_RE.test(session)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${session}`);
       // wire 가 개설한 턴만 attach 대상이다 — runSession 직접 호출(a2a 등)의 busy 는
@@ -602,7 +608,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/stream$/,
     handler: ({ deps, req, res, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const id = m[1];
       const t = turns.get(id);
       if (t && t.pkg === pkg) return void openLiveStream(t, req, res);
@@ -616,7 +622,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/interrupt$/,
     handler: ({ deps, res, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const t = turns.get(m[1]);
       // 종결과 함께 메모리에서 내려간 턴 — 장부가 남아 있으면 "있었지만 끝난 턴"이라
       // ok:false 로 답한다(애초에 없는 턴의 404 와 구별한다)
@@ -639,7 +645,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/respond$/,
     handler: async ({ deps, req, res, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const t = turns.get(m[1]);
       // 종결한 턴에는 회송할 ask 가 없다 — interrupt 와 같은 판정(장부 있음 = ok:false)
       if (!t || t.pkg !== pkg) {
@@ -658,7 +664,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/sessions$/,
     handler: ({ deps, res, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       json(res, 200, { sessions: listSessionRows(pkg) });
     },
   },
@@ -667,7 +673,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/sessions$/,
     handler: ({ deps, res, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       // 세션 id 는 기판 발급 불투명 문자열(§5.3-22) — SLOT_RE 는 내부 문법일 뿐 계약이 아니다
       const id = "s-" + Date.now().toString(36) + "-" + crypto.randomBytes(4).toString("hex");
       sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
@@ -679,7 +685,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/sessions\/([^/]+)\/history$/,
     handler: ({ deps, res, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const slot = m[1];
       if (!SLOT_RE.test(slot)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${slot}`);
       // busy+turn(§5.3-24) — 새로고침 복구가 폴링 없이 한 왕복으로 끝나는 근거.
@@ -694,7 +700,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/sessions\/([^/]+)\/(rename|archive|pin|delete|reset)$/,
     handler: async ({ deps, req, res, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       const slot = m[1];
       const op = m[2];
       if (!SLOT_RE.test(slot)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${slot}`);
@@ -743,7 +749,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/upload$/,
     handler: ({ deps, req, res, url, pkg }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       // 업로드 프로브(§5.4-26) — 바이트 전송 없이 인가·상한을 선판정한다. 2xx = 통과
       if (String(req.headers["x-upload-probe"] ?? "") === "1") {
         const size = Number(req.headers["x-upload-size"] ?? 0);
@@ -789,7 +795,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/file\/(.+)$/,
     handler: ({ deps, req, res, url, pkg, m }) => {
-      requirePkg(deps, pkg);
+      requirePkg(deps.getLedger(), pkg);
       // stage 봉인 아래에서만(§5.4-27). HEAD 는 실재 프로브
       const root = path.normalize(stageDir(pkg));
       const target = path.normalize(path.join(root, decodeURIComponent(m[1])));
@@ -814,7 +820,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/harness\/(info|models|commands)$/,
     handler: ({ deps, res, pkg, m }) => {
-      const rec = requirePkg(deps, pkg);
+      const rec = requirePkg(deps.getLedger(), pkg);
       const man = loadManifest(rec.path);
       // capability 미선언(하네스 미동봉) 동사 호출은 404 + 봉투(§3-8) — 코드는 기판 소유 어휘
       if (!activeHarness(man, rec.harness)) throw new WireError(404, "E_NO_HARNESS", `하네스 미동봉 패키지: ${pkg}`);
@@ -839,9 +845,9 @@ export const WIRE_ROUTES: WireRoute[] = [
     scope: "base",
     pattern: /^\/model$/,
     handler: async ({ deps, req, res, pkg }) => {
-      const rec = requirePkg(deps, pkg) as { model?: string; effort?: string };
-      const b = await readBody(req);
       const l = deps.getLedger();
+      const rec = requirePkg(l, pkg) as { model?: string; effort?: string };
+      const b = await readBody(req);
       if ("model" in b) rec.model = b.model ? String(b.model) : undefined;
       if ("effort" in b) rec.effort = b.effort ? String(b.effort) : undefined;
       saveLedger(l);
