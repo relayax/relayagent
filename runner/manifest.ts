@@ -10,6 +10,16 @@ export interface RequiresDecl {
   apps?: { name: string; install?: string }[];
 }
 
+/**
+ * 자격 형태 선언(surfaces.channels[].credential) — 값이 아니라 형태다.
+ * 화면이 이걸로 입력 칸을 그린다. 조립 규칙은 relay.manifest.yaml 의 주석이 정본이다:
+ * 전부 key 있으면 JSON 객체, key 없는 것 하나뿐이면 문자열. 섞이면 판정 실패.
+ */
+export interface CredentialDecl {
+  fields: { key?: string; label: string; placeholder?: string; secret?: boolean; list?: boolean; required?: boolean }[];
+  help?: { url?: string; note?: string };
+}
+
 export interface Manifest {
   schema: string;
   name: string;
@@ -29,7 +39,7 @@ export interface Manifest {
     /** 컴포넌트 수출 — source = npm 패키지(package.json name = 매니페스트 name). 소비는 edges[].components */
     components?: { source: string };
     chat?: { mode: "direct" | "none"; greeting?: string };
-    channels?: { name: string; source: string; entry: string; icon?: string }[];
+    channels?: { name: string; source: string; entry: string; icon?: string; credential?: CredentialDecl }[];
   };
   harness?: {
     variants?: HarnessVariant[];
@@ -266,6 +276,24 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!c.source || !c.entry) issues.push(`channels[${c.name}]: source + entry 필수`);
     else mustExist(path.join(c.source, c.entry), `channels[${c.name}].entry`);
     if (c.icon) mustExist(c.icon, `channels[${c.name}].icon`);
+    // 조립 규칙은 형태로 판정한다 — 화면이 이 선언 하나로 자격을 조립하므로, 섞인 선언은
+    // "무엇으로 조립되는지" 가 정해지지 않는다. 애매한 채로 화면에 흘리지 않는다.
+    const fields = c.credential?.fields;
+    if (fields) {
+      const keyed = fields.filter((f) => f.key != null);
+      const bare = fields.filter((f) => f.key == null);
+      if (keyed.length && bare.length) {
+        issues.push(`channels[${c.name}].credential: key 있는 필드와 없는 필드를 섞을 수 없습니다 — 전부 key(JSON 조립) 또는 key 없는 하나(문자열)`);
+      }
+      if (bare.length > 1) {
+        issues.push(`channels[${c.name}].credential: key 없는 필드는 하나뿐이어야 합니다 — 문자열 자격은 칸이 하나입니다`);
+      }
+      if (bare.some((f) => f.list)) {
+        issues.push(`channels[${c.name}].credential: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
+      }
+      const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
+      if (dupKey) issues.push(`channels[${c.name}].credential: key 중복: ${dupKey}`);
+    }
   }
 
   const h = m.harness;

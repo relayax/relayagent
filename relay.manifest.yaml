@@ -251,6 +251,54 @@ properties:
             icon:
               description: 채널 배지 아이콘 (패키지 상대경로, 이미지 파일) — 그래프 카드 상단에 배지로 뜬다
               $ref: '#/$defs/relpath'
+            credential:
+              description: |
+                이 채널이 요구하는 자격의 **형태** 선언. 값이 아니라 형태다 — 값은 vault 에 산다.
+                화면(콘솔 채널 다이얼로그)이 이 선언으로 입력 칸을 그린다. 선언이 없으면 화면은
+                원시 붙여넣기 칸으로 물러난다: 제3자 어댑터가 선언 없이도 연결 가능해야 하기 때문이다.
+                자격 형태를 아는 것은 어댑터뿐인데 화면이 그것을 알 길이 없어서, 지금까지는
+                사람이 JSON 을 손으로 조립해야 했다(그 예시가 어댑터의 실제 키와 어긋나 있었다).
+                조립 규칙: 모든 field 에 key 가 있으면 화면이 JSON 객체로 조립해 넘기고,
+                key 없는 field 하나뿐이면 그 값이 곧 자격 문자열이다. 둘을 섞으면 판정 실패다.
+              type: object
+              additionalProperties: false
+              required: [fields]
+              properties:
+                fields:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [label]
+                    properties:
+                      key:
+                        description: 조립될 JSON 키. 생략하면 자격이 문자열 하나라는 뜻(단독일 때만)
+                        type: string
+                        pattern: '^[a-z][a-z0-9_]*$'
+                      label:
+                        type: string
+                        minLength: 1
+                      placeholder:
+                        type: string
+                      secret:
+                        description: 참이면 화면이 값을 가린다. 토큰 류는 참
+                        type: boolean
+                      list:
+                        description: 참이면 쉼표 구분 입력을 배열로 조립한다 (key 있는 필드만)
+                        type: boolean
+                      required:
+                        description: 참이면 이 칸이 비면 화면이 연결을 막는다
+                        type: boolean
+                help:
+                  description: 자격을 어디서 얻는지 — 화면이 링크와 안내로 보여준다
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    url:
+                      type: string
+                    note:
+                      type: string
   harness:
     type: object
     additionalProperties: false

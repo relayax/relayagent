@@ -959,7 +959,9 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const channels = [];
         for (const c of m.surfaces?.channels ?? []) {
           const pid = channelPid(pkg, c.name);
-          channels.push({ name: c.name, icon: c.icon ?? null, running: pid != null, pid, hasCred: (await authority.credential(credKey(pkg, c.name))) != null, lastError: channelLastError(pkg, c.name) });
+          // credential 은 **형태 선언**이라 그대로 나간다 — 값은 vault 에 있고 여기 실리지 않는다.
+          // 화면이 이 선언으로 입력 칸을 그린다(없으면 원시 붙여넣기로 물러난다).
+          channels.push({ name: c.name, icon: c.icon ?? null, running: pid != null, pid, hasCred: (await authority.credential(credKey(pkg, c.name))) != null, lastError: channelLastError(pkg, c.name), credential: c.credential ?? null });
         }
         return void json(res, 200, { channels });
       }

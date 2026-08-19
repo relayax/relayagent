@@ -106,6 +106,20 @@ export function loginHarness(pkg: string, sw = false): Promise<{ launched: boole
 }
 
 // 채널 운영면 — 하네스 설정과 같은 기판 API 패턴. 저작(스튜디오)이 아니라 상태·자격·재기동
+/** 자격 형태 선언 — 값이 아니라 형태다(매니페스트 surfaces.channels[].credential) */
+export interface CredentialField {
+  key?: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  list?: boolean;
+  required?: boolean;
+}
+export interface CredentialDecl {
+  fields: CredentialField[];
+  help?: { url?: string; note?: string };
+}
+
 export interface ChannelStatusView {
   name: string;
   icon: string | null;
@@ -113,6 +127,8 @@ export interface ChannelStatusView {
   pid: number | null;
   hasCred: boolean;
   lastError: string | null;
+  /** null = 선언 없음 → 화면은 원시 붙여넣기로 물러난다(제3자 어댑터) */
+  credential: CredentialDecl | null;
 }
 
 export function channelStatus(pkg: string): Promise<{ channels: ChannelStatusView[] }> {

@@ -5,7 +5,7 @@
    자격 수명주기 3동사(relayos connections 축소): connect(저장) · verify(실왕복) · restart. */
 
 import { useCallback, useEffect, useState } from "react";
-import { channelStatus, connectChannel, verifyChannel, restartChannel, type ChannelStatusView } from "@/lib/api";
+import { channelStatus, connectChannel, verifyChannel, restartChannel, type ChannelStatusView, type CredentialDecl } from "@/lib/api";
 import type { Pkg } from "@/lib/types";
 
 /** 3-상태 점 — 자격 없음(○) / 저장됨·미검증·죽음(●) / 연결됨(●). 색이 상태의 축이다 */
@@ -28,6 +28,8 @@ export default function ChannelDialog({
   const asset = (rel: string) => `/pkg/${encodeURIComponent(pkg.name)}/asset/${rel}`;
   const [channels, setChannels] = useState<ChannelStatusView[]>([]);
   const [open, setOpen] = useState<string | null>(null);
+  // 선언된 채널은 필드별 값(채널→키→값), 선언 없는 채널은 원시 붙여넣기 한 칸
+  const [vals, setVals] = useState<Record<string, Record<string, string>>>({});
   const [cred, setCred] = useState("");
   const [note, setNote] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -50,21 +52,50 @@ export default function ChannelDialog({
   }, [load]);
 
   const setNoteFor = (ch: string, msg: string) => setNote((n) => ({ ...n, [ch]: msg }));
+  const valOf = (ch: string, k: string) => vals[ch]?.[k] ?? "";
+  const setVal = (ch: string, k: string, v: string) =>
+    setVals((s) => ({ ...s, [ch]: { ...(s[ch] ?? {}), [k]: v } }));
+
+  /**
+   * 선언대로 자격을 조립한다 — 조립 규칙의 정본은 relay.manifest.yaml 이다:
+   * 전부 key 있으면 JSON 객체, key 없는 하나면 그 값이 곧 자격 문자열.
+   * 판정기가 섞인 선언을 이미 막으므로 여기서 다시 분기하지 않는다.
+   */
+  function assemble(ch: string, decl: CredentialDecl): string {
+    const bare = decl.fields.find((f) => f.key == null);
+    if (bare) return valOf(ch, "").trim();
+    const out: Record<string, unknown> = {};
+    for (const f of decl.fields) {
+      const raw = valOf(ch, f.key!).trim();
+      if (!raw) continue;
+      out[f.key!] = f.list ? raw.split(",").map((x) => x.trim()).filter(Boolean) : raw;
+    }
+    return JSON.stringify(out);
+  }
+
+  /** 연결 버튼이 살아 있는 조건 — 선언된 필수 칸이 다 찼는가 */
+  function ready(c: ChannelStatusView): boolean {
+    if (!c.credential) return cred.trim().length > 0;
+    return c.credential.fields.every((f) => !f.required || valOf(c.name, f.key ?? "").trim().length > 0);
+  }
 
   // 연결 = 저장 → 검증 → (유효면) 재기동. "저장됨 ≠ 유효" 를 한 흐름으로 정직히 그린다
-  async function connect(ch: string) {
-    if (busy || !cred.trim()) return;
+  async function connect(c: ChannelStatusView) {
+    const ch = c.name;
+    const payload = c.credential ? assemble(ch, c.credential) : cred.trim();
+    if (busy || !payload) return;
     setBusy(true);
     setErr(null);
     setNoteFor(ch, "저장 중...");
     try {
-      await connectChannel(pkg.name, ch, cred.trim());
+      await connectChannel(pkg.name, ch, payload);
       setNoteFor(ch, "검증 중...");
       const v = await verifyChannel(pkg.name, ch);
       if (v.ok) {
         await restartChannel(pkg.name, ch);
         setNoteFor(ch, `연결됨 · ${v.note}`);
         setCred("");
+        setVals((s) => ({ ...s, [ch]: {} }));
       } else {
         setNoteFor(ch, `저장은 됐지만 자격이 먹히지 않습니다: ${v.note}`);
       }
@@ -130,15 +161,51 @@ export default function ChannelDialog({
                     </div>
                     {expanded ? (
                       <div className="lv-in" style={{ flexDirection: "column", gap: 8 }}>
-                        <textarea
-                          rows={3}
-                          placeholder={'자격 붙여넣기 — 어댑터가 정한 형태 그대로 (예: {"app_token":"xapp-…","bot_token":"xoxb-…","allow":["U…"]})'}
-                          value={cred}
-                          onChange={(e) => setCred(e.target.value)}
-                          style={{ width: "100%", font: "12px var(--rc-mono)", resize: "vertical" }}
-                        />
+                        {c.credential ? (
+                          <>
+                            {c.credential.fields.map((f) => (
+                              <label key={f.key ?? "_"} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                <span style={{ font: "11px var(--rc-ui)", color: "var(--rc-faint)" }}>
+                                  {f.label}
+                                  {f.required ? <span style={{ color: "var(--rc-err)" }}> *</span> : null}
+                                  {f.list ? <span style={{ color: "var(--rc-faint)" }}> · 쉼표로 구분</span> : null}
+                                </span>
+                                <input
+                                  type={f.secret ? "password" : "text"}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                  placeholder={f.placeholder}
+                                  value={valOf(c.name, f.key ?? "")}
+                                  onChange={(e) => setVal(c.name, f.key ?? "", e.target.value)}
+                                  style={{ width: "100%", font: "12px var(--rc-mono)" }}
+                                />
+                              </label>
+                            ))}
+                            {c.credential.help ? (
+                              <div className="gx-hint" style={{ font: "11px var(--rc-ui)" }}>
+                                {c.credential.help.note}
+                                {c.credential.help.url ? (
+                                  <>
+                                    {" "}
+                                    <a href={c.credential.help.url} target="_blank" rel="noreferrer">
+                                      발급처 열기
+                                    </a>
+                                  </>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <textarea
+                            rows={3}
+                            placeholder="자격 붙여넣기 — 이 어댑터는 자격 형태를 선언하지 않았습니다(어댑터 문서를 따르세요)"
+                            value={cred}
+                            onChange={(e) => setCred(e.target.value)}
+                            style={{ width: "100%", font: "12px var(--rc-mono)", resize: "vertical" }}
+                          />
+                        )}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button className="rc-btn accent" disabled={busy || !cred.trim()} onClick={() => void connect(c.name)}>
+                          <button className="rc-btn accent" disabled={busy || !ready(c)} onClick={() => void connect(c)}>
                             연결 (저장·검증·재기동)
                           </button>
                           <button className="rc-btn" disabled={busy || !c.hasCred} onClick={() => void verify(c.name)} title="저장된 자격이 실제로 먹히는지 확인">

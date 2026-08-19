@@ -1,9 +1,12 @@
 // Slack 채널 어댑터 — surfaces.channels 계약의 참조 구현 (Socket Mode, 의존성 0).
 //
 // 자격: relay connect <패키지> slack — Socket Mode 는 자격이 둘이다(앱 레벨 xapp- 토큰으로
-//       소켓을 열고, 봇 xoxb- 토큰으로 발화한다). 한 줄에 공백 구분으로 붙여넣거나
-//       JSON {"app":"xapp-...","bot":"xoxb-..."} 으로 붙여넣는다 → RELAY_CRED_SLACK.
-// 게이트: 기본 닫힘 — RELAY_SLACK_ALLOW(쉼표 구분 사용자 id)의 발화자만 착신.
+//       소켓을 열고, 봇 xoxb- 토큰으로 발화한다). JSON {"app":"xapp-…","bot":"xoxb-…",
+//       "allow":["U…"]} 으로 붙여넣는다 → RELAY_CRED_SLACK. 콘솔 채널 다이얼로그는 매니페스트의
+//       credential 선언대로 칸을 그려 이 JSON 을 대신 조립한다. 공백 구분 한 줄도 계속 받는다.
+// 게이트: 기본 닫힘 — 자격의 allow(사용자 id 목록)에 있는 발화자만 착신. 게이트가 자격에 사는
+//        이유: 데몬 env 로만 열면 화면에서 열 길이 없어 GUI 로 연결한 채널이 영영 닫혀 있다.
+//        RELAY_SLACK_ALLOW env 는 하위호환 폴백으로 남는다.
 //        채널(그룹)에서는 앱 멘션이 있어야 응답 범위에 든다(DM 은 불요).
 // session: slack-<채널id>[-<스레드ts>] — 스레드는 자기 세션으로 이어진다.
 // 발신:  stdin JSON {"type":"post","conversation":"<채널id>[:<스레드ts>]","text","files"?}.
@@ -14,24 +17,26 @@ const NAME = process.env.RELAY_NAME ?? "";
 const CHANNEL = process.env.RELAY_CHANNEL ?? "slack";
 const API = process.env.RELAY_API ?? "";
 const TOKEN = process.env.RELAY_TOKEN ?? "";
-const ALLOW = new Set((process.env.RELAY_SLACK_ALLOW ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+const idList = (v: unknown): string[] =>
+  (Array.isArray(v) ? v.map(String) : String(v ?? "").split(",")).map((s) => s.trim()).filter(Boolean);
 
 if (process.env.RELAY_CONFORM === "1") {
   console.log(JSON.stringify({ name: "slack", protocol: 1, capabilities: ["post", "files"] }));
   process.exit(0);
 }
 
-function parseCred(raw: string): { app: string; bot: string } | null {
+function parseCred(raw: string): { app: string; bot: string; allow: string[] } | null {
   try {
     const j = JSON.parse(raw);
-    if (j?.app && j?.bot) return { app: String(j.app), bot: String(j.bot) };
+    if (j?.app && j?.bot) return { app: String(j.app), bot: String(j.bot), allow: idList(j.allow) };
   } catch { /* JSON 아님 — 공백 구분 시도 */ }
   const parts = raw.split(/\s+/).filter(Boolean);
   const app = parts.find((p) => p.startsWith("xapp-"));
   const bot = parts.find((p) => p.startsWith("xoxb-"));
-  return app && bot ? { app, bot } : null;
+  return app && bot ? { app, bot, allow: [] } : null;
 }
 const cred = parseCred(process.env.RELAY_CRED_SLACK ?? "");
+const ALLOW = new Set([...(cred?.allow ?? []), ...idList(process.env.RELAY_SLACK_ALLOW)]);
 if (!cred) {
   console.log(`slack: 자격 없음/형식 위반 — relay connect ${NAME} ${CHANNEL} 에 "xapp-... xoxb-..." 를 붙여넣으세요 (종료)`);
   process.exit(0);

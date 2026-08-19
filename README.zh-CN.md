@@ -32,7 +32,7 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | 概念 | 含义 |
 | --- | --- |
 | 包(Package) | 带有 `relay.yaml` 的目录。清单是结构与路径的正本,目录树是内容的正本。 |
-| Surfaces | 包面向用户的方式。核心是 `view`:包自带的网页 UI,安装期构建,由守护进程托管在 `/pkg/<名称>/view/`,并凭包令牌连接到自己智能体的动词。`chat`(直接对话)与 `channels`(Discord、Slack 等适配器)是额外的门。`components` 导出一个 npm 包(源码 + `package.json`),其他包的 view 通过 components edge 将其作为构建依赖消费——基座在安装期打成 tgz,不经过任何 registry。 |
+| Surfaces | 包面向用户的方式。核心是 `view`:包自带的网页 UI,安装期构建,由守护进程托管在 `/pkg/<名称>/view/`,并凭包令牌连接到自己智能体的动词。`chat`(直接对话)与 `channels`(Discord、Slack 等适配器)是额外的门——频道声明它所需凭据的*形态*(`credential.fields`),控制台据此渲染输入框,而不是让人手工拼装 JSON。`components` 导出一个 npm 包(源码 + `package.json`),其他包的 view 通过 components edge 将其作为构建依赖消费——基座在安装期打成 tgz,不经过任何 registry。 |
 | Harness | 随包内置、负责运行智能体的执行适配器。系统包内置 Claude Code、Codex、Kimi、Pi 适配器。动词:`session`、`setup`、`models`、`commands`、`info`(可选 `login`,以及 `serve` —— 常驻会话,经 stdin 注入回合,而非每回合一个进程)。契约一致性由 `relay harness-check` 判定,完整契约见 [docs/harness-protocol.md](docs/harness-protocol.md)。 |
 | Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
