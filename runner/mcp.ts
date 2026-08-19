@@ -48,6 +48,10 @@ export interface McpIO {
 
 export const MCP_PROTOCOL_VERSION = "2025-03-26";
 
+/** 이 문이 말할 수 있는 판들. 쓰는 축이 도구 넷(initialize·ping·tools/list·tools/call)뿐이라
+ *  이 판들 사이에서 봉투가 같다 — 목록 밖 판은 협상 대상이 아니다 */
+const MCP_PROTOCOL_VERSIONS = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
+
 export interface McpReply {
   jsonrpc: "2.0";
   id: unknown;
@@ -68,8 +72,12 @@ export async function mcpDispatch(
 
   if (method === "initialize") {
     const want = msg?.params?.protocolVersion;
+    const mine = io.protocolVersion ?? MCP_PROTOCOL_VERSION;
+    // 협상은 서버 몫이다: 청한 판을 무조건 에코하면 모르는 방언을 이해한다고 답하는 셈이고,
+    // 클라이언트는 그 판의 규칙으로 말하기 시작한다. 말할 수 있는 판이면 맞추고 아니면 내 판을 낸다
+    const agreed = typeof want === "string" && (want === mine || MCP_PROTOCOL_VERSIONS.has(want)) ? want : mine;
     return reply({
-      protocolVersion: typeof want === "string" ? want : io.protocolVersion ?? MCP_PROTOCOL_VERSION,
+      protocolVersion: agreed,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: io.serverName ?? "relay", version: "0.1.0" },
     });

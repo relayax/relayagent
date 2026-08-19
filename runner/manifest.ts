@@ -99,14 +99,31 @@ const TOP_KEYS = new Set([
 ]);
 const STORAGE_POLICIES = new Set(["org-member", "owner-only", "role-based"]);
 
+/** 필드별 허용 범위 — 분·시·일·월·요일. 요일 7 은 일요일의 별칭(0 과 같다) */
+const CRON_BOUNDS: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+
 /** 트리거 cron 문법 — tick.ts 의 매처가 이해하는 그대로(5필드, *|*\/n|a-b|숫자, 콤마 목록).
- *  판정 없이 받으면 오타 난 cron 이 영원히 침묵한다 — 발화하지 않는 트리거는 에러를 내지 않는다 */
+ *  판정 없이 받으면 오타 난 cron 이 영원히 침묵한다 — 발화하지 않는 트리거는 에러를 내지 않는다.
+ *  형식만 보는 판정도 같은 침묵을 낸다: `99 * * * *`(범위 밖)이나 `1-0 * * * *`(역순 구간)은
+ *  문법을 지키면서 어떤 시각에도 안 맞는다. 그래서 범위와 구간 방향까지 여기서 본다 */
 export function validCron(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
-  return parts.every((f) =>
-    f.split(",").every((part) => part === "*" || /^\*\/[1-9]\d*$/.test(part) || /^\d+-\d+$/.test(part) || /^\d+$/.test(part)),
-  );
+  return parts.every((f, i) => {
+    const [lo, hi] = CRON_BOUNDS[i];
+    const inBounds = (n: number): boolean => n >= lo && n <= hi;
+    return f.split(",").every((part) => {
+      if (part === "*") return true;
+      const step = part.match(/^\*\/([1-9]\d*)$/);
+      if (step) return Number(step[1]) <= hi; // 주기가 필드 폭을 넘으면 영원히 안 맞는다
+      const span = part.match(/^(\d+)-(\d+)$/);
+      if (span) {
+        const [a, b] = [Number(span[1]), Number(span[2])];
+        return inBounds(a) && inBounds(b) && a <= b;
+      }
+      return /^\d+$/.test(part) && inBounds(Number(part));
+    });
+  });
 }
 
 /** auth 블록 공용 판정 — services[].auth · harness llm.auth · 최상위 auth 가 같은 어휘를 쓴다 */
@@ -368,7 +385,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
     const whenForms = [t.when?.cron, t.when?.event].filter((x) => x != null).length;
     if (whenForms !== 1) issues.push(`triggers[${t.id}].when: cron | event 중 하나`);
     if (t.when?.cron != null) {
-      if (!validCron(t.when.cron)) issues.push(`triggers[${t.id}].when.cron 문법 위반(5필드 · *|*/n|a-b|숫자, 콤마): ${t.when.cron}`);
+      if (!validCron(t.when.cron)) issues.push(`triggers[${t.id}].when.cron 문법 위반(5필드 · *|*/n|a-b|숫자, 콤마 · 분0-59 시0-23 일1-31 월1-12 요일0-7, 구간은 오름차순): ${t.when.cron}`);
       if (t.when.tz != null) {
         try {
           new Date().toLocaleString("en-US", { timeZone: t.when.tz });

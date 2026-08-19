@@ -97,7 +97,7 @@ function startSourceService(
 
   if (s.entry) {
     const entry = path.join(pkgPath, s.source, s.entry);
-    const child = spawn("node", ["--experimental-strip-types", entry], {
+    const child = spawn(process.execPath, ["--experimental-strip-types", entry], {
       cwd: path.join(pkgPath, s.source),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -169,8 +169,10 @@ export function startOneChannel(
   env.RELAY_CHANNEL = c.name;
   Object.assign(env, serviceAuthEnv(io, pkg, c.name));
   const entry = path.join(pkgPath, c.source, c.entry);
-  // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다
-  const child = spawn("node", ["--experimental-strip-types", entry], {
+  // stdin 은 기판의 발신 제어 채널이다 (계약 '발신' 절) — 트리거 선톡(then.delivery)이 이 길로 온다.
+  // 실행기는 PATH 의 node 가 아니라 데몬 자신이다(process.execPath) — conform.ts 의 검사 스폰과
+  // 같은 실행기여야 게이트를 지난 어댑터가 런타임에 문법으로 죽지 않는다
+  const child = spawn(process.execPath, ["--experimental-strip-types", entry], {
     cwd: path.join(pkgPath, c.source),
     env,
     stdio: ["pipe", "pipe", "pipe"],

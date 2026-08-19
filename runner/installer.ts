@@ -555,7 +555,15 @@ function satisfiesRange(version: string, range: string | null): boolean {
   };
   if (range.startsWith("^")) {
     const base = norm(range.slice(1));
-    return version.split(".")[0] === base.split(".")[0] && cmpSemver(version, base) >= 0;
+    if (cmpSemver(version, base) < 0) return false;
+    // ^ 의 상한은 "가장 왼쪽의 0 아닌 자리"가 유지되는 범위다(npm semver 와 같은 규칙):
+    // ^1.2.3 은 <2.0.0, ^0.2.3 은 **<0.3.0**, ^0.0.3 은 <0.0.4. 초기 패키지는 전부 0.x 라
+    // major 만 보면 0.2.3 → 0.3.0 같은 breaking 판이 조용히 통과한다
+    const [bMaj, bMin, bPatch] = base.split(".").map(Number);
+    const v = version.split("-")[0].split(".").map(Number);
+    if (bMaj > 0) return v[0] === bMaj;
+    if (bMin > 0) return v[0] === 0 && v[1] === bMin;
+    return v[0] === 0 && v[1] === 0 && v[2] === bPatch;
   }
   if (range.startsWith("~")) {
     const base = norm(range.slice(1));

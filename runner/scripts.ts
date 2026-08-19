@@ -118,21 +118,32 @@ export async function mcpCall(url: string, tool: string, args: unknown, authHead
 
 // host_methods 선언 = ring-0 브리지의 캡. 미선언이면 전체(ring-0 결재가 유일한 경계 — 현행 호환),
 // 선언하면 목록 밖 메서드는 거부한다. 메서드 이름 좌표는 host.<동사_스네이크> (draftPublish → host.draft_publish)
-const hostKey = (method: string): string => "host." + method.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
+const hostKey = (prefix: string, method: string): string => prefix + "." + method.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
 
 function capHost(bridge: HostBridge, declared: string[] | undefined): HostBridge {
   if (!declared || !declared.length) return bridge;
-  const allowed = new Set(declared);
-  return new Proxy(bridge, {
-    get(target, prop) {
-      const v = (target as unknown as Record<string | symbol, unknown>)[prop];
-      if (typeof v !== "function" || typeof prop !== "string") return v;
-      if (!allowed.has(hostKey(prop))) {
-        return () => {
-          throw new Error(`host_methods 미선언 메서드: ${hostKey(prop)}`);
-        };
+  return capNode(bridge, "host", new Set(declared)) as HostBridge;
+}
+
+/** 캡 집행의 한 마디. 함수가 아닌 값을 그대로 통과시키면 중첩 브리지(org 표기
+ *  host.<도메인>.<동사> — 문법이 허용한다)에서 캡이 조용히 무력해진다: host.members 는
+ *  함수가 아니므로 그냥 나가고, 그 위의 list 는 아무 판정도 지나지 않는다. 마디마다 같은
+ *  규칙을 물려 내려가 선언과 집행의 좌표를 하나로 둔다 */
+function capNode(target: object, prefix: string, allowed: Set<string>): object {
+  return new Proxy(target, {
+    get(t, prop) {
+      const v = (t as Record<string | symbol, unknown>)[prop];
+      if (typeof prop !== "string") return v;
+      const key = hostKey(prefix, prop);
+      if (typeof v === "function") {
+        if (!allowed.has(key)) {
+          return () => {
+            throw new Error(`host_methods 미선언 메서드: ${key}`);
+          };
+        }
+        return (v as (...a: unknown[]) => unknown).bind(t);
       }
-      return (v as (...a: unknown[]) => unknown).bind(target);
+      return v && typeof v === "object" ? capNode(v as object, key, allowed) : v;
     },
   });
 }

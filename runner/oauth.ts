@@ -153,10 +153,40 @@ export async function runOAuthFlow(serviceUrl: string, auth: AuthDecl, opts: OAu
   }
 }
 
+/** 진행 중 회전 — 자격 하나(credKey)가 회전의 단위다. 동시에 두 소비가 만료 임박 토큰을
+ *  집으면 refresh 가 두 번 나가는데, refresh token 을 일회용으로 회전시키는 서버에서는
+ *  두 번째가 실패하고 자격이 통째로 죽는다. 한 번만 돌리고 결과를 나눠 쓴다 */
+const refreshing = new Map<string, Promise<OAuthBundle>>();
+
+function rotate(authority: Authority, key: string, b: OAuthBundle): Promise<OAuthBundle> {
+  const running = refreshing.get(key);
+  if (running) return running;
+  const flight = (async () => {
+    try {
+      const tok = await postForm(b.token_endpoint, {
+        grant_type: "refresh_token",
+        refresh_token: b.refresh_token as string,
+        client_id: b.client_id,
+      });
+      const next = toBundle(tok, b.token_endpoint, b.client_id, b);
+      await authority.setCredential(key, JSON.stringify(next));
+      return next;
+    } finally {
+      refreshing.delete(key);
+    }
+  })();
+  refreshing.set(key, flight);
+  return flight;
+}
+
 /** 자격 소비 — 만료 60초 전이면 회전해 저장하고 Bearer 를 돌려준다. 번들 없음 = null.
  *  자격의 읽기·쓰기는 권위 이음새(authority.credential/setCredential)를 지난다 */
 export async function oauthHeader(authority: Authority, pkg: string, service: string): Promise<string | null> {
-  const raw = await authority.credential(credKey(pkg, service));
+  const key = credKey(pkg, service);
+  // 회전이 돌고 있으면 끝난 뒤에 읽는다 — 낡은 refresh_token 을 손에 쥐고 출발하지 않기 위해
+  const inflight = refreshing.get(key);
+  if (inflight) await inflight.catch(() => { /* 앞선 회전의 실패는 내 판정을 막지 않는다 */ });
+  const raw = await authority.credential(key);
   if (!raw) return null;
   let b: OAuthBundle;
   try {
@@ -165,13 +195,7 @@ export async function oauthHeader(authority: Authority, pkg: string, service: st
     return `Bearer ${raw}`; // 번들 이전 시대의 생 토큰 — 그대로 소비(회전 축 없음)
   }
   if (b.expires_at != null && b.expires_at < Date.now() + 60_000 && b.refresh_token) {
-    const tok = await postForm(b.token_endpoint, {
-      grant_type: "refresh_token",
-      refresh_token: b.refresh_token,
-      client_id: b.client_id,
-    });
-    b = toBundle(tok, b.token_endpoint, b.client_id, b);
-    await authority.setCredential(credKey(pkg, service), JSON.stringify(b));
+    b = await rotate(authority, key, b);
   }
   return `Bearer ${b.access_token}`;
 }
