@@ -84,6 +84,7 @@ export type Capability =
   | "harness-info"
   | "harness-models"
   | "harness-commands"
+  | "harness-variants"
   | "effort"
   | "upload-progress";
 
@@ -130,9 +131,11 @@ export type HarnessInfo = {
 };
 export type HarnessModels = { ok: boolean; value: string[] };
 export type HarnessCommands = { ok: boolean; value: { name: string; description?: string; tty?: boolean }[] };
-export type HarnessSetRequest = { model?: string; effort?: string };
+export type HarnessSetRequest = { model?: string; effort?: string; harness?: string };
 /** §5.5-30 — 기판은 해제("" 저장)를 null 로 되돌려주고, known 은 판정 불가(카탈로그 불달)면 null. */
-export type HarnessSetResult = { ok: boolean; model: string | null; effort: string | null; known: boolean | null };
+export type HarnessSetResult = { ok: boolean; model: string | null; effort: string | null; harness?: string | null; known: boolean | null };
+export type HarnessVariant = { name: string; provider?: string };
+export type HarnessVariants = { ok: boolean; value: { active: string | null; variants: HarnessVariant[] } };
 
 export type InstanceEntry = {
   id: string;
@@ -548,6 +551,8 @@ export function createTransport(opts: TransportOptions) {
       models: (): Promise<Result<HarnessModels>> => get<HarnessModels>(base + "/harness/models"),
       /** §5.5-29 — capability harness-commands 뒤. */
       commands: (): Promise<Result<HarnessCommands>> => get<HarnessCommands>(base + "/harness/commands"),
+      /** §5.5-30-a — capability harness-variants 뒤. 변형 선택은 설정이지 자격 행위가 아니다. */
+      variants: (): Promise<Result<HarnessVariants>> => get<HarnessVariants>(base + "/harness/variants"),
       /** §5.5-30 — known:false 는 판정 정보(저장은 된다). effort 필드는 capability effort 뒤. */
       set: (req: HarnessSetRequest): Promise<Result<HarnessSetResult>> =>
         post<HarnessSetResult>(base + "/model", req),

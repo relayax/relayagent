@@ -92,7 +92,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 | 세션 | `session.list` · `session.open` · `session.create` · `session.rename` · `session.archive` · `session.pin` · `session.remove` · `session.reset` | — |
 | 이력 | `history.get` | — |
 | 파일 | `file.upload`(단일 동사) · `file.download` | upload-progress |
-| 하네스 | `harness.info` · `harness.models` · `harness.commands` · `harness.set`(model/effort) | harness-info · harness-models · harness-commands · effort |
+| 하네스 | `harness.info` · `harness.models` · `harness.commands` · `harness.variants` · `harness.set`(model/effort/harness) | harness-info · harness-models · harness-commands · effort · harness-variants |
 | 열거 | `instances.list` | enumerate |
 | 표면 상태 | `state.get` · `state.set` | state |
 | push | `push.subscribe` | push |
@@ -282,11 +282,25 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     저장은 되고, 세션에서 어댑터가 거부하면 그 턴이 실패한다(client-wire.ts:819-827 현행 의미).
     `effort` 필드는 capability `effort` 뒤에 있다(하네스 `effort` capability 의 투영,
     harness-protocol.md:100).
-31. 하네스 **관리** 동사(variants 전환·connect·login 중계 — runner/api.ts:823-858 · 906-926)는
-    이 계약 밖이다. 1인 기판의 콘솔 전용 표면이며, org 기판에서 하네스 관리는 문이 아니라
-    권위(fleet)의 소관이다.
+30-a. `harness.variants` = `GET {base}/harness/variants` → `{ok, value: {active, variants:
+    [{name, provider?}]}}` · 전환은 §5.5-30 과 **같은 문**이다: `POST {base}/model` 의
+    `{harness?}`. 둘 다 capability `harness-variants` 뒤에 있다.
+    *왜 설정 문에 있나: 변형 선택은 자격 행위가 아니라 **설정**이다 — 매니페스트가 후보를
+    선언하고(BOM: `harness.variants[]`), 장부가 활성 하나를 든다. `model`·`effort` 와 같은
+    레코드의 같은 성질의 필드이고(runner/state.ts PkgRecord), 선언 밖 이름은 거부된다
+    (installer.ts setHarness). 이것을 자격 관리와 한 덩어리로 묶으면, 선언된 후보 중 하나를
+    고르는 일까지 계약 밖으로 밀려 화면이 기판마다 갈린다.*
+    변형을 바꾸면 기판이 **모델 오버라이드를 지운다** — 모델 어휘는 하네스 소속이라 이전
+    어댑터의 모델명이 새 어댑터로 넘어가면 무의미한 인자가 된다(setHarness 의 현행 의미).
+    응답의 `known` 은 §5.5-30 그대로 새 하네스 기준으로 판정된다.
+    준비 상태(도구 실재·로그인)는 이 문의 소관이 아니다 — 선언된 후보로 바꾸는 것은 성공하고,
+    준비가 안 된 하네스면 그 턴이 실패한다(`known: false` 와 같은 결).
+31. 하네스 **자격** 동사(connect·login 중계 — runner/api.ts:943-1018)는 이 계약 밖이다.
+    1인 기판의 콘솔 전용 표면이며, org 기판에서 자격은 문이 아니라 권위(fleet)의 소관이다.
     *왜: 최종사용자 채팅 문에 자격 관리가 섞이면 org 기판이 그 동사들을 401 로 도배해야
-    한다 — 게이트할 것과 존재하지 않아야 할 것의 구분이다.*
+    한다 — 게이트할 것과 존재하지 않아야 할 것의 구분이다. 이 선은 **자격 행위와 설정** 사이에
+    긋는다(2026-08-19 정정 — 종전에는 variants 전환까지 여기 묶여 있었는데, 그것은 설정이라
+    §5.5-30-a 로 옮겼다. 기판이 원치 않으면 capability 를 선언하지 않으면 된다).*
     계약 밖이되 방향은 있다 — 결정 G(2026-08-16): 현행 login 중계의 pty 출력 700ms 폴링
     (runner/api.ts:918-920 · core.js:393)은 기판 소유 표면에서 SSE 스트림으로 현대화하고,
     relayos 가 실사고로 검증한 무폴링 구조화 플로(begin → 코드 붙여넣기 → complete —
@@ -391,6 +405,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `enumerate` | 인스턴스 열거 | `instances.list` | 양쪽 신설 (OSS 는 /registry 재포장) |
 | `harness-info` | 하네스 신원·capabilities 조회 | `harness.info` | OSS ○ (client-wire.ts:783-807) · relayos × (현행 대응물 부재 — 정렬 시 신설 또는 미선언) |
 | `harness-models` | 모델 카탈로그 조회 | `harness.models` | OSS ○ (client-wire.ts:783-807) · relayos ○ (/api/llm/models, api_turns.go:317) |
+| `harness-variants` | 하네스 변형 조회·전환 | `harness.variants` · `harness.set({harness})` | OSS ○ (client-wire.ts) · relayos ✗ (변형 선택은 fleet 권위 소관 — 선언하지 않는다) |
 | `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
 | `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |

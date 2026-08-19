@@ -568,6 +568,12 @@ export const WIRE_ROUTES: WireRoute[] = [
         // 하네스 조회 3동사는 어댑터 필수 동사(info/models/commands)의 중계라 하네스가 있으면 산다
         caps.push("harness-info", "harness-models", "harness-commands");
         if (adapter.includes("effort")) caps.push("effort"); // 어댑터 capability 의 투영(§7)
+        // 변형 선택은 자격 행위가 아니라 설정이다(§5.5-30-a) — 매니페스트가 후보를 선언하고
+        // 장부가 활성 하나를 든다. 후보가 둘 이상일 때만 고를 것이 있다.
+        try {
+          const man = loadManifest(deps.getLedger().packages[pkg].path);
+          if ((man.harness?.variants ?? []).length > 1) caps.push("harness-variants");
+        } catch { /* 판정 실패 설치본 — 선언 못 하는 것이 정직 */ }
       }
       json(res, 200, { protocol: CLIENT_PROTOCOL, capabilities: caps });
     },
@@ -841,13 +847,40 @@ export const WIRE_ROUTES: WireRoute[] = [
     },
   },
   {
+    methods: ["GET"],
+    scope: "base",
+    pattern: /^\/harness\/variants$/,
+    handler: ({ deps, res, pkg }) => {
+      const l = deps.getLedger();
+      const rec = requirePkg(l, pkg);
+      const man = loadManifest(rec.path);
+      const variants = (man.harness?.variants ?? []).map((v) => ({
+        name: v.name,
+        ...(v.llm?.provider ? { provider: v.llm.provider } : {}),
+      }));
+      // 준비 상태(도구 실재·로그인)는 이 문의 소관이 아니다(§5.5-30-a) — 프로브는 프로세스
+      // 전수 스폰이라 채팅 문이 감당할 비용이 아니고, 기판 소유 콘솔에 그 표면이 이미 있다.
+      json(res, 200, { ok: true, value: { active: rec.harness ?? variants[0]?.name ?? null, variants } });
+    },
+  },
+  {
     methods: ["POST"],
     scope: "base",
     pattern: /^\/model$/,
     handler: async ({ deps, req, res, pkg }) => {
       const l = deps.getLedger();
-      const rec = requirePkg(l, pkg) as { model?: string; effort?: string };
+      const rec = requirePkg(l, pkg) as { model?: string; effort?: string; harness?: string };
       const b = await readBody(req);
+      // 변형 전환이 먼저다 — setHarness 가 모델 오버라이드를 지우므로(모델 어휘는 하네스
+      // 소속), 같은 요청의 model 이 그 뒤에 앉아야 지워지지 않는다. 미선언 이름은 거부된다.
+      if (b.harness) {
+        const { setHarness } = await import("./installer.ts");
+        try {
+          setHarness(l, pkg, String(b.harness));
+        } catch (e) {
+          throw new WireError(400, "E_BAD_REQUEST", String(e instanceof Error ? e.message : e));
+        }
+      }
       if ("model" in b) rec.model = b.model ? String(b.model) : undefined;
       if ("effort" in b) rec.effort = b.effort ? String(b.effort) : undefined;
       saveLedger(l);
@@ -860,7 +893,7 @@ export const WIRE_ROUTES: WireRoute[] = [
           if (Array.isArray(arr)) known = arr.includes(rec.model);
         } catch { /* models 불달 — 판정 불가 */ }
       }
-      json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, known });
+      json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, known });
     },
   },
 

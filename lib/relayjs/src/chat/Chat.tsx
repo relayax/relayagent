@@ -4,7 +4,7 @@
  * the runtime: streaming, auto-scroll, message lifecycle. We supply the look: 내레이션 산문(잉크)
  * 과 대비되는 보더리스 스텝 타임라인, TodoWrite 플랜 카드, 스폰 내레이션, 마크다운 본문.
  */
-import { createContext, useContext, useMemo, useState, useEffect, useRef } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -20,7 +20,10 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import type { TurnMeta, RelayCtx, ReplayMessage } from "./runtime";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance } from "./runtime";
+import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
+  loadHarnessVariants,
+  setHarnessVariant,
+} from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
 import { loadInbox, loadInstances, type NavInstance } from "./runtime";
@@ -1612,6 +1615,63 @@ function EffortSelector() {
   );
 }
 
+/** 하네스 변형 선택 — capability harness-variants 뒤(§5.5-30-a). 변형 선택은 자격 행위가
+ *  아니라 **설정**이다: 매니페스트가 후보를 선언하고(BOM) 장부가 활성 하나를 든다.
+ *  후보가 하나뿐이거나 기판이 capability 를 선언하지 않으면 아무것도 그리지 않는다 —
+ *  고를 것이 없는 자리에 빈 피커를 두지 않는다. */
+function HarnessSelector() {
+  const ctx = useRelayCtx();
+  const [active, setActive] = useState<string | null>(null);
+  const [variants, setVariants] = useState<{ name: string; provider?: string }[]>([]);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const load = useCallback(() => {
+    void loadHarnessVariants().then((r) => { setActive(r.active); setVariants(r.variants); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+  if (variants.length < 2) return null;
+
+  const set = (name: string) => {
+    if (name === active) { setOpen(false); return; }
+    setErr(false); setActive(name); setOpen(false);
+    void setHarnessVariant(ctx, name).then((ok) => {
+      if (!ok) { setErr(true); load(); return; }
+      // 전환은 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 모델 피커를 다시 읽힌다
+      notifyOverridesChanged();
+    });
+  };
+
+  return (
+    <div className="rc-model" ref={boxRef}
+         title="하네스 — 이 패키지가 동봉한 실행 어댑터 중 활성 하나. 바꾸면 모델 오버라이드는 해제됩니다.">
+      <button type="button" className="rc-model-btn" onClick={() => setOpen((o) => !o)}
+              aria-haspopup="listbox" aria-expanded={open}>
+        <svg className="rc-model-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M4 7h16M4 12h16M4 17h10" />
+        </svg>
+        <span className="rc-model-lb">Harness <span className="rc-model-val">({active ?? "-"})</span>{err && <span className="rc-save-err">전환 실패</span>}</span>
+      </button>
+      {open && (
+        <div className="rc-model-menu" role="listbox">
+          {variants.map((v) => (
+            <button type="button" role="option" key={v.name} aria-selected={active === v.name}
+                    className={"rc-model-item" + (active === v.name ? " on" : "")} onClick={() => set(v.name)}>
+              {v.name}{v.provider ? ` · ${v.provider}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Per-conversation model override as a compact dropdown — EffortSelector 와 대칭. 오버라이드가
  *  없으면 실효 모델(인스턴스 바인딩/llm_default 상속·비면 CLI 기본)을 흐리게 보여주고, 항목을
  *  고르면 이 대화의 다음 턴부터 그 모델로 실행된다(브레인 세션 row 저장 → resume 후에도 유지). */
@@ -2402,6 +2462,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
       {notice && <div className="rc-builtin-notice" role="status">{notice}</div>}
       <div className="rc-composer-foot">
         <EffortSelector />
+        <HarnessSelector />
         <ModelSelector />
         <span style={{ flex: 1 }} />
         {ctxUsed > 0 && (

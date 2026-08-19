@@ -760,6 +760,26 @@ export async function loadModel(ctx: RelayCtx): Promise<ModelInfo> {
 // setModel persists the value ("" clears → 기본). known:false 는 판정 정보 — 저장은 되고
 // 어댑터가 거부하면 그 턴이 실패한다(§5.5-30). 그래서 저장 성공과 **분리해서** 돌려준다:
 // 성공으로만 접으면 화면이 "바뀌었다" 고 말한 뒤 다음 턴이 조용히 실패한다.
+/** 하네스 변형 — capability harness-variants 뒤(§5.5-30-a). 미선언 기판은 빈 목록으로 답해
+ *  화면이 이 축을 아예 그리지 않는다(선언 안 한 것을 화면이 지어내지 않는다). */
+export async function loadHarnessVariants(): Promise<{ active: string | null; variants: { name: string; provider?: string }[] }> {
+  const g = getCtx();
+  const base = baseOf(g);
+  const root = rootOf(g);
+  if (!(await capsFor(base, root)).has("harness-variants")) return { active: null, variants: [] };
+  const r = await transportFor(base, root).harness.variants();
+  if (isError(r)) return { active: null, variants: [] };
+  const v = r.value;
+  return { active: v?.active ?? null, variants: Array.isArray(v?.variants) ? v.variants : [] };
+}
+
+/** 변형 전환. 기판이 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 호출부가 모델 표시를
+ *  다시 읽어야 한다. 미선언 이름은 기판이 400 으로 거부한다. */
+export async function setHarnessVariant(ctx: RelayCtx, harness: string): Promise<boolean> {
+  const r = await wireOf(ctx).harness.set({ harness });
+  return !isError(r);
+}
+
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {
   const r = await wireOf(ctx).harness.set({ model: model || "" });
   if (isError(r)) return { ok: false, known: null };
