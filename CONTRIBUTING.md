@@ -19,7 +19,7 @@ Credentials never live in the tree. Manifests declare only the shape of auth (`n
 ## Setup
 
 Requirements: Node.js 22.6 or later. The runner is plain TypeScript executed with
-`--experimental-strip-types`, so there is no build step.
+`--experimental-strip-types`, so the *runner* has no build step.
 
 ```sh
 git clone https://github.com/relayax/relayagent.git
@@ -27,9 +27,28 @@ cd relayagent
 npm install
 alias relay="node --experimental-strip-types runner/relay.ts"
 
-relay validate packages/system
+npm run build:widget                       # chat widget bundle → lib/relayjs/dist/
+relay install packages/system --ring0       # management shell; --ring0 opens the host bridge
 relay daemon
 ```
+
+Two things the daemon serves are **build artifacts, and both are gitignored** — a fresh clone has
+neither, and neither is built by CI:
+
+- **the chat widget bundle** (`lib/relayjs/dist/` → `/assets/chat-app.{js,css}`): `npm run build:widget`
+- **a package's view** (`surfaces/view/out/` → `/pkg/<name>/view/`): `relay install` and
+  `relay build <pkg>` bake it
+
+Rebuild a view **only** through `relay build <pkg>`. A view is served under
+`/pkg/<installName>/view/`, so Next must be built with `basePath` set to that prefix; the substrate
+injects it as `RELAY_BASE_PATH` because the install name is only known at install time. Running
+`npx next build` by hand leaves it empty, bakes every `/_next/...` URL root-absolute, and the page
+404s its own stylesheet — with the build reporting success. The daemon now refuses to serve such a
+view and says so, but the shortest path is not to make one.
+
+Omitting `--ring0` on `packages/system` is the other easy trap: the management shell's `pkg-*`,
+`draft-*`, `grant-*` and `release-*` verbs all need the host bridge, and without it the console
+lists no packages and the studio answers `ring-0 전용`.
 
 Because the runner is type-stripped rather than compiled, use **type-only TypeScript syntax**:
 no enums, no namespaces, no decorators, no parameter properties.
@@ -42,6 +61,14 @@ npm run validate     # every package in packages/ must pass judgment
 ```
 
 Both must pass. CI runs exactly these.
+
+If you edited a package view, rebuild it before validating — `npm run validate` also judges the
+build artifact when it is present (stale relative to its source, or baked without the mount
+prefix), and both judgments name the fix:
+
+```sh
+npm run relay -- build <pkg>
+```
 
 If your change touches what `relay.yaml` may contain, it must touch all four of these in the
 same PR, or it is incomplete:

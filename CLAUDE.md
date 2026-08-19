@@ -101,12 +101,19 @@ rebuilt, and for two days the served document had the old wiring already gone an
 not yet there ("the chat widget is missing").
 
 ```sh
-(cd packages/<pkg>/surfaces/view && npx next build)
+npm run relay -- build <pkg>
 ```
 
-`npm run validate` now judges this: if `out/` exists and is older than any view source file, the
-package fails with the rebuild command. It stays silent when `out/` is absent — CI and fresh
-clones don't build views, and absence is not staleness.
+**Rebuild only through that command.** A view is served under `/pkg/<installName>/view/`, so Next
+must be built with `basePath` set to that prefix — `next.config.mjs` reads it from
+`RELAY_BASE_PATH`, which `buildView` injects because the install name is only known at install
+time. Running `npx next build` by hand leaves `basePath` empty, every `/_next/...` URL is baked
+root-absolute, and the served page 404s its own stylesheet and chunks: an unstyled console that
+never hydrates. That failure looks nothing like a build error — the build passes.
+
+`npm run validate` judges both halves: `out/` older than its source, and `out/` whose own assets
+are addressed at daemon root instead of the mount. It stays silent when `out/` is absent — CI and
+fresh clones don't build views, and absence is not staleness.
 
 There is no release pipeline in this repo yet, so both steps are manual.
 

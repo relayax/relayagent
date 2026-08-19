@@ -18,7 +18,7 @@ export default async function (
   input: { consumer: string; provider: string; tools?: string[]; mission?: string },
   ctx: any,
 ) {
-  if (!ctx.host) throw new Error("ring-0 전용");
+  if (!ctx.host) throw new Error(`ring-0 전용 — "${ctx.pkg}" 이 ring-0 설치가 아닙니다: relay list 로 경로를 확인해 relay install <경로> --ring0 (기존 결재·설정은 보존됩니다)`);
   if (!input.consumer || !input.provider) throw new Error("consumer + provider 필수");
   if (input.tools?.length && input.mission) throw new Error("tools 와 mission 동시 결재 불가");
   if (!input.tools?.length && !input.mission) throw new Error("tools 또는 mission 중 하나는 있어야 합니다");

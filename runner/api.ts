@@ -15,6 +15,8 @@ import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validat
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
 import { saveLedger } from "./state.ts";
+import { assetsAtDaemonRoot } from "./build.ts";
+import { logLine } from "./state.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, localIO } from "./run.ts";
 import { verifyChannel } from "./conform.ts";
 import { Ticker } from "./tick.ts";
@@ -462,20 +464,25 @@ function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerRe
     }
     return void json(res, 404, { error: `view 표면 없는 패키지: ${pkg}` });
   }
-  let root = path.join(rec.path, view.source, view.out ?? "");
-  if (view.out && !fs.existsSync(root)) root = path.join(rec.path, view.source);
-  root = path.normalize(root);
+  const root = path.normalize(path.join(rec.path, view.source, view.out ?? ""));
+  // out 선언은 서빙 뿌리 선언이다. 없으면 미빌드 — 소스로 물러나면 선언과 실체의 불일치가
+  // "없음: /" 404 나 날 소스로 위장한다(규칙 2: 조용한 강등 금지). 처방이 판정의 본체다.
+  if (view.out && !fs.existsSync(root)) {
+    return void json(res, 503, {
+      error: `view 미빌드: ${pkg} — 선언된 ${view.source}/${view.out} 이 없습니다: npm run relay -- build ${pkg}`,
+    });
+  }
   const target = path.normalize(path.join(root, rest === "" || rest === "/" ? "index.html" : rest));
   if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     // 정적 발행물의 라우트 관례: <경로>/index.html (trailingSlash) 또는 <경로>.html
     const idx = path.join(target, "index.html");
-    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, res);
+    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, root, res);
     const html = target + ".html";
-    if (fs.existsSync(html)) return void serveViewFile(html, pkg, res);
+    if (fs.existsSync(html)) return void serveViewFile(html, pkg, root, res);
     return void json(res, 404, { error: `없음: ${rest}` });
   }
-  serveViewFile(target, pkg, res);
+  serveViewFile(target, pkg, root, res);
 }
 
 function streamFile(file: string, res: http.ServerResponse): void {
@@ -492,8 +499,48 @@ function viewContextTag(pkg: string): string {
   return `<script>window.__RELAY_CONTEXT={base:${base},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
 }
 
-function serveViewFile(file: string, pkg: string, res: http.ServerResponse): void {
+/**
+ * 발행물 접두사 판정의 캐시. 키는 (뿌리, index.html mtime) — 빌드 한 번에 한 번만 stat 한다.
+ *
+ * 왜 서빙에도 판정이 있는가: 여기가 **사용자를 덮는 유일한 자리**다. validate 는 이 레포의
+ * packages/* 만 걷지만 설치본은 rec.path 가 가리키는 아무 곳(마켓 산출·사용자 트리)에 산다.
+ * 그 트리를 손으로 구운 사람에게는 판정해 줄 게 아무것도 없었고, 그래서 접두사 없는 발행물이
+ * 200 으로 나가고 운영자는 /_next/... 404 벽만 보았다(실사고 2건, 진단은 어디에도 없었다).
+ */
+const prefixVerdicts = new Map<string, string[]>();
+function assetsAtRootCached(root: string): string[] {
+  let key = root;
+  try {
+    key = `${root}\u0000${fs.statSync(path.join(root, "index.html")).mtimeMs}`;
+  } catch { /* 문서 없는 뿌리 — 뿌리만으로 캐시 */ }
+  const hit = prefixVerdicts.get(key);
+  if (hit) return hit;
+  const bad = assetsAtDaemonRoot(root);
+  prefixVerdicts.clear(); // 재빌드마다 키가 바뀐다 — 옛 키를 쌓아두지 않는다
+  prefixVerdicts.set(key, bad);
+  return bad;
+}
+
+function serveViewFile(file: string, pkg: string, root: string, res: http.ServerResponse): void {
   if (path.extname(file) !== ".html") return void streamFile(file, res);
+  const atRoot = assetsAtRootCached(root);
+  if (atRoot.length) {
+    const base = "/pkg/" + pkg + "/view";
+    logLine("view", { pkg, ok: false, base, at_root: atRoot.slice(0, 5) });
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    res.writeHead(500, { "content-type": MIME[".html"], "cache-control": "no-store" });
+    return void res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>view 판정 실패: ${esc(pkg)}</title>
+<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
+</head><body>
+<h1>이 화면은 자기 자산을 데몬 루트로 가리킵니다</h1>
+<p>발행물이 <code>${esc(base)}</code> 접두사 없이 구워져, 아래 자산이 서빙되지 않습니다:</p>
+<ul>${atRoot.slice(0, 8).map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ul>
+<p><code>RELAY_BASE_PATH</code> 없이 <code>npx next build</code> 를 돌린 흔적입니다. 정본 경로로 다시 구우세요:</p>
+<p><code>npm run relay -- build ${esc(pkg)}</code></p>
+<p>깨진 화면을 200 으로 내보내는 대신 여기서 멈춥니다 — 그 편이 <code>/_next</code> 404 벽보다 짧습니다.</p>
+</body></html>`);
+  }
   const html = fs.readFileSync(file, "utf8");
   const head = html.match(/<head\b[^>]*>/i);
   // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽는다)
