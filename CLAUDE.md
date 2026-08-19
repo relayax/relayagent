@@ -119,49 +119,36 @@ There is no release pipeline in this repo yet, so both steps are manual.
 
 ## Where the harness comes from
 
-An agent package ships harness **adapters**, not the tools they drive. The adapter is a thin
-translator; the CLI it drives (`claude`, `codex`, `pi`, `kimi`) is a separate program. Two things
-answer "where does that program come from":
+An agent package ships harness **adapters**, not the tools they drive. Where the tool comes from
+is declared in `requires.binaries` — one vocabulary for "this executable must exist" (2026-08-19,
+merged from a short-lived `harness.variants[].binary` object at the user's direction):
 
-**1. The host, elected.** `electHarness` runs each declared variant's `setup` and takes the first
-that passes, so a package works as long as **one** variant is ready on this machine.
-`requires.binaries` cannot express this — it demands all, and demanding `codex` would block a
-claude-only user's install.
+- `requires` is **AND**: when install finishes, everything in the list exists. An entry with only
+  `install` is advisory-and-gate, as before (git — the substrate cannot install it for you).
+- An entry with `manager` + `package` is a **recipe**: if the binary is missing, the substrate
+  installs it under `~/.relay/bin/<pkg>/` and puts that directory first on PATH for the package's
+  spawns. This is what makes AND affordable — before recipes, requiring `codex` would have blocked
+  a claude-only user's install, which is why harness tools could never live in `requires`.
+- A variant's `binary: <name>` is a **reference** to a requires entry, not a second declaration.
+  It exists for one reason: when `setup` fails, the substrate promotes that entry to its own copy
+  and retries once. Plain existence checks pass a gutted install (an npm wrapper whose native
+  binary is gone — the real incident), so setup-failure is the only signal that catches it.
+- Pinned `version` → the substrate's copy is canonical, host ignored (reproducibility).
+  Unpinned → host first; nothing is downloaded that already works (eagerly provisioning all four
+  system variants measured 921 MB).
+- If the manager itself is absent, install fails loud with the entry's `install` guidance.
+  The system package deliberately does not require `kimi` — that would make `uv` a product-wide
+  prerequisite; the kimi variant remains host-elective. npm is already a de-facto prerequisite
+  (view builds and component packing shell out to it).
+- Removing a package removes its provisioned binaries.
 
-**2. The substrate, provisioned.** A variant may declare `binary: {name, manager, package, version?}` — the same vocabulary as `requires.binaries` ("this executable must exist") plus how to get it.
-Then the substrate installs that CLI under `~/.relay/harness/<pkg>/<variant>/` and puts it **first
-on PATH** for that harness's spawns. This exists because the host copy is not the package's to fix:
-a global `@openai/codex` whose native binary was missing bricked every turn, and all the substrate
-could say was "reinstall it".
-
-When each applies:
-
-- **No `version`** — host first, provision on failure. A working host tool is not re-downloaded
-  (measured: eagerly provisioning all four variants cost 921 MB on one install); a missing or
-  broken one is replaced by the substrate's copy, and that is the whole point of the axis.
-- **Pinned `version`** — the substrate's copy is canonical, host ignored. Pinning is a request for
-  reproducibility; honoring the host would defeat it.
-- **Election stops provisioning once a variant is elected.** The rest report "not examined —
-  switching installs it", and `setHarness` provisions on switch. Opening a harness dialog
-  (`probeHarness`) never installs.
-- **Removing a package removes its tools.** `~/.relay` must not keep CLIs for packages that are gone.
-
-`manager` is a closed set (`npm`, `uv`) so a manifest cannot hand the substrate a shell string to
-run. If the manager itself is absent, `ensureBinary` fails loud with a prescription and election skips
-**that variant only** — a package declaring both an npm variant and a uv variant still works with
-one of the two installed. npm is already a de-facto prerequisite here (view builds and component
-packing shell out to it); uv is not, which is why kimi degrades rather than blocking.
-
-Provisioning does not isolate — it owns and pins. That is deliberate: containerizing the harness
-would move the workspace behind a mount (rule 6 says a session stands on one granted folder, and the
-console's "데이터 폴더 열기" exists to prove that folder is real) and, more decisively, would cut the
-tool off from its own credentials — `claude-code` and `codex` declare `auth: {kind: oauth}` and the
-subscription lives in the host tool's Keychain, which the adapter deliberately does not borrow.
-relayos, which does run harnesses in pods, had to convert that axis to a substrate-held token
-(`RELAY_CLAUDE_TOKEN` → `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`). Provisioning keeps the
-folder, keeps the Keychain, and needs no VM. `harness.variants[].dockerfile` was retired on
-2026-08-19 — it had a schema entry and a TypeScript field and nothing else, and this axis replaces
-the need it was standing in for. Declaring it now fails validation with that explanation.
+Provisioning owns and pins; it does not isolate. Containerizing the harness was considered and
+rejected (2026-08-19): the decisive cost is credentials — subscription logins live in the host
+tool's Keychain, which adapters deliberately do not borrow, and relayos had to convert that axis
+to a substrate-held token when it moved sessions into pods. A substrate-owned host copy keeps the
+workspace a real folder and keeps the Keychain reachable. `harness.variants[].dockerfile` was
+retired the same day; declaring it (or the old object-form `binary`) fails validation with a
+prescription.
 
 ## Language
 

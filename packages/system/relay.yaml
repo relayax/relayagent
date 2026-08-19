@@ -6,9 +6,24 @@ description: "기판 관리 셸. 패키지 목록, mcp/a2a 그래프, 연결 결
 
 # 수정 레이어(draft 이력·diff·릴리스 태그)가 git 을 쓴다
 requires:
+  # AND 다 — 설치가 끝나면 전부 실재한다. 레시피(manager+package) 있는 항목은 호스트에 없으면
+  # 기판이 ~/.relay/bin/system/ 에 깔아 이 패키지의 스폰에 PATH 앞으로 준다. git 은 기판이
+  # 깔아줄 수 없어 안내만 싣는다. kimi(uv)는 요구하지 않는다 — uv 를 제품 전제로 만들지 않기
+  # 위해서다. kimi 변형은 호스트에 있으면 후보가 되는 선택 표면으로 남는다.
   binaries:
     - name: git
       install: "xcode-select --install (macOS) 또는 https://git-scm.com"
+    - name: claude
+      manager: npm
+      package: "@anthropic-ai/claude-code"
+    - name: codex
+      manager: npm
+      package: "@openai/codex"
+    # 어댑터(harness/pi)는 pi | pi-pods 둘 다 받지만, 이 레시피가 실제로 까는 실행 파일은
+    # pi-pods 다 — 선언은 실체를 적는다(설치후 검증이 이 이름으로 실재를 판정한다)
+    - name: pi-pods
+      manager: npm
+      package: "@mariozechner/pi"
 
 surfaces:
   view:
@@ -65,14 +80,14 @@ surfaces:
           note: Socket Mode 를 켜고 앱 레벨 토큰(xapp-)을 만든 뒤, OAuth & Permissions 에서 봇 토큰(xoxb-)을 설치하세요. 사용자 ID 는 프로필 → 더보기 → 멤버 ID 복사.
 
 harness:
-  # binary 선언 = 실행 파일을 기판이 직접 대겠다는 뜻. 없으면 호스트 전역 설치에 기댄다(사용자 몫).
-  # 버전은 고정하지 않는다: CLI 어휘가 빠르게 움직여서(models 별칭·--effort 도입) 고정하면
-  # 낡은 판에 묶인다. 재현성이 필요한 저작물은 자기 매니페스트에 version 을 박으면 된다.
+  # binary = requires.binaries 참조. 레시피는 requires 한 곳에 산다 — setup 실패 시 기판이
+  # 그 레시피로 사본을 깔고 재시도한다(껍데기 npm 래퍼 회복 경로). 버전은 고정하지 않는다:
+  # CLI 어휘가 빠르게 움직여서(models 별칭·--effort 도입) 고정하면 낡은 판에 묶인다.
   variants:
     - name: claude-code
       source: harness/claude-code
       entry: run
-      binary: { name: claude, manager: npm, package: "@anthropic-ai/claude-code" }
+      binary: claude
       icon: harness/claude-code/icon.png
       llm:
         provider: anthropic
@@ -81,7 +96,7 @@ harness:
     - name: codex
       source: harness/codex
       entry: run
-      binary: { name: codex, manager: npm, package: "@openai/codex" }
+      binary: codex
       icon: harness/codex/icon.png
       llm:
         provider: openai
@@ -90,7 +105,7 @@ harness:
     - name: pi
       source: harness/pi
       entry: run
-      binary: { name: pi, manager: npm, package: "@mariozechner/pi" }
+      binary: pi-pods
       llm:
         provider: vllm
         icon: assets/llm/vllm.svg
@@ -98,7 +113,6 @@ harness:
     - name: kimi
       source: harness/kimi
       entry: run
-      binary: { name: kimi, manager: uv, package: kimi-cli }
       icon: harness/kimi/icon.png
       llm:
         provider: moonshot

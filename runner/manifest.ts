@@ -4,9 +4,24 @@ import { parse as parseYaml } from "yaml";
 
 export type RequiredOS = "darwin" | "linux" | "win32";
 
+/**
+ * 호스트 실행 파일 요구 하나. install 은 사람에게 주는 안내, manager+package 는 **기판이
+ * 직접 채우는 레시피**다 — 레시피가 있으면 "없음 = 설치 거부" 가 아니라 "없음 = 기판이 깖" 이
+ * 된다(requires 는 AND: 설치가 끝나면 목록 전부가 실재한다). manager 는 닫힌집합이라
+ * 매니페스트가 셸 문자열을 실행시키지 못한다.
+ */
+export interface BinaryRequire {
+  name: string;
+  install?: string;
+  manager?: "npm" | "uv";
+  package?: string;
+  /** 고정 버전 — 지정하면 호스트에 무엇이 있든 기판 사본이 정본(재현성 요구) */
+  version?: string;
+}
+
 export interface RequiresDecl {
   os?: RequiredOS[];
-  binaries?: { name: string; install?: string }[];
+  binaries?: BinaryRequire[];
   apps?: { name: string; install?: string }[];
 }
 
@@ -61,26 +76,15 @@ export interface Manifest {
   org?: unknown;
 }
 
-/**
- * 기판이 이 변형의 실행 파일을 어떻게 얻는가 — 값이 아니라 **레시피**다.
- * requires.binaries 와 같은 어휘("이 실행 파일이 필요하다")에 획득 방법이 붙은 형이고,
- * manager 는 닫힌집합이라 매니페스트가 셸 문자열을 실행시키지 못한다(선언은 캡).
- */
-export interface HarnessBinary {
-  /** PATH 에서 찾을 실행 파일 이름 — requires.binaries[].name 과 같은 축 */
-  name: string;
-  manager: "npm" | "uv";
-  /** 매니저의 패키지 좌표 */
-  package: string;
-  /** 고정 버전. 생략하면 최신 — 재현성을 포기하는 선언이다 */
-  version?: string;
-}
-
 export interface HarnessVariant {
   name: string;
   source: string;
   entry: string;
-  binary?: HarnessBinary;
+  /** 이 변형이 모는 실행 파일 — requires.binaries[].name 참조. 레시피는 requires 한 곳에만
+   *  산다(BOM 규율: 같은 사실을 두 곳에 적지 않는다). 참조가 걸린 항목은 setup 실패 시
+   *  기판이 그 레시피로 사본을 깔고 재시도한다 — 껍데기만 남은 호스트 설치가 존재 검사를
+   *  통과해도 여기서 덮인다. */
+  binary?: string;
   /** 어댑터 도구 아이콘 (패키지 상대경로 이미지) */
   icon?: string;
   llm?: { provider: string; auth?: AuthDecl; /** provider(모델) 아이콘 */ icon?: string };
@@ -232,10 +236,23 @@ export function judge(m: Manifest, pkgPath?: string): void {
     }
     if (req.binaries && req.binaries.length === 0) issues.push("requires.binaries: 빈 목록 불가");
     const BIN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+    const BINREQ_KEYS = new Set(["name", "install", "manager", "package", "version"]);
+    const MANAGERS = new Set(["npm", "uv"]);
+    const binNames = new Set<string>();
     for (const b of req.binaries ?? []) {
       if (typeof b !== "object" || b == null || !BIN.test(b.name ?? "")) {
-        issues.push(`requires.binaries 형식 위반({name, install?}): ${JSON.stringify(b)}`);
+        issues.push(`requires.binaries 형식 위반({name, install?, manager?, package?, version?}): ${JSON.stringify(b)}`);
+        continue;
       }
+      if (binNames.has(b.name)) issues.push(`requires.binaries 이름 중복: ${b.name}`);
+      binNames.add(b.name);
+      for (const k of Object.keys(b)) {
+        if (!BINREQ_KEYS.has(k)) issues.push(`미지 requires.binaries[${b.name}] 키: ${k}`);
+      }
+      // 레시피는 반쪽이 없다 — manager 만 있으면 무엇을 깔지 모르고, package 만 있으면 어떻게 깔지 모른다
+      if (b.manager != null && !MANAGERS.has(b.manager)) issues.push(`requires.binaries[${b.name}].manager 미지: ${b.manager} (npm | uv)`);
+      if ((b.manager != null) !== (b.package != null)) issues.push(`requires.binaries[${b.name}]: manager 와 package 는 함께 선언합니다(레시피의 반쪽만은 실행 불능)`);
+      if (b.version != null && b.manager == null) issues.push(`requires.binaries[${b.name}].version 은 레시피(manager+package)와 함께만 의미가 있습니다`);
     }
     if (req.apps && req.apps.length === 0) issues.push("requires.apps: 빈 목록 불가");
     const APP = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
@@ -318,7 +335,6 @@ export function judge(m: Manifest, pkgPath?: string): void {
   // 은퇴한 어휘가 계속 저작되고 "판정 통과" 가 그것을 승인해 준다. 실사고: dockerfile 은
   // 스키마에만 있고 판정·소비·봉투가 전부 없었는데, 워크드 예제가 그걸 가르치고 있었다.
   const VARIANT_KEYS = new Set(["name", "source", "entry", "binary", "icon", "llm"]);
-  const BINARY_KEYS = new Set(["name", "manager", "package", "version"]);
   const MANAGERS = new Set(["npm", "uv"]);
   const LLM_KEYS = new Set(["provider", "auth", "icon"]);
   for (const v of variants) {
@@ -340,19 +356,14 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!v.source || !v.entry) issues.push(`harness.variants[${v.name}]: source + entry 필수`);
     else mustExist(path.join(v.source, v.entry), `harness.variants[${v.name}].entry`);
     if (v.icon) mustExist(v.icon, `harness.variants[${v.name}].icon`);
-    if (v.binary) {
-      for (const k of Object.keys(v.binary)) {
-        if (!BINARY_KEYS.has(k)) issues.push(`미지 harness.variants[${v.name}].binary 키: ${k}`);
+    if (v.binary != null) {
+      // 참조는 requires.binaries 로 해석돼야 한다 — 대상 없는 참조는 "기판이 대준다" 는
+      // 약속이 빈 약속이 되는 자리다(dockerfile 실사고와 같은 부류).
+      if (typeof v.binary !== "string") {
+        issues.push(`harness.variants[${v.name}].binary 는 requires.binaries[].name 참조 문자열입니다 — 레시피(manager·package)는 requires.binaries 에 선언하세요`);
+      } else if (!(m.requires?.binaries ?? []).some((b) => b.name === v.binary)) {
+        issues.push(`harness.variants[${v.name}].binary 참조 미해석: "${v.binary}" — requires.binaries 에 같은 name 이 없습니다`);
       }
-      if (!v.binary.name || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v.binary.name)) {
-        issues.push(`harness.variants[${v.name}].binary.name 형식 위반: ${v.binary.name}`);
-      }
-      if (!MANAGERS.has(v.binary.manager)) {
-        issues.push(`harness.variants[${v.name}].binary.manager 미지: ${v.binary.manager} (npm | uv)`);
-      }
-      if (!v.binary.package) issues.push(`harness.variants[${v.name}].binary.package 필수`);
-      // 버전 미고정은 거부하지 않는다 — 도구 어휘는 열린 집합이고 고정을 강제하면 신모델
-      // CLI 를 못 쓴다. 다만 재현성을 포기하는 선언이라는 사실은 문서가 말한다.
     }
     if (v.llm) {
       if (!SLUG.test(v.llm.provider ?? "")) issues.push(`harness.variants[${v.name}].llm.provider 형식 위반: ${v.llm.provider}`);

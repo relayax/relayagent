@@ -98,6 +98,35 @@ env 자격(`ANTHROPIC_API_KEY` 등)이 있을 때만 격리를 켜고, 없으면
 **네이티브 표면은 감싸지 마라.** TTY 분기는 `exec` 로 도구를 그대로 띄운다.
 슬래시 커맨드, 압축, 모델 변경, 권한 모드는 도구 것이고 재구현 대상이 아니다.
 
+## 도구는 requires 에 선언하라 — setup 안내는 폴백이다
+
+어댑터는 도구를 번역할 뿐 동봉하지 않는다. 그 도구가 어디서 오는지는 **매니페스트 소관**이다:
+
+```yaml
+requires:
+  binaries:
+    - name: codex            # 이 실행 파일이 있어야 한다 (requires 는 AND)
+      manager: npm           # 없으면 기판이 이 레시피로 직접 깐다
+      package: "@openai/codex"
+
+harness:
+  variants:
+    - name: codex
+      source: harness/codex
+      entry: run
+      binary: codex          # requires.binaries[].name 참조
+```
+
+- 레시피(manager+package)가 있으면 호스트에 없어도 설치가 막히지 않는다 — 기판이
+  `~/.relay/bin/<패키지>/` 에 깔아 이 패키지의 스폰에 PATH 앞으로 준다.
+- `binary:` 참조가 걸린 변형은 **setup 실패 시 기판이 그 레시피로 사본을 깔고 재시도**한다.
+  껍데기만 남은 호스트 설치(존재하지만 실행 불능)의 회복 경로가 이것뿐이다 — 참조를 빼먹으면
+  그 부류에서 기판이 해줄 수 있는 것이 없다.
+- `version` 을 고정하면 호스트를 보지 않고 기판 사본이 정본이 된다(재현성 요구).
+- 기판이 깔아줄 수 없는 것(git 류)은 `install` 안내만 싣는다 — 종전 동작 그대로.
+- setup 의 exit 3("도구 없음 + 설치 안내")은 여전히 필수다. 레시피가 없는 저작물,
+  매니저 자체가 없는 환경에서 그 안내가 사용자의 마지막 단서다.
+
 ## 입출력
 
 ```

@@ -9,7 +9,7 @@ import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, type BuildResult } from "./build.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "./entry.ts";
-import { ensureBinary, binaryEnv, binaryReady, removeBinaries } from "./binaries.ts";
+import { ensureBinary, binaryEnv, provisionForVariant, removeBinaries } from "./binaries.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { sha256File, unpackArtifact } from "./pack.ts";
 import { parse as parseYaml } from "yaml";
@@ -46,16 +46,19 @@ export interface InstallResult {
 }
 
 /** requires 실체 판정. 기판은 안내(install)만 전하고 대신 설치하지 않는다 */
-export function judgeRequires(m: Manifest): void {
+export function judgeRequires(m: Manifest, pkgName: string): void {
   const r = m.requires;
   if (!r) return;
   const issues: string[] = [];
   if (r.os?.length && !(r.os as string[]).includes(process.platform)) {
     issues.push(`requires os: ${process.platform} 미지원 (요구: ${r.os.join(", ")})`);
   }
+  // requires 는 AND 다 — 설치가 끝나면 목록 전부가 실재한다. 레시피(manager+package) 있는
+  // 항목은 없을 때 기판이 채우고(ensureBinary ④), 레시피 없는 항목은 안내와 함께 거부한다.
+  // 채우다 실패한 것도 거부다: "기판이 대준다" 는 선언이 조용히 빈 약속이 되면 안 된다.
   for (const b of r.binaries ?? []) {
-    const probe = spawnSync(process.platform === "win32" ? "where" : "which", [b.name], { encoding: "utf8" });
-    if (probe.status !== 0) issues.push(`requires binary 없음: ${b.name}${b.install ? ` (설치: ${b.install})` : ""}`);
+    const t = ensureBinary(pkgName, b);
+    if (!t.ok) issues.push(t.out);
   }
   const appRoots = ["/Applications", path.join(os.homedir(), "Applications"), "/System/Applications"];
   for (const a of r.apps ?? []) {
@@ -86,37 +89,23 @@ function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: 
   for (const v of variants) {
     // Windows 에서는 엔트리 확장자 해석이 필요하다 — 이 레포의 어댑터 실행 규약(spawnEntrySync)을 따른다
     const entry = path.join(pkgPath, v.source, v.entry);
-    const setup = (env: NodeJS.ProcessEnv) => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env });
-    // 선출된 뒤로는 남은 후보의 도구를 내려받지 않는다. 안 그러면 설치 한 번이 CLI 를 전부
-    // 받는다(실측: 네 변형 921MB). 나머지는 전환 시점에 setHarness 가 댄다.
-    if (picked) {
-      reports.push(`${v.name}: 미검사 — 선출됨(${picked}) 뒤라 도구를 받지 않았습니다. 전환하면 기판이 설치합니다`);
-      continue;
-    }
+    const setup = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(pkgName) });
+    // 실행 파일 실재는 judgeRequires 가 이미 보장했다(AND — 레시피 항목은 기판이 채운다).
+    // 여기 남은 판정은 준비 상태(자격·로그인)와, 존재 검사가 못 거르는 껍데기 설치뿐이다.
+    let r = setup();
     let note = "";
-    let r: ReturnType<typeof setup>;
-    if (v.binary?.version) {
-      // 버전을 고정한 선언 = 재현성을 요구한 것이다. 호스트에 무엇이 있든 기판 사본이 정본
-      const t = ensureBinary(pkgName, v);
-      if (!t.ok) {
-        reports.push(`${v.name}: 불가 — ${t.out}`);
-        continue;
-      }
-      note = t.cached ? "" : ` · ${t.out}`;
-      r = setup(binaryEnv(pkgName, v));
-    } else {
-      // 호스트 먼저 — 이미 되는 도구를 두고 수백 MB 를 다시 받지 않는다.
-      // 안 되면(미설치·깨진 설치) 그때 기판이 대신 깔고 다시 묻는다. 그게 이 축의 존재 이유다.
-      r = setup(binaryEnv(pkgName, v));
-      if (r.status !== 0 && v.binary) {
-        const t = ensureBinary(pkgName, v);
+    if (r.status !== 0) {
+      // setup 실패 + 변형이 requires 를 참조 — "있는데 안 도는" 부류(네이티브 바이너리 빠진
+      // npm 래퍼 실사고)일 수 있다. 참조된 레시피를 기판 사본으로 강제 승격하고 한 번 재시도.
+      const t = provisionForVariant(pkgName, m, v.binary);
+      if (t) {
         note = ` · ${t.out}`;
-        if (t.ok) r = setup(binaryEnv(pkgName, v));
+        if (t.ok) r = setup();
       }
     }
     const out = ((r.stdout ?? "") + (r.stderr ?? "")).trim();
     reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}${note}`);
-    if (r.status === 0) picked = v.name;
+    if (r.status === 0 && !picked) picked = v.name;
   }
   return { picked, out: reports.join("\n") };
 }
@@ -124,7 +113,8 @@ function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: 
 export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}): InstallResult {
   const abs = path.resolve(dir);
   const m = loadManifest(abs);
-  judgeRequires(m); // 장부에 기록되기 전에 fail-loud
+  const name = opts.name ?? path.basename(abs);
+  judgeRequires(m, name); // 장부에 기록되기 전에 fail-loud — 레시피 항목은 여기서 기판이 채운다
 
   // 계약 적합성은 설치 게이트다. 도구 미설치(환경 미비)와 계약 위반(어댑터 결함)은 다른 축이라
   // conform 은 setup 실패를 위반으로 세지 않는다 — 여기서 막히는 것은 잘못 만든 어댑터뿐이다.
@@ -133,7 +123,6 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   // components edge 는 빌드 의존 — 미해결(미설치 provider·제공 선언 없음·범위 밖)이면
   // 장부 기록 전에 fail-loud (judgeRequires 와 같은 자리)
   const components = resolveComponentEdges(ledger, m);
-  const name = opts.name ?? path.basename(abs);
 
   // 재설치는 결재·설정(ring, workspace, model, effort, harness, dirBindings)을 보존한다.
   // 레코드를 통째로 갈면 ring-0 이 조용히 증발한다 — draft.ts 의 publishDraft 와 같은 계약
@@ -284,8 +273,8 @@ export function prepareArtifact(
   try {
     unpackArtifact(abs, staging);
     const m = loadManifest(staging); // 판정 실패는 여기서 fail-loud
-    judgeRequires(m);
     const { name, fresh } = resolveInstallName(ledger, m.name, opts.name);
+    judgeRequires(m, name);
     const dest = path.join(RELAY_HOME, "releases", name, m.version);
     const digestFile = path.join(dest, ".relay-digest");
     if (fs.existsSync(dest)) {
@@ -397,7 +386,7 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
 // setup 이 "연결 후에도 미준비" 로 거짓말하지 않는다
 function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
   // 기판이 대는 도구가 있으면 그것이 먼저다 — 호스트의 같은 이름 전역 설치보다 앞
-  const env: NodeJS.ProcessEnv = pkg ? { ...binaryEnv(pkg, v) } : { ...process.env };
+  const env: NodeJS.ProcessEnv = pkg ? { ...binaryEnv(pkg) } : { ...process.env };
   if (v.llm?.auth?.kind === "token" && v.llm.auth.env) {
     // §8-2 잔여: llmEnv 는 동기 하네스 동사 체인(harnessVerb·probeHarness·electHarness) 깊숙이
     // 있어 비동기 authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
@@ -494,7 +483,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name, v) });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -502,7 +491,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   if (!verbs.includes("login")) {
     throw new Error(`이 하네스(${v.name})는 login 동사를 제공하지 않습니다 — 자격 연결은 relay connect llm ${v.llm?.provider ?? "<provider>"} 로 하세요`);
   }
-  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit", env: binaryEnv(name, v) });
+  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit", env: binaryEnv(name) });
   return r.status ?? 1;
 }
 
@@ -518,7 +507,7 @@ export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name, v) });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -552,11 +541,20 @@ export function setHarness(ledger: Ledger, name: string, variant: string): { act
   // 모델 어휘는 하네스 소속이다. 이전 하네스의 모델명이 새 어댑터로 넘어가면 무의미한 --model 이 된다
   delete rec.model;
   saveLedger(ledger);
-  // 전환도 설치와 같은 계약이다 — 기판이 대기로 선언한 도구를 여기서 앉힌다(멱등).
-  const t = ensureBinary(name, v);
-  if (!t.ok) return { active: variant, setup: { ok: false, out: t.out } };
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8", env: binaryEnv(name, v) });
-  return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() } };
+  // 전환도 선출과 같은 계약이다 — setup 실패가 "있는데 안 도는" 부류면 참조된 requires
+  // 레시피를 기판 사본으로 승격하고 한 번 재시도한다(껍데기 npm 래퍼 실사고의 회복 경로).
+  const entry = path.join(rec.path, v.source, v.entry);
+  const run = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(name) });
+  let r = run();
+  let note = "";
+  if (r.status !== 0) {
+    const t = provisionForVariant(name, m, v.binary);
+    if (t) {
+      note = t.ok ? "" : `\n${t.out}`;
+      if (t.ok) r = run();
+    }
+  }
+  return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() + note } };
 }
 
 export function removePkg(ledger: Ledger, name: string): void {

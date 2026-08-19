@@ -379,7 +379,7 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
   const v = validateDir(droot);
   if (!v.ok) throw new ManifestError(v.issues);
   const m = loadManifest(droot);
-  judgeRequires(m);
+  judgeRequires(m, name);
   const broken = (m.harness?.variants ?? [])
     .map((hv) => conformHarness(droot, hv))
     .filter((r) => !r.ok)
