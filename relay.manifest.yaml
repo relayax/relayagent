@@ -12,7 +12,7 @@ description: |
     surfaces/view/                   surfaces.view.source (+ out 선언 시 발행이 빌드해 <source>/<out> 서빙)
     surfaces/components/             surfaces.components.source — 다른 패키지 view 가 소비하는 npm 패키지(package.json + 소스)
     channels/<name>/                 channels[].source + entry
-    harness/<name>/                  harness.source + entry + dockerfile(선택)
+    harness/<name>/                  harness.variants[].source + entry
     services/<name>/                 services[].source + dockerfile(컨테이너 형) 또는 entry(프로세스 형)
 type: object
 additionalProperties: false
@@ -378,9 +378,6 @@ properties:
                 한다. ③ 자격 보존 — 도구 자신의 자격 경로(Keychain 등)를 끊지 않는다. 설정 디렉토리
                 격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
                 규칙 + 훅 가드로 이중 번역한다 (가드레일이지 샌드박스가 아니다)
-              $ref: '#/$defs/relpath'
-            dockerfile:
-              description: 컨테이너 격리 백엔드용 (선택)
               $ref: '#/$defs/relpath'
             icon:
               description: 어댑터 도구 아이콘 (패키지 상대경로 이미지) — 카드 하네스 필과 설정 목록에 뜬다

@@ -29,7 +29,6 @@ harness:
     - name: claude-code
       source: harness/claude-code
       entry: run
-      dockerfile: Dockerfile
       llm:
         provider: anthropic
         auth: { kind: oauth }

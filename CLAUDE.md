@@ -117,6 +117,38 @@ fresh clones don't build views, and absence is not staleness.
 
 There is no release pipeline in this repo yet, so both steps are manual.
 
+## Where the harness comes from
+
+An agent package ships harness **adapters**, not the tools they drive. The adapter is a thin
+translator; the CLI it drives (`claude`, `codex`, …) lives on the host. That is deliberate, and it
+is the line between this substrate and the org one:
+
+- **Here (single user):** install *elects* a harness — `electHarness` runs every declared variant's
+  `setup` and takes the first that passes. A package works as long as **one** declared variant is
+  ready on this machine. `requires.binaries` cannot express this: it demands all, and demanding
+  `codex` would block a claude-only user's install.
+- **Org substrate (relayos):** the harness comes from the **image** — the session pod is the
+  harness, so the host is irrelevant. That is a property you buy, not one this repo reproduces.
+
+`harness.variants[].dockerfile` was retired (2026-08-19). It had a schema entry, a TypeScript
+field, and a line in the worked example — and no judgment, no consumer, and no place in the packed
+artifact. Running the harness in a container is not a missing feature here; it is the wrong shape
+for this substrate:
+
+- **It turns the workspace from a folder into a resource.** Rule 6 says a session stands on one
+  granted workspace folder, and the console's "데이터 폴더 열기" button exists to prove in one click
+  that data lives in a folder you can open. Containerizing means bind mounts, uid mismatches, path
+  translation (the agent sees `/workspace`, you see `~/Relay/<pkg>`), a mount per `dir` service, and
+  `~/.relay` still denied. relayos already paid this: its workspace became a subPath inside a shared
+  PVC with its own control-plane domain, junction records per (member × instance), and REST file
+  access — after one architecture revision.
+- **It would make Docker effectively mandatory.** Today Docker is optional and per-package: only
+  `services[].dockerfile` needs it (`run.ts` skips container services when it is absent), and
+  `packages/system` ships none. Every agent package must ship a harness — so a container harness
+  would move Docker from optional to required for the whole product.
+
+If a package declares `dockerfile` under a harness variant, validation now fails and says so.
+
 ## Language
 
 Code comments and manifest commentary in this repo are written in Korean; public-facing docs

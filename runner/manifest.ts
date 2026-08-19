@@ -65,7 +65,6 @@ export interface HarnessVariant {
   name: string;
   source: string;
   entry: string;
-  dockerfile?: string;
   /** 어댑터 도구 아이콘 (패키지 상대경로 이미지) */
   icon?: string;
   llm?: { provider: string; auth?: AuthDecl; /** provider(모델) 아이콘 */ icon?: string };
@@ -299,7 +298,24 @@ export function judge(m: Manifest, pkgPath?: string): void {
   const h = m.harness;
   const variants = h?.variants ?? [];
   const vNames = new Set<string>();
+  // 미지 키는 거부한다 — 최상위·surfaces·storage 와 같은 규율(194·205·465행). 조용히 받으면
+  // 은퇴한 어휘가 계속 저작되고 "판정 통과" 가 그것을 승인해 준다. 실사고: dockerfile 은
+  // 스키마에만 있고 판정·소비·봉투가 전부 없었는데, 워크드 예제가 그걸 가르치고 있었다.
+  const VARIANT_KEYS = new Set(["name", "source", "entry", "icon", "llm"]);
+  const LLM_KEYS = new Set(["provider", "auth", "icon"]);
   for (const v of variants) {
+    for (const k of Object.keys(v ?? {})) {
+      if (!VARIANT_KEYS.has(k)) {
+        issues.push(
+          k === "dockerfile"
+            ? `harness.variants[${v.name}].dockerfile 는 은퇴했습니다 — 이 기판은 하네스를 컨테이너로 돌리지 않습니다(세션은 결재된 workspace 폴더 위에 선다, 규칙 6). 호스트 도구는 설치가 setup 으로 선출합니다`
+            : `미지 harness.variants 키: ${k}`,
+        );
+      }
+    }
+    for (const k of Object.keys(v?.llm ?? {})) {
+      if (!LLM_KEYS.has(k)) issues.push(`미지 harness.variants[${v.name}].llm 키: ${k}`);
+    }
     if (!SLUG.test(v.name ?? "")) issues.push(`harness.variants 이름 형식 위반: ${v.name}`);
     if (vNames.has(v.name)) issues.push(`harness.variants 이름 중복: ${v.name}`);
     vNames.add(v.name);
