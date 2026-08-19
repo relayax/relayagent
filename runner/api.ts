@@ -62,6 +62,14 @@ const PREPARE_TTL = 10 * 60_000;
 /** 손으로 가져오는 봉투의 상한 — 원격 다운로드와 같은 선 */
 const MAX_IMPORT = 200 * 1024 * 1024;
 
+/** 데몬 자신의 오리진 — 상태를 바꾸는 요청의 Origin 화이트리스트(CSRF 판정). 데몬이 굽는
+ *  화면(설치 동의·패키지 view·직결 채팅)은 전부 여기서 서빙되므로 이 집합이 곧 전부다 */
+const SELF_ORIGINS = new Set([
+  `http://127.0.0.1:${API_PORT}`,
+  `http://localhost:${API_PORT}`,
+  `http://[::1]:${API_PORT}`,
+]);
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -513,6 +521,17 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const hostHdr = String(req.headers.host ?? "");
       if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(hostHdr)) {
         return void json(res, 403, { error: `허용되지 않은 Host: ${hostHdr}` });
+      }
+      // CSRF 방어: Host 검사는 DNS rebinding 만 막는다. 아무 웹페이지나 이 데몬으로 상태를
+      // 바꾸는 요청을 보낼 수 있고(응답은 못 읽어도 부수효과는 난다 — 턴 개설은 곧 호스트
+      // 권한 에이전트에 임의 프롬프트를 넣는 축이다), 문에는 인증이 없다. 브라우저는 비
+      // GET/HEAD 요청에 Origin 을 반드시 싣는다는 성질이 유일한 판별점이다: 실려 있으면
+      // 데몬 자신의 오리진이어야 하고, 없으면 브라우저 밖(어댑터·CLI·컨테이너)이라 통과다
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const reqOrigin = String(req.headers.origin ?? "");
+        if (reqOrigin && !SELF_ORIGINS.has(reqOrigin.toLowerCase())) {
+          return void json(res, 403, { error: `허용되지 않은 Origin: ${reqOrigin}` });
+        }
       }
       if (p === "/" || p === "") {
         res.writeHead(302, { location: "/pkg/system/view/" });

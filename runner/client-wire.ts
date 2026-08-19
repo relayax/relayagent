@@ -78,6 +78,13 @@ class WireError extends Error {
 
 // 신 wire 의 본문은 JSON 단일이다(§5.0-11) — 구 wire 와 달리 form-urlencoded 분기가 없다
 async function readBody(req: http.IncomingMessage): Promise<any> {
+  // 형식 판정은 api.ts 의 Origin 검사와 짝이다: content-type 을 안 보고 파싱하면 브라우저가
+  // 프리플라이트 없이 보낼 수 있는 simple request(text/plain·form)가 상태 변경 문에 그대로
+  // 닿는다. 미선언은 통과 — 브라우저가 아닌 소비자(어댑터·CLI)는 헤더를 안 붙이기도 한다
+  const ctype = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+  if (ctype && ctype !== "application/json") {
+    throw new WireError(415, "E_BAD_CONTENT_TYPE", `본문은 application/json 이어야 합니다: ${ctype}`);
+  }
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -239,6 +246,9 @@ function settleTurn(t: TurnRecord, ok: boolean): void {
   // settled 후 서버가 스트림을 닫는다(§5.2-20)
   for (const s of [...t.sinks]) s.end();
   t.sinks.clear();
+  // 종결한 턴은 메모리에서 내려간다 — 재생의 원천은 디스크 장부(findTurnFile)라 stream 은
+  // 그대로 성립한다. 이 삭제가 없으면 데몬 수명 동안 턴 레코드가 무한 누적된다
+  turns.delete(t.id);
 }
 
 async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<void> {
@@ -608,8 +618,12 @@ export const WIRE_ROUTES: WireRoute[] = [
     handler: ({ deps, res, pkg, m }) => {
       requirePkg(deps, pkg);
       const t = turns.get(m[1]);
-      if (!t || t.pkg !== pkg) throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
-      if (t.status === "settled") return void json(res, 200, { ok: false });
+      // 종결과 함께 메모리에서 내려간 턴 — 장부가 남아 있으면 "있었지만 끝난 턴"이라
+      // ok:false 로 답한다(애초에 없는 턴의 404 와 구별한다)
+      if (!t || t.pkg !== pkg) {
+        if (findTurnFile(pkg, m[1])) return void json(res, 200, { ok: false });
+        throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
+      }
       if (t.status === "queued") {
         // 시작 전 턴 — 봉투 제어가 닿을 프로세스가 없으므로 여기서 종결한다
         appendTurnEvent(t, { event: "error", message: "시작 전에 중단되었습니다" });
@@ -627,7 +641,11 @@ export const WIRE_ROUTES: WireRoute[] = [
     handler: async ({ deps, req, res, pkg, m }) => {
       requirePkg(deps, pkg);
       const t = turns.get(m[1]);
-      if (!t || t.pkg !== pkg) throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
+      // 종결한 턴에는 회송할 ask 가 없다 — interrupt 와 같은 판정(장부 있음 = ok:false)
+      if (!t || t.pkg !== pkg) {
+        if (findTurnFile(pkg, m[1])) return void json(res, 200, { ok: false });
+        throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
+      }
       const b = await readBody(req);
       // 봉투 ask 회송(§5.1-16) — 빈 answers = 사용자 취소
       json(res, 200, { ok: deliverAnswer(pkg, t.session, String(b.ask ?? ""), Array.isArray(b.answers) ? b.answers : []) });
