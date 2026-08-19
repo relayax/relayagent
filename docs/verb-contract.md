@@ -115,9 +115,11 @@ Rules:
   one substrate's dialect becomes everyone's grammar.
 - **Schemas are advertised, never validated.** A validator is a dependency, and the zero-dependency
   rule outranks type advertisement. Judging the input stays the verb body's job.
-- **Listing never runs a verb.** `tools/list` imports the module to read `meta` and never calls the
+- **Listing never calls a verb.** `tools/list` imports the module to read `meta` and never calls the
   default export. A module that fails to import is still listed by name; its condition is judged
-  when it is called.
+  when it is called. Importing is not free of consequence, though: module top-level runs on every
+  listing. Keep side effects inside the default export — a verb that opens a connection or writes
+  a file at top level does it once per `tools/list`, not once per call.
 
 ## Reference
 

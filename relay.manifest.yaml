@@ -183,38 +183,47 @@ properties:
                           멘션·스레드 참여 같은 플랫폼 관례로 응답 범위를 더 좁힌다(어댑터 소유).
                   봉투    착신 message 는 <channel source="<채널이름>" ...>원문</channel>
                           태그로 감싼다. 발화자 닉네임·대화 키·시각 등 라우팅 맥락은 속성으로
-                          싣는다 — 그룹 대화는 한 slot 에 발화자가 여럿이라 닉네임은 매 착신마다
+                          싣는다 — 그룹 대화는 한 session 에 발화자가 여럿이라 닉네임은 매 착신마다
                           실어야 세션이 회신 상대를 오인하지 않는다. user 속성(플랫폼의 발화자
                           안정 식별자)은 필수다 — 개인 기판은 게이트에만 쓰지만, org 기판은
                           이 값으로 발신자를 principal 에 결부한다(결부는 권위 소관).
-                  착신    POST {RELAY_API}/pkg/{RELAY_NAME}/chat · Authorization: Bearer
-                          {RELAY_TOKEN} · body {message, slot, attachments?}. 동기 호출 —
-                          턴이 종결되면 {reply, model, usage, files} 가 온다.
-                  slot    대화 연속성의 축. <채널이름>-<대화키> 를 [a-zA-Z0-9._-]{1,64} 로
-                          정규화한다. 같은 외부 대화 = 같은 slot = 이어지는 세션. 사람이
-                          읽을 이름은 POST …/session/<slot>/label 로 앉힌다 — slot 원문은
-                          목록에서 정체를 숨긴다. slot(대화)은 영속, 하네스 맥락은 회전
-                          가능: 새 대화 시작은 POST …/session/reset — 이력은 남고 네이티브
-                          세션만 새로 시작한다. /reset 류 플랫폼 명령으로의 번역은 어댑터 소유다.
-                  직렬화  **한 slot 에 동시 착신 금지.** 착신 순서는 외부 발화 순서를
-                          보존한다. 턴 진행 중 새 발화가 오면 갈래는 둘이다: 큐잉(기본) =
-                          종결을 기다려 다음을 착신한다, 쌓인 발화는 하나로 합쳐도 된다.
-                          끼어들기 = POST …/session/<slot>/cancel 로 진행 턴을 끊고 새
-                          발화를 착신한다 — 취소로 끝난 호출의 오류 응답을 외부에 답인 양
-                          내보내지 마라. 다른 slot 끼리는 병렬 자유. 최소 한 번(at-least-once)
-                          배달 플랫폼의 중복 이벤트 dedup 도 어댑터 소유다.
-                  진행    긴 턴의 생존 신호(타이핑 표시·진행 편집)는 GET …/session/<slot>/events
-                          를 폴링해 delta·tool 이벤트로 그린다. 글자 수 제한, 마크다운 방언,
+                  착신    왕복의 정본은 클라이언트 전송 계약 v1(docs/client-protocol.md)이고,
+                          개설과 관찰이 갈린 두 동사다 — 구 블로킹 POST …/chat 은 은퇴했다.
+                          ① 개설  POST {RELAY_API}/pkg/{RELAY_NAME}/turns · Authorization:
+                                  Bearer {RELAY_TOKEN} · body {message, session, attachments?}
+                                  → 202 {turn, session}. 개설은 턴 종결을 붙들지 않는다.
+                          ② 관찰  GET …/turns/<turn>/stream (SSE). data: 한 줄 = 봉투 이벤트
+                                  JSON 하나이고 어휘는 하네스 봉투 그대로다(delta·tool·usage·
+                                  task·ask·file·reply·error). 스트림의 끝은 수명주기
+                                  {event:"turn",status:"settled",ok} 다 — settled 없이 끊긴
+                                  스트림은 종결이 아니라 절단이므로 빈 답으로 위장하지 마라.
+                                  다시 붙는 문은 GET …/turns/attach?session=<session> 이다.
+                  session 대화 연속성의 축. <채널이름>-<대화키> 를 [a-zA-Z0-9._-]{1,64} 로
+                          정규화한다. 같은 외부 대화 = 같은 session = 이어지는 세션. 사람이
+                          읽을 이름은 POST …/sessions/<session>/rename body {label} 로 앉힌다 —
+                          원문 id 는 목록에서 정체를 숨긴다. session(대화)은 영속, 하네스 맥락은
+                          회전 가능: 새 대화 시작은 POST …/sessions/<session>/reset — 이력은
+                          남고 네이티브 세션만 새로 시작한다. /reset 류 플랫폼 명령으로의
+                          번역은 어댑터 소유다.
+                  직렬화  **기판이 세션의 유일한 직렬화 지점이다**(§5.1-12) — 같은 session 의
+                          턴은 도착순으로 줄 선다. 어댑터 큐는 계약이 아니라 발신 순서를
+                          지키기 위한 자기 몫이고, 쌓인 발화를 하나로 합쳐도 된다. 끼어들기는
+                          POST …/turns/<turn>/interrupt 로 진행 턴을 끊는다 — 취소로 끝난 턴의
+                          오류 이벤트를 외부에 답인 양 내보내지 마라. 다른 session 끼리는 병렬
+                          자유. 최소 한 번(at-least-once) 배달 플랫폼의 중복 이벤트 dedup 도
+                          어댑터 소유다.
+                  진행    긴 턴의 생존 신호(타이핑 표시·진행 편집)는 관찰 스트림의 delta·tool
+                          이벤트로 그린다 — 폴링 축은 은퇴했다. 글자 수 제한, 마크다운 방언,
                           메시지 분할, 레이트리밋 등 외부 표면 형편으로의 번역은 전부
                           어댑터 소유다.
-                  파일    회신 files 는 stage 상대경로 — GET …/file/<경로> 로 받아 네이티브
-                          첨부로 내보낸다. 인바운드 첨부는 POST …/upload 로 stage 에 앉힌
-                          뒤 그 참조를 attachments 로 넘긴다.
+                  파일    회신 파일은 관찰 스트림의 file 이벤트로 온다(path = stage 상대경로) —
+                          GET …/file/<경로> 로 받아 네이티브 첨부로 내보낸다. 인바운드 첨부는
+                          POST …/upload 로 stage 에 앉힌 뒤 그 참조를 attachments 로 넘긴다.
                   발신    stdin 은 기판의 발신 제어 채널이다. 줄 단위 JSON
                           {"type":"post","conversation":"<대화키>","text":"…","files":["<stage 경로>"]?}
                           를 받으면 그 대화에 게시한다 — 트리거 선톡(then.delivery)이 이
-                          길로 온다. 선톡이 대화가 되려면 그 턴은 해당 대화의 slot 에서
-                          돈다(기판 소관) — 사용자의 후속 발화가 같은 slot 에 착신되어
+                          길로 온다. 선톡이 대화가 되려면 그 턴은 해당 대화의 session 에서
+                          돈다(기판 소관) — 사용자의 후속 발화가 같은 session 에 착신되어
                           맥락을 잇는다.
                   실패    비 200 을 침묵으로 뭉개지 마라 — 외부에도 실패로 알린다. 단 내부
                           사정(토큰·경로·스택)은 싣지 않는다. RELAY_TOKEN 과 자격은 외부
