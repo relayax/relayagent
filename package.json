@@ -33,7 +33,8 @@
     "relay": "node --experimental-strip-types runner/relay.ts",
     "typecheck": "tsc --noEmit",
     "validate": "node --experimental-strip-types runner/validate-all.ts",
-    "build:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run build:chat"
+    "build:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run build:chat",
+    "typecheck:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run typecheck"
   },
   "dependencies": {
     "yaml": "^2.5.0"

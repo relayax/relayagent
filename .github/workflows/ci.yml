@@ -31,6 +31,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 위젯 소스(lib/relayjs)는 루트 tsconfig 의 include 밖이다 — 자기 tsconfig 와 자기
+      # devDeps(react·assistant-ui 타입)를 쓰기 때문이다. 별도 단계로 세우지 않으면 데몬이
+      # 서빙하는 번들이 **한 번도 타입 검사되지 않는다**: 실사고로 컴포넌트를 가로지르는
+      # ReferenceError 가 그대로 나갔다(선언은 A 컴포넌트, 참조는 B).
+      - name: Typecheck the chat widget
+        run: npm run typecheck:widget
+
       - name: Validate every package manifest
         run: npm run validate
 

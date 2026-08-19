@@ -763,8 +763,7 @@ export async function loadModel(ctx: RelayCtx): Promise<ModelInfo> {
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {
   const r = await wireOf(ctx).harness.set({ model: model || "" });
   if (isError(r)) return { ok: false, known: null };
-  const known = (r.value as { known?: boolean | null } | undefined)?.known;
-  return { ok: true, known: known === undefined ? null : known };
+  return { ok: true, known: r.known ?? null };
 }
 
 // ---------------- attachments (file picker / drag-drop / clipboard paste) ----------------
@@ -1257,7 +1256,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         if (isCompactPrompt(prompt) && cutClass) {
           meta.custom.ended = "ok";
           if (parts.length === 0) parts.push({ type: "text", text: "🗜️ 컨텍스트를 압축했어요 — 이어서 대화하세요." });
-          yield { content: parts, status: { type: "complete" }, metadata: meta };
+          yield { content: parts, status: { type: "complete", reason: "stop" }, metadata: meta };
           return;
         }
         meta.custom.ended = cutClass ? "cut" : "error";
@@ -1295,7 +1294,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         return;
       }
       if (!meta.custom.ended) meta.custom.ended = "ok";
-      yield { content: parts, status: { type: "complete" }, metadata: meta };
+      yield { content: parts, status: { type: "complete", reason: "stop" }, metadata: meta };
     },
   };
 }
