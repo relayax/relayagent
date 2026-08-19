@@ -6,6 +6,7 @@ import readline from "node:readline";
 import { API_URL, RELAY_HOME, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
 import { spawnEntry, spawnEntrySync } from "./entry.ts";
+import { toolEnv } from "./toolchain.ts";
 import { localAuthority } from "./authority.ts";
 import type { Authority } from "./authority-contract.ts";
 import { UPLOADS_DIR } from "./protocol.ts";
@@ -172,7 +173,7 @@ const STALL_MS = (() => {
 
 // serve 선언 조회 — info 는 어댑터 프로세스 1회 비용이라 mtime 캐시로 어댑터당 한 번만 돈다
 const serveCache = new Map<string, { mtime: number; serves: boolean }>();
-function harnessServes(entry: string): boolean {
+function harnessServes(entry: string, envForInfo: NodeJS.ProcessEnv): boolean {
   let mtime: number;
   try {
     mtime = fs.statSync(entry).mtimeMs;
@@ -183,7 +184,7 @@ function harnessServes(entry: string): boolean {
   if (hit && hit.mtime === mtime) return hit.serves;
   let serves = false;
   try {
-    const r = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000 });
+    const r = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env: envForInfo });
     const j = JSON.parse(r.stdout || "{}");
     serves = Array.isArray(j.verbs) && j.verbs.includes("serve");
   } catch { /* info 불달 — 상주 없이 턴마다 프로세스로 */ }
@@ -467,6 +468,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     RELAY_SESSION: slot,
     RELAY_BUNDLE: bundle,
   };
+  // 기판이 대는 도구가 있으면 PATH 앞에 — 호스트의 깨진 전역 설치보다 먼저 걸려야 한다
+  Object.assign(env, toolEnv(input.pkg, variant, env));
   if (variant?.llm?.auth?.kind === "token" && variant.llm.auth.env) {
     // LLM 토큰 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다
     const cred = await authority.credential(`llm/${variant.llm.provider}`);
@@ -481,7 +484,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const fp = crypto.createHash("sha256")
     .update([rec.path, agent, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
     .digest("hex").slice(0, 16);
-  const resident = !input.interactive && residentsEnabled && harnessServes(entry);
+  const resident = !input.interactive && residentsEnabled && harnessServes(entry, env);
 
   await authority.audit("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : resident ? "resident" : "auto" });
 

@@ -120,34 +120,48 @@ There is no release pipeline in this repo yet, so both steps are manual.
 ## Where the harness comes from
 
 An agent package ships harness **adapters**, not the tools they drive. The adapter is a thin
-translator; the CLI it drives (`claude`, `codex`, …) lives on the host. That is deliberate, and it
-is the line between this substrate and the org one:
+translator; the CLI it drives (`claude`, `codex`, `pi`, `kimi`) is a separate program. Two things
+answer "where does that program come from":
 
-- **Here (single user):** install *elects* a harness — `electHarness` runs every declared variant's
-  `setup` and takes the first that passes. A package works as long as **one** declared variant is
-  ready on this machine. `requires.binaries` cannot express this: it demands all, and demanding
-  `codex` would block a claude-only user's install.
-- **Org substrate (relayos):** the harness comes from the **image** — the session pod is the
-  harness, so the host is irrelevant. That is a property you buy, not one this repo reproduces.
+**1. The host, elected.** `electHarness` runs each declared variant's `setup` and takes the first
+that passes, so a package works as long as **one** variant is ready on this machine.
+`requires.binaries` cannot express this — it demands all, and demanding `codex` would block a
+claude-only user's install.
 
-`harness.variants[].dockerfile` was retired (2026-08-19). It had a schema entry, a TypeScript
-field, and a line in the worked example — and no judgment, no consumer, and no place in the packed
-artifact. Running the harness in a container is not a missing feature here; it is the wrong shape
-for this substrate:
+**2. The substrate, provisioned.** A variant may declare `tool: {bin, manager, package, version?}`.
+Then the substrate installs that CLI under `~/.relay/harness/<pkg>/<variant>/` and puts it **first
+on PATH** for that harness's spawns. This exists because the host copy is not the package's to fix:
+a global `@openai/codex` whose native binary was missing bricked every turn, and all the substrate
+could say was "reinstall it".
 
-- **It turns the workspace from a folder into a resource.** Rule 6 says a session stands on one
-  granted workspace folder, and the console's "데이터 폴더 열기" button exists to prove in one click
-  that data lives in a folder you can open. Containerizing means bind mounts, uid mismatches, path
-  translation (the agent sees `/workspace`, you see `~/Relay/<pkg>`), a mount per `dir` service, and
-  `~/.relay` still denied. relayos already paid this: its workspace became a subPath inside a shared
-  PVC with its own control-plane domain, junction records per (member × instance), and REST file
-  access — after one architecture revision.
-- **It would make Docker effectively mandatory.** Today Docker is optional and per-package: only
-  `services[].dockerfile` needs it (`run.ts` skips container services when it is absent), and
-  `packages/system` ships none. Every agent package must ship a harness — so a container harness
-  would move Docker from optional to required for the whole product.
+When each applies:
 
-If a package declares `dockerfile` under a harness variant, validation now fails and says so.
+- **No `version`** — host first, provision on failure. A working host tool is not re-downloaded
+  (measured: eagerly provisioning all four variants cost 921 MB on one install); a missing or
+  broken one is replaced by the substrate's copy, and that is the whole point of the axis.
+- **Pinned `version`** — the substrate's copy is canonical, host ignored. Pinning is a request for
+  reproducibility; honoring the host would defeat it.
+- **Election stops provisioning once a variant is elected.** The rest report "not examined —
+  switching installs it", and `setHarness` provisions on switch. Opening a harness dialog
+  (`probeHarness`) never installs.
+- **Removing a package removes its tools.** `~/.relay` must not keep CLIs for packages that are gone.
+
+`manager` is a closed set (`npm`, `uv`) so a manifest cannot hand the substrate a shell string to
+run. If the manager itself is absent, `ensureTool` fails loud with a prescription and election skips
+**that variant only** — a package declaring both an npm variant and a uv variant still works with
+one of the two installed. npm is already a de-facto prerequisite here (view builds and component
+packing shell out to it); uv is not, which is why kimi degrades rather than blocking.
+
+Provisioning does not isolate — it owns and pins. That is deliberate: containerizing the harness
+would move the workspace behind a mount (rule 6 says a session stands on one granted folder, and the
+console's "데이터 폴더 열기" exists to prove that folder is real) and, more decisively, would cut the
+tool off from its own credentials — `claude-code` and `codex` declare `auth: {kind: oauth}` and the
+subscription lives in the host tool's Keychain, which the adapter deliberately does not borrow.
+relayos, which does run harnesses in pods, had to convert that axis to a substrate-held token
+(`RELAY_CLAUDE_TOKEN` → `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`). Provisioning keeps the
+folder, keeps the Keychain, and needs no VM. `harness.variants[].dockerfile` was retired on
+2026-08-19 — it had a schema entry and a TypeScript field and nothing else, and this axis replaces
+the need it was standing in for. Declaring it now fails validation with that explanation.
 
 ## Language
 

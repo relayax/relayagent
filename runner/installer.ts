@@ -9,6 +9,7 @@ import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, type BuildResult } from "./build.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "./entry.ts";
+import { ensureTool, toolEnv, toolReady, removeTools } from "./toolchain.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { sha256File, unpackArtifact } from "./pack.ts";
 import { parse as parseYaml } from "yaml";
@@ -77,17 +78,45 @@ function judgeConform(pkgPath: string, m: Manifest): void {
 }
 
 /** variant 전수 setup 을 돌려 쓸 수 있는 하네스를 선출한다 — installPkg 과 activatePrepared 공용 */
-function electHarness(pkgPath: string, m: Manifest): { picked: string | null; out: string } | null {
+function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: string | null; out: string } | null {
   const variants = m.harness?.variants ?? [];
   if (!variants.length) return null;
   const reports: string[] = [];
   let picked: string | null = null;
   for (const v of variants) {
     // Windows 에서는 엔트리 확장자 해석이 필요하다 — 이 레포의 어댑터 실행 규약(spawnEntrySync)을 따른다
-    const r = spawnEntrySync(path.join(pkgPath, v.source, v.entry), ["setup"], { encoding: "utf8" });
+    const entry = path.join(pkgPath, v.source, v.entry);
+    const setup = (env: NodeJS.ProcessEnv) => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env });
+    // 선출된 뒤로는 남은 후보의 도구를 내려받지 않는다. 안 그러면 설치 한 번이 CLI 를 전부
+    // 받는다(실측: 네 변형 921MB). 나머지는 전환 시점에 setHarness 가 댄다.
+    if (picked) {
+      reports.push(`${v.name}: 미검사 — 선출됨(${picked}) 뒤라 도구를 받지 않았습니다. 전환하면 기판이 설치합니다`);
+      continue;
+    }
+    let note = "";
+    let r: ReturnType<typeof setup>;
+    if (v.tool?.version) {
+      // 버전을 고정한 선언 = 재현성을 요구한 것이다. 호스트에 무엇이 있든 기판 사본이 정본
+      const t = ensureTool(pkgName, v);
+      if (!t.ok) {
+        reports.push(`${v.name}: 불가 — ${t.out}`);
+        continue;
+      }
+      note = t.cached ? "" : ` · ${t.out}`;
+      r = setup(toolEnv(pkgName, v));
+    } else {
+      // 호스트 먼저 — 이미 되는 도구를 두고 수백 MB 를 다시 받지 않는다.
+      // 안 되면(미설치·깨진 설치) 그때 기판이 대신 깔고 다시 묻는다. 그게 이 축의 존재 이유다.
+      r = setup(toolEnv(pkgName, v));
+      if (r.status !== 0 && v.tool) {
+        const t = ensureTool(pkgName, v);
+        note = ` · ${t.out}`;
+        if (t.ok) r = setup(toolEnv(pkgName, v));
+      }
+    }
     const out = ((r.stdout ?? "") + (r.stderr ?? "")).trim();
-    reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}`);
-    if (r.status === 0 && !picked) picked = v.name;
+    reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}${note}`);
+    if (r.status === 0) picked = v.name;
   }
   return { picked, out: reports.join("\n") };
 }
@@ -124,7 +153,7 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   const current = ledger.packages[name].harness;
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 선출한다
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(abs, m)!;
+    const elected = electHarness(name, abs, m)!;
     ledger.packages[name].harness = elected.picked ?? variants[0].name;
     saveLedger(ledger);
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[name].harness}\n` + elected.out };
@@ -344,7 +373,7 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
   const variants = m.harness?.variants ?? [];
   const current = ledger.packages[p.name].harness;
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(p.dir, m)!;
+    const elected = electHarness(p.name, p.dir, m)!;
     ledger.packages[p.name].harness = elected.picked ?? variants[0].name;
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[p.name].harness}\n` + elected.out };
   }
@@ -366,8 +395,9 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
 
 // token 자격형은 자격이 기판 손(vault)에 있다 — 동사 실행에도 세션과 같은 주입을 해줘야
 // setup 이 "연결 후에도 미준비" 로 거짓말하지 않는다
-function llmEnv(v: HarnessVariant): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
+  // 기판이 대는 도구가 있으면 그것이 먼저다 — 호스트의 같은 이름 전역 설치보다 앞
+  const env: NodeJS.ProcessEnv = pkg ? { ...toolEnv(pkg, v) } : { ...process.env };
   if (v.llm?.auth?.kind === "token" && v.llm.auth.env) {
     // §8-2 잔여: llmEnv 는 동기 하네스 동사 체인(harnessVerb·probeHarness·electHarness) 깊숙이
     // 있어 비동기 authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
@@ -383,7 +413,7 @@ export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info
   const m = loadManifest(rec.path);
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v) });
+  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v, name) });
   // models·info·commands 는 stdout 이 JSON 계약이다. stderr(강등 사유 등)를 섞으면
   // JSON 해석이 깨져 화면의 모델 목록이 통째로 사라진다 — 진단문은 setup 에만 합친다
   const jsonVerb = verb === "models" || verb === "info" || verb === "commands";
@@ -412,7 +442,9 @@ export function probeHarness(ledger: Ledger, name: string): VariantProbe[] {
   const m = loadManifest(rec.path);
   return (m.harness?.variants ?? []).map((v) => {
     const entry = path.join(rec.path, v.source, v.entry);
-    const env = llmEnv(v);
+    // 조회는 설치하지 않는다 — 다이얼로그를 여는 행위가 수백 MB 를 받아선 안 된다.
+    // 기판 사본이 있으면 PATH 앞이라 그것이 쓰이고, 없으면 호스트 도구로 판정된다.
+    const env = llmEnv(v, name);
     const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env });
     let j: { account?: unknown; protocol?: unknown; capabilities?: unknown; verbs?: unknown } = {};
     try {
@@ -462,7 +494,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: toolEnv(name, v) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -470,7 +502,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   if (!verbs.includes("login")) {
     throw new Error(`이 하네스(${v.name})는 login 동사를 제공하지 않습니다 — 자격 연결은 relay connect llm ${v.llm?.provider ?? "<provider>"} 로 하세요`);
   }
-  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit" });
+  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit", env: toolEnv(name, v) });
   return r.status ?? 1;
 }
 
@@ -486,7 +518,7 @@ export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: toolEnv(name, v) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -520,11 +552,16 @@ export function setHarness(ledger: Ledger, name: string, variant: string): { act
   // 모델 어휘는 하네스 소속이다. 이전 하네스의 모델명이 새 어댑터로 넘어가면 무의미한 --model 이 된다
   delete rec.model;
   saveLedger(ledger);
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8" });
+  // 전환도 설치와 같은 계약이다 — 기판이 대기로 선언한 도구를 여기서 앉힌다(멱등).
+  const t = ensureTool(name, v);
+  if (!t.ok) return { active: variant, setup: { ok: false, out: t.out } };
+  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8", env: toolEnv(name, v) });
   return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() } };
 }
 
 export function removePkg(ledger: Ledger, name: string): void {
+  // 기판이 깐 도구 사본도 함께 — 남기면 ~/.relay 가 지운 패키지의 CLI 를 계속 품는다
+  removeTools(name);
   delete ledger.packages[name];
   ledger.grants = ledger.grants.filter((g) => g.consumer !== name && g.provider !== name);
   saveLedger(ledger);
