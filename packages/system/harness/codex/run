@@ -519,6 +519,21 @@ child.on("error", (e) => {
   emit({ event: "error", message: "codex 실행 실패: " + (e?.message ?? e) });
   process.exit(1);
 });
+// stderr 에서 **진단이 되는 줄**을 고른다. 꼬리 N 줄을 그대로 붙이면 스택의 닫는 괄호와
+// spawnargs 조각("'hi' / ] / }")이 사용자에게 가고 정작 원인은 그 위에 묻힌다(실사고).
+// 알아보는 고장은 처방까지 낸다 — setup 이 이미 같은 문장을 내는데 세션 경로만 몰랐다.
+function diagnose(err) {
+  const raw = String(err || "");
+  if (/ENOENT[\s\S]*@openai\/codex/.test(raw) || /spawn[\s\S]*codex-(darwin|linux|win32)/.test(raw)) {
+    return " — codex 설치가 깨졌습니다(네이티브 바이너리 없음). 다시 설치하세요: npm install -g @openai/codex";
+  }
+  const lines = raw.split("\n").map((l) => l.trim())
+    // 스택 프레임·닫는 괄호·필드 나열은 진단이 아니다
+    .filter((l) => l && !/^at\s/.test(l) && !/^[\]}),]+$/.test(l) && !/^\w+:\s*\[?$/.test(l));
+  const said = lines.find((l) => /error|failed|denied|not found|unauthor|invalid/i.test(l)) ?? lines[lines.length - 1];
+  return said ? " — " + said.slice(0, 300) : "";
+}
+
 child.on("close", (code) => {
   rl.close();
   ctl.close();
@@ -533,9 +548,9 @@ child.on("close", (code) => {
     return;
   }
   if (!text) {
-    let tail = "";
-    try { tail = fs.readFileSync(B + "/stderr.log", "utf8").trim().split("\n").slice(-3).join(" / "); } catch { /* 로그 없음 */ }
-    emit({ event: "error", message: (failure ?? "codex 응답 없음 (exit " + code + ")") + (tail ? " - " + tail : "") });
+    let err = "";
+    try { err = fs.readFileSync(B + "/stderr.log", "utf8"); } catch { /* 로그 없음 */ }
+    emit({ event: "error", message: (failure ?? "codex 응답 없음 (exit " + code + ")") + diagnose(err) });
     process.exitCode = code || 1;
     return;
   }

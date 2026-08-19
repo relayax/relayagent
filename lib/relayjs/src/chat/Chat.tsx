@@ -1639,6 +1639,9 @@ function HarnessSelector() {
   const [variants, setVariants] = useState<{ name: string; provider?: string }[]>([]);
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState(false);
+  // 전환은 성공했는데 그 하네스가 준비되지 않은 경우(도구 미설치·설치 파손·미로그인).
+  // 다음 턴이 실패할 때까지 침묵하지 않는다 — 처방은 어댑터 setup 이 이미 문장으로 준다.
+  const [notReady, setNotReady] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
   const load = useCallback(() => {
     void loadHarnessVariants().then((r) => { setActive(r.active); setVariants(r.variants); });
@@ -1654,9 +1657,10 @@ function HarnessSelector() {
 
   const set = (name: string) => {
     if (name === active) { setOpen(false); return; }
-    setErr(false); setActive(name); setOpen(false);
-    void setHarnessVariant(ctx, name).then((ok) => {
-      if (!ok) { setErr(true); load(); return; }
+    setErr(false); setNotReady(""); setActive(name); setOpen(false);
+    void setHarnessVariant(ctx, name).then((r) => {
+      if (!r.ok) { setErr(true); load(); return; }
+      if (r.ready && !r.ready.ok) setNotReady(r.ready.note);
       // 전환은 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 모델 피커를 다시 읽힌다
       notifyOverridesChanged();
     });
@@ -1682,6 +1686,7 @@ function HarnessSelector() {
           ))}
         </div>
       )}
+      {notReady && <div className="rc-model-notice" role="status">준비되지 않은 하네스입니다 — {notReady}</div>}
     </div>
   );
 }

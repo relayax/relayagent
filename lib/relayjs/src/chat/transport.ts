@@ -133,7 +133,10 @@ export type HarnessModels = { ok: boolean; value: string[] };
 export type HarnessCommands = { ok: boolean; value: { name: string; description?: string; tty?: boolean }[] };
 export type HarnessSetRequest = { model?: string; effort?: string; harness?: string };
 /** §5.5-30 — 기판은 해제("" 저장)를 null 로 되돌려주고, known 은 판정 불가(카탈로그 불달)면 null. */
-export type HarnessSetResult = { ok: boolean; model: string | null; effort: string | null; harness?: string | null; known: boolean | null };
+export type HarnessSetResult = { ok: boolean; model: string | null; effort: string | null; harness?: string | null;
+  known: boolean | null;
+  /** §5.5-30-a — {harness} 를 실은 요청에만. 전환 자체는 성공하고, ok:false 는 다음 턴 실패 예고다. */
+  ready?: { ok: boolean; note: string } };
 export type HarnessVariant = { name: string; provider?: string };
 export type HarnessVariants = { ok: boolean; value: { active: string | null; variants: HarnessVariant[] } };
 

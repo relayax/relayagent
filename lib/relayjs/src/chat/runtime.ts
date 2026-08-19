@@ -797,13 +797,16 @@ export async function loadHarnessVariants(): Promise<{ active: string | null; va
 
 /** 변형 전환. 기판이 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 호출부가 모델 표시를
  *  다시 읽어야 한다. 미선언 이름은 기판이 400 으로 거부한다. */
-export async function setHarnessVariant(ctx: RelayCtx, harness: string): Promise<boolean> {
+export async function setHarnessVariant(
+  ctx: RelayCtx,
+  harness: string,
+): Promise<{ ok: boolean; ready: { ok: boolean; note: string } | null }> {
   const r = await wireOf(ctx).harness.set({ harness });
-  if (isError(r)) return false;
+  if (isError(r)) return { ok: false, ready: null };
   // 하네스가 바뀌면 capability 집합도 모델 카탈로그도 그 하네스 것이다 — 둘 다 버린다
   invalidateCaps();
   _modelOptions = MODEL_OPTIONS;
-  return true;
+  return { ok: true, ready: r.ready ?? null };
 }
 
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {

@@ -873,10 +873,15 @@ export const WIRE_ROUTES: WireRoute[] = [
       const b = await readBody(req);
       // 변형 전환이 먼저다 — setHarness 가 모델 오버라이드를 지우므로(모델 어휘는 하네스
       // 소속), 같은 요청의 model 이 그 뒤에 앉아야 지워지지 않는다. 미선언 이름은 거부된다.
+      // 전환은 setup 을 이미 돌린다(installer.setHarness) — 그 판정을 버리지 않는다.
+      // 준비 안 된 하네스로 바꾼 사람에게 아무 말도 안 하면, 다음 턴이 실패할 때까지
+      // "왜 안 되지" 가 남는다. 실사고: 네이티브 바이너리가 빠진 codex 로 전환 → 무신호.
+      let ready: { ok: boolean; note: string } | null = null;
       if (b.harness) {
         const { setHarness } = await import("./installer.ts");
         try {
-          setHarness(l, pkg, String(b.harness));
+          const r = setHarness(l, pkg, String(b.harness));
+          ready = { ok: r.setup.ok, note: r.setup.out.split("\n").slice(0, 2).join(" · ") };
         } catch (e) {
           throw new WireError(400, "E_BAD_REQUEST", String(e instanceof Error ? e.message : e));
         }
@@ -893,7 +898,7 @@ export const WIRE_ROUTES: WireRoute[] = [
           if (Array.isArray(arr)) known = arr.includes(rec.model);
         } catch { /* models 불달 — 판정 불가 */ }
       }
-      json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, known });
+      json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, known, ...(ready ? { ready } : {}) });
     },
   },
 
