@@ -69,6 +69,11 @@ export type TurnSettled = { turn: string; ok: boolean };
  */
 export type StreamHandle = { settled: Promise<Result<TurnSettled>>; close(): void };
 
+/** 절단(§5.2-20) 뒤 attach 로 잇는 유한 재시도의 상한. 관찰을 모는 소비자가 둘이고(SDK 의
+ *  client.observe · 위젯의 runtime.drive) 둘은 같은 예산을 써야 한다 — 각자 상수를 두면
+ *  한쪽만 고쳐도 아무도 모르게 갈린다. 예산의 주인은 관찰을 여는 층, 즉 transport 다 */
+export const REATTACH_MAX = 5;
+
 // ── 동사 응답 shape (§5) ─────────────────────────────────────────────────────
 
 /** §7 닫힌 어휘 — 새 capability 는 계약 문서 개정이다. */

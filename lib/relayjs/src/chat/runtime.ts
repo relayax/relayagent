@@ -42,6 +42,7 @@ import type { ChatModelAdapter } from "@assistant-ui/react";
 import {
   createTransport,
   isError,
+  REATTACH_MAX,
   type Transport,
   type Result,
   type StreamHandle,
@@ -1071,7 +1072,6 @@ function textOf(m: any): string {
 // (§5.2 커넥션 예산 — 신규 추가가 아니다). 종결 정본은 turn/settled(§5.2-20) — settled 없는
 // EOF 를 성공으로 위장하지 않는다. 이벤트 소비는 EnvelopeReducer 단일(라이브·재생 동일).
 
-const REATTACH_MAX = 5;
 
 export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
   return {

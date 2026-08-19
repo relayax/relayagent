@@ -26,12 +26,14 @@
 import {
   createTransport,
   isError,
+  REATTACH_MAX,
   type Transport,
   type Result,
   type OnEvent,
   type TurnSettled,
   type TurnSendRequest,
   type RespondRequest,
+  type StreamHandle,
 } from "./chat/transport";
 import { EnvelopeReducer, type EnvelopeEvent, type TurnUsageLive } from "./chat/envelope-reducer";
 // 봉투 축 타입의 정본은 패키지 공개 선언(src/index.d.ts) — 재선언하지 않는다.
@@ -170,10 +172,12 @@ const settledOf = (h: { settled: Promise<Result<TurnSettled>> }): Promise<TurnSe
 
 const wireCapabilities = async (base: string) => unwrap(await tFor(base).capabilities());
 const wireTurnSend = async (base: string, req: TurnSendRequest) => unwrap(await tFor(base).turn.send(req));
-const wireTurnStream = (base: string, turn: string, onEvent: OnEvent) =>
-  settledOf(tFor(base).turn.stream(turn, onEvent));
-const wireTurnAttach = (base: string, session: string, onEvent: OnEvent) =>
-  settledOf(tFor(base).turn.attach(session, onEvent));
+// 스트림 동사는 **핸들**을 돌려준다 — settled 만 받아 가면 close() 참조가 사라져 소비자가
+// 관찰을 끊을 길이 없어진다(SPA 라우팅에서 열린 fetch·reader 가 남는다)
+const wireTurnStream = (base: string, turn: string, onEvent: OnEvent): StreamHandle =>
+  tFor(base).turn.stream(turn, onEvent);
+const wireTurnAttach = (base: string, session: string, onEvent: OnEvent): StreamHandle =>
+  tFor(base).turn.attach(session, onEvent);
 const wireTurnInterrupt = async (base: string, turn: string) => unwrap(await tFor(base).turn.interrupt(turn));
 const wireTurnRespond = async (base: string, turn: string, req: { ask: string; answers: unknown[] }) =>
   unwrap(await tFor(base).turn.respond(turn, req as unknown as RespondRequest));
@@ -234,7 +238,6 @@ const wirePushSubscribe = (
 /** 절단 판정 — 서버 턴은 계속 돌 수 있으므로 재접속으로 잇는다(§5.2-20). */
 const isCut = (e: ErrorShape | null): boolean => !!e && e.code === "E_DISCONNECTED";
 
-const REATTACH_MAX = 5;
 const REATTACH_BACKOFF_MS = 400;
 
 export function createChat(opts: CreateChatOptions) {
@@ -262,6 +265,8 @@ export function createChat(opts: CreateChatOptions) {
   /** 미완 백그라운드 작업(봉투 task 이벤트의 원장) — 자발 턴을 기다릴 근거. */
   const bgTasks = new Set<string>();
   let unsubscribePush: (() => void) | null = null;
+  /** 지금 열려 있는 관찰 핸들 — close() 가 끊을 대상. 종결하면 스스로 비운다. */
+  let liveObservation: StreamHandle | null = null;
 
   const emit = (ev: ChatEventName, arg?: any): void => {
     for (const f of listeners[ev] || []) {
@@ -467,8 +472,12 @@ export function createChat(opts: CreateChatOptions) {
     syncBusy();
     try {
       let reducer = newReducer();
-      const run = async (fn: () => Promise<unknown>): Promise<ErrorShape | null> => {
-        const r = await envelope(fn);
+      // 열린 관찰을 들고 있어야 close() 가 그것을 끊는다 — 핸들을 버리면 종결 전엔 못 닫는다
+      const run = async (open: () => StreamHandle): Promise<ErrorShape | null> => {
+        const h = open();
+        liveObservation = h;
+        const r = await envelope(() => settledOf(h));
+        if (liveObservation === h) liveObservation = null;
         if (r.error) return r.error;
         // 스트림이 깨끗이 끝났는데 종결 마커가 없다 = 가짜완료 후보. 서버 턴은 계속 돌고
         // 있을 수 있으므로 절단으로 판정한다(§5.2-20) — 성공으로 위장하지 않는다.
@@ -724,9 +733,13 @@ export function createChat(opts: CreateChatOptions) {
     );
   }
 
+  /** 소비자가 이 대화를 버릴 때 부른다(언마운트·라우팅) — 열린 커넥션을 전부 반납한다.
+   *  서버 턴은 끊지 않는다: 관찰만 닫고 돌아오면 attach 로 다시 잇는다(§5.2-20). */
   function close(): void {
     unsubscribePush?.();
     unsubscribePush = null;
+    liveObservation?.close();
+    liveObservation = null;
   }
 
   return {
