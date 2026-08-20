@@ -126,7 +126,22 @@ function autoFloat() {
   dock.appendChild(fab);
   document.body.appendChild(dock);
   let opened = false;
-  const setOpen = (v: boolean) => { opened = v; dock.classList.toggle("open", v); };
+  // 도킹은 겹침이 아니라 **공간 예약**이다 — 열면 body 폭을 줄여 화면이 나란히 앉는다(org
+  // 기판의 도킹 계약과 같은 결: 화면이 body 기준 폭(w-full/100%)이면 자연히 함께 줄어든다).
+  // fixed 오버레이만 있으면 전폭 화면 위에 패널이 떠서 내용을 가린다 — 실사용 보고의 답.
+  const PANEL_W = 440;
+  const prevBodyWidth = document.body.style.width;
+  const prevBodyTransition = document.body.style.transition;
+  const reserve = (v: boolean) => {
+    if (v && window.innerWidth > PANEL_W * 2) {
+      document.body.style.transition = "width .18s ease";
+      document.body.style.width = `calc(100% - ${PANEL_W}px)`;
+    } else {
+      document.body.style.width = prevBodyWidth;
+      document.body.style.transition = prevBodyTransition;
+    }
+  };
+  const setOpen = (v: boolean) => { opened = v; dock.classList.toggle("open", v); reserve(v); };
   let mounted = false;
   fab.addEventListener("click", () => {
     if (!mounted) {

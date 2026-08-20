@@ -148,12 +148,15 @@ doc += "\n\n# 기판 (Relay)\n"
   + "- 파일 교환 무대: " + meta.stage + " — 사용자에게 채팅으로 전달할 파일은 여기 놓는다. 첨부도 여기서 온다\n"
   + "- 접근 금지: " + (meta.hooks?.deny ?? []).join(", ") + " — 읽지도 쓰지도 마라\n";
 
-// 서브에이전트는 문서 절로 강등한다. kimi 의 subagents 선언은 에이전트 파일마다 별도 프롬프트를
-// 요구해서 조립 표면이 커지는데, 얻는 것은 격리된 문맥뿐이다 — 있는 척도 조용한 폐기도 아니다
+// 서브에이전트 위임 — 기판 소유(2026-08-20 단일화, harness-protocol §subagents). kimi 의
+// 네이티브 subagents 선언은 쓰지 않는다(조립 표면만 커진다) — relay MCP 의 agent_dispatch 로 간다
 for (const a of meta.agents ?? []) {
   const p = B + "/agents/" + a.name + ".md";
   if (!fs.existsSync(p)) continue;
-  doc += "\n\n# 위임 역할: " + a.name + "\n이 역할의 일이 오면 본 세션이 아래 지침을 직접 따른다.\n\n" + fs.readFileSync(p, "utf8");
+  const first = fs.readFileSync(p, "utf8").split("\n").find((l) => l.trim()) ?? "";
+  doc += "\n\n# 위임 가능: " + a.name + "\n" + (first ? first.trim() + "\n" : "")
+    + "이 역할의 일은 직접 하지 말고 relay 의 agent_dispatch 도구로 위임하라 — "
+    + "별도 세션에서 돌고 완료 결과가 돌아온다. 맥락은 공유되지 않으니 지시에 필요한 배경을 담아라.\n";
 }
 // 커맨드도 문서 절이다. kimi 의 슬래시 커맨드는 내장 집합이라 사용자 커맨드를 등록할 자리가 없고,
 // 문서 절은 TTY 와 headless 양쪽에서 똑같이 동작한다

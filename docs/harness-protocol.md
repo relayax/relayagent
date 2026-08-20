@@ -44,6 +44,17 @@ original becomes the import line). When both files exist independently the adapt
 either. Home-scoped memory (`~/.claude` and kin) is the tool's own and never crosses — same axis
 as credentials.
 
+**Subagents are substrate-run.** `agents[].dispatch` names who an agent may delegate to; the
+substrate serves that as the `agent_dispatch` MCP tool (gate = the declaration), runs the
+subagent's turn in its **own session** — a first-class citizen of the session list, labeled
+`↳ <name>`, prompt prefixed with the `[서브에이전트 · <pkg> · <name>]` marker the chat renders as
+a delegation card — and returns the reply when it settles. Adapters must NOT translate subagents
+into a native mechanism (claude's `--agents`/Task was retired 2026-08-20): native translation made
+the same manifest mean different things per harness — in-context tasks on one CLI, silent
+degradation on the rest — and hid the work from the session ledger. Adapters render the
+delegation roster as a document section pointing at `agent_dispatch` (see the reference adapters);
+a harness with no MCP (pi) states honestly that delegation is unreachable.
+
 **The bundle is also the rotation boundary.** Native-session pointers (a claude session id, a
 codex thread id — whatever the adapter needs to resume its own conversation) live inside the
 bundle too. The substrate never learns their names; instead, conversation reset and harness

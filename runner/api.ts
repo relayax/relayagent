@@ -355,6 +355,38 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
     tools.push({ name: s, description: meta?.description ?? `${pkg} 패키지의 ${s} 동사`, inputSchema: meta?.input });
   }
 
+  // 서브에이전트 위임 — 기판 소유다(2026-08-20 단일화). 종전에는 어댑터가 하네스 네이티브
+  // (claude --agents)로 번역해 하네스마다 의미가 갈렸다: claude 는 부모 세션 안 Task, 나머지는
+  // 문서 절 강등(실행 자체가 안 됨). 이제 전 하네스가 같은 문으로 위임하고, 서브에이전트 턴은
+  // 별도 세션(목록 시민)으로 돈다 — org 기판(turn.service dispatch)과 같은 의미론.
+  {
+    const m = loadManifest(ledger.packages[pkg].path);
+    const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];
+    if (subs.length) {
+      // 소개는 페르소나 첫 줄 — 매니페스트에 별도 description 축이 없고, 첫 줄이 그 관례다
+      const rows = subs.map((n) => {
+        const d = (m.agents ?? []).find((a) => a.name === n);
+        let first = "";
+        try {
+          if (d) first = fs.readFileSync(path.join(ledger.packages[pkg].path, d.persona), "utf8").split("\n").find((l) => l.trim()) ?? "";
+        } catch { /* 페르소나 불달 — 이름만 */ }
+        return `${n}${first ? ` — ${first.trim().slice(0, 80)}` : ""}`;
+      });
+      tools.push({
+        name: "agent_dispatch",
+        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고 완료까지 기다린다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string }`,
+        inputSchema: {
+          type: "object",
+          required: ["agent", "prompt"],
+          properties: {
+            agent: { type: "string", enum: subs },
+            prompt: { type: "string", description: "서브에이전트에게 전달할 지시 — 맥락은 공유되지 않으므로 필요한 배경을 담아라" },
+          },
+        },
+      });
+    }
+  }
+
   // 인가 장부 조회도 권위 이음새를 지난다 — 목록(tools/list)과 집행(grantForTool)이 같은 문을 본다
   for (const g of (await authority.grants()).filter((g) => g.consumer === pkg)) {
     if (g.mission) {
@@ -409,6 +441,25 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
       }
       if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent);
+      if (name === "agent_dispatch") {
+        const m = loadManifest(ledger.packages[pkg].path);
+        const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];
+        const sub = String(args.agent ?? "");
+        // 게이트는 선언이다 — dispatch 목록 밖 이름은 도구를 아는 세션이라도 못 부른다(선언 = 캡)
+        if (!subs.includes(sub)) throw new Error(`E_SCOPE: ${agent} 의 dispatch 선언 밖 서브에이전트: ${sub} (선언: ${subs.join(", ") || "없음"})`);
+        const instruction = String(args.prompt ?? "").trim();
+        if (!instruction) throw new Error("빈 지시 — prompt 를 담아라");
+        // 위임마다 새 슬롯 — 같은 슬롯이면 기판의 세션 직렬화(한 슬롯에 턴은 하나)가 병렬
+        // 위임을 막는다. 목록 시민이라 "_" 접두를 쓰지 않고, 라벨이 마커 원문의 행세를 막는다
+        const slot = `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
+        const labelFile = path.join(sessionDir(pkg, slot), "label");
+        if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `↳ ${sub}`);
+        // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
+        // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
+        const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;
+        const r = await runSession({ ledger, pkg, agent: sub, authority, prompt, slot });
+        return r.reply;
+      }
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
       if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
       return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host, authority);
