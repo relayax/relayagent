@@ -48,7 +48,11 @@ as credentials.
 substrate serves that as the `agent_dispatch` MCP tool (gate = the declaration), runs the
 subagent's turn in its **own session** — a first-class citizen of the session list, labeled
 `↳ <name>`, prompt prefixed with the `[서브에이전트 · <pkg> · <name>]` marker the chat renders as
-a delegation card — and returns the reply when it settles. Adapters must NOT translate subagents
+a delegation card — and returns the reply when it settles. Delegation sessions are keyed by
+`(agent, target)`: naming the same `target` again lands in the same session and continues that
+conversation (one turn per slot, so parallel delegation onto the same target is fenced off at the
+door), `fresh: true` rotates the native pointer exactly like conversation reset, and a target-less
+delegation falls back to a one-off session. Adapters must NOT translate subagents
 into a native mechanism (claude's `--agents`/Task was retired 2026-08-20): native translation made
 the same manifest mean different things per harness — in-context tasks on one CLI, silent
 degradation on the rest — and hid the work from the session ledger. Adapters render the

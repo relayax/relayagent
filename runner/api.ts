@@ -7,7 +7,7 @@ import { API_PORT, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, retireResident, retireResidents, setEnvelopeTap } from "./session.ts";
+import { runSession, retireResident, retireResidents, setEnvelopeTap, isSessionBusy } from "./session.ts";
 import { handleClientWire, tapSessionEvent } from "./client-wire.ts";
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
@@ -374,14 +374,15 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
       });
       tools.push({
         name: "agent_dispatch",
-        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string, target?: string }`,
+        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 같은 (agent, target) 재위임은 이전 위임 대화에 이어서 돈다 — 중단된 작업의 계속·후속 수정은 같은 target 으로 보내라. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string, target?: string, fresh?: boolean }`,
         inputSchema: {
           type: "object",
           required: ["agent", "prompt"],
           properties: {
             agent: { type: "string", enum: subs },
             prompt: { type: "string", description: "서브에이전트에게 전달할 지시 — 맥락은 공유되지 않으므로 필요한 배경을 담아라" },
-            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별한다" },
+            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별하고, 같은 (agent, target) 재위임이 이전 위임 대화에 이어지는 열쇠다" },
+            fresh: { type: "boolean", description: "true 면 그 target 의 이전 위임 대화를 버리고 새로 시작한다 — 이전 세션이 오염됐거나 이어받으면 안 되는 새 작업일 때만" },
           },
         },
       });
@@ -450,17 +451,37 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         if (!subs.includes(sub)) throw new Error(`E_SCOPE: ${agent} 의 dispatch 선언 밖 서브에이전트: ${sub} (선언: ${subs.join(", ") || "없음"})`);
         const instruction = String(args.prompt ?? "").trim();
         if (!instruction) throw new Error("빈 지시 — prompt 를 담아라");
-        // 위임마다 새 슬롯 — 같은 슬롯이면 기판의 세션 직렬화(한 슬롯에 턴은 하나)가 병렬
-        // 위임을 막는다. 대화의 에이전트 정체성은 슬롯 **이름이 아니라 기판 메타(agent 파일)**다:
-        // 위젯의 agent-<이름>:~<id> 스레드 문법은 `:` `~` 를 쓰는데 슬롯은 디렉토리명이라
-        // (SLOT_RE) 그 문자를 못 싣는다 — 이름에 실으려던 첫 구현은 새니타이즈로 뭉개져 위임
-        // 대화가 착지 에이전트(system) 행세를 했다(실사용 보고 2026-08-20).
-        const slot = `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
-        const sdir = sessionDir(pkg, slot);
         // 작업 대상(org 의 param 축) — "agent-builder 인데 무엇의 빌더인가" 를 목록·칩이 답하게
         // 한다. slug 목록만 받는다: 좌표에 임의 산문이 실리면 칩이 문장이 된다
         const target = String(args.target ?? "").trim().toLowerCase().replace(/\s+/g, "");
         const param = /^[a-z0-9._-]+(,[a-z0-9._-]+)*$/.test(target) ? target : "";
+        // 슬롯 키 = (서브에이전트, 작업 대상). 같은 대상 재위임은 같은 슬롯에 앉아 이전 위임
+        // 대화를 잇는다 — 봉투가 슬롯의 네이티브 포인터로 스스로 resume 하고, 포인터가 만료면
+        // 새 대화로 강등하는 복구 사다리도 봉투 소유다. 위임마다 새 슬롯을 팠던 종전 구현은
+        // "이어서" 위임조차 맥락 재파생을 처음부터 다시 지불했다(실측 2026-08-20: 같은 저작
+        // 위임 3회 = 501 콜, 위임 지출의 절반이 중복). 같은 슬롯의 턴 직렬화(한 슬롯에 턴
+        // 하나)는 이제 막이 아니라 담장이다 — 같은 draft 에 병렬 위임이 붙어 두 설계가 섞여
+        // 발행된 실사고(2026-08-20)를 입구에서 끊는다. 대상이 다르면 병렬은 종전 그대로다.
+        // 대상 미상이면 이을 열쇠가 없다 — 1회용 난수 슬롯으로 강등한다.
+        // 쉼표(다중 대상)는 SLOT_RE 밖이라 . 로 접는다. 대화의 에이전트 정체성은 슬롯 이름이
+        // 아니라 기판 메타(agent 파일)다 — 위젯 스레드 문법(`:` `~`)을 이름에 실으려다
+        // 새니타이즈로 뭉개진 첫 구현의 계보(실사용 보고 2026-08-20) 그대로.
+        const slot = param
+          ? `sub-${sub}-${param.replace(/,/g, ".")}`.slice(0, 64)
+          : `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
+        // 진행 중인 같은 대상 위임 위에 얹지 않는다 — runSession 의 직렬화가 튕기기 전에
+        // 위임 어휘로 정직하게 알린다 (재시도 루프 방지: 완료는 어차피 📬 로 온다)
+        if (isSessionBusy(pkg, slot)) {
+          throw new Error(`이미 진행 중인 위임: ↳ ${sub}${param ? " · " + param : ""} — 완료가 이 대화로 📬 배달된다. 기다렸다가 필요하면 그때 재위임하라.`);
+        }
+        const sdir = sessionDir(pkg, slot);
+        // fresh — 이어받을 대화가 오염됐을 때의 탈출구. 대화 reset(§5.3-23)과 같은 회전이다:
+        // 이력은 두고 번들만 비워 네이티브 포인터를 끊고, 낡은 대화를 메모리에 문 상주도
+        // 함께 은퇴시킨다. 다음 턴의 조립이 빈 자리를 다시 채운다
+        if ((args.fresh === true || args.fresh === "true") && param) {
+          retireResident(pkg, slot);
+          fs.rmSync(path.join(sdir, "bundle"), { recursive: true, force: true });
+        }
         if (!fs.existsSync(path.join(sdir, "label"))) {
           fs.writeFileSync(path.join(sdir, "label"), `↳ ${sub}${param ? " · " + param : ""}`);
         }
@@ -540,7 +561,7 @@ function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerRe
     // GUI 에서 카드를 눌러도 쓸 길이 없는 막다른 골목을 없애는 폴백이다
     if (m.surfaces?.chat?.mode === "direct") {
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-      const fav = m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
+      const fav = pkgIconHref(pkg, m);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return void res.end(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -563,17 +584,18 @@ function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerRe
       error: `view 미빌드: ${pkg} — 선언된 ${view.source}/${view.out} 이 없습니다: npm run relay -- build ${pkg}`,
     });
   }
+  const fav = pkgIconHref(pkg, m);
   const target = path.normalize(path.join(root, rest === "" || rest === "/" ? "index.html" : rest));
   if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     // 정적 발행물의 라우트 관례: <경로>/index.html (trailingSlash) 또는 <경로>.html
     const idx = path.join(target, "index.html");
-    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, root, res);
+    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, root, res, fav);
     const html = target + ".html";
-    if (fs.existsSync(html)) return void serveViewFile(html, pkg, root, res);
+    if (fs.existsSync(html)) return void serveViewFile(html, pkg, root, res, fav);
     return void json(res, 404, { error: `없음: ${rest}` });
   }
-  serveViewFile(target, pkg, root, res);
+  serveViewFile(target, pkg, root, res, fav);
 }
 
 function streamFile(file: string, res: http.ServerResponse): void {
@@ -588,6 +610,11 @@ function streamFile(file: string, res: http.ServerResponse): void {
 function viewContextTag(pkg: string): string {
   const base = JSON.stringify("/pkg/" + encodeURIComponent(pkg));
   return `<script>window.__RELAY_CONTEXT={base:${base},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
+}
+
+// 패키지 대표 아이콘의 서빙 주소 — 카드 아바타와 탭 favicon 이 같은 그림(manifest icon)을 본다
+function pkgIconHref(pkg: string, m: Manifest): string {
+  return m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
 }
 
 /**
@@ -612,7 +639,7 @@ function assetsAtRootCached(root: string): string[] {
   return bad;
 }
 
-function serveViewFile(file: string, pkg: string, root: string, res: http.ServerResponse): void {
+function serveViewFile(file: string, pkg: string, root: string, res: http.ServerResponse, fav: string): void {
   if (path.extname(file) !== ".html") return void streamFile(file, res);
   const atRoot = assetsAtRootCached(root);
   if (atRoot.length) {
@@ -636,8 +663,12 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
   const head = html.match(/<head\b[^>]*>/i);
   // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽는다)
   const at = head ? (head.index ?? 0) + head[0].length : 0;
+  // favicon 도 좌표처럼 서빙 시점에 얹는다 — 발행물이 자기 favicon 을 선언했다면 그쪽을 존중
+  const iconTag = /rel=["']?(?:shortcut\s+)?icon\b/i.test(html)
+    ? ""
+    : `<link rel="icon" href="${fav.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">`;
   res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
-  res.end(html.slice(0, at) + viewContextTag(pkg) + html.slice(at));
+  res.end(html.slice(0, at) + viewContextTag(pkg) + iconTag + html.slice(at));
 }
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
