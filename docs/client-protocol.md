@@ -208,10 +208,11 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 ### 5.3 세션과 이력
 
 21. **[현행 v1]** `session.list` = `GET {base}/sessions`
-    → `{sessions: [{session, label, updated, archived, pinned, agent?}]}`.
-    `agent`(additive, 2026-08-20) = 이 대화의 에이전트 정체성 — 위임(agent_dispatch)이 만든
-    세션처럼 착지 에이전트가 아닌 대화가 밝힌다. 클라이언트는 이 값으로 대화의 에이전트 칩을
-    세우고 turn.send 의 `agent` 기본값으로 쓴다. 없으면 착지 — 종전 그대로.
+    → `{sessions: [{session, label, updated, archived, pinned, agent?, param?}]}`.
+    `agent`·`param`(additive, 2026-08-20) = 이 대화의 정체성 — 위임(agent_dispatch)이 만든
+    세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 작업 대상 slug 목록(쉼표 무공백,
+    org param 축의 쌍둥이 — "빌더인데 무엇의 빌더인가"). 클라이언트는 이 값으로 대화의
+    에이전트·대상 칩을 세우고 turn.send 의 `agent` 기본값으로 쓴다. 없으면 착지 — 종전 그대로.
     *왜 행에 싣나: 화면의 스레드 문법(`agent-<이름>:~<id>`)은 `:` `~` 를 쓰는데 기판 발급
     세션 id 는 그 문자를 실을 수 없는 기판이 있다(OSS 는 디렉토리명이다). 이름에 정체성을
     싣는 규약은 그래서 이식 불가였고, 메타가 정본이 된다.*

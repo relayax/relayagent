@@ -374,13 +374,14 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
       });
       tools.push({
         name: "agent_dispatch",
-        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string }`,
+        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string, target?: string }`,
         inputSchema: {
           type: "object",
           required: ["agent", "prompt"],
           properties: {
             agent: { type: "string", enum: subs },
             prompt: { type: "string", description: "서브에이전트에게 전달할 지시 — 맥락은 공유되지 않으므로 필요한 배경을 담아라" },
+            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별한다" },
           },
         },
       });
@@ -456,9 +457,16 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 대화가 착지 에이전트(system) 행세를 했다(실사용 보고 2026-08-20).
         const slot = `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
         const sdir = sessionDir(pkg, slot);
-        if (!fs.existsSync(path.join(sdir, "label"))) fs.writeFileSync(path.join(sdir, "label"), `↳ ${sub}`);
-        // 이 대화의 에이전트 — runSession 의 agent 폴백과 세션 목록 행(§5.3-24 additive)이 읽는다
+        // 작업 대상(org 의 param 축) — "agent-builder 인데 무엇의 빌더인가" 를 목록·칩이 답하게
+        // 한다. slug 목록만 받는다: 좌표에 임의 산문이 실리면 칩이 문장이 된다
+        const target = String(args.target ?? "").trim().toLowerCase().replace(/\s+/g, "");
+        const param = /^[a-z0-9._-]+(,[a-z0-9._-]+)*$/.test(target) ? target : "";
+        if (!fs.existsSync(path.join(sdir, "label"))) {
+          fs.writeFileSync(path.join(sdir, "label"), `↳ ${sub}${param ? " · " + param : ""}`);
+        }
+        // 이 대화의 정체성 — runSession 의 agent 폴백과 세션 목록 행(§5.3-21 additive)이 읽는다
         fs.writeFileSync(path.join(sdir, "agent"), sub);
+        if (param) fs.writeFileSync(path.join(sdir, "param"), param);
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;

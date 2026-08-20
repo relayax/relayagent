@@ -454,10 +454,10 @@ function sessionsRoot(pkg: string): string {
 }
 
 /** §5.3-21 — 고정 우선, 그 안에서 최근순. 라벨 우선순위(label > auto-label > 첫 발화)는 기판 내부 규칙 */
-function listSessionRows(pkg: string): { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string }[] {
+function listSessionRows(pkg: string): { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string; param?: string }[] {
   const root = sessionsRoot(pkg);
   if (!fs.existsSync(root)) return [];
-  const rows: { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string }[] = [];
+  const rows: { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string; param?: string }[] = [];
   for (const e of fs.readdirSync(root, { withFileTypes: true })) {
     // "_" 접두 슬롯은 기판 내부용(자동 제목 등의 임시 세션) — 목록에 내지 않는다
     if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
@@ -480,12 +480,17 @@ function listSessionRows(pkg: string): { session: string; label: string; updated
     // agent 메타(위임 세션의 정체성) — §5.3-24 additive. 화면이 이 값으로 대화의 에이전트
     // 칩을 세우고, 없으면 종전(착지) 그대로다
     let rowAgent = "";
+    let rowParam = "";
     try {
       rowAgent = fs.readFileSync(path.join(dir, "agent"), "utf8").trim();
+    } catch { /* 메타 없음 */ }
+    try {
+      rowParam = fs.readFileSync(path.join(dir, "param"), "utf8").trim();
     } catch { /* 메타 없음 */ }
     rows.push({
       session: e.name,
       ...(rowAgent ? { agent: rowAgent } : {}),
+      ...(rowParam ? { param: rowParam } : {}),
       label: label || e.name,
       updated,
       archived: fs.existsSync(path.join(dir, "archived")),

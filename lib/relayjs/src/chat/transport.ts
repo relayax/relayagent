@@ -105,8 +105,8 @@ export type TurnSendRequest = {
 };
 
 export type SessionEntry = { session: string; label: string; updated: number; archived: boolean; pinned: boolean;
-  /** §5.3-24 additive — 이 대화의 에이전트(위임 세션 등). 없으면 착지 에이전트 */
-  agent?: string };
+  /** §5.3-21 additive — 이 대화의 정체성(위임 세션 등): 에이전트와 작업 대상. 없으면 착지 */
+  agent?: string; param?: string };
 
 export type HistoryMessage = {
   role: "user" | "bot" | "sys";

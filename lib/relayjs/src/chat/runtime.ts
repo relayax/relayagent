@@ -465,9 +465,13 @@ export type ConversationRow = { conversation_id: string; session_count?: number;
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
-const _convAgent = new Map<string, string>();
+const _convAgent = new Map<string, { agent: string; param: string }>();
 export function serverAgentOf(conv: string): string {
-  return _convAgent.get(conv) ?? "";
+  return _convAgent.get(conv)?.agent ?? "";
+}
+/** 서버가 밝힌 작업 대상(org param 축의 쌍둥이) — "빌더인데 무엇의 빌더인가" */
+export function serverParamOf(conv: string): string {
+  return _convAgent.get(conv)?.param ?? "";
 }
 export type ConversationsInfo = { conversations: ConversationRow[] };
 
@@ -482,7 +486,9 @@ export async function loadConversationsOf(instanceId: string, _principal: string
   const conversations: ConversationRow[] = (Array.isArray(r.sessions) ? r.sessions : [])
     .filter((s) => s && typeof s.session === "string" && s.session)
     .map((s) => {
-      if (typeof s.agent === "string" && s.agent) _convAgent.set(s.session, s.agent);
+      if (typeof s.agent === "string" && s.agent) {
+        _convAgent.set(s.session, { agent: s.agent, param: typeof s.param === "string" ? s.param : "" });
+      }
       return s;
     })
     .map((s) => ({

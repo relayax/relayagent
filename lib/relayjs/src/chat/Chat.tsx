@@ -25,6 +25,7 @@ import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLi
   setHarnessVariant,
   hasEffort,
   serverAgentOf,
+  serverParamOf,
 } from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
@@ -959,7 +960,9 @@ function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boolean; onS
   // 로컬 스레드 문법 > 서버가 밝힌 세션 정체성(위임 대화 — §5.3-24 agent). 서버 발급 슬롯은
   // 문법을 못 실으므로(디렉토리명 제약) 이 폴백이 없으면 위임 대화가 착지 행세를 한다
   const rawBind = displayBinding(ctx.conversationId);
-  const bind = rawBind.agent ? rawBind : { ...rawBind, agent: serverAgentOf(ctx.conversationId) };
+  const bind = rawBind.agent
+    ? rawBind
+    : { ...rawBind, agent: serverAgentOf(ctx.conversationId), param: serverParamOf(ctx.conversationId) };
   return (
     <header className="rc-head">
       {live ? <HeadDot /> : <span className="rc-dot" />}
@@ -1332,10 +1335,11 @@ function targetChipsOf(ctx: RelayCtx): Chip[] {
   // 슬롯이라 문법을 못 실으므로, 이 폴백이 없으면 컴포저가 [● 인스턴스]만 남아
   // 착지 에이전트 행세를 한다(실사용 보고 2026-08-20 — 헤더만 고치고 이 파생을 놓쳤었다)
   const agent = bind.agent || serverAgentOf(ctx.conversationId);
+  const param = bind.param || serverParamOf(ctx.conversationId);
   const chips: Chip[] = [];
   if (ctx.instanceId) chips.push({ icon: "dot", text: ctx.instanceId });
   // 작업 대상이 여럿이면 목록으로 편다 — "agent-builder:task, calendar"(좌표는 쉼표 무공백).
-  if (agent) chips.push({ icon: "slash", text: agent + (bind.param ? ":" + paramTargets(bind.param).join(", ") : "") });
+  if (agent) chips.push({ icon: "slash", text: agent + (param ? ":" + paramTargets(param).join(", ") : "") });
   return chips;
 }
 
