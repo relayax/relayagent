@@ -450,10 +450,15 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         const instruction = String(args.prompt ?? "").trim();
         if (!instruction) throw new Error("빈 지시 — prompt 를 담아라");
         // 위임마다 새 슬롯 — 같은 슬롯이면 기판의 세션 직렬화(한 슬롯에 턴은 하나)가 병렬
-        // 위임을 막는다. 목록 시민이라 "_" 접두를 쓰지 않고, 라벨이 마커 원문의 행세를 막는다
+        // 위임을 막는다. 대화의 에이전트 정체성은 슬롯 **이름이 아니라 기판 메타(agent 파일)**다:
+        // 위젯의 agent-<이름>:~<id> 스레드 문법은 `:` `~` 를 쓰는데 슬롯은 디렉토리명이라
+        // (SLOT_RE) 그 문자를 못 싣는다 — 이름에 실으려던 첫 구현은 새니타이즈로 뭉개져 위임
+        // 대화가 착지 에이전트(system) 행세를 했다(실사용 보고 2026-08-20).
         const slot = `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
-        const labelFile = path.join(sessionDir(pkg, slot), "label");
-        if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `↳ ${sub}`);
+        const sdir = sessionDir(pkg, slot);
+        if (!fs.existsSync(path.join(sdir, "label"))) fs.writeFileSync(path.join(sdir, "label"), `↳ ${sub}`);
+        // 이 대화의 에이전트 — runSession 의 agent 폴백과 세션 목록 행(§5.3-24 additive)이 읽는다
+        fs.writeFileSync(path.join(sdir, "agent"), sub);
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;

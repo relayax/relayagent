@@ -461,7 +461,14 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
 
 // ---------------- 대화 목록 (다중세션 헤더) ----------------
 
-export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string };
+export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string };
+
+// 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
+// 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
+const _convAgent = new Map<string, string>();
+export function serverAgentOf(conv: string): string {
+  return _convAgent.get(conv) ?? "";
+}
 export type ConversationsInfo = { conversations: ConversationRow[] };
 
 /** (instance) 대화 슬롯 목록 — session.list(§5.3-21)의 재포장. principal 인자는 구 표면
@@ -474,8 +481,13 @@ export async function loadConversationsOf(instanceId: string, _principal: string
   if (isError(r)) return { conversations: [] };
   const conversations: ConversationRow[] = (Array.isArray(r.sessions) ? r.sessions : [])
     .filter((s) => s && typeof s.session === "string" && s.session)
+    .map((s) => {
+      if (typeof s.agent === "string" && s.agent) _convAgent.set(s.session, s.agent);
+      return s;
+    })
     .map((s) => ({
       conversation_id: s.session,
+      ...(typeof s.agent === "string" && s.agent ? { agent: s.agent } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0
@@ -1221,7 +1233,8 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
           if (isError(sid)) return sid.error;
           // 에이전트 바인딩은 대화 좌표의 화면 축(displayBinding)에서 읽어 turn.send 인자로
           // 나른다 — 세션 id 가 불투명해진 뒤 바인딩이 wire 에 닿는 유일한 자리다(§5.1-12).
-          const boundAgent = displayBinding(ctx.conversationId).agent;
+          // 로컬 스레드 문법 > 서버가 밝힌 세션 정체성(위임 대화) > 착지(빈 값)
+          const boundAgent = displayBinding(ctx.conversationId).agent || serverAgentOf(ctx.conversationId);
           const started = await t.turn.send({
             session: sid.session,
             message: prompt,

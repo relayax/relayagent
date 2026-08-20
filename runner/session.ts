@@ -494,7 +494,17 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   if (!rec) throw new Error(`미설치 패키지: ${input.pkg}`);
   const authority = input.authority ?? localAuthority(() => input.ledger);
   const m = loadManifest(rec.path);
-  const agent = input.agent ?? landingAgentName(m) ?? "";
+  // 대화의 에이전트 정체성 — 명시 > 슬롯의 agent 메타(위임 세션이 심는다) > 착지.
+  // 메타가 없으면 착지로 가는 종전 동작 그대로다. 메타는 선언 검증을 거친다: 임의 문자열이
+  // 에이전트 행세를 하면 composeBundle 이 기본 페르소나로 조용히 강등된다(fail-loud 위반).
+  let slotAgent: string | undefined;
+  if (!input.agent && input.slot) {
+    try {
+      const cand = fs.readFileSync(path.join(sessionDir(input.pkg, input.slot), "agent"), "utf8").trim();
+      if (cand && (m.agents ?? []).some((a) => a.name === cand)) slotAgent = cand;
+    } catch { /* 메타 없음 — 착지로 */ }
+  }
+  const agent = input.agent ?? slotAgent ?? landingAgentName(m) ?? "";
   const slot = input.slot ?? `agent-${agent || "main"}`;
   const token = authority.packageToken(input.pkg);
 

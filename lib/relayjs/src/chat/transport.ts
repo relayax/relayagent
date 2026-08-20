@@ -104,7 +104,9 @@ export type TurnSendRequest = {
   scene?: string;
 };
 
-export type SessionEntry = { session: string; label: string; updated: number; archived: boolean; pinned: boolean };
+export type SessionEntry = { session: string; label: string; updated: number; archived: boolean; pinned: boolean;
+  /** §5.3-24 additive — 이 대화의 에이전트(위임 세션 등). 없으면 착지 에이전트 */
+  agent?: string };
 
 export type HistoryMessage = {
   role: "user" | "bot" | "sys";

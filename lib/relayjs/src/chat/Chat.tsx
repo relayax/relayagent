@@ -24,6 +24,7 @@ import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLi
   loadHarnessVariants,
   setHarnessVariant,
   hasEffort,
+  serverAgentOf,
 } from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
@@ -955,7 +956,10 @@ function AccountMenu({ ctx }: { ctx: RelayCtx }) {
  *  "어떤 에이전트와 연결됐는가"를 항상 보여준다: main=인스턴스 제목(통합/front), 도킹=에이전트
  *  이름 + 스레드 키(param) 배지. live=false 는 히스토리 로딩 스켈레톤 단계(runtime 밖 — 정적 점). */
 function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boolean; onSwitch?: (c: string) => void }) {
-  const bind = displayBinding(ctx.conversationId);
+  // 로컬 스레드 문법 > 서버가 밝힌 세션 정체성(위임 대화 — §5.3-24 agent). 서버 발급 슬롯은
+  // 문법을 못 실으므로(디렉토리명 제약) 이 폴백이 없으면 위임 대화가 착지 행세를 한다
+  const rawBind = displayBinding(ctx.conversationId);
+  const bind = rawBind.agent ? rawBind : { ...rawBind, agent: serverAgentOf(ctx.conversationId) };
   return (
     <header className="rc-head">
       {live ? <HeadDot /> : <span className="rc-dot" />}

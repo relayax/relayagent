@@ -270,6 +270,8 @@ async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<
       authority: deps.authority,
       prompt: String(body.message ?? ""),
       slot: t.session,
+      // agent 미지정 개설은 runSession 이 슬롯의 agent 메타로 폴백한다 — 위임 대화에
+      // 문법 모르는 소비자가 열어도 착지 에이전트로 새지 않는다
       agent: body.agent ? String(body.agent) : undefined,
       attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
       scene: body.scene ? String(body.scene) : undefined,
@@ -452,10 +454,10 @@ function sessionsRoot(pkg: string): string {
 }
 
 /** §5.3-21 — 고정 우선, 그 안에서 최근순. 라벨 우선순위(label > auto-label > 첫 발화)는 기판 내부 규칙 */
-function listSessionRows(pkg: string): { session: string; label: string; updated: number; archived: boolean; pinned: boolean }[] {
+function listSessionRows(pkg: string): { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string }[] {
   const root = sessionsRoot(pkg);
   if (!fs.existsSync(root)) return [];
-  const rows: { session: string; label: string; updated: number; archived: boolean; pinned: boolean }[] = [];
+  const rows: { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string }[] = [];
   for (const e of fs.readdirSync(root, { withFileTypes: true })) {
     // "_" 접두 슬롯은 기판 내부용(자동 제목 등의 임시 세션) — 목록에 내지 않는다
     if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
@@ -475,8 +477,15 @@ function listSessionRows(pkg: string): { session: string; label: string; updated
       }
     }
     const updated = fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs;
+    // agent 메타(위임 세션의 정체성) — §5.3-24 additive. 화면이 이 값으로 대화의 에이전트
+    // 칩을 세우고, 없으면 종전(착지) 그대로다
+    let rowAgent = "";
+    try {
+      rowAgent = fs.readFileSync(path.join(dir, "agent"), "utf8").trim();
+    } catch { /* 메타 없음 */ }
     rows.push({
       session: e.name,
+      ...(rowAgent ? { agent: rowAgent } : {}),
       label: label || e.name,
       updated,
       archived: fs.existsSync(path.join(dir, "archived")),
