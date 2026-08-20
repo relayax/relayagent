@@ -374,7 +374,7 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
       });
       tools.push({
         name: "agent_dispatch",
-        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고 완료까지 기다린다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string }`,
+        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string }`,
         inputSchema: {
           type: "object",
           required: ["agent", "prompt"],
@@ -427,7 +427,7 @@ async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: stri
 // "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
 // handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
 // (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
-function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string): McpIO {
+function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, callerSlot?: string | null): McpIO {
   return {
     tools: () => sessionTools(ledger, authority, pkg, agent),
     call: async (name, args) => {
@@ -457,8 +457,34 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;
-        const r = await runSession({ ledger, pkg, agent: sub, authority, prompt, slot });
-        return r.reply;
+        const run = runSession({ ledger, pkg, agent: sub, authority, prompt, slot });
+        // 시한은 도구 자신이 갖는다 — MCP 층(MCP_TOOL_TIMEOUT 240s)이 먼저 자르면 "timed out"
+        // 원문만 남고 완료가 영영 배달되지 않는다(실사고 2026-08-20: 240s 초과 위임). org 와
+        // 같은 골격: 도구는 180s 에 정직하게 물러나고, 위임은 계속 돌며, 완료는 발신 대화에
+        // 📬 프리픽스 턴으로 배달된다(위젯 SYSTEM_PROMPT_PREFIXES · watchServerTurns 계약).
+        const timeoutS = Number(process.env.RELAY_DISPATCH_TIMEOUT_S) > 0 ? Number(process.env.RELAY_DISPATCH_TIMEOUT_S) : 180;
+        const winner = await Promise.race([
+          run.then((r) => ({ reply: r.reply })),
+          new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), timeoutS * 1000); (t as { unref?: () => void }).unref?.(); }),
+        ]);
+        if (winner) return winner.reply;
+        const deliver = async (head: string, bodyText: string) => {
+          if (!callerSlot) return; // 발신 슬롯 미상(구 번들) — 배달할 곳이 없다. 세션 목록이 답
+          const msg = `📬 위임 완료 — ${sub}(${head})\n\n${String(bodyText).slice(0, 4000)}`;
+          // 부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴은 하나) — 10초 간격, 최대 1시간
+          for (let i = 0; i < 360; i++) {
+            try {
+              await runSession({ ledger: loadLedger(), pkg, agent, authority, prompt: msg, slot: callerSlot });
+              return;
+            } catch (e) {
+              if (!String(e).includes("이전 요청을 처리")) break;
+              await new Promise((r2) => setTimeout(r2, 10_000));
+            }
+          }
+          logLine("dispatch", { pkg, sub, slot, delivered: false });
+        };
+        void run.then((r) => deliver("완료", r.reply), (e) => deliver("실패", e instanceof Error ? e.message : String(e)));
+        return `위임이 ${timeoutS}초 안에 끝나지 않았습니다 — 서브에이전트는 세션 "↳ ${sub}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
       if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
@@ -475,7 +501,8 @@ async function handleMcp(
   agent: string,
   body: any,
   res: http.ServerResponse,
-  io: McpIO = localMcpIO(ledger, authority, host, pkg, agent),
+  callerSlot?: string | null,
+  io: McpIO = localMcpIO(ledger, authority, host, pkg, agent, callerSlot),
 ): Promise<void> {
   const r = await mcpDispatch(io, body ?? {});
   if (r === null) {
@@ -958,7 +985,8 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const owner = await authority.packageForToken(token);
         if (owner !== pkg) return void json(res, 401, { error: "토큰 불일치" });
         const agent = url.searchParams.get("agent") ?? landingAgentName(loadManifest(getLedger().packages[pkg].path)) ?? "";
-        return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res));
+        // session = 발신 슬롯(composeBundle 이 mcp url 에 싣는다) — 위임 완료 배달의 목적지
+        return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res, url.searchParams.get("session")));
       }
 
       const hs = p.match(/^\/pkg\/([^/]+)\/harness$/);

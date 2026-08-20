@@ -155,7 +155,8 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
       description: `${m.display_name} 패키지의 ${sub} 서브에이전트`,
     })),
     mcp: {
-      url: `${API_URL}/mcp/${encodeURIComponent(pkg)}?agent=${encodeURIComponent(agent)}`,
+      // session = 이 번들의 슬롯 — agent_dispatch 완료 배달의 회신 주소다
+      url: `${API_URL}/mcp/${encodeURIComponent(pkg)}?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(slot)}`,
       authorization: `Bearer ${token}`,
     },
   };
