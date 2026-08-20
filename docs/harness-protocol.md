@@ -34,6 +34,16 @@ Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_
 format is the adapter's job, and every translation artifact lands inside the bundle — never in
 the user's config directory or the cwd.
 
+**Workspace memory has one canon: `AGENTS.md` in the workspace.** Memory is agent data, so it
+lives in the granted folder (not in the tool's home, which nothing else can reach, and not in the
+bundle, which rotation empties). Tools whose native convention already reads `AGENTS.md` from cwd
+(codex, kimi) get it for free. A tool with a different convention shuttles via its own rail — the
+claude-code adapter materializes a `CLAUDE.md` containing the single line `@AGENTS.md` before
+spawn, and promotes a lone `CLAUDE.md` into the canon once (content moves to `AGENTS.md`, the
+original becomes the import line). When both files exist independently the adapter must not touch
+either. Home-scoped memory (`~/.claude` and kin) is the tool's own and never crosses — same axis
+as credentials.
+
 **The bundle is also the rotation boundary.** Native-session pointers (a claude session id, a
 codex thread id — whatever the adapter needs to resume its own conversation) live inside the
 bundle too. The substrate never learns their names; instead, conversation reset and harness

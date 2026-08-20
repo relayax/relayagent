@@ -140,6 +140,23 @@ try {
     exit 0
     ;;
   session|serve)
+    # workspace 메모리 셔틀 — 정본은 AGENTS.md 다(codex·kimi 가 네이티브로 읽는 중립 규약,
+    # harness-protocol §memory). claude 의 프로젝트 메모리 규약은 CLAUDE.md 라 이름이 갈리는데,
+    # CLAUDE.md 는 @경로 import 를 지원하므로 import 한 줄로 정본을 잇는다. 이 파일들은 조립
+    # 산출물이 아니라 도구 자신이 cwd 에 쓰는 메모리 규약 파일이다 — "cwd 를 건드리지 않는다"
+    # 규율(아래)은 조립을 말하는 것이고, 메모리는 도구가 이미 소유한 cwd 표면이다.
+    #   · CLAUDE.md 없음 + AGENTS.md 있음 → import 한 줄짜리 CLAUDE.md 생성 (# 메모리도 여기 쌓인다)
+    #   · CLAUDE.md 있음 + AGENTS.md 없음 → 내용을 정본으로 승격하고 CLAUDE.md 는 import 로 교체
+    #   · 둘 다 있음/없음 → 손대지 않는다 (사용자 파일 존중 · 빈 약속 생성 금지)
+    if [ ! -e CLAUDE.md ] && [ -f AGENTS.md ]; then
+      printf '@AGENTS.md\n' > CLAUDE.md
+    elif [ -f CLAUDE.md ] && [ ! -e AGENTS.md ]; then
+      if [ "$(cat CLAUDE.md 2>/dev/null)" = "@AGENTS.md" ]; then
+        : > AGENTS.md   # 홀로 남은 import — 정본 자리를 만들어 dangling 을 없앤다
+      else
+        cp CLAUDE.md AGENTS.md && printf '@AGENTS.md\n' > CLAUDE.md
+      fi
+    fi
     ;;
   *)
     echo "지원하지 않는 동사: $VERB (session|serve|setup|login|models|commands|info)"
