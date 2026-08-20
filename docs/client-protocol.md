@@ -416,7 +416,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `enumerate` | 인스턴스 열거 | `instances.list` | 양쪽 신설 (OSS 는 /registry 재포장) |
 | `harness-info` | 하네스 신원·capabilities 조회 | `harness.info` | OSS ○ (client-wire.ts:783-807) · relayos × (현행 대응물 부재 — 정렬 시 신설 또는 미선언) |
 | `harness-models` | 모델 카탈로그 조회 | `harness.models` | OSS ○ (client-wire.ts:783-807) · relayos ○ (/api/llm/models, api_turns.go:317) |
-| `harness-variants` | 하네스 변형 조회·전환 | `harness.variants` · `harness.set({harness})` | OSS ○ (client-wire.ts) · relayos ✗ (변형 선택은 fleet 권위 소관 — 선언하지 않는다) |
+| `harness-variants` | 하네스 변형 조회·전환 | `harness.variants` · `harness.set({harness})` | OSS ○ (client-wire.ts) · relayos ○ (2026-08-20 — §5.5-31 의 "선택은 설정" 정정을 따라 my-llm 레코드가 장부: 선언 BOM 게이트·전환 시 model clear·ready 동봉) |
 | `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
 | `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |

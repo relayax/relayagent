@@ -1,9 +1,9 @@
 // Discord 채널 어댑터 — surfaces.channels 계약(relay.manifest.yaml)의 참조 구현.
 // 의존성 0: Node 22 네이티브 WebSocket(게이트웨이) + fetch(REST) 만 쓴다 — 어댑터는 글루다.
 //
-// 자격: relay connect <패키지> discord — JSON {"bot":"…","allow":["…"]} 으로 앉힌다
-//       → RELAY_CRED_DISCORD. 콘솔 채널 다이얼로그가 매니페스트의 credential 선언대로 칸을
-//       그려 이 JSON 을 대신 조립한다. 봇 토큰 문자열 하나(구 형식)도 계속 받는다.
+// 자격: JSON 단일 — {"bot":"…","allow":["…"]} → RELAY_CRED_DISCORD. 콘솔 채널 다이얼로그가
+//       매니페스트의 credential 선언대로 칸을 그려 이 JSON 을 조립한다. 구 형식(봇 토큰
+//       문자열·env RELAY_DISCORD_ALLOW)은 은퇴 — 소비자 0 실측(2026-08-21).
 // 게이트: 기본 닫힘 — RELAY_DISCORD_ALLOW(쉼표 구분 사용자 id)에 있는 발화자만 착신한다.
 //        판정 대상은 방이 아니라 발화자다(그룹에서 방 게이트는 전원 통과가 된다).
 //        그룹 채널에서는 멘션이 있을 때만 응답 범위를 좁힌다(DM 은 멘션 불요).
@@ -19,27 +19,27 @@ const CHANNEL = process.env.RELAY_CHANNEL ?? "discord";
 const API = process.env.RELAY_API ?? "";
 const TOKEN = process.env.RELAY_TOKEN ?? "";
 const idList = (v: unknown): string[] =>
-  (Array.isArray(v) ? v.map(String) : String(v ?? "").split(",")).map((s) => s.trim()).filter(Boolean);
+  (Array.isArray(v) ? v.map(String) : []).map((s) => s.trim()).filter(Boolean);
 
-// 자격은 JSON {"bot":"…","allow":["…"]} 또는 봇 토큰 문자열 하나(구 형식)다. 게이트가 자격에
-// 사는 이유: 데몬 env 로만 열면 화면에서 열 길이 없어 GUI 로 연결한 채널이 영영 닫혀 있다.
-function parseCred(raw: string): { bot: string; allow: string[] } {
+// 게이트가 자격에 사는 이유: 데몬 env 로만 열면 화면에서 열 길이 없어 GUI 로 연결한 채널이
+// 영영 닫혀 있다. 형식이 다르면 처방과 함께 물러난다 — 조립기가 화면에 있다.
+function parseCred(raw: string): { bot: string; allow: string[] } | null {
   try {
     const j = JSON.parse(raw);
     if (j && typeof j === "object" && j.bot) return { bot: String(j.bot), allow: idList(j.allow) };
-  } catch { /* JSON 아님 — 토큰 문자열 그대로 */ }
-  return { bot: raw.trim(), allow: [] };
+  } catch { /* JSON 아님 — 아래 처방 */ }
+  return null;
 }
 const cred = parseCred(process.env.RELAY_CRED_DISCORD ?? "");
-const BOT = cred.bot;
-const ALLOW = new Set([...cred.allow, ...idList(process.env.RELAY_DISCORD_ALLOW)]);
+const BOT = cred?.bot ?? "";
+const ALLOW = new Set(cred?.allow ?? []);
 
 if (process.env.RELAY_CONFORM === "1") {
   console.log(JSON.stringify({ name: "discord", protocol: 1, capabilities: ["post", "files"] }));
   process.exit(0);
 }
 if (!BOT) {
-  console.log(`discord: 자격 없음 — relay connect ${NAME} ${CHANNEL} 로 봇 토큰을 연결하세요 (대기하지 않고 종료)`);
+  console.log(`discord: 자격 없음 또는 구 형식 — 콘솔의 채널 다이얼로그에서 다시 연결하세요(입력 칸이 JSON 을 조립합니다) (대기하지 않고 종료)`);
   process.exit(0);
 }
 
