@@ -703,8 +703,14 @@ const onLine = (line) => {
       child.kill("SIGTERM");
       return;
     }
-    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다
-    if (!j.is_error && !String(j.result ?? "").trim() && !turn.said.trim() && !j.usage) return;
+    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다. 장부는 **실질**로 판정한다:
+    // usage 객체가 있어도 토큰이 전부 0 이면 모델이 돌지 않은 것이다. 실사고(2026-08-20) —
+    // 재기동 직후 resume 부팅에서 이전 대화의 pending task 배달과 주입 턴이 경합하자 CLI 가
+    // usage {0,0} 를 단 빈 result 를 냈고, 객체 존재만 보던 이 방어를 통과해 "완료 · 1.5s" 에
+    // 빈 답이 앉았다. 무시하면 진짜 result 가 뒤따르거나, 없으면 stall 타이머가 정직하게 운다.
+    const ledgered = j.usage && ((j.usage.input_tokens ?? 0) + (j.usage.output_tokens ?? 0)
+      + (j.usage.cache_read_input_tokens ?? 0) + (j.usage.cache_creation_input_tokens ?? 0)) > 0;
+    if (!j.is_error && !String(j.result ?? "").trim() && !turn.said.trim() && !ledgered) return;
     turn.done = true;
     resetTick();
     if (j.session_id) fs.writeFileSync(B + "/claude-session", j.session_id);
