@@ -1328,10 +1328,14 @@ type Chip = { icon: "dot" | "slash"; text: string };
  *  (대화함으로 대상을 바꿔도 칩이 따라온다 — host 주입 칩은 보조). */
 function targetChipsOf(ctx: RelayCtx): Chip[] {
   const bind = displayBinding(ctx.conversationId);
+  // 로컬 스레드 문법 > 서버가 밝힌 세션 정체성(§5.3-21 agent) — 위임 세션은 기판 발급
+  // 슬롯이라 문법을 못 실으므로, 이 폴백이 없으면 컴포저가 [● 인스턴스]만 남아
+  // 착지 에이전트 행세를 한다(실사용 보고 2026-08-20 — 헤더만 고치고 이 파생을 놓쳤었다)
+  const agent = bind.agent || serverAgentOf(ctx.conversationId);
   const chips: Chip[] = [];
   if (ctx.instanceId) chips.push({ icon: "dot", text: ctx.instanceId });
   // 작업 대상이 여럿이면 목록으로 편다 — "agent-builder:task, calendar"(좌표는 쉼표 무공백).
-  if (bind.agent) chips.push({ icon: "slash", text: bind.agent + (bind.param ? ":" + paramTargets(bind.param).join(", ") : "") });
+  if (agent) chips.push({ icon: "slash", text: agent + (bind.param ? ":" + paramTargets(bind.param).join(", ") : "") });
   return chips;
 }
 
@@ -1357,7 +1361,7 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
   const [picking, setPicking] = useState(false);
   const [adding, setAdding] = useState(false);
   // 대상 축은 에이전트에 바인딩된 대화에만 있다(main 대화엔 워크벤치 개념이 없다).
-  const hasTargetAxis = !!displayBinding(ctx.conversationId).agent;
+  const hasTargetAxis = !!(displayBinding(ctx.conversationId).agent || serverAgentOf(ctx.conversationId));
   if (!derived.length && !host.length) return null;
 
   const chipBody = derived.map((c, i) => (
