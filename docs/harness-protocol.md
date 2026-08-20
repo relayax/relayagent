@@ -34,6 +34,16 @@ Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_
 format is the adapter's job, and every translation artifact lands inside the bundle — never in
 the user's config directory or the cwd.
 
+**The bundle is also the rotation boundary.** Native-session pointers (a claude session id, a
+codex thread id — whatever the adapter needs to resume its own conversation) live inside the
+bundle too. The substrate never learns their names; instead, conversation reset and harness
+switching rotate the native context by **emptying the bundle** and letting the next turn's
+assembly refill it. Anything an adapter stores outside the bundle survives that rotation and
+becomes a stale-context bug. Native contexts never transfer across adapters — a codex thread
+cannot resume a claude session — so on a harness switch the substrate rotates the pointers and
+hands the new adapter a preamble synthesized from the substrate's own history ledger, which is
+the conversation of record.
+
 `meta.json`: `{pkg, agent, slot?, workspace, stage, hooks: {deny[]}, agents[], mcp, mcpServers?}`.
 The MCP doors:
 

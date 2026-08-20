@@ -741,10 +741,12 @@ export const WIRE_ROUTES: WireRoute[] = [
         fs.rmSync(dir, { recursive: true, force: true });
         return void json(res, 200, { ok: true });
       }
-      // reset — 이력은 두고 하네스 대화 포인터만 끊는다(§5.3-23)
+      // reset — 이력은 두고 하네스 대화 포인터만 끊는다(§5.3-23). 포인터 파일 이름은 어댑터
+      // 소유(claude-session·codex-thread·…)라 기판이 열거할 수 없다 — 종전엔 claude-session
+      // 만 하드코딩해서 다른 하네스의 reset 이 무동작이었다. 번들을 통째로 비우는 것이
+      // 이름을 모른 채 전부 회전시키는 유일한 방법이고, 다음 턴의 조립이 다시 채운다.
       retireResident(pkg, slot); // 상주가 낡은 대화를 메모리에 물고 있으면 포인터를 지워도 대화가 이어진다
-      const pointer = path.join(sessionDir(pkg, slot), "bundle", "claude-session");
-      if (fs.existsSync(pointer)) fs.unlinkSync(pointer);
+      fs.rmSync(path.join(sessionDir(pkg, slot), "bundle"), { recursive: true, force: true });
       json(res, 200, { ok: true });
     },
   },
@@ -879,6 +881,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       let ready: { ok: boolean; note: string } | null = null;
       if (b.harness) {
         const { setHarness } = await import("./installer.ts");
+        const { retireResidents } = await import("./session.ts");
+        retireResidents(pkg); // 상주는 이전 하네스로 떠 있다 — 콘솔 전환 라우트(api.ts)와 같은 동반 조치
         try {
           const r = setHarness(l, pkg, String(b.harness));
           ready = { ok: r.setup.ok, note: r.setup.out.split("\n").slice(0, 2).join(" · ") };

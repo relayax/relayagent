@@ -66,6 +66,56 @@ function safeAttachments(atts: SessionInput["attachments"]): { path: string; nam
     .filter((a) => a.path && !a.path.startsWith("/") && !a.path.split("/").includes(".."));
 }
 
+/**
+ * 하네스 전환 인수인계 — 전환이 감지되면 번들을 비우고(네이티브 포인터 회전) 최근 이력을
+ * 서문으로 돌려준다. 반환 "" = 전환 아님(첫 턴 포함 — 이어받을 이력이 없으면 서문도 없다).
+ *
+ * 포인터 회전이 번들 통삭제인 이유: 포인터 파일 이름(claude-session·codex-thread)은 어댑터
+ * 소유라 기판이 열거할 수 없다. 어댑터 계약이 "네이티브 포인터·작업물은 번들 안에만" 이므로
+ * (harness-protocol) 번들을 비우는 것이 이름을 모른 채 전부 회전시키는 유일한 방법이고,
+ * 조립(composeBundle)이 바로 뒤에서 빈 자리를 다시 채운다.
+ */
+function harnessHandoff(pkg: string, slot: string, variantName: string): string {
+  const dir = sessionDir(pkg, slot);
+  const marker = path.join(dir, "harness");
+  let last = "";
+  try {
+    last = fs.readFileSync(marker, "utf8").trim();
+  } catch { /* 첫 턴 — 기준 없음 */ }
+  if (!last || last === variantName) return "";
+
+  fs.rmSync(path.join(dir, "bundle"), { recursive: true, force: true });
+  fs.rmSync(marker, { force: true }); // 이 턴이 실패해도 다음 턴이 다시 인수인계하도록
+
+  const hist = path.join(dir, "history.jsonl");
+  let lines: string[] = [];
+  try {
+    lines = fs.readFileSync(hist, "utf8").trim().split("\n");
+  } catch {
+    return ""; // 이력 없는 슬롯 — 이어받을 것이 없다
+  }
+  // 최근 대화 꼬리 — 메시지당·전체 상한을 걸어 서문이 컨텍스트를 삼키지 않게 한다
+  const MSG_CAP = 600;
+  const TOTAL_CAP = 6_000;
+  const rows: string[] = [];
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0 && total < TOTAL_CAP; i--) {
+    let m: { role?: string; text?: string };
+    try {
+      m = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const text = String(m.text ?? "").trim();
+    if (!text) continue;
+    const row = `${m.role === "user" ? "사용자" : "에이전트"}: ${text.length > MSG_CAP ? text.slice(0, MSG_CAP) + " …" : text}`;
+    rows.unshift(row);
+    total += row.length;
+  }
+  if (!rows.length) return "";
+  return `[대화 인수인계 — 이 대화는 지금까지 다른 하네스(${last})로 진행됐고 방금 ${variantName} 로 전환됐다. 이전 도구의 네이티브 세션 맥락은 이어지지 않는다. 아래 최근 대화 기록을 맥락으로 삼아 자연스럽게 이어서 답하라. 이 안내와 기록 자체는 사용자에게 언급하지 마라]\n${rows.join("\n")}`;
+}
+
 function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string, pkg: string, token: string, ground: { workspace: string; stage: string }): string {
   const bundle = path.join(sessionDir(pkg, slot), "bundle");
   fs.mkdirSync(path.join(bundle, "agents"), { recursive: true });
@@ -452,10 +502,12 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const workdir = path.join(workspaceDir(input.ledger, input.pkg), m.harness?.workdir ?? "");
   fs.mkdirSync(workdir, { recursive: true });
   const stage = stageDir(input.pkg);
-  const bundle = composeBundle(rec.path, m, agent, slot, input.pkg, token, { workspace: workdir, stage });
-
   const variant = activeHarness(m, rec.harness);
   if (!variant) throw new Error(`하네스 미동봉 패키지: ${input.pkg} — relay.yaml 에 harness.variants 를 선언하고 어댑터를 동봉하세요`);
+  // 인수인계 판정은 번들 조립보다 앞이어야 한다 — 회전(번들 삭제)이 조립 뒤에 오면
+  // 이 턴이 방금 조립된 번들을 지우고, 앞에 오면 조립이 빈 자리를 새로 채운다
+  const handoff = harnessHandoff(input.pkg, slot, variant.name);
+  const bundle = composeBundle(rec.path, m, agent, slot, input.pkg, token, { workspace: workdir, stage });
   const entry = path.join(rec.path, variant.source, variant.entry);
 
   const env: Record<string, string> = {
@@ -482,7 +534,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 자격은 값 대신 해시로 — 지문이 로그에 실려도 비밀이 새지 않는다
   const cred = variant.llm?.auth?.kind === "token" && variant.llm.auth.env ? env[variant.llm.auth.env] ?? "" : "";
   const fp = crypto.createHash("sha256")
-    .update([rec.path, agent, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
+    .update([rec.path, agent, variant.name, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
     .digest("hex").slice(0, 16);
   const resident = !input.interactive && residentsEnabled && harnessServes(entry, env);
 
@@ -498,7 +550,13 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const atts = safeAttachments(input.attachments);
   // 서문 합성은 기판 몫이다 — 화면 맥락(scene)도 첨부도 프롬프트에만 붙고 이력에는 원문만 남는다
   const scene = String(input.scene ?? "").trim();
-  const prompt = (scene ? `[화면 맥락 — 사용자가 지금 보고 있는 화면]\n${scene}\n\n` : "")
+  // 하네스 인수인계 — 네이티브 맥락(claude 세션·codex 스레드)은 각 도구 소유라 교차 resume 이
+  // 물리적으로 불가하다. 전환된 대화의 연속성은 기판 이력이 답한다: 마지막 턴을 돈 변형이
+  // 지금과 다르면 ① 번들을 비워 모든 네이티브 포인터를 회전시키고(사이 대화를 모르는 낡은
+  // 네이티브 세션이 이력과 어긋난 답을 만드는 것을 막는다 — 위젯은 전체 이력을 보여 주는데
+  // 에이전트만 다른 기억을 갖게 된다) ② 최근 이력을 서문으로 실어 새 하네스가 이어받게 한다.
+  const prompt = (handoff ? handoff + "\n\n" : "")
+    + (scene ? `[화면 맥락 — 사용자가 지금 보고 있는 화면]\n${scene}\n\n` : "")
     + (atts.length ? `첨부 파일 — Read 도구로 읽어라:\n${atts.map((a) => "- " + path.join(stage, a.path)).join("\n")}\n\n` : "")
     + (input.prompt ?? "");
 
@@ -606,6 +664,9 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const seen = new Set(evFiles.map((f) => f.path));
   const files = [...evFiles, ...stageDiffFiles(stage, stageBefore).filter((f) => !seen.has(f.path))];
   appendBot(input.pkg, slot, r.reply, { model: r.model, usage: r.usage, context: r.context, files });
+  // 이 슬롯의 마지막 턴을 돈 변형 — 다음 턴의 인수인계 판정 기준. 성공한 턴만 기록한다:
+  // 실패 턴 뒤 재시도에도 서문이 다시 실려야 새 하네스가 맥락 없이 시작하지 않는다
+  fs.writeFileSync(path.join(sessionDir(input.pkg, slot), "harness"), variant.name);
   return { ...r, files };
 }
 
