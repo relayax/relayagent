@@ -716,7 +716,9 @@ const onLine = (line) => {
     if (j.session_id) fs.writeFileSync(B + "/claude-session", j.session_id);
     const text = String(j.result ?? "").trim() || turn.said.trim();
     if (j.is_error) {
-      emit({ event: "error", message: text.trim() || ("claude 실패 (" + (j.subtype ?? "사유 없음") + ")") });
+      // 취소로 죽어가는 CLI 는 is_error result 에 중단 시점의 부분 본문을 실어 온다 — 그대로
+      // 사유로 쓰면 이력에 "오류: <부분 텍스트>" 가 남는다. 취소 턴의 사유는 취소 사실이다
+      emit({ event: "error", message: cancelled ? "취소됨" : (text.trim() || ("claude 실패 (" + (j.subtype ?? "사유 없음") + ")")) });
       if (MODE === "session") { process.exitCode = 1; retire(); }
       else afterSettle();
       return;
@@ -771,7 +773,12 @@ try {
       return;
     }
     if (c?.type === "turn" && MODE === "serve") {
-      if (closing || cancelled) return;
+      if (closing || cancelled) {
+        // 은퇴/취소는 사형선고라 이 상주에 새 턴은 계약 위반이다 — 조용히 삼키면 기판의
+        // exit 감시가 "하네스 상주 종료" 로 늦게 울린다. 즉시 error 로 종결시켜 원인을 밝힌다
+        emit({ event: "error", message: "취소로 내려가는 상주에 턴이 주입되었습니다 — 새 상주로 다시 보내세요" });
+        return;
+      }
       if (typeof c.prompt !== "string" || !c.prompt.trim()) return;
       if (turn) {
         // 자발 턴 진행 중의 주입은 큐잉한다(교차 배선 방지). 주입 턴 위의 주입은 기판이 막는다

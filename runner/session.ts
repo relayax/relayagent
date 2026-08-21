@@ -184,8 +184,10 @@ const live = new Map<string, ChildProcess>();
 
 /** 봉투 제어(stdin cancel)가 1순위 — 어댑터가 정리할 기회. 그물은 SIGTERM, 최후는 SIGKILL */
 export function cancelSession(pkg: string, slot: string): boolean {
-  const child = live.get(`${pkg}/${slot}`);
+  const key = `${pkg}/${slot}`;
+  const child = live.get(key);
   if (!child) return false;
+  condemnResident(key, child);
   try {
     child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
   } catch { /* stdin 이미 닫힘 — 아래 신호로 */ }
@@ -303,6 +305,22 @@ export function retireResidents(pkg: string): number {
 
 export function retireAllResidents(): void {
   for (const [key, r] of [...residents]) retireEntry(key, r, true);
+}
+
+/** cancel 제어는 계약상 어댑터의 사형선고다(harness-protocol §control — error 종결 + exit 130).
+ *  선고받은 상주가 명부에 남으면, stdin cancel → 프로세스 exit 사이의 창에 시작되는 다음 턴을
+ *  acquireResident 가 그 죽어가는 프로세스에 주입한다 — 어댑터는 cancelled 가드로 주입을 삼키고,
+ *  exit 가 그 턴을 "하네스 상주 종료" 실패로 만든다(사용자 Stop 직후의 큐 드레인이 정확히 이
+ *  창에 떨어진다 — 2026-08-21 실사고). 선고와 동시에 명부에서 내려 다음 턴이 새 상주를 펴게
+ *  한다. 프로세스 정리는 cancel 을 받은 어댑터 자신과 호출측의 신호 그물이 맡는다. */
+function condemnResident(key: string, child: ChildProcess): void {
+  const r = residents.get(key);
+  if (!r || r.child !== child) return;
+  residents.delete(key);
+  if (r.idle) {
+    clearTimeout(r.idle);
+    r.idle = null;
+  }
 }
 
 /** 진행 중 턴 여부 — 화면이 새로고침 뒤에도 서버의 진행 상태(와 중지 버튼)를 되찾게 한다 */
@@ -423,6 +441,7 @@ function residentTurn(
     const stall = setInterval(() => {
       if (Date.now() - r.lastEvent < STALL_MS) return;
       void authority.audit("sessions", { pkg, slot, stall_s: Math.round((Date.now() - r.lastEvent) / 1000) });
+      condemnResident(key, r.child); // cancel 은 사형선고 — 죽어가는 상주를 다음 턴이 재사용하지 않게
       try {
         r.child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
       } catch { /* 이미 닫힘 */ }
