@@ -9,7 +9,7 @@ import { spawnEntry, spawnEntrySync } from "./entry.ts";
 import { binaryEnv } from "./binaries.ts";
 import { localAuthority } from "./authority.ts";
 import type { Authority } from "./authority-contract.ts";
-import { UPLOADS_DIR } from "./protocol.ts";
+import { UPLOADS_DIR, paramTargets } from "./protocol.ts";
 
 /** 봉투 이벤트 방청 훅 — 세션이 장부에 쓰는 이벤트를 그대로 흘린다 */
 export type EnvelopeTap = (pkg: string, slot: string, ev: { event: string; [k: string]: unknown }) => void;
@@ -122,8 +122,9 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
 
   const decl = (m.agents ?? []).find((a) => a.name === agent);
   for (const sub of ["skills", "commands"]) fs.rmSync(path.join(bundle, sub), { recursive: true, force: true });
+  let persona: string;
   if (decl) {
-    fs.writeFileSync(path.join(bundle, "persona.md"), fs.readFileSync(path.join(pkgPath, decl.persona), "utf8"));
+    persona = fs.readFileSync(path.join(pkgPath, decl.persona), "utf8");
     if (decl.skills && fs.existsSync(path.join(pkgPath, decl.skills))) {
       fs.cpSync(path.join(pkgPath, decl.skills), path.join(bundle, "skills"), { recursive: true });
     }
@@ -137,8 +138,22 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
       fs.writeFileSync(path.join(bundle, "agents", sub + ".md"), fs.readFileSync(path.join(pkgPath, subDecl.persona), "utf8"));
     }
   } else {
-    fs.writeFileSync(path.join(bundle, "persona.md"), `당신은 ${m.display_name} 에이전트입니다.\n${m.description}\n`);
+    persona = `당신은 ${m.display_name} 에이전트입니다.\n${m.description}\n`;
   }
+  // 작업 대상(param 축) 주입 — 세션 메타의 param 이 대화의 "무엇의 <agent>인가"를 밝힌다
+  // (§5.3-22). relayos runtime/turn/claudedir.go personaDoc 의 쌍둥이: 목록이면 펴서 알린다 —
+  // 단수 표현은 목록을 하나의 이름으로 오해하게 한다. 권한 축이 아니라 맥락 한 줄이다.
+  let slotParam = "";
+  try {
+    slotParam = fs.readFileSync(path.join(sessionDir(pkg, slot), "param"), "utf8").trim();
+  } catch { /* 메타 없음 — 대상 무주입 */ }
+  if (slotParam) {
+    const targets = paramTargets(slotParam);
+    persona += targets.length > 1
+      ? `\n\n---\n[세션 컨텍스트] 현재 작업 대상: ${targets.join(", ")} — 이 대화의 범위는 이들 전부입니다.`
+      : `\n\n---\n[세션 컨텍스트] 현재 작업 대상(param): ${targets[0]}.`;
+  }
+  fs.writeFileSync(path.join(bundle, "persona.md"), persona);
 
   const meta = {
     pkg,

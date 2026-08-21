@@ -210,8 +210,11 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 21. **[현행 v1]** `session.list` = `GET {base}/sessions`
     → `{sessions: [{session, label, updated, archived, pinned, agent?, param?}]}`.
     `agent`·`param`(additive, 2026-08-20) = 이 대화의 정체성 — 위임(agent_dispatch)이 만든
-    세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 작업 대상 slug 목록(쉼표 무공백,
-    org param 축의 쌍둥이 — "빌더인데 무엇의 빌더인가"). 클라이언트는 이 값으로 대화의
+    세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 org param 축의 쌍둥이("빌더인데
+    무엇의 빌더인가") — slug 목록(`[a-z0-9-]` csv, 쉼표 무공백)일 때만 목록으로 해석하고,
+    그 밖의 임의 스레드 키는 쉼표를 품어도 통짜 대상 하나다(routematch `paramTargets` 와
+    동형 — org "param = 임의 스레드 키" 계약 보존, 2026-08-21 slug 한정 문언 교정).
+    클라이언트는 이 값으로 대화의
     에이전트·대상 칩을 세우고 turn.send 의 `agent` 기본값으로 쓴다. 없으면 착지 — 종전 그대로.
     *왜 행에 싣나: 화면의 스레드 문법(`agent-<이름>:~<id>`)은 `:` `~` 를 쓰는데 기판 발급
     세션 id 는 그 문자를 실을 수 없는 기판이 있다(OSS 는 디렉토리명이다). 이름에 정체성을
@@ -225,6 +228,14 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     *왜: id 발급을 클라이언트가 하면 형식(`SLOT_RE`, protocol.ts:72)이 사실상 클라이언트
     계약이 되고, org 기판의 영속 규칙("새 대화 즉시 영속 — 빈 대화 증발 방지",
     api_turns.go:195-196)을 표현할 자리가 없다.*
+    요청 본문(additive, 2026-08-21)으로 대화 바인딩 `{agent?, param?}` 을 실을 수 있다 —
+    화면 스레드 문법의 param 축(`:`)은 기판 발급 id 에 실을 수 없으므로(:21 의 왜) 민팅
+    순간이 바인딩이 wire 에 닿는 유일한 자리다. 기판의 판정: `agent` 는 agents[] 선언 밖이면
+    `E_BAD_AGENT` 400, `agent` 없는 `param` 은 `E_BAD_PARAM` 400 — param 은 "무엇의
+    <agent>인가"라 홀로 설 수 없다. 통과한 바인딩은 세션 정체성으로 기록되어 :21 의 행
+    메타(`agent`·`param`)로 되돌아오고, 기판은 대화의 페르소나 문맥에 "현재 작업 대상"으로
+    반영한다(org 쌍둥이 — relayos `runtime/turn/claudedir.go` 의 param 주입. 목록이면 펴서
+    알린다 — 단수 표현은 목록을 하나의 이름으로 오해하게 한다).
 23. **[현행 v1]** 세션 부속 동사 — 전부 `POST {base}/sessions/<id>/<op>`:
     | op | 요청 | 응답 |
     |---|---|---|

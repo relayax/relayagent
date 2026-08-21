@@ -195,9 +195,13 @@ export function invalidateCaps(): void {
 
 const LOCAL_CONV_RE = /(^c-[0-9a-f]{16}$)|(~[0-9a-f]{8}$)/;
 
-/** 로컬 민팅 드래프트인가 — siblingThread 가 만드는 두 문법만. 그 밖의 id 는 전부 주입분. */
+/** 로컬 민팅 드래프트인가 — siblingThread 의 두 문법 + param 축(`:`)을 실은 agent 좌표.
+ *  param 축은 기판 발급 세션 id 에 실을 수 없으므로(§5.3-21 의 왜) 화면 드래프트로만 살고,
+ *  민팅(session.create {agent, param})이 바인딩을 기판 행 메타로 옮긴다. 바인딩 어휘 없는
+ *  `agent-<name>` 좌표는 종전대로 wire 에 그대로 나간다. 그 밖의 id 는 전부 주입분. */
 export function isLocalConversation(id: string): boolean {
-  return LOCAL_CONV_RE.test(String(id || ""));
+  const s = String(id || "");
+  return LOCAL_CONV_RE.test(s) || (s.startsWith("agent-") && s.includes(":"));
 }
 
 // 드래프트 → session.create 발급 id. 메모리 수명 — 새로고침 뒤에는 탭/폴백이 발급 id 를
@@ -242,24 +246,52 @@ export function seedConversation(instanceId: string): string {
   return d;
 }
 
-/** 지연 민팅 — 첫 발화 직전 어댑터가 부른다. 드래프트가 아니면 그대로, 드래프트면 1회
- *  session.create 후 매핑을 기록하고 relay-session-minted 로 탭 셸에 재바인딩을 알린다. */
+/** 드래프트 → 발급 id 매핑 기록 + relay-session-minted 재바인딩 통지(민팅·입양 공용 꼬리). */
+function adoptMinted(ctx: RelayCtx, draft: string, real: string): { session: string } {
+  _minted.set(draft, real);
+  rememberLastSession(ctx.instanceId, real);
+  try {
+    window.dispatchEvent(new CustomEvent("relay-session-minted", {
+      detail: { instanceId: ctx.instanceId, conversation: draft, session: real },
+    }));
+  } catch { /* ignore */ }
+  return { session: real };
+}
+
+/** 바인딩 seed 드래프트(sibling 아님)의 기존 세션 이어받기 — §5.3-21 행 메타 (agent, param)
+ *  일치. org 에선 좌표=세션이라 공짜였던 seed 연속성의 불투명 id 기판 등가물이다(목록은
+ *  최근순이라 첫 매치가 최신). sibling(`~`)·main 드래프트("c-…")는 의도된 새 대화라 조회
+ *  대상이 아니다. best-effort — 실패·무매치는 null(민팅으로 진행). */
+async function resolveBoundSeed(ctx: RelayCtx): Promise<string | null> {
+  const id = ctx.conversationId;
+  const bind = displayBinding(id);
+  if (!bind.agent || bind.sibling) return null;
+  const r = await wireOf(ctx).session.list();
+  if (isError(r)) return null;
+  const hit = (r.sessions ?? []).find((s) => !s.archived && (s.agent ?? "") === bind.agent && (s.param ?? "") === bind.param);
+  if (!hit) return null;
+  return adoptMinted(ctx, id, hit.session).session;
+}
+
+/** 지연 민팅 — 첫 발화 직전 어댑터가 부른다. 드래프트가 아니면 그대로, 드래프트면 seed
+ *  이어받기(resolveBoundSeed) 후 1회 session.create — 매핑을 기록하고 relay-session-minted
+ *  로 탭 셸에 재바인딩을 알린다. 바인딩(agent·param)은 좌표의 화면 축에서 읽어 민팅에
+ *  싣는다(§5.3-22 additive) — 기판이 행 메타로 기록하고 페르소나 문맥("현재 작업 대상")으로
+ *  주입하는 원천이다. */
 export async function ensureWireSession(ctx: RelayCtx): Promise<Result<{ session: string }>> {
   const id = ctx.conversationId;
   const known = wireSessionForId(id);
   if (known != null) return { session: known };
-  const r = await wireOf(ctx).session.create();
+  const adopted = await resolveBoundSeed(ctx);
+  if (adopted != null) return { session: adopted };
+  const bind = displayBinding(id);
+  const r = await wireOf(ctx).session.create(
+    bind.agent ? { agent: bind.agent, ...(bind.param ? { param: bind.param } : {}) } : undefined,
+  );
   if (isError(r)) return r;
   const real = typeof r.session === "string" ? r.session : "";
   if (!real) return { error: { code: "E_NO_SESSION", message: "세션 발급 응답에 session 이 없습니다" } };
-  _minted.set(id, real);
-  rememberLastSession(ctx.instanceId, real);
-  try {
-    window.dispatchEvent(new CustomEvent("relay-session-minted", {
-      detail: { instanceId: ctx.instanceId, conversation: id, session: real },
-    }));
-  } catch { /* ignore */ }
-  return { session: real };
+  return adoptMinted(ctx, id, real);
 }
 
 /** 민팅 통지 구독 — 탭 셸이 드래프트 좌표의 탭을 발급 id 로 재바인딩(영속 정합)하는 데 쓴다. */
@@ -390,7 +422,9 @@ type WireHistory = { messages: any[]; busy: boolean; turn?: string };
 // 마운트 직후 첫 조회는 기판이 아직 덜 깬 창과 겹칠 수 있다 — E_NETWORK 만 유한 재시도한다
 // (판정 에러는 재시도 대상이 아니다: 같은 요청은 같은 판정을 받는다).
 async function fetchHistory(ctx: RelayCtx): Promise<Result<WireHistory>> {
-  const sid = wireSessionOf(ctx);
+  // 바인딩 seed 드래프트는 마운트에서 기존 세션을 이어받는다(resolveBoundSeed) — 없으면
+  // 미민팅 그대로(빈 이력). 이 조회가 매핑을 심으므로 뒤따르는 loadActiveTurn 도 같은 세션을 본다
+  const sid = wireSessionOf(ctx) ?? await resolveBoundSeed(ctx);
   if (sid == null) return { messages: [], busy: false }; // 미민팅 드래프트 — 서버에 아직 없다
   let last: Result<WireHistory> = { error: { code: "E_NETWORK", message: "이력 조회 미시도" } };
   for (let attempt = 0; attempt < HISTORY_RETRIES; attempt++) {

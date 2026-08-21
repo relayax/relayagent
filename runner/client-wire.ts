@@ -692,11 +692,25 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/sessions$/,
-    handler: ({ deps, res, pkg }) => {
-      requirePkg(deps.getLedger(), pkg);
+    handler: async ({ deps, req, res, pkg }) => {
+      const ledger = deps.getLedger();
+      requirePkg(ledger, pkg);
+      // 대화 바인딩(§5.3-22 additive) — 화면 스레드 문법의 param 축은 기판 발급 id 에 실을 수
+      // 없으므로 민팅 순간이 바인딩이 wire 에 닿는 유일한 자리다. 판정은 선언이다(agents[] 밖 =
+      // 400). 기록된 메타는 §5.3-21 행으로 되돌아가고, runSession 이 페르소나 문맥으로 주입한다
+      const b = await readBody(req);
+      const agent = String(b.agent ?? "").trim();
+      const param = String(b.param ?? "").trim();
+      if (agent && !(loadManifest(ledger.packages[pkg].path).agents ?? []).some((a) => a.name === agent)) {
+        throw new WireError(400, "E_BAD_AGENT", `agents[] 선언 밖 에이전트: ${agent}`);
+      }
+      if (param && !agent) throw new WireError(400, "E_BAD_PARAM", "param 은 agent 없이 설 수 없다");
+      if (param.length > 256) throw new WireError(400, "E_BAD_PARAM", "param 이 너무 길다(≤256)");
       // 세션 id 는 기판 발급 불투명 문자열(§5.3-22) — SLOT_RE 는 내부 문법일 뿐 계약이 아니다
       const id = "s-" + Date.now().toString(36) + "-" + crypto.randomBytes(4).toString("hex");
-      sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
+      const dir = sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
+      if (agent) fs.writeFileSync(path.join(dir, "agent"), agent);
+      if (param) fs.writeFileSync(path.join(dir, "param"), param);
       json(res, 200, { session: id });
     },
   },

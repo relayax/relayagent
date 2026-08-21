@@ -108,6 +108,9 @@ export type SessionEntry = { session: string; label: string; updated: number; ar
   /** §5.3-21 additive — 이 대화의 정체성(위임 세션 등): 에이전트와 작업 대상. 없으면 착지 */
   agent?: string; param?: string };
 
+/** §5.3-22 additive — 민팅 시 대화 바인딩. param 은 agent 없이 설 수 없다(기판 판정). */
+export type SessionCreateRequest = { agent?: string; param?: string };
+
 export type HistoryMessage = {
   role: "user" | "bot" | "sys";
   text: string;
@@ -486,8 +489,14 @@ export function createTransport(opts: TransportOptions) {
       list: (): Promise<Result<{ sessions: SessionEntry[] }>> =>
         get<{ sessions: SessionEntry[] }>(base + "/sessions"),
 
-      /** §5.3-22 — 세션 id 는 기판 발급 불투명 문자열. 클라이언트 로컬 발급은 은퇴. */
-      create: (): Promise<Result<{ session: string }>> => post<{ session: string }>(base + "/sessions", {}),
+      /** §5.3-22 — 세션 id 는 기판 발급 불투명 문자열. 클라이언트 로컬 발급은 은퇴.
+       *  init(additive) = 대화 바인딩 {agent, param} — param 축은 기판 id 에 실을 수 없어
+       *  민팅 순간이 바인딩이 wire 에 닿는 유일한 자리다. */
+      create: (init?: SessionCreateRequest): Promise<Result<{ session: string }>> =>
+        post<{ session: string }>(base + "/sessions", {
+          ...(init?.agent ? { agent: init.agent } : {}),
+          ...(init?.param ? { param: init.param } : {}),
+        }),
 
       /** §5.3-23 — 빈 label = 자동 라벨 복귀. */
       rename: (session: string, label: string): Promise<Result<{ ok: boolean }>> =>

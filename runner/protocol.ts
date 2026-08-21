@@ -70,3 +70,16 @@ export function parseEdgeToolName(name: string): { provider: string; tool: strin
 // 정본이다. 클라이언트 쪽 검증·발급(widget.js SLOT_OK)은 Phase 2 에서 은퇴한다.
 
 export const SLOT_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+
+// ── 작업 대상 param 축 (client-protocol.md §5.3-21) ──────────────────────────
+// org param 축의 쌍둥이 — lib/relayjs routematch.ts SLUG_LIST 와 동형. slug 목록
+// ([a-z0-9-] csv)일 때만 목록으로 해석하고, 그 밖의 임의 스레드 키는 쉼표를 품어도
+// 통짜 대상 하나다(org "param = 임의 스레드 키" 계약 보존).
+
+export const PARAM_SLUGS_RE = /^[a-z0-9-]+(,[a-z0-9-]+)*$/i;
+
+/** param → 작업 대상 목록. routematch.ts paramTargets 쌍둥이 — 규칙을 바꾸면 동반 점검. */
+export function paramTargets(param: string): string[] {
+  if (!param) return [];
+  return PARAM_SLUGS_RE.test(param) ? param.split(",") : [param];
+}

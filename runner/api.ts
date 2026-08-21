@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,7 @@ import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
 import { serviceAuthHeader } from "./oauth.ts";
-import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE } from "./protocol.ts";
+import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
@@ -381,7 +382,7 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
           properties: {
             agent: { type: "string", enum: subs },
             prompt: { type: "string", description: "서브에이전트에게 전달할 지시 — 맥락은 공유되지 않으므로 필요한 배경을 담아라" },
-            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별하고, 같은 (agent, target) 재위임이 이전 위임 대화에 이어지는 열쇠다" },
+            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿 — [a-z0-9-]. 그 밖의 임의 키도 통짜 대상 하나로 보존된다). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별하고, 같은 (agent, target) 재위임이 이전 위임 대화에 이어지는 열쇠다" },
             fresh: { type: "boolean", description: "true 면 그 target 의 이전 위임 대화를 버리고 새로 시작한다 — 이전 세션이 오염됐거나 이어받으면 안 되는 새 작업일 때만" },
           },
         },
@@ -452,9 +453,12 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         const instruction = String(args.prompt ?? "").trim();
         if (!instruction) throw new Error("빈 지시 — prompt 를 담아라");
         // 작업 대상(org 의 param 축) — "agent-builder 인데 무엇의 빌더인가" 를 목록·칩이 답하게
-        // 한다. slug 목록만 받는다: 좌표에 임의 산문이 실리면 칩이 문장이 된다
-        const target = String(args.target ?? "").trim().toLowerCase().replace(/\s+/g, "");
-        const param = /^[a-z0-9._-]+(,[a-z0-9._-]+)*$/.test(target) ? target : "";
+        // 한다. slug 목록(PARAM_SLUGS_RE — routematch SLUG_LIST 쌍둥이)만 소문자 정규화·목록
+        // 해석하고, 그 밖의 임의 스레드 키는 원문 그대로 통짜 대상 하나다(§5.3-21 — org
+        // "param = 임의 스레드 키" 계약 보존. 구 구현의 "" 무음 강등은 연속성 키를 조용히
+        // 버리는 silent degradation 이라 은퇴, 2026-08-21).
+        const target = String(args.target ?? "").trim();
+        const param = PARAM_SLUGS_RE.test(target) ? target.toLowerCase() : target;
         // 슬롯 키 = (서브에이전트, 작업 대상). 같은 대상 재위임은 같은 슬롯에 앉아 이전 위임
         // 대화를 잇는다 — 봉투가 슬롯의 네이티브 포인터로 스스로 resume 하고, 포인터가 만료면
         // 새 대화로 강등하는 복구 사다리도 봉투 소유다. 위임마다 새 슬롯을 팠던 종전 구현은
@@ -463,11 +467,17 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 하나)는 이제 막이 아니라 담장이다 — 같은 draft 에 병렬 위임이 붙어 두 설계가 섞여
         // 발행된 실사고(2026-08-20)를 입구에서 끊는다. 대상이 다르면 병렬은 종전 그대로다.
         // 대상 미상이면 이을 열쇠가 없다 — 1회용 난수 슬롯으로 강등한다.
-        // 쉼표(다중 대상)는 SLOT_RE 밖이라 . 로 접는다. 대화의 에이전트 정체성은 슬롯 이름이
-        // 아니라 기판 메타(agent 파일)다 — 위젯 스레드 문법(`:` `~`)을 이름에 실으려다
-        // 새니타이즈로 뭉개진 첫 구현의 계보(실사용 보고 2026-08-20) 그대로.
+        // slug 목록의 쉼표는 SLOT_RE 밖이라 . 로 접는다 — `.` 는 slug 축([a-z0-9-])에 없으므로
+        // 목록 "a,b" 와 임의 키 "a.b" 는 충돌하지 않는다(임의 키는 아래 해시 슬롯). 임의 키는
+        // SLOT_RE 에 실을 수 없어 지문(sha256 8자리)으로 슬롯을 파고 원문은 param 메타에 든다.
+        // 대화의 에이전트 정체성은 슬롯 이름이 아니라 기판 메타(agent 파일)다 — 위젯 스레드
+        // 문법(`:` `~`)을 이름에 실으려다 새니타이즈로 뭉개진 첫 구현의 계보(실사용 보고
+        // 2026-08-20) 그대로.
         const slot = param
-          ? `sub-${sub}-${param.replace(/,/g, ".")}`.slice(0, 64)
+          ? (PARAM_SLUGS_RE.test(param)
+              ? `sub-${sub}-${param.replace(/,/g, ".")}`
+              : `sub-${sub}-k${crypto.createHash("sha256").update(param).digest("hex").slice(0, 8)}`
+            ).slice(0, 64)
           : `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
         // 진행 중인 같은 대상 위임 위에 얹지 않는다 — runSession 의 직렬화가 튕기기 전에
         // 위임 어휘로 정직하게 알린다 (재시도 루프 방지: 완료는 어차피 📬 로 온다)
