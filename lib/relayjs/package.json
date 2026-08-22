@@ -2,7 +2,7 @@
   "name": "@relay/relayjs",
   "version": "0.1.0",
   "type": "module",
-  "description": "Relay FE SDK. 채팅 코어(하네스 호출 클라이언트)와 위젯. npm 임포트, file: 의존성, 기판 /assets 정적 서빙 세 경로로 소비한다.",
+  "description": "Relay FE SDK. \ud074\ub77c\uc774\uc5b8\ud2b8 \uc804\uc1a1 \uacc4\uc57d v1 \uc758 SDK(client)\uc640 \ucc44\ud305 \uc704\uc82f \ubc88\ub4e4. npm \uc784\ud3ec\ud2b8, file: \uc758\uc874\uc131, \uae30\ud310 /assets \ubc88\ub4e4 \uc11c\ube59 \uc138 \uacbd\ub85c\ub85c \uc18c\ube44\ud55c\ub2e4.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "exports": {
@@ -10,20 +10,41 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     },
-    "./core": {
+    "./client": {
       "types": "./src/index.d.ts",
-      "default": "./src/core.js"
+      "default": "./src/client.ts"
     },
-    "./widget": {
-      "types": "./src/widget.d.ts",
-      "default": "./src/widget.js"
-    }
+    "./transport": "./src/chat/transport.ts",
+    "./envelope-reducer": "./src/chat/envelope-reducer.ts",
+    "./sse": "./src/sse.ts",
+    "./next-preset.mjs": "./next-preset.mjs"
   },
   "files": [
-    "src"
+    "src",
+    "next-preset.mjs"
   ],
+  "scripts": {
+    "build:chat": "node chat-build.mjs",
+    "build:chat:dev": "node chat-build.mjs --dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "tailwind-merge": "^3.0.0"
+  },
+  "devDependencies": {
+    "@assistant-ui/react": "^0.11.0",
+    "@assistant-ui/react-markdown": "^0.11.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "0.24.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0",
+    "typescript": "^7.0.2"
+  },
   "sideEffects": [
-    "./src/widget.js"
+    "./src/chat/main.tsx"
   ],
   "keywords": [
     "relay",

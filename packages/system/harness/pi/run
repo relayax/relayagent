@@ -147,7 +147,8 @@ if (skills.length) {
     + skills.map((n) => "- " + n + ": " + path.join(sk, n, "SKILL.md")).join("\n") + "\n";
 }
 if ((meta.agents ?? []).length) {
-  doc += "\n# 서브에이전트\n이 하네스에는 서브에이전트 실행 경로가 없다. 위임하지 말고 직접 처리하라.\n";
+  // 위임 문(agent_dispatch)은 relay MCP 도구인데 pi 에는 MCP 가 없다 — 위임 불가를 정직하게
+  doc += "\n# 서브에이전트\n이 하네스에는 MCP 가 없어 위임 문(agent_dispatch)에 닿지 못한다. 위임하지 말고 직접 처리하라.\n";
 }
 fs.writeFileSync(B + "/system.md", doc);
 '

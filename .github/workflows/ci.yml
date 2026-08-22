@@ -31,6 +31,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 위젯 소스(lib/relayjs)는 루트 tsconfig 의 include 밖이다 — 자기 tsconfig 와 자기
+      # devDeps(react·assistant-ui 타입)를 쓰기 때문이다. 별도 단계로 세우지 않으면 데몬이
+      # 서빙하는 번들이 **한 번도 타입 검사되지 않는다**: 실사고로 컴포넌트를 가로지르는
+      # ReferenceError 가 그대로 나갔다(선언은 A 컴포넌트, 참조는 B).
+      - name: Typecheck the chat widget
+        run: npm run typecheck:widget
+
       - name: Validate every package manifest
         run: npm run validate
 
@@ -52,10 +59,14 @@ jobs:
             exit 1
           fi
 
+      # Slack 토큰은 **접두사만으로 판정하면 안 된다** — 문서·에러 문구·접두사 매칭 코드가
+      # `xoxb-…` 를 쓰는 것이 정상이고(자격 형태를 사람에게 알려주는 일), 그걸 시크릿으로
+      # 잡으면 채널 자격을 설명하는 것 자체가 불가능해진다. 실토큰은 접두사 뒤에 긴 본문이
+      # 붙으므로 길이 조건으로 가른다.
       - name: No secrets committed
         run: |
           set -e
-          if git grep -nIE '(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_|AKIA[0-9A-Z]{16}|xox[baprs]-|-----BEGIN [A-Z ]*PRIVATE KEY)' -- . ':!.github/workflows'; then
+          if git grep -nIE '(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY)' -- . ':!.github/workflows'; then
             echo "::error::possible secret committed"
             exit 1
           fi

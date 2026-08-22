@@ -4,6 +4,8 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { artifactsDir, logLine } from "./state.ts";
 import { loadManifest, declaredPaths, disclosure, type Disclosure, type Manifest } from "./manifest.ts";
+import { vaultGet } from "./vault.ts";
+import { signDigest, SIGNING_VAULT_KEY, type EnvelopeSignature } from "./sign.ts";
 
 // 봉투(.relay) = 릴리스 스냅샷의 이동형. tar+gzip 하나에 매니페스트가 선언한 경로만 담고
 // sha256 다이제스트가 신원이 된다. tar 를 외부 명령으로 부르지 않고 직접 쓰는 이유는
@@ -83,6 +85,8 @@ export interface PackResult {
   excluded: string[];
   manifest: Manifest;
   disclosure: Disclosure;
+  /** 발행 키(vault signing/ed25519)가 있을 때만 — 봉인값 위의 Ed25519 사인 */
+  signature?: EnvelopeSignature;
 }
 
 export function artifactFileName(ref: string, version: string): string {
@@ -137,13 +141,25 @@ export function packDir(pkgDir: string, outFile?: string): PackResult {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, gz);
 
+  // 서명 — vault 에 발행 키(relay keygen)가 있으면 봉인값 위에 사인해 사이드카로 남긴다.
+  // 키 없는 굽기는 무서명(현행) — 서명 요구는 설치 기판의 RELAY_PUBKEYS 고정이 결정한다
+  let signature: EnvelopeSignature | undefined;
+  // §8-2 잔여: packDir 는 동기 계약(CLI pack·host.pack·등재 화면이 동기 소비)이라 비동기
+  // authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
+  const signKey = vaultGet(SIGNING_VAULT_KEY);
+  if (signKey) {
+    signature = signDigest(signKey, digest);
+    fs.writeFileSync(file + ".sig", JSON.stringify(signature) + "\n");
+  }
+
   // 선언 밖 보고 — 트리 전수에서 담은 것을 뺀 나머지
   const all: string[] = [];
   walk(root, "", viewOut, all);
   const excluded = all.filter((f) => !files.has(f));
 
+  // §8-2 잔여: 위 signKey 와 같은 사유(동기 계약) — audit 이사 보류
   logLine("pack", { ref: m.name, version: m.version, digest, size: gz.length, files: included.length });
-  return { file, ref: m.name, version: m.version, digest, size: gz.length, included, excluded, manifest: m, disclosure: disclosure(m) };
+  return { file, ref: m.name, version: m.version, digest, size: gz.length, included, excluded, manifest: m, disclosure: disclosure(m), signature };
 }
 
 // ── 봉인 검증과 해체 ─────────────────────────────────────────────────────────

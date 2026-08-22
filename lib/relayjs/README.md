@@ -36,13 +36,14 @@ mount({ pkg: "diary", mode: "inline", target: document.getElementById("chat") })
 기판이 이 디렉토리를 `/assets` 로 서빙한다. 패키지 view 문서에는 한 줄이면 된다:
 
 ```html
-<script type="module" src="/assets/chat-widget.js"></script>
+<link rel="stylesheet" href="/assets/chat-app.css">
+<script type="module" src="/assets/chat-app.js"></script>
 ```
 
-URL(`/pkg/<이름>/view/`)의 패키지로 우측하단 부유 위젯이 자동 마운트된다.
-자동 마운트를 끄려면 로드 전에 `window.RELAY_CHAT_MANUAL = true`.
+우측하단 부유 위젯이 자동 마운트된다. 대상은 기판이 문서에 심는 좌표
+(`window.__RELAY_CONTEXT` — client-protocol §2-6)에서 오고, 좌표가 없으면 마운트를 포기하고
+판정을 콘솔에 남긴다(마운트 문법 조립 금지). 자동 마운트를 끄려면 로드 전에
+`window.RELAY_CHAT_MANUAL = true`.
 
-## 3. 구 경로 shim
-
-`/pkg/system/view/chat-widget.js` 는 `/assets/chat-widget.js` 로 넘기는 호환 shim 이다.
-새 코드는 /assets 경로를 쓴다.
+번들은 빌드 산출물이다(`dist/` — gitignore). 갓 클론한 트리에서는 `npm run build:widget` 이
+선행이고, 그 전까지 `/assets/*` 는 안내를 실은 404 를 낸다.

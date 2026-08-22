@@ -48,13 +48,6 @@ export function approveGrant(g: Grant): Promise<{ ok: boolean }> {
   return post("/grants", g);
 }
 
-export function sendChat(pkg: string, message: string, slot = "console"): Promise<{ reply?: string; error?: string }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/chat`, { message, slot });
-}
-
-export function resetSession(pkg: string, slot = "console"): Promise<{ ok: boolean }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/session/reset`, { slot });
-}
 
 export async function callScript<T = any>(name: string, input: unknown): Promise<T> {
   const data = await post(`/pkg/system/script/${name}`, { input });
@@ -110,6 +103,51 @@ export function setModel(pkg: string, model: string | null): Promise<{ ok: boole
 /** 대화형 로그인 발화 — 기판이 터미널 창을 연다 (인증은 그 창이 소유) */
 export function loginHarness(pkg: string, sw = false): Promise<{ launched: boolean; command: string; note: string }> {
   return post(`/pkg/${encodeURIComponent(pkg)}/harness/login`, { switch: sw });
+}
+
+// 채널 운영면 — 하네스 설정과 같은 기판 API 패턴. 저작(스튜디오)이 아니라 상태·자격·재기동
+/** 자격 형태 선언 — 값이 아니라 형태다(매니페스트 surfaces.channels[].credential) */
+export interface CredentialField {
+  key?: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  list?: boolean;
+  required?: boolean;
+}
+export interface CredentialDecl {
+  fields: CredentialField[];
+  help?: { url?: string; note?: string };
+}
+
+export interface ChannelStatusView {
+  name: string;
+  icon: string | null;
+  running: boolean;
+  pid: number | null;
+  hasCred: boolean;
+  lastError: string | null;
+  /** null = 선언 없음 → 화면은 원시 붙여넣기로 물러난다(제3자 어댑터) */
+  credential: CredentialDecl | null;
+}
+
+export function channelStatus(pkg: string): Promise<{ channels: ChannelStatusView[] }> {
+  return getJson(`/pkg/${encodeURIComponent(pkg)}/channels`);
+}
+
+/** 자격 저장만 — 유효 판정은 verify 소관("저장됨 ≠ 유효") */
+export function connectChannel(pkg: string, channel: string, cred: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/channel/${encodeURIComponent(channel)}/connect`, { cred });
+}
+
+/** 저장된 자격이 실제로 먹히는지 실왕복 한 번으로 판정 */
+export function verifyChannel(pkg: string, channel: string): Promise<{ ok: boolean; note: string }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/channel/${encodeURIComponent(channel)}/verify`, {});
+}
+
+/** 채널 하나만 갈아탄다 — 새 자격 반영 */
+export function restartChannel(pkg: string, channel: string): Promise<{ ok: boolean; running: boolean; note: string }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/channel/${encodeURIComponent(channel)}/restart`, {});
 }
 
 // 마켓 화면은 OSS 콘솔에서 걷어냈다 (스토어 UI 는 데스크탑 앱의 몫).

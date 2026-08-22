@@ -7,6 +7,9 @@ const SERVICE = "relay";
 const FALLBACK = path.join(RELAY_HOME, "vault.json");
 
 function hasSecurity(): boolean {
+  // RELAY_VAULT=file — Keychain 이 있어도 파일 vault 강제(헤드리스 서버·테스트 격리용).
+  // 테스트가 사용자 Keychain 을 오염시키는 것은 사고다
+  if (process.env.RELAY_VAULT === "file") return false;
   return spawnSync("which", ["security"]).status === 0;
 }
 

@@ -112,6 +112,8 @@ async function fetchVerified(u: URL, entry: StoreEntry): Promise<string> {
   const tmp = target + ".part";
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, target);
+  // §8-2 잔여: 다운로드 3동사(download/redeem/ticket)의 호출부 6곳에 authority 인자 연쇄를
+  // 일으키는 데 비해 얻는 것이 소비 기록 한 줄 — 과대수술로 판단해 audit 이사 보류
   logLine("store", { ref: entry.ref, version: entry.version, digest: entry.digest, size: buf.length });
   return target;
 }

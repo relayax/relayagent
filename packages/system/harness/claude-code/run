@@ -140,6 +140,23 @@ try {
     exit 0
     ;;
   session|serve)
+    # workspace 메모리 셔틀 — 정본은 AGENTS.md 다(codex·kimi 가 네이티브로 읽는 중립 규약,
+    # harness-protocol §memory). claude 의 프로젝트 메모리 규약은 CLAUDE.md 라 이름이 갈리는데,
+    # CLAUDE.md 는 @경로 import 를 지원하므로 import 한 줄로 정본을 잇는다. 이 파일들은 조립
+    # 산출물이 아니라 도구 자신이 cwd 에 쓰는 메모리 규약 파일이다 — "cwd 를 건드리지 않는다"
+    # 규율(아래)은 조립을 말하는 것이고, 메모리는 도구가 이미 소유한 cwd 표면이다.
+    #   · CLAUDE.md 없음 + AGENTS.md 있음 → import 한 줄짜리 CLAUDE.md 생성 (# 메모리도 여기 쌓인다)
+    #   · CLAUDE.md 있음 + AGENTS.md 없음 → 내용을 정본으로 승격하고 CLAUDE.md 는 import 로 교체
+    #   · 둘 다 있음/없음 → 손대지 않는다 (사용자 파일 존중 · 빈 약속 생성 금지)
+    if [ ! -e CLAUDE.md ] && [ -f AGENTS.md ]; then
+      printf '@AGENTS.md\n' > CLAUDE.md
+    elif [ -f CLAUDE.md ] && [ ! -e AGENTS.md ]; then
+      if [ "$(cat CLAUDE.md 2>/dev/null)" = "@AGENTS.md" ]; then
+        : > AGENTS.md   # 홀로 남은 import — 정본 자리를 만들어 dangling 을 없앤다
+      else
+        cp CLAUDE.md AGENTS.md && printf '@AGENTS.md\n' > CLAUDE.md
+      fi
+    fi
     ;;
   *)
     echo "지원하지 않는 동사: $VERB (session|serve|setup|login|models|commands|info)"
@@ -148,6 +165,12 @@ try {
 esac
 
 B="$RELAY_BUNDLE"
+
+# agent_dispatch 는 서브에이전트 완료까지 블로킹하는 장기 툴콜이다 — claude 기본 MCP 타임아웃에
+# 먼저 잘리면 정직한 완료·실패가 모델에 못 닿는다. 운영자 명시값은 존중(org 기판과 같은 값)
+if [ -z "${MCP_TOOL_TIMEOUT:-}" ]; then
+  export MCP_TOOL_TIMEOUT=240000
+fi
 
 # 조립은 전부 플래그로 넣는다 — cwd(workspace)도, 사용자의 ~/.claude 도 건드리지 않는다.
 #
@@ -174,6 +197,20 @@ doc += "\n\n# 기판 (Relay)\n"
   + "- 작업 무대(cwd): " + (meta.workspace ?? process.cwd()) + "\n"
   + "- 파일 교환 무대: " + meta.stage + " — 사용자에게 채팅으로 전달할 파일은 여기 놓는다. 첨부도 여기서 온다\n"
   + "- 접근 금지: " + (meta.hooks?.deny ?? []).join(", ") + " — 도구 호출이 차단된다\n";
+// ③ 서브에이전트 위임 — 기판 소유다(2026-08-20 단일화, harness-protocol §subagents).
+// 구 --agents(하네스 네이티브 Task) 번역은 은퇴했다: 하네스마다 의미가 갈렸고(네이티브가
+// 없는 도구는 강등으로 실행 자체가 안 됐다), 부모 세션 안에서 돌아 세션 목록·위임 카드에
+// 보이지 않았다. 이제 위임 안내를 문서 절로 싣고, 실행은 기판의 agent_dispatch MCP 도구가
+// 별도 세션으로 돌린다 — 어느 하네스든 같은 그림.
+for (const a of meta.agents ?? []) {
+  const src = path.join(B, "agents", a.name + ".md");
+  if (!fs.existsSync(src)) continue;
+  const first = fs.readFileSync(src, "utf8").split("\n").find((l) => l.trim()) ?? "";
+  doc += "\n\n# 위임 가능: " + a.name + "\n" + (first ? first.trim() + "\n" : "")
+    + "이 역할의 일은 직접 하지 말고 relay 의 agent_dispatch 도구로 위임하라 — "
+    + "별도 세션에서 돌고 완료 결과가 돌아온다. 맥락은 공유되지 않으니 지시에 필요한 배경을 담아라.\n";
+}
+
 fs.writeFileSync(B + "/system.md", doc);
 
 // ② 스킬·커맨드 = 플러그인 디렉토리. 사용자의 ~/.claude 나 cwd 를 오염하지 않는 유일한 경로.
@@ -201,18 +238,25 @@ const names = fs.existsSync(cmdDir)
   : [];
 fs.writeFileSync(B + "/slash.json", JSON.stringify({ prefix: plugin, names }));
 
-// ③ 서브에이전트 = --agents JSON (frontmatter 파일 대신 인자로)
-const agents = {};
-for (const a of meta.agents ?? []) {
-  const src = path.join(B, "agents", a.name + ".md");
-  if (!fs.existsSync(src)) continue;
-  agents[a.name] = { description: a.description, prompt: fs.readFileSync(src, "utf8") };
-}
-fs.writeFileSync(B + "/agents.json", JSON.stringify(agents));
 
-fs.writeFileSync(B + "/mcp.claude.json", JSON.stringify({
-  mcpServers: { relay: { type: "http", url: meta.mcp.url, headers: { Authorization: meta.mcp.authorization } } },
-}));
+// MCP 문 배선 — meta.mcpServers(복수, additive)가 있으면 선언 이름 그대로 앉힌다: 도구명이
+// mcp__<이름>__* 로 서서 기판 표면의 정확명 매칭이 어댑터와 무관해진다. authorization 은
+// Authorization 헤더 값, headers 는 다른 이름으로 인증하는 문의 불투명 추가 헤더다.
+// 복수 선언이 비어 있으면 구형 단일 meta.mcp 를 서버명 relay 로 (기존 임베더 무변)
+const doors = {};
+for (const [nm, d] of Object.entries(meta.mcpServers && typeof meta.mcpServers === "object" ? meta.mcpServers : {})) {
+  if (!d || typeof d.url !== "string" || !d.url) continue; // url 없는 항목은 계약 밖 — 추측 금지
+  const headers = {};
+  for (const [h, v] of Object.entries(d.headers && typeof d.headers === "object" ? d.headers : {})) {
+    if (typeof v === "string") headers[h] = v;
+  }
+  if (typeof d.authorization === "string" && d.authorization) headers.Authorization = d.authorization;
+  doors[nm] = { type: "http", url: d.url, ...(Object.keys(headers).length ? { headers } : {}) };
+}
+if (!Object.keys(doors).length) {
+  doors.relay = { type: "http", url: meta.mcp.url, headers: { Authorization: meta.mcp.authorization } };
+}
+fs.writeFileSync(B + "/mcp.claude.json", JSON.stringify({ mcpServers: doors }));
 
 // hooks.deny 번역: 파일 도구 전계열은 권한 deny 규칙으로, 전 도구는 PreToolUse 가드로 이중으로 막는다.
 // 훅은 permission mode 와 무관하게 돌므로 headless 의 skip-permissions 에서도 산다
@@ -265,9 +309,6 @@ ARGS=(
   --append-system-prompt-file "$B/system.md"
   --plugin-dir "$B/plugin"
 )
-if [ -s "$B/agents.json" ] && [ "$(cat "$B/agents.json")" != "{}" ]; then
-  ARGS+=(--agents "$(cat "$B/agents.json")")
-fi
 if [ -n "${RELAY_MODEL:-}" ]; then
   ARGS+=(--model "$RELAY_MODEL")
 fi
@@ -662,14 +703,22 @@ const onLine = (line) => {
       child.kill("SIGTERM");
       return;
     }
-    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다
-    if (!j.is_error && !String(j.result ?? "").trim() && !turn.said.trim() && !j.usage) return;
+    // 빈 껍데기 result — 본문도 장부도 없는 것은 종결이 아니다. 장부는 **실질**로 판정한다:
+    // usage 객체가 있어도 토큰이 전부 0 이면 모델이 돌지 않은 것이다. 실사고(2026-08-20) —
+    // 재기동 직후 resume 부팅에서 이전 대화의 pending task 배달과 주입 턴이 경합하자 CLI 가
+    // usage {0,0} 를 단 빈 result 를 냈고, 객체 존재만 보던 이 방어를 통과해 "완료 · 1.5s" 에
+    // 빈 답이 앉았다. 무시하면 진짜 result 가 뒤따르거나, 없으면 stall 타이머가 정직하게 운다.
+    const ledgered = j.usage && ((j.usage.input_tokens ?? 0) + (j.usage.output_tokens ?? 0)
+      + (j.usage.cache_read_input_tokens ?? 0) + (j.usage.cache_creation_input_tokens ?? 0)) > 0;
+    if (!j.is_error && !String(j.result ?? "").trim() && !turn.said.trim() && !ledgered) return;
     turn.done = true;
     resetTick();
     if (j.session_id) fs.writeFileSync(B + "/claude-session", j.session_id);
     const text = String(j.result ?? "").trim() || turn.said.trim();
     if (j.is_error) {
-      emit({ event: "error", message: text.trim() || ("claude 실패 (" + (j.subtype ?? "사유 없음") + ")") });
+      // 취소로 죽어가는 CLI 는 is_error result 에 중단 시점의 부분 본문을 실어 온다 — 그대로
+      // 사유로 쓰면 이력에 "오류: <부분 텍스트>" 가 남는다. 취소 턴의 사유는 취소 사실이다
+      emit({ event: "error", message: cancelled ? "취소됨" : (text.trim() || ("claude 실패 (" + (j.subtype ?? "사유 없음") + ")")) });
       if (MODE === "session") { process.exitCode = 1; retire(); }
       else afterSettle();
       return;
@@ -689,6 +738,11 @@ const onLine = (line) => {
         input: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         output: u.output_tokens ?? 0,
         context_window: (name && mu[name]?.contextWindow) ?? null,
+        // additive 세분(하위호환): input 은 위 그대로 캐시 포함 합계로 남는다 — 비캐시 입력이
+        // 필요한 기판은 input - cache_read - cache_creation 으로 되구한다. cost 는 도구 자기 정산액
+        cache_read: u.cache_read_input_tokens ?? 0,
+        cache_creation: u.cache_creation_input_tokens ?? 0,
+        ...(typeof j.total_cost_usd === "number" ? { cost_usd: j.total_cost_usd } : {}),
       },
       // 점유율 게이지의 정본 — 마지막 본류 프레임의 usage. result.usage 는 누적이라 부푼다
       context: { input: turn.ctxIn || null, window: (name && mu[name]?.contextWindow) ?? null },
@@ -719,7 +773,12 @@ try {
       return;
     }
     if (c?.type === "turn" && MODE === "serve") {
-      if (closing || cancelled) return;
+      if (closing || cancelled) {
+        // 은퇴/취소는 사형선고라 이 상주에 새 턴은 계약 위반이다 — 조용히 삼키면 기판의
+        // exit 감시가 "하네스 상주 종료" 로 늦게 울린다. 즉시 error 로 종결시켜 원인을 밝힌다
+        emit({ event: "error", message: "취소로 내려가는 상주에 턴이 주입되었습니다 — 새 상주로 다시 보내세요" });
+        return;
+      }
       if (typeof c.prompt !== "string" || !c.prompt.trim()) return;
       if (turn) {
         // 자발 턴 진행 중의 주입은 큐잉한다(교차 배선 방지). 주입 턴 위의 주입은 기판이 막는다

@@ -1,25 +1,62 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { API_PORT, PRINCIPAL, RELAY_HOME, STORE_INDEX_URL, loadLedger, tokenToPkg, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
+import { API_PORT, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./state.ts";
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
-import { vaultGet, vaultSet } from "./vault.ts";
+import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
-import { runSession, cancelSession, retireResident, retireResidents, autoTitleSession, deliverAnswer, isSessionBusy } from "./session.ts";
-import { runScript, mcpCall, type HostBridge } from "./scripts.ts";
-import { installPkg, buildPkg, removePkg, addGrant, removeGrant, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
+import { runSession, retireResident, retireResidents, setEnvelopeTap, isSessionBusy } from "./session.ts";
+import { handleClientWire, tapSessionEvent } from "./client-wire.ts";
+import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
+import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
+import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, listReleases, rollbackRelease } from "./draft.ts";
 import { saveLedger } from "./state.ts";
-import { startServices, stopServices } from "./run.ts";
+import { assetsAtDaemonRoot } from "./build.ts";
+import { logLine } from "./state.ts";
+import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, localIO } from "./run.ts";
+import { verifyChannel } from "./conform.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
+import { localAuthority, type Authority } from "./authority.ts";
+import { serviceAuthHeader } from "./oauth.ts";
+import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
-const ASSETS_DIR = path.join(RUNNER_DIR, "..", "lib", "relayjs", "src");
+// 서빙 정본은 번들 산출물이다 — 소스가 아니라 컷이 구운 dist 를 낸다(계획 §4-a)
+const ASSETS_DIR = path.join(RUNNER_DIR, "..", "lib", "relayjs", "dist");
+
+// 채널 로그에서 밖으로 나갈 문자열의 비밀을 지운다 — 토큰과 사용자 절대경로. fail-loud 하되
+// 자격은 외부에 노출하지 않는다는 계약(schema surfaces.channels '실패' 절)의 집행이다
+function scrubSecrets(s: string): string {
+  return s
+    .replace(/xox[a-z]-[A-Za-z0-9-]+/gi, "xox•-…")
+    .replace(/xapp-[A-Za-z0-9-]+/gi, "xapp-…")
+    .replace(/xoxe[.-][A-Za-z0-9.-]+/gi, "xoxe-…")
+    .replace(/\/(Users|home)\/[^\s"']+/g, "…");
+}
+
+// 채널 상태의 '최근 오류' — channels.jsonl 을 뒤에서부터 훑어 이 채널의 가장 최근 사건을 본다.
+// err(경고 제외) 또는 비정상 exit 이 최근이면 그 사연을, out/정상 exit 이 최근이면 건강(null)
+function channelLastError(pkg: string, channel: string): string | null {
+  const file = path.join(RELAY_HOME, "logs", "channels.jsonl");
+  if (!fs.existsSync(file)) return null;
+  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let j: { pkg?: string; channel?: string; err?: string; out?: string; exit?: number | null };
+    try { j = JSON.parse(lines[i]); } catch { continue; }
+    if (j.pkg !== pkg || j.channel !== channel) continue;
+    if (j.err && !/ExperimentalWarning|trace-warnings/.test(j.err)) return scrubSecrets(j.err);
+    if (j.exit != null && j.exit !== 0) return `프로세스 종료 (exit ${j.exit})`;
+    if (j.out || j.exit === 0) return null; // 최근 사건이 건강하면 오류 없음
+  }
+  return null;
+}
 
 // 준비된 설치의 대기석. 고지서를 본 화면만 activate 에 닿도록 짧은 토큰으로 잇는다.
 // 릴리스 전개는 이미 디스크에 있으므로 만료되어도 잃는 것은 없다 — 다시 prepare 하면 재사용된다
@@ -27,6 +64,14 @@ const prepared = new Map<string, { p: Prepared; at: number }>();
 const PREPARE_TTL = 10 * 60_000;
 /** 손으로 가져오는 봉투의 상한 — 원격 다운로드와 같은 선 */
 const MAX_IMPORT = 200 * 1024 * 1024;
+
+/** 데몬 자신의 오리진 — 상태를 바꾸는 요청의 Origin 화이트리스트(CSRF 판정). 데몬이 굽는
+ *  화면(설치 동의·패키지 view·직결 채팅)은 전부 여기서 서빙되므로 이 집합이 곧 전부다 */
+const SELF_ORIGINS = new Set([
+  `http://127.0.0.1:${API_PORT}`,
+  `http://localhost:${API_PORT}`,
+  `http://[::1]:${API_PORT}`,
+]);
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -148,6 +193,8 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
   if (d.host.length) rows.push(`<div><dt>호스트</dt><dd>${esc(d.host.join(" · "))}</dd></div>`);
   if (d.borrows.length) rows.push(`<div><dt>빌림</dt><dd>${esc(d.borrows.join(" · "))}</dd></div>`);
   if (d.spawns.length) rows.push(`<div><dt>프로세스</dt><dd>${esc(d.spawns.join(" · "))}</dd></div>`);
+  if (d.connector) rows.push(`<div><dt>자격</dt><dd>커넥터 계약 (${esc(d.connector)}) — 값은 vault, 연결은 설치 후</dd></div>`);
+  if (d.hostMethods.length) rows.push(`<div><dt>기판</dt><dd>host 브리지 <code>${esc(d.hostMethods.join(", "))}</code></dd></div>`);
   if (d.denied.length) rows.push(`<div><dt>담장</dt><dd>${esc(d.denied.join(", "))} 에는 닿지 않습니다</dd></div>`);
 
   const nots: string[] = [];
@@ -160,10 +207,10 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
     `${SHELL}<div class="card">
 <h1>${esc(prep.manifest.display_name ?? prep.name)} 설치</h1>
 <p class="sub">${esc(prep.ref)} · ${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p>
-${sideloaded
-      ? `<div class="warn">스토어를 거치지 않은 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
+${sideloaded && !prep.signed
+      ? `<div class="warn">스토어를 거치지 않은 무서명 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
 <div class="seal">봉인값 · <code>${esc(prep.digest)}</code></div>`
-      : `<div class="seal">봉인 확인됨 · <code>${esc(prep.digest)}</code></div>`}
+      : `<div class="seal">${prep.signed ? "서명·봉인 확인됨" : "봉인 확인됨"} · <code>${esc(prep.digest)}</code></div>`}
 <h2>이 에이전트가 요구하는 것</h2>
 <dl>${rows.join("") || `<div><dt>—</dt><dd>따로 요구하는 것이 없습니다</dd></div>`}</dl>
 ${nots.length ? `<div class="nots">이 패키지는 ${esc(nots.join(", "))}.</div>` : ""}
@@ -189,13 +236,16 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
   return JSON.parse(raw);
 }
 
-export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null): HostBridge {
+// 권위 이음새를 인자로 받는다 — 결재(grant)·장부 조회가 이 문을 지나야 조직 임베드가
+// 브리지를 그대로 두고 권위 구현만 갈아 끼운다 (조립 지점: relay.ts daemon · createApi)
+export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority): HostBridge {
   return {
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
-      const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace });
+      const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
+      startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       getTicker()?.emit("relay.package.installed", { pkg: r.name });
       // setup 과 build 결과를 여기서 버리면 "설치 성공" 이 검증 없이 참이 된다
       return { name: r.name, setup: r.setup ?? null, build: r.build ?? null };
@@ -205,9 +255,9 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       removePkg(getLedger(), name);
       return { removed: name };
     },
-    grants: () => getLedger().grants,
-    grant: (g) => {
-      addGrant(getLedger(), g);
+    grants: () => authority.grants() as Promise<Grant[]>,
+    grant: async (g) => {
+      await authority.recordGrant(g);
       return { ok: true };
     },
     validate: (dir) => validateDir(dir),
@@ -224,7 +274,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
         retireResidents(name);
         stopServices(name);
-        const notes = startServices(l, name, r.path, r.manifest);
+        const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
         return { ...r, manifest: undefined, services: notes };
       }
@@ -259,7 +309,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const r = rollbackRelease(l, name, version);
       retireResidents(name);
       stopServices(name);
-      const notes = startServices(l, name, r.path, r.manifest);
+      const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
       return { name: r.name, version: r.version, path: r.path, services: notes };
     },
     dispatch: async (providerRef, mission, payload, consumer) => {
@@ -269,22 +319,22 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const m = loadManifest(ledger.packages[provider].path);
       if (!(m.missions ?? []).some((x) => x.name === mission)) throw new Error(`미선언 미션: ${mission}`);
       // 첫 줄은 위임 마커다 — 수신 대화의 화면이 이 마커를 발신자 아이콘 카드로 렌더한다
-      const prompt = `[미션 수신: ${mission}${consumer ? ` ← ${consumer}` : ""}]\n${payload}`;
+      const prompt = `${a2aMissionMarker(mission, consumer)}\n${payload}`;
       const slot = `mission-${mission}`;
       // 위임 대화도 세션 목록의 시민이다 — 이름이 없으면 마커 원문이 라벨 행세를 해서 흉하다
       const labelFile = path.join(sessionDir(provider, slot), "label");
       if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `⇄ ${consumer ?? "외부"} → ${mission}`);
-      const r = await runSession({ ledger, pkg: provider, prompt, slot });
+      const r = await runSession({ ledger, pkg: provider, authority, prompt, slot });
       return r.reply;
     },
   };
 }
 
-function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: string; description: string }[] {
+// 세션이 부를 수 있는 동사의 유일한 진리 — 목록(tools/list)과 집행(tools/call)이 같은 집합을
+// 봐야 한다. 목록에만 스코프를 걸면 이름을 아는 세션이 아무 동사나 부른다 (선언 = 캡 원칙 위반)
+function sessionScriptSet(ledger: Ledger, pkg: string, agent: string): Set<string> {
   const rec = ledger.packages[pkg];
   const m = loadManifest(rec.path);
-  const tools: { name: string; description: string }[] = [];
-
   const agentsInPlay = [agent, ...((m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [])];
   const allScripts = listScripts(rec.path, m);
   const inScope = new Set<string>();
@@ -293,100 +343,217 @@ function sessionTools(ledger: Ledger, pkg: string, agent: string): { name: strin
     if (!scope) continue;
     for (const s of allScripts) if (scope(s)) inScope.add(s);
   }
-  for (const s of inScope) tools.push({ name: s, description: `${pkg} 패키지의 ${s} 동사` });
+  return inScope;
+}
 
-  for (const g of ledger.grants.filter((g) => g.consumer === pkg)) {
+// 서술·입력 형의 정본은 동사 자신이다 — 기판이 이름으로 문장을 지어내면 tools/list 가 세션에게
+// 아무것도 알려주지 못한다(이름을 두 번 읽는 셈). meta 를 수출한 동사는 그 서술과 JSON Schema 를
+// 싣고, 수출하지 않은 동사는 현행 그대로 자동 서술 + 개방 스키마(mcp.ts 폴백)로 선다.
+async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, agent: string): Promise<McpToolInfo[]> {
+  const tools: McpToolInfo[] = [];
+  for (const s of sessionScriptSet(ledger, pkg, agent)) {
+    const meta = await scriptMeta(ledger, pkg, s);
+    tools.push({ name: s, description: meta?.description ?? `${pkg} 패키지의 ${s} 동사`, inputSchema: meta?.input });
+  }
+
+  // 서브에이전트 위임 — 기판 소유다(2026-08-20 단일화). 종전에는 어댑터가 하네스 네이티브
+  // (claude --agents)로 번역해 하네스마다 의미가 갈렸다: claude 는 부모 세션 안 Task, 나머지는
+  // 문서 절 강등(실행 자체가 안 됨). 이제 전 하네스가 같은 문으로 위임하고, 서브에이전트 턴은
+  // 별도 세션(목록 시민)으로 돈다 — org 기판(turn.service dispatch)과 같은 의미론.
+  {
+    const m = loadManifest(ledger.packages[pkg].path);
+    const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];
+    if (subs.length) {
+      // 소개는 페르소나 첫 줄 — 매니페스트에 별도 description 축이 없고, 첫 줄이 그 관례다
+      const rows = subs.map((n) => {
+        const d = (m.agents ?? []).find((a) => a.name === n);
+        let first = "";
+        try {
+          if (d) first = fs.readFileSync(path.join(ledger.packages[pkg].path, d.persona), "utf8").split("\n").find((l) => l.trim()) ?? "";
+        } catch { /* 페르소나 불달 — 이름만 */ }
+        return `${n}${first ? ` — ${first.trim().slice(0, 80)}` : ""}`;
+      });
+      tools.push({
+        name: "agent_dispatch",
+        description: `서브에이전트에게 위임한다. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. 같은 (agent, target) 재위임은 이전 위임 대화에 이어서 돈다 — 중단된 작업의 계속·후속 수정은 같은 target 으로 보내라. 위임 가능: ${rows.join(" · ")}. arguments: { agent: string, prompt: string, target?: string, fresh?: boolean }`,
+        inputSchema: {
+          type: "object",
+          required: ["agent", "prompt"],
+          properties: {
+            agent: { type: "string", enum: subs },
+            prompt: { type: "string", description: "서브에이전트에게 전달할 지시 — 맥락은 공유되지 않으므로 필요한 배경을 담아라" },
+            target: { type: "string", description: "작업 대상 slug(다루는 패키지·draft 이름 등, 쉼표로 여럿 — [a-z0-9-]. 그 밖의 임의 키도 통짜 대상 하나로 보존된다). 알면 반드시 실어라 — 세션 목록과 대화 칩에 떠서 사용자가 무슨 작업인지 구별하고, 같은 (agent, target) 재위임이 이전 위임 대화에 이어지는 열쇠다" },
+            fresh: { type: "boolean", description: "true 면 그 target 의 이전 위임 대화를 버리고 새로 시작한다 — 이전 세션이 오염됐거나 이어받으면 안 되는 새 작업일 때만" },
+          },
+        },
+      });
+    }
+  }
+
+  // 인가 장부 조회도 권위 이음새를 지난다 — 목록(tools/list)과 집행(grantForTool)이 같은 문을 본다
+  for (const g of (await authority.grants()).filter((g) => g.consumer === pkg)) {
     if (g.mission) {
       tools.push({
-        name: `a2a__${g.provider}__${g.mission.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+        name: a2aToolName(g.provider, g.mission),
         description: `a2a 위임: ${g.provider} 의 ${g.mission} 미션. arguments: { payload: string }`,
       });
     }
     for (const t of g.tools ?? []) {
-      tools.push({ name: `edge__${g.provider}__${t}`, description: `edge 소비: ${g.provider} 의 ${t}` });
+      tools.push({ name: edgeToolName(g.provider, t), description: `edge 소비: ${g.provider} 의 ${t}` });
     }
   }
   return tools;
 }
 
-async function callEdgeTool(ledger: Ledger, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge): Promise<unknown> {
-  const grant = ledger.grants.find((g) => g.consumer === consumer && g.provider === provider && (g.tools ?? []).includes(tool));
+async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge, agent?: string): Promise<unknown> {
+  // 인가 판정은 권위 이음새를 지난다 — "누구로서(consumer), 무엇을(provider/tool), 어떤 자격으로"
+  const grant = await authority.grantForTool(consumer, provider, tool);
   if (!grant) throw new Error(`E_NO_GRANT: ${consumer} -> ${provider}/${tool}`);
   const rec = ledger.packages[provider];
   const m = loadManifest(rec.path);
   const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
-  if (urlSvc) return await mcpCall(urlSvc.url, tool, args);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, { principal: PRINCIPAL }, host);
+  // 소비의 두 축은 여기서 갈라진다 — 자격은 provider, 신원은 원 호출자.
+  // 자격: provider 의 것으로 나간다(몸과의 연결은 provider 가 소유한다 — ctx.service 와 같은
+  //   해석: token·oauth 회전). 무자격 호출이던 구멍의 답.
+  // 신원: 소비를 발화한 쪽의 것으로 나간다(principal = 그 사람, agent = 그 세션의 얼굴).
+  //   신원까지 provider 로 바꾸면 principal 로 RLS 를 거는 몸이 소비자 사용자를 못 보고
+  //   provider 하나로 뭉뚱그린다 — 인가가 consumer→provider 로 기록되는 것과 같은 결이다.
+  //   agent 이름은 consumer 패키지의 어휘다: provider 는 이것을 자기 에이전트로 읽으면 안 된다.
+  //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
+  const identity = { principal: authority.principal(), agent };
+  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 
-async function handleMcp(ledger: Ledger, host: HostBridge, pkg: string, agent: string, body: any, res: http.ServerResponse): Promise<void> {
-  const { id, method, params } = body;
-  const reply = (result: unknown) => json(res, 200, { jsonrpc: "2.0", id, result });
-  const fail = (message: string) => json(res, 200, { jsonrpc: "2.0", id, error: { code: -32000, message } });
+// 1인 기판의 문 이음새 구현(mcp.ts McpIO) — 프로토콜 합성은 mcpDispatch 한 벌이고, 여기는
+// "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
+// handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
+// (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
+function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, callerSlot?: string | null): McpIO {
+  return {
+    tools: () => sessionTools(ledger, authority, pkg, agent),
+    call: async (name, args) => {
+      const a2a = parseA2aToolName(name);
+      const edge = parseEdgeToolName(name);
+      if (a2a) {
+        const m = loadManifest(ledger.packages[a2a.provider].path);
+        const mission = (m.missions ?? []).find((x) => sanitizeToolSegment(x.name) === a2a.rest)?.name ?? a2a.rest;
+        const grant = await authority.grantForMission(pkg, a2a.provider, mission);
+        if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a.provider}/${mission}`);
+        return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
+      }
+      if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent);
+      if (name === "agent_dispatch") {
+        const m = loadManifest(ledger.packages[pkg].path);
+        const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];
+        const sub = String(args.agent ?? "");
+        // 게이트는 선언이다 — dispatch 목록 밖 이름은 도구를 아는 세션이라도 못 부른다(선언 = 캡)
+        if (!subs.includes(sub)) throw new Error(`E_SCOPE: ${agent} 의 dispatch 선언 밖 서브에이전트: ${sub} (선언: ${subs.join(", ") || "없음"})`);
+        const instruction = String(args.prompt ?? "").trim();
+        if (!instruction) throw new Error("빈 지시 — prompt 를 담아라");
+        // 작업 대상(org 의 param 축) — "agent-builder 인데 무엇의 빌더인가" 를 목록·칩이 답하게
+        // 한다. slug 목록(PARAM_SLUGS_RE — routematch SLUG_LIST 쌍둥이)만 소문자 정규화·목록
+        // 해석하고, 그 밖의 임의 스레드 키는 원문 그대로 통짜 대상 하나다(§5.3-21 — org
+        // "param = 임의 스레드 키" 계약 보존. 구 구현의 "" 무음 강등은 연속성 키를 조용히
+        // 버리는 silent degradation 이라 은퇴, 2026-08-21).
+        const target = String(args.target ?? "").trim();
+        const param = PARAM_SLUGS_RE.test(target) ? target.toLowerCase() : target;
+        // 슬롯 키 = (서브에이전트, 작업 대상). 같은 대상 재위임은 같은 슬롯에 앉아 이전 위임
+        // 대화를 잇는다 — 봉투가 슬롯의 네이티브 포인터로 스스로 resume 하고, 포인터가 만료면
+        // 새 대화로 강등하는 복구 사다리도 봉투 소유다. 위임마다 새 슬롯을 팠던 종전 구현은
+        // "이어서" 위임조차 맥락 재파생을 처음부터 다시 지불했다(실측 2026-08-20: 같은 저작
+        // 위임 3회 = 501 콜, 위임 지출의 절반이 중복). 같은 슬롯의 턴 직렬화(한 슬롯에 턴
+        // 하나)는 이제 막이 아니라 담장이다 — 같은 draft 에 병렬 위임이 붙어 두 설계가 섞여
+        // 발행된 실사고(2026-08-20)를 입구에서 끊는다. 대상이 다르면 병렬은 종전 그대로다.
+        // 대상 미상이면 이을 열쇠가 없다 — 1회용 난수 슬롯으로 강등한다.
+        // slug 목록의 쉼표는 SLOT_RE 밖이라 . 로 접는다 — `.` 는 slug 축([a-z0-9-])에 없으므로
+        // 목록 "a,b" 와 임의 키 "a.b" 는 충돌하지 않는다(임의 키는 아래 해시 슬롯). 임의 키는
+        // SLOT_RE 에 실을 수 없어 지문(sha256 8자리)으로 슬롯을 파고 원문은 param 메타에 든다.
+        // 대화의 에이전트 정체성은 슬롯 이름이 아니라 기판 메타(agent 파일)다 — 위젯 스레드
+        // 문법(`:` `~`)을 이름에 실으려다 새니타이즈로 뭉개진 첫 구현의 계보(실사용 보고
+        // 2026-08-20) 그대로.
+        const slot = param
+          ? (PARAM_SLUGS_RE.test(param)
+              ? `sub-${sub}-${param.replace(/,/g, ".")}`
+              : `sub-${sub}-k${crypto.createHash("sha256").update(param).digest("hex").slice(0, 8)}`
+            ).slice(0, 64)
+          : `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
+        // 진행 중인 같은 대상 위임 위에 얹지 않는다 — runSession 의 직렬화가 튕기기 전에
+        // 위임 어휘로 정직하게 알린다 (재시도 루프 방지: 완료는 어차피 📬 로 온다)
+        if (isSessionBusy(pkg, slot)) {
+          throw new Error(`이미 진행 중인 위임: ↳ ${sub}${param ? " · " + param : ""} — 완료가 이 대화로 📬 배달된다. 기다렸다가 필요하면 그때 재위임하라.`);
+        }
+        const sdir = sessionDir(pkg, slot);
+        // fresh — 이어받을 대화가 오염됐을 때의 탈출구. 대화 reset(§5.3-23)과 같은 회전이다:
+        // 이력은 두고 번들만 비워 네이티브 포인터를 끊고, 낡은 대화를 메모리에 문 상주도
+        // 함께 은퇴시킨다. 다음 턴의 조립이 빈 자리를 다시 채운다
+        if ((args.fresh === true || args.fresh === "true") && param) {
+          retireResident(pkg, slot);
+          fs.rmSync(path.join(sdir, "bundle"), { recursive: true, force: true });
+        }
+        if (!fs.existsSync(path.join(sdir, "label"))) {
+          fs.writeFileSync(path.join(sdir, "label"), `↳ ${sub}${param ? " · " + param : ""}`);
+        }
+        // 이 대화의 정체성 — runSession 의 agent 폴백과 세션 목록 행(§5.3-21 additive)이 읽는다
+        fs.writeFileSync(path.join(sdir, "agent"), sub);
+        if (param) fs.writeFileSync(path.join(sdir, "param"), param);
+        // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
+        // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
+        const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;
+        const run = runSession({ ledger, pkg, agent: sub, authority, prompt, slot });
+        // 시한은 도구 자신이 갖는다 — MCP 층(MCP_TOOL_TIMEOUT 240s)이 먼저 자르면 "timed out"
+        // 원문만 남고 완료가 영영 배달되지 않는다(실사고 2026-08-20: 240s 초과 위임). org 와
+        // 같은 골격: 도구는 180s 에 정직하게 물러나고, 위임은 계속 돌며, 완료는 발신 대화에
+        // 📬 프리픽스 턴으로 배달된다(위젯 SYSTEM_PROMPT_PREFIXES · watchServerTurns 계약).
+        const timeoutS = Number(process.env.RELAY_DISPATCH_TIMEOUT_S) > 0 ? Number(process.env.RELAY_DISPATCH_TIMEOUT_S) : 180;
+        const winner = await Promise.race([
+          run.then((r) => ({ reply: r.reply })),
+          new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), timeoutS * 1000); (t as { unref?: () => void }).unref?.(); }),
+        ]);
+        if (winner) return winner.reply;
+        const deliver = async (head: string, bodyText: string) => {
+          if (!callerSlot) return; // 발신 슬롯 미상(구 번들) — 배달할 곳이 없다. 세션 목록이 답
+          const msg = `📬 위임 완료 — ${sub}(${head})\n\n${String(bodyText).slice(0, 4000)}`;
+          // 부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴은 하나) — 10초 간격, 최대 1시간
+          for (let i = 0; i < 360; i++) {
+            try {
+              await runSession({ ledger: loadLedger(), pkg, agent, authority, prompt: msg, slot: callerSlot });
+              return;
+            } catch (e) {
+              if (!String(e).includes("이전 요청을 처리")) break;
+              await new Promise((r2) => setTimeout(r2, 10_000));
+            }
+          }
+          logLine("dispatch", { pkg, sub, slot, delivered: false });
+        };
+        void run.then((r) => deliver("완료", r.reply), (e) => deliver("실패", e instanceof Error ? e.message : String(e)));
+        return `위임이 ${timeoutS}초 안에 끝나지 않았습니다 — 서브에이전트는 세션 "↳ ${sub}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
+      }
+      // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
+      if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
+      return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host, authority);
+    },
+  };
+}
 
-  if (method === "initialize") {
-    return reply({
-      protocolVersion: params?.protocolVersion ?? "2024-11-05",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "relay", version: "0.1.0" },
-    });
-  }
-  if (String(method ?? "").startsWith("notifications/")) {
+async function handleMcp(
+  ledger: Ledger,
+  authority: Authority,
+  host: HostBridge,
+  pkg: string,
+  agent: string,
+  body: any,
+  res: http.ServerResponse,
+  callerSlot?: string | null,
+  io: McpIO = localMcpIO(ledger, authority, host, pkg, agent, callerSlot),
+): Promise<void> {
+  const r = await mcpDispatch(io, body ?? {});
+  if (r === null) {
     res.writeHead(202).end();
     return;
   }
-  if (method === "ping") return reply({});
-  if (method === "tools/list") {
-    return reply({
-      tools: sessionTools(ledger, pkg, agent).map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: { type: "object", additionalProperties: true },
-      })),
-    });
-  }
-  if (method === "tools/call") {
-    const name = String(params?.name ?? "");
-    const args = params?.arguments ?? {};
-    try {
-      let result: unknown;
-      const a2a = name.match(/^a2a__([a-z0-9-]+)__(.+)$/);
-      const edge = name.match(/^edge__([a-z0-9-]+)__(.+)$/);
-      if (a2a) {
-        const m = loadManifest(ledger.packages[a2a[1]].path);
-        const mission = (m.missions ?? []).find((x) => x.name.replace(/[^a-zA-Z0-9_-]/g, "_") === a2a[2])?.name ?? a2a[2];
-        const grant = ledger.grants.find((g) => g.consumer === pkg && g.provider === a2a[1] && g.mission === mission);
-        if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a[1]}/${mission}`);
-        result = await host.dispatch(a2a[1], mission, String((args as any).payload ?? JSON.stringify(args)), pkg);
-      } else if (edge) {
-        result = await callEdgeTool(ledger, pkg, edge[1], edge[2], args, host);
-      } else {
-        result = await runScript(ledger, pkg, name, args, { principal: PRINCIPAL, agent }, host);
-      }
-      const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-      return reply({ content: [{ type: "text", text }], isError: false });
-    } catch (e) {
-      return reply({ content: [{ type: "text", text: String(e) }], isError: true });
-    }
-  }
-  return fail(`지원하지 않는 메서드: ${method}`);
-}
-
-function pkgCommands(ledger: Ledger, pkg: string): { name: string; description: string; tty: boolean }[] {
-  const rec = ledger.packages[pkg];
-  if (!rec) return [];
-  const m = loadManifest(rec.path);
-  const landing = landingAgentName(m);
-  const decl = (m.agents ?? []).find((a) => a.name === landing);
-  if (!decl?.commands) return [];
-  const dir = path.join(rec.path, decl.commands);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => {
-    const body = fs.readFileSync(path.join(dir, f), "utf8");
-    const desc = body.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
-    return { name: f.replace(/\.md$/, ""), description: desc, tty: false };
-  });
+  json(res, 200, r);
 }
 
 function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerResponse): void {
@@ -404,33 +571,41 @@ function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerRe
     // GUI 에서 카드를 눌러도 쓸 길이 없는 막다른 골목을 없애는 폴백이다
     if (m.surfaces?.chat?.mode === "direct") {
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-      const fav = m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
+      const fav = pkgIconHref(pkg, m);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return void res.end(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="${esc(fav)}">
 <title>${esc(m.display_name ?? pkg)}</title>
+<link rel="stylesheet" href="/assets/chat-app.css">
 <style>html,body{height:100%;margin:0;background:#f5f6f7}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
 </head><body><div id="chat"></div>
-<script type="module">import { mount } from "/assets/chat-widget.js"; mount({ pkg: ${JSON.stringify(pkg)}, mode: "inline", target: document.getElementById("chat") });</script>
+<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + encodeURIComponent(pkg))},root:"",instanceId:${JSON.stringify(pkg)}};window.RELAY_CHAT_MANUAL=1;</script>
+<script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
 </body></html>`);
     }
     return void json(res, 404, { error: `view 표면 없는 패키지: ${pkg}` });
   }
-  let root = path.join(rec.path, view.source, view.out ?? "");
-  if (view.out && !fs.existsSync(root)) root = path.join(rec.path, view.source);
-  root = path.normalize(root);
+  const root = path.normalize(path.join(rec.path, view.source, view.out ?? ""));
+  // out 선언은 서빙 뿌리 선언이다. 없으면 미빌드 — 소스로 물러나면 선언과 실체의 불일치가
+  // "없음: /" 404 나 날 소스로 위장한다(규칙 2: 조용한 강등 금지). 처방이 판정의 본체다.
+  if (view.out && !fs.existsSync(root)) {
+    return void json(res, 503, {
+      error: `view 미빌드: ${pkg} — 선언된 ${view.source}/${view.out} 이 없습니다: npm run relay -- build ${pkg}`,
+    });
+  }
+  const fav = pkgIconHref(pkg, m);
   const target = path.normalize(path.join(root, rest === "" || rest === "/" ? "index.html" : rest));
   if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     // 정적 발행물의 라우트 관례: <경로>/index.html (trailingSlash) 또는 <경로>.html
     const idx = path.join(target, "index.html");
-    if (fs.existsSync(idx)) return void streamFile(idx, res);
+    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, root, res, fav);
     const html = target + ".html";
-    if (fs.existsSync(html)) return void streamFile(html, res);
+    if (fs.existsSync(html)) return void serveViewFile(html, pkg, root, res, fav);
     return void json(res, 404, { error: `없음: ${rest}` });
   }
-  streamFile(target, res);
+  serveViewFile(target, pkg, root, res, fav);
 }
 
 function streamFile(file: string, res: http.ServerResponse): void {
@@ -438,73 +613,82 @@ function streamFile(file: string, res: http.ServerResponse): void {
   fs.createReadStream(file).pipe(res);
 }
 
-// ── 세션 장부 조회 ─────────────────────────────────────────────────────────
-// 이력의 정본은 세션 디렉토리의 history.jsonl (session.ts 가 쌓는다).
-// 목록·전환·복원은 기판이 답한다 — 하네스의 자체 세션 저장과는 별개의 축이다
-const SLOT_RE = /^[a-zA-Z0-9._-]{1,64}$/;
-
-function sessionsRoot(pkg: string): string {
-  return path.join(RELAY_HOME, "sessions", pkg);
+// 패키지 view 문서에 마운트 좌표를 심는다(client-protocol §2-6: 마운트를 아는 쪽이 주입한다).
+// 이게 없으면 /assets 번들은 base 미주입으로 자동 마운트를 포기하고(main.tsx autoFloat 의
+// fail-loud) mount() 도 뿌리 없는 상대 호출이 된다 — README §2 의 "스크립트 한 줄" 이 죽는다.
+// 정적 발행물을 손대지 않고 서빙 시점에만 얹으므로 패키지 트리는 기판 마운트를 모른 채 남는다.
+function viewContextTag(pkg: string): string {
+  const base = JSON.stringify("/pkg/" + encodeURIComponent(pkg));
+  return `<script>window.__RELAY_CONTEXT={base:${base},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
 }
 
-function readHistory(pkg: string, slot: string, limit: number): { t: string; role: string; text: string }[] {
-  const file = path.join(sessionsRoot(pkg), slot, "history.jsonl");
-  if (!fs.existsSync(file)) return [];
-  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
-  return lines
-    .slice(-limit)
-    .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+// 패키지 대표 아이콘의 서빙 주소 — 카드 아바타와 탭 favicon 이 같은 그림(manifest icon)을 본다
+function pkgIconHref(pkg: string, m: Manifest): string {
+  return m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
 }
 
-type SessionRow = { slot: string; label: string; updated: number; archived: boolean; pinned: boolean };
+/**
+ * 발행물 접두사 판정의 캐시. 키는 (뿌리, index.html mtime) — 빌드 한 번에 한 번만 stat 한다.
+ *
+ * 왜 서빙에도 판정이 있는가: 여기가 **사용자를 덮는 유일한 자리**다. validate 는 이 레포의
+ * packages/* 만 걷지만 설치본은 rec.path 가 가리키는 아무 곳(마켓 산출·사용자 트리)에 산다.
+ * 그 트리를 손으로 구운 사람에게는 판정해 줄 게 아무것도 없었고, 그래서 접두사 없는 발행물이
+ * 200 으로 나가고 운영자는 /_next/... 404 벽만 보았다(실사고 2건, 진단은 어디에도 없었다).
+ */
+const prefixVerdicts = new Map<string, string[]>();
+function assetsAtRootCached(root: string): string[] {
+  let key = root;
+  try {
+    key = `${root}\u0000${fs.statSync(path.join(root, "index.html")).mtimeMs}`;
+  } catch { /* 문서 없는 뿌리 — 뿌리만으로 캐시 */ }
+  const hit = prefixVerdicts.get(key);
+  if (hit) return hit;
+  const bad = assetsAtDaemonRoot(root);
+  prefixVerdicts.clear(); // 재빌드마다 키가 바뀐다 — 옛 키를 쌓아두지 않는다
+  prefixVerdicts.set(key, bad);
+  return bad;
+}
 
-function listSessions(pkg: string): { sessions: SessionRow[] } {
-  const root = sessionsRoot(pkg);
-  if (!fs.existsSync(root)) return { sessions: [] };
-  const sessions: SessionRow[] = [];
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-    // "_" 접두 슬롯은 기판 내부용(자동 제목 생성 등의 임시 세션) — 목록에 내지 않는다
-    if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
-    const dir = path.join(root, e.name);
-    const hist = path.join(dir, "history.jsonl");
-    // 이름 우선순위: 사용자가 지은 label > 하네스가 지은 auto-label > 첫 사용자 발화
-    let label = "";
-    for (const f of ["label", "auto-label"]) {
-      const p = path.join(dir, f);
-      if (fs.existsSync(p)) label = fs.readFileSync(p, "utf8").trim();
-      if (label) break;
-    }
-    if (!label && fs.existsSync(hist)) {
-      // 이름이 없으면 첫 사용자 발화가 이름이다 (relayos-claude 세션 목록 관례)
-      try {
-        label = String(JSON.parse(fs.readFileSync(hist, "utf8").split("\n", 1)[0]).text ?? "").slice(0, 40);
-      } catch {
-        label = "";
-      }
-    }
-    const updated = fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs;
-    // 보관·고정 = 세션 디렉토리의 marker 파일. 이력은 그대로 두고 목록의 자리만 옮긴다
-    sessions.push({
-      slot: e.name,
-      label: label || e.name,
-      updated,
-      archived: fs.existsSync(path.join(dir, "archived")),
-      pinned: fs.existsSync(path.join(dir, "pinned")),
-    });
+function serveViewFile(file: string, pkg: string, root: string, res: http.ServerResponse, fav: string): void {
+  if (path.extname(file) !== ".html") return void streamFile(file, res);
+  const atRoot = assetsAtRootCached(root);
+  if (atRoot.length) {
+    const base = "/pkg/" + pkg + "/view";
+    logLine("view", { pkg, ok: false, base, at_root: atRoot.slice(0, 5) });
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    res.writeHead(500, { "content-type": MIME[".html"], "cache-control": "no-store" });
+    return void res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>view 판정 실패: ${esc(pkg)}</title>
+<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
+</head><body>
+<h1>이 화면은 자기 자산을 데몬 루트로 가리킵니다</h1>
+<p>발행물이 <code>${esc(base)}</code> 접두사 없이 구워져, 아래 자산이 서빙되지 않습니다:</p>
+<ul>${atRoot.slice(0, 8).map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ul>
+<p><code>RELAY_BASE_PATH</code> 없이 <code>npx next build</code> 를 돌린 흔적입니다. 정본 경로로 다시 구우세요:</p>
+<p><code>npm run relay -- build ${esc(pkg)}</code></p>
+<p>깨진 화면을 200 으로 내보내는 대신 여기서 멈춥니다 — 그 편이 <code>/_next</code> 404 벽보다 짧습니다.</p>
+</body></html>`);
   }
-  // 고정이 먼저, 그 안에서는 최근 순
-  sessions.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated - a.updated);
-  return { sessions };
+  const html = fs.readFileSync(file, "utf8");
+  const head = html.match(/<head\b[^>]*>/i);
+  // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽는다)
+  const at = head ? (head.index ?? 0) + head[0].length : 0;
+  // favicon 도 좌표처럼 서빙 시점에 얹는다 — 발행물이 자기 favicon 을 선언했다면 그쪽을 존중
+  const iconTag = /rel=["']?(?:shortcut\s+)?icon\b/i.test(html)
+    ? ""
+    : `<link rel="icon" href="${fav.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">`;
+  res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
+  res.end(html.slice(0, at) + viewContextTag(pkg) + iconTag + html.slice(at));
 }
 
-export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker): http.Server {
+// ── 세션 장부 조회 ─────────────────────────────────────────────────────────
+
+// 권위 이음새 — 1인 기판은 로컬 권위(기본값). 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
+export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker, authority: Authority = localAuthority(getLedger)): http.Server {
+  // 신 wire 의 턴 장부는 세션이 흘리는 봉투를 방청해 쌓인다 — 이 배선이 없으면 stream/attach 가
+  // reply 만 보고 delta·tool 이 통째로 사라진다(왕복은 성공하는데 스트리밍만 죽는 형태)
+  setEnvelopeTap(tapSessionEvent);
+  const wire = { getLedger, authority };
   const server = http.createServer(async (req, res) => {
     try {
       // URL 파싱은 try 안에서 — "//" 같은 기형 경로의 파싱 예외가 밖으로 새면
@@ -517,11 +701,27 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(hostHdr)) {
         return void json(res, 403, { error: `허용되지 않은 Host: ${hostHdr}` });
       }
+      // CSRF 방어: Host 검사는 DNS rebinding 만 막는다. 아무 웹페이지나 이 데몬으로 상태를
+      // 바꾸는 요청을 보낼 수 있고(응답은 못 읽어도 부수효과는 난다 — 턴 개설은 곧 호스트
+      // 권한 에이전트에 임의 프롬프트를 넣는 축이다), 문에는 인증이 없다. 브라우저는 비
+      // GET/HEAD 요청에 Origin 을 반드시 싣는다는 성질이 유일한 판별점이다: 실려 있으면
+      // 데몬 자신의 오리진이어야 하고, 없으면 브라우저 밖(어댑터·CLI·컨테이너)이라 통과다
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const reqOrigin = String(req.headers.origin ?? "");
+        if (reqOrigin && !SELF_ORIGINS.has(reqOrigin.toLowerCase())) {
+          return void json(res, 403, { error: `허용되지 않은 Origin: ${reqOrigin}` });
+        }
+      }
       if (p === "/" || p === "") {
         res.writeHead(302, { location: "/pkg/system/view/" });
         return void res.end();
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
+
+      // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.
+      // 마운트 문법(/pkg/<pkg>·/)은 여기서만 해석되고 클라이언트는 base 주입으로 받는다(§2-6).
+      // 매치되면 응답까지 책임지므로 아래 기판 라우트는 계약 밖 표면(설치·스토어·관리)만 남는다
+      if (await handleClientWire(wire, req, res, url)) return;
 
       // ── 마켓 스튜디오(스토어 웹 /admin)의 선반 조회 — 스토어 오리진에만 CORS 를 연다.
       // 선반 엔트리(disclosure 포함)가 등재 폼의 정본이고, 운영자 브라우저가 그 다리다.
@@ -642,7 +842,9 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       // 스토어를 거치지 않는 경로다. 폐쇄망 납품이나 "친구에게 하나 줄게"가 여기 산다.
       // 내보낸 봉투에는 봉인이 함께 들어 있지만, 대조할 정본이 없다 — 그래서 가져오기
       // 화면은 "스토어를 거치지 않았다"고 분명히 말한다. 믿음의 근거가 다르기 때문이다.
-      const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay)$/);
+      // .sig 사이드카도 내보낸다 — 손으로 옮기는 봉투가 서명을 잃지 않게(받는 쪽이 .relay 옆에
+      // 두면 prepareArtifact 가 읽는다). 봉투와 사이드카는 같은 선반 봉인 아래 있다
+      const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay(?:\.sig)?)$/);
       if (exportFile && req.method === "GET") {
         const file = path.join(artifactsDir(), exportFile[1]);
         if (!fs.existsSync(file)) return void json(res, 404, { error: "선반에 없는 봉투 — 먼저 구우세요" });
@@ -722,7 +924,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
               abs = paidCache;
             } else if (entry.price != null && !entry.url) {
               // 유료 — 키가 다운로드의 문을 연다. 키는 vault 에 앉아 재설치 때 다시 묻지 않는다
-              const key = (b.key ? String(b.key) : null) ?? vaultGet(`store-key/${entry.ref}`);
+              const key = (b.key ? String(b.key) : null) ?? await authority.credential(`store-key/${entry.ref}`);
               if (!key) {
                 return void json(res, 402, { error: `유료 패키지입니다 (₩${entry.price.toLocaleString()})`, need_key: true, ref: entry.ref, price: entry.price });
               }
@@ -734,7 +936,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
                 }
                 throw e;
               }
-              vaultSet(`store-key/${entry.ref}`, key.trim()); // redeem 을 통과한 키만 보관한다
+              await authority.setCredential(`store-key/${entry.ref}`, key.trim()); // redeem 을 통과한 키만 보관한다
             } else {
               abs = await downloadArtifact(STORE_INDEX_URL, entry);
             }
@@ -764,7 +966,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const l = getLedger();
         const r = activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
         stopServices(held.p.name); // 업데이트라면 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다
-        const notes = startServices(l, held.p.name, held.p.dir, held.p.manifest);
+        const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest)];
         ticker.emit(held.p.fresh ? "relay.package.installed" : "relay.package.published", { pkg: held.p.name, version: held.p.version });
         return void json(res, 200, { name: r.name, fresh: held.p.fresh, version: held.p.version, setup: r.setup ?? null, build: r.build ?? null, services: notes });
       }
@@ -782,12 +984,18 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         return void streamFile(target, res);
       }
 
-      // 기판 소유 클라이언트 자산(채팅 코어·위젯). 패키지 view 가 아니라 기판이 서빙한다 —
-      // 위젯은 하네스와의 연결지점이라 구현이 기판과 함께 움직여야 하기 때문
-      const asset = p.match(/^\/assets\/([a-z0-9-]+\.js)$/);
+      // 기판 소유 클라이언트 자산(채팅 위젯 번들). 패키지 view 가 아니라 기판이 서빙한다 —
+      // 위젯은 하네스와의 연결지점이라 구현이 기판과 함께 움직여야 하기 때문.
+      // 번들은 릴리스 컷이 굽는다(lib/relayjs chat-build.mjs → dist) — js 와 css 두 갈래다
+      const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css))$/);
       if (asset && req.method === "GET") {
-        const file = path.join(ASSETS_DIR, asset[1] === "chat-core.js" ? "core.js" : asset[1] === "chat-widget.js" ? "widget.js" : asset[1]);
-        if (!fs.existsSync(file)) return void json(res, 404, { error: `없는 자산: ${asset[1]}` });
+        const file = path.join(ASSETS_DIR, asset[1]);
+        if (!fs.existsSync(file)) {
+          // 번들은 트리에 커밋하지 않는다(빌드 산출물) — 갓 클론한 트리에는 없다.
+          // 조용한 404 로 두면 "채팅이 안 뜬다"가 원인 없이 남는다
+          const hint = fs.existsSync(ASSETS_DIR) ? "" : " — 위젯 번들이 없습니다. `npm run build:widget` 을 먼저 실행하세요";
+          return void json(res, 404, { error: `없는 자산: ${asset[1]}${hint}` });
+        }
         // 위젯은 기판과 함께 움직이는 자산이다 — 낡은 캐시가 새 기판 API 와 어긋나면 조용히 깨진다
         res.setHeader("cache-control", "no-store");
         return void streamFile(file, res);
@@ -800,18 +1008,19 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const { parse } = await import("yaml");
         return void json(res, 200, parse(fs.readFileSync(SCHEMA_FILE, "utf8")));
       }
+      // 결재 문은 하나다 — HTTP 결재도 권위 이음새(recordGrant/removeGrant)를 지난다
       if (p === "/grants" && req.method === "POST") {
         const g = (await readBody(req)) as Grant;
-        addGrant(getLedger(), g);
+        await authority.recordGrant(g);
         return void json(res, 200, { ok: true });
       }
       if (p === "/grants/remove" && req.method === "POST") {
-        removeGrant(getLedger(), (await readBody(req)) as Grant);
+        await authority.removeGrant((await readBody(req)) as Grant);
         return void json(res, 200, { ok: true });
       }
       if (p === "/install" && req.method === "POST") {
         const b = await readBody(req);
-        const r = host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined });
+        const r = host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined, bindings: b.bindings && typeof b.bindings === "object" ? b.bindings : undefined });
         return void json(res, 200, r);
       }
       const buildRoute = p.match(/^\/pkg\/([^/]+)\/build$/);
@@ -827,10 +1036,11 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       if (mcp && req.method === "POST") {
         const pkg = decodeURIComponent(mcp[1]);
         const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-        const owner = tokenToPkg(getLedger(), token);
+        const owner = await authority.packageForToken(token);
         if (owner !== pkg) return void json(res, 401, { error: "토큰 불일치" });
         const agent = url.searchParams.get("agent") ?? landingAgentName(loadManifest(getLedger().packages[pkg].path)) ?? "";
-        return void (await handleMcp(getLedger(), host, pkg, agent, await readBody(req), res));
+        // session = 발신 슬롯(composeBundle 이 mcp url 에 싣는다) — 위임 완료 배달의 목적지
+        return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res, url.searchParams.get("session")));
       }
 
       const hs = p.match(/^\/pkg\/([^/]+)\/harness$/);
@@ -870,6 +1080,52 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         return void json(res, 200, { ok: setup.ok, setup });
       }
 
+      // ── 채널 운영면 — 하네스 설정 다이얼로그의 자매. 저작(스튜디오)이 아니라 운영(콘솔)이다 ──
+      // 상태 조회: 상주 pid·자격 존재·최근 오류를 합친다. 자격 값은 절대 싣지 않는다(hasCred 만)
+      const chs = p.match(/^\/pkg\/([^/]+)\/channels$/);
+      if (chs && req.method === "GET") {
+        const l = getLedger();
+        const pkg = decodeURIComponent(chs[1]);
+        const rec = l.packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const m = loadManifest(rec.path);
+        const channels = [];
+        for (const c of m.surfaces?.channels ?? []) {
+          const pid = channelPid(pkg, c.name);
+          // credential 은 **형태 선언**이라 그대로 나간다 — 값은 vault 에 있고 여기 실리지 않는다.
+          // 화면이 이 선언으로 입력 칸을 그린다(없으면 원시 붙여넣기로 물러난다).
+          channels.push({ name: c.name, icon: c.icon ?? null, running: pid != null, pid, hasCred: (await authority.credential(credKey(pkg, c.name))) != null, lastError: channelLastError(pkg, c.name), credential: c.credential ?? null });
+        }
+        return void json(res, 200, { channels });
+      }
+
+      // connect(자격 저장) · verify(실왕복 판정) · restart(채널 하나 갈아타기) — relayos connections 3동사의 OSS 축소
+      const cop = p.match(/^\/pkg\/([^/]+)\/channel\/([^/]+)\/(connect|verify|restart)$/);
+      if (cop && req.method === "POST") {
+        const l = getLedger();
+        const pkg = decodeURIComponent(cop[1]);
+        const channel = decodeURIComponent(cop[2]);
+        const rec = l.packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const m = loadManifest(rec.path);
+        const c = (m.surfaces?.channels ?? []).find((x) => x.name === channel);
+        if (!c) return void json(res, 404, { error: `없는 채널: ${channel}` });
+        if (cop[3] === "connect") {
+          const b = await readBody(req);
+          const cred = String(b.cred ?? "").trim();
+          if (!cred) return void json(res, 400, { error: "빈 자격" });
+          await authority.setCredential(credKey(pkg, channel), cred); // 저장만 — 유효 판정은 verify 소관("저장됨 ≠ 유효")
+          return void json(res, 200, { ok: true });
+        }
+        if (cop[3] === "verify") {
+          return void json(res, 200, verifyChannel(rec.path, c, await authority.credential(credKey(pkg, channel))));
+        }
+        // restart — 옛 상주를 죽이고 다시 스폰한다(새 자격 반영). 정체 가드가 겹침 레이스를 막는다
+        stopChannel(pkg, channel);
+        const note = startOneChannel(pkg, rec.path, c, localIO(l));
+        return void json(res, 200, { ok: true, running: channelPid(pkg, channel) != null, note });
+      }
+
       // 대화형 로그인 발화. 인증 자체는 터미널(TTY)이 소유하고 기판은 그 창을 열어 줄 뿐이다
       // 로그인 두 갈래: headless(pty 중계 — 브라우저 안에서 끝난다)와 terminal(창을 여는 폴백)
       const hl = p.match(/^\/pkg\/([^/]+)\/harness\/login$/);
@@ -879,7 +1135,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (b.mode === "terminal") {
           return void json(res, 200, { mode: "terminal", ...launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch }) });
         }
-        return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, { switch: !!b.switch }) });
+        return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, authority, { switch: !!b.switch }) });
       }
       const hlr = p.match(/^\/pkg\/([^/]+)\/harness\/login\/(read|input|stop)$/);
       if (hlr) {
@@ -894,213 +1150,11 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (hlr[2] === "stop" && req.method === "POST") return void json(res, 200, loginStop(pkg));
       }
 
-      const hv = p.match(/^\/pkg\/([^/]+)\/harness\/(models|info|setup|commands)$/);
+      // setup 만 남는다 — 하네스 조회 3동사(info·models·commands)와 model/effort 설정은
+      // 클라이언트 계약이 가져갔다(§5.5-29·30). setup 은 준비 상태를 여는 관리 동사라 계약 밖(§5.5-31)
+      const hv = p.match(/^\/pkg\/([^/]+)\/harness\/setup$/);
       if (hv && req.method === "GET") {
-        const pkg = decodeURIComponent(hv[1]);
-        const r = harnessVerb(getLedger(), pkg, hv[2] as never);
-        if (hv[2] === "setup") return void json(res, 200, r);
-        let value: unknown;
-        try {
-          value = JSON.parse(r.out);
-        } catch {
-          value = r.out;
-        }
-        if (hv[2] === "commands") {
-          const fromHarness = Array.isArray(value) ? value : [];
-          return void json(res, 200, { ok: r.ok, value: [...pkgCommands(getLedger(), pkg), ...fromHarness] });
-        }
-        return void json(res, 200, { ok: r.ok, value });
-      }
-      const setModel = p.match(/^\/pkg\/([^/]+)\/model$/);
-      if (setModel && req.method === "POST") {
-        const b = await readBody(req);
-        const l = getLedger();
-        const pkg = decodeURIComponent(setModel[1]);
-        const rec = l.packages[pkg];
-        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
-        if ("model" in b) rec.model = b.model ? String(b.model) : undefined;
-        if ("effort" in b) rec.effort = b.effort ? String(b.effort) : undefined;
-        saveLedger(l);
-        // 저장 시점 재검증 — 장부에 없는 모델이 박혀 조용히 썩는 사고의 답. 직접 입력의 자유는
-        // 지키므로 막지 않고 known 으로 알린다 (어댑터가 세션에서 거부하면 exit != 0 으로 드러난다)
-        let known: boolean | null = null;
-        if (rec.model) {
-          try {
-            const r = harnessVerb(l, pkg, "models");
-            const arr = JSON.parse(r.out);
-            if (Array.isArray(arr)) known = arr.includes(rec.model);
-          } catch { /* models 불달 — 판정 불가 */ }
-        }
-        return void json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, known });
-      }
-
-      const sessList = p.match(/^\/pkg\/([^/]+)\/sessions$/);
-      if (sessList && req.method === "GET") {
-        return void json(res, 200, listSessions(decodeURIComponent(sessList[1])));
-      }
-
-      const sessOp = p.match(/^\/pkg\/([^/]+)\/session\/([^/]+)\/(history|label|delete|cancel|events|answer|archive|pin)$/);
-      if (sessOp) {
-        const pkg = decodeURIComponent(sessOp[1]);
-        const slot = sessOp[2];
-        if (!SLOT_RE.test(slot)) return void json(res, 400, { error: `slot 형식 위반: ${slot}` });
-        if (sessOp[3] === "history" && req.method === "GET") {
-          // busy = 이 슬롯에 진행 중 턴이 있다 — 새로고침한 화면이 진행 표시와 중지를 되찾는 근거
-          return void json(res, 200, { messages: readHistory(pkg, slot, 200), busy: isSessionBusy(pkg, slot) });
-        }
-        // 진행 중 턴의 봉투 이벤트 — 위젯이 폴링해 delta·tool 진행과 파일 칩을 그린다.
-        // from = 이미 받은 줄 수: 도구 결과 본문이 실리는 protocol 3 에서 매 폴링이
-        // 전체 장부를 다시 나르지 않게 한다 (미지정 = 전체, 구 위젯 호환)
-        if (sessOp[3] === "events" && req.method === "GET") {
-          const file = path.join(sessionsRoot(pkg), slot, "events.jsonl");
-          if (!fs.existsSync(file)) return void json(res, 200, { events: [], from: 0 });
-          const lines = fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean);
-          const from = Math.min(lines.length, Math.max(0, Number(url.searchParams.get("from") ?? 0) || 0));
-          const events = lines.slice(from).map((l) => {
-            try {
-              return JSON.parse(l);
-            } catch {
-              return null;
-            }
-          }).filter(Boolean);
-          return void json(res, 200, { events, from: lines.length });
-        }
-        // ask(질문) 회송 — 위젯 답변을 진행 중 봉투의 제어 채널로 전달한다
-        if (sessOp[3] === "answer" && req.method === "POST") {
-          const b = await readBody(req);
-          return void json(res, 200, { ok: deliverAnswer(pkg, slot, String(b.id ?? ""), Array.isArray(b.answers) ? b.answers : []) });
-        }
-        // 취소: 봉투 stdin 제어가 1순위, 신호가 그물 (session.cancelSession)
-        if (sessOp[3] === "cancel" && req.method === "POST") {
-          return void json(res, 200, { ok: cancelSession(pkg, slot) });
-        }
-        const dir = path.join(sessionsRoot(pkg), slot);
-        if (sessOp[3] === "label" && req.method === "POST") {
-          const b = await readBody(req);
-          if (!fs.existsSync(dir)) return void json(res, 404, { error: `없는 세션: ${slot}` });
-          fs.writeFileSync(path.join(dir, "label"), String(b.label ?? "").trim().slice(0, 80));
-          return void json(res, 200, { ok: true, slot });
-        }
-        if (sessOp[3] === "delete" && req.method === "POST") {
-          retireResident(pkg, slot); // 상주가 지워진 번들 경로를 물고 있으면 안 된다
-          fs.rmSync(dir, { recursive: true, force: true });
-          return void json(res, 200, { ok: true, removed: slot });
-        }
-        // 보관/복원 — 삭제와 달리 이력을 지우지 않는다. marker 파일 하나가 상태의 전부다
-        if (sessOp[3] === "archive" && req.method === "POST") {
-          const b = await readBody(req);
-          if (!fs.existsSync(dir)) return void json(res, 404, { error: `없는 세션: ${slot}` });
-          const marker = path.join(dir, "archived");
-          if (b.archived) fs.writeFileSync(marker, "");
-          else fs.rmSync(marker, { force: true });
-          return void json(res, 200, { ok: true, slot, archived: !!b.archived });
-        }
-        // 고정/해제 — 목록 정렬에서 맨 위로 올리는 marker. archive 와 같은 축이다
-        if (sessOp[3] === "pin" && req.method === "POST") {
-          const b = await readBody(req);
-          if (!fs.existsSync(dir)) return void json(res, 404, { error: `없는 세션: ${slot}` });
-          const marker = path.join(dir, "pinned");
-          if (b.pinned) fs.writeFileSync(marker, "");
-          else fs.rmSync(marker, { force: true });
-          return void json(res, 200, { ok: true, slot, pinned: !!b.pinned });
-        }
-      }
-
-      const reset = p.match(/^\/pkg\/([^/]+)\/session\/reset$/);
-      if (reset && req.method === "POST") {
-        const b = await readBody(req);
-        const slot = String(b.slot ?? "console");
-        const { sessionDir } = await import("./state.ts");
-        // 상주가 낡은 대화를 메모리에 물고 있으면 포인터를 지워도 대화가 이어진다 — 먼저 은퇴
-        retireResident(decodeURIComponent(reset[1]), slot);
-        const marker = path.join(sessionDir(decodeURIComponent(reset[1]), slot), "bundle", "claude-session");
-        if (fs.existsSync(marker)) fs.unlinkSync(marker);
-        return void json(res, 200, { ok: true, slot });
-      }
-
-      const chat = p.match(/^\/pkg\/([^/]+)\/chat$/);
-      if (chat && req.method === "POST") {
-        const b = await readBody(req);
-        const pkg = decodeURIComponent(chat[1]);
-        const r = await runSession({
-          ledger: getLedger(),
-          pkg,
-          prompt: String(b.message ?? ""),
-          slot: b.slot ? String(b.slot) : undefined,
-          agent: b.agent ? String(b.agent) : undefined,
-          attachments: Array.isArray(b.attachments) ? b.attachments : undefined,
-          scene: b.scene ? String(b.scene) : undefined,
-        });
-        // 첫 교환이 완결된 무명 세션이면 하네스에 제목을 시킨다 — 응답을 붙들지 않는다(fire-and-forget)
-        if (b.slot && SLOT_RE.test(String(b.slot))) {
-          void autoTitleSession(getLedger(), pkg, String(b.slot)).catch(() => { /* 제목 실패는 무시 */ });
-        }
-        return void json(res, 200, { reply: r.reply, model: r.model ?? null, usage: r.usage ?? null, context: r.context ?? null, files: r.files ?? [] });
-      }
-
-      // ── 파일 주고받기 — stage 가 유일한 무대다 ─────────────────────────
-      // 업로드: 바이트를 사이드밴드로 스트리밍해 stage/uploads 에 앉힌다 (JSON body 비경유).
-      // 반환된 상대경로가 첨부 참조가 되고, 세션이 프롬프트 앞에 절대경로로 붙인다.
-      // workspace 가 아니라 stage 인 이유: workspace 는 ~ 처럼 넓게 결재될 수 있고,
-      // HTTP 로 드나드는 파일의 범위는 그와 무관하게 좁아야 한다
-      const up = p.match(/^\/pkg\/([^/]+)\/upload$/);
-      if (up && req.method === "POST") {
-        const pkg = decodeURIComponent(up[1]);
-        if (!getLedger().packages[pkg]) return void json(res, 404, { error: `미설치 패키지: ${pkg}` });
-        const rawName = String(url.searchParams.get("name") ?? "file");
-        const name = (rawName.split(/[\\/]/).pop() ?? "file").replace(/^\.+/, "_").slice(0, 128) || "file";
-        const dir = path.join(stageDir(pkg), "uploads");
-        fs.mkdirSync(dir, { recursive: true });
-        let target = path.join(dir, name);
-        if (fs.existsSync(target)) {
-          const ext = path.extname(name);
-          target = path.join(dir, path.basename(name, ext) + "-" + Date.now().toString(36) + ext);
-        }
-        const MAX_UPLOAD = 100 * 1024 * 1024;
-        let size = 0;
-        let failed = false;
-        const ws = fs.createWriteStream(target);
-        req.on("data", (c: Buffer) => {
-          size += c.length;
-          if (size > MAX_UPLOAD && !failed) {
-            failed = true;
-            ws.destroy();
-            fs.rmSync(target, { force: true });
-            json(res, 413, { error: `첨부 상한 초과: ${MAX_UPLOAD} bytes` });
-            req.destroy();
-          }
-        });
-        req.pipe(ws);
-        ws.on("finish", () => {
-          if (!failed) json(res, 200, { path: "uploads/" + path.basename(target), size, name: path.basename(target) });
-        });
-        ws.on("error", (e) => {
-          if (!failed) json(res, 500, { error: String(e) });
-        });
-        return;
-      }
-
-      // 다운로드: stage 봉인 아래에서만. HEAD 는 위젯의 파일 링크 실재 프로브용.
-      // 에이전트가 채팅으로 파일을 보내려면 stage 에 놓는다 — 번들 meta 가 그 경로를 알려준다
-      const fileR = p.match(/^\/pkg\/([^/]+)\/file\/(.+)$/);
-      if (fileR && (req.method === "GET" || req.method === "HEAD")) {
-        const pkg = decodeURIComponent(fileR[1]);
-        if (!getLedger().packages[pkg]) return void json(res, 404, { error: `미설치 패키지: ${pkg}` });
-        const root = path.normalize(stageDir(pkg));
-        const target = path.normalize(path.join(root, decodeURIComponent(fileR[2])));
-        if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
-        if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) return void json(res, 404, { error: "없는 파일" });
-        const head: Record<string, string> = {
-          "content-type": MIME[path.extname(target)] ?? "application/octet-stream",
-          "content-length": String(fs.statSync(target).size),
-        };
-        if (url.searchParams.get("dl") === "1") {
-          head["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(target))}`;
-        }
-        res.writeHead(200, head);
-        if (req.method === "HEAD") return void res.end();
-        fs.createReadStream(target).pipe(res);
-        return;
+        return void json(res, 200, harnessVerb(getLedger(), decodeURIComponent(hv[1]), "setup"));
       }
 
       // 데이터 폴더 열기 — 패키지의 workspace 를 OS 파일 탐색기로 연다.
@@ -1119,7 +1173,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);
       if (script && req.method === "POST") {
         const b = await readBody(req);
-        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: PRINCIPAL }, host);
+        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority);
         return void json(res, 200, { result });
       }
 

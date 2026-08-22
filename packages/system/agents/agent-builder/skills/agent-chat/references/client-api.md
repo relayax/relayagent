@@ -1,70 +1,100 @@
 # 채팅 클라이언트 API
 
-기판이 서빙하는 두 모듈. 둘 다 런타임 URL 로 임포트한다.
+기판이 서빙하는 위젯 번들과, 그 아래의 클라이언트 SDK 두 층이다.
 
-- `/assets/chat-widget.js` — UI 째 위젯. `mount()` 를 수출한다.
-- `/assets/chat-core.js` — UI 없는 클라이언트. `createChat()` 을 수출한다.
+- `/assets/chat-app.js` — 완성 UI. `mount(el, opts)` · `mountTabs(el, opts)` 를 수출한다.
+  런타임 URL 로 임포트한다(`import { mount } from "/assets/chat-app.js"`).
+  `window.RelayChat = { mount, mountTabs }` 전역도 같이 선다 — ESM 을 못 쓰는 임베더용.
+- `/assets/chat-app.css` — 그 UI 의 스타일. 같이 링크해야 한다.
+- `@relay/relayjs` 의 `createChat` — UI 없는 클라이언트(headless). 자산이 아니라 **의존성**이다
+  (기판 레포 안에서는 `file:`). 번들은 `createChat` 을 수출하지 않는다.
 
 공통 계약: 모든 호출은 throw 하지 않는다. 실패는 `{ error: { code, message } }` 로 돌아온다.
-busy 중의 `send` 는 버리지 않고 줄 세운다 — 같은 slot 에 세션이 동시에 뜨면 충돌하기 때문이다.
+같은 세션의 턴 직렬화는 **기판이 소유한다** — 클라이언트가 큐를 만들 필요가 없다.
 
-## mount(옵션) → { client, root, remove() }
+## mount(el, 옵션) → { unmount(), setConversation(c), setTarget(id, c?) }
 
 | 옵션 | 뜻 |
 |---|---|
-| `pkg` | 설치 이름. `location.pathname` 의 `/pkg/<이름>/view/` 에서 파싱한다 |
-| `mode` | `"float"`(기본, 우측하단 부유) / `"inline"`(target 을 채우는 컴포넌트형) |
-| `target` | inline 모드의 마운트 대상 엘리먼트 |
-| `slot` | 시작 세션 슬롯 (기본 `"console"`) |
-| `agent` | 대화가 착지할 에이전트 (기본: 패키지 짧은 이름과 같은 착지 에이전트) |
+| `instanceId` | 대상 인스턴스. 생략 시 주입 좌표(`window.__RELAY_CONTEXT.instanceId` / `[data-relay-instance]`) |
+| `conversation` | 이어 열 대화 스레드 — `"main"` \| `"agent-<name>[:<param>]"` |
+| `title` | 헤더에 그릴 이름 |
+| `principal` | 신원 표식(기본 `"local"`). 신원 해석의 정본은 서버다 |
+| `onClose` | 접기 콜백. 주면 헤더에 접기 버튼이 생긴다 |
 
-`client` 가 아래 ChatClient 다 — 위젯을 심고도 프로그램적으로 발화하거나 이벤트를 구독할 수 있다.
-`remove()` 는 위젯과 문서 전역 리스너(붙여넣기·드래그)를 정리한다.
+첫 인자가 **대상 엘리먼트**다. 구 판의 `mount({ pkg, mode, target })` 은 은퇴했다 —
+`mode: "float"` 자리는 자동 마운트(스크립트 한 줄)가 대신한다.
 
-## createChat({ pkg, slot?, agent? }) → ChatClient
+## mountTabs(el, 옵션) → { unmount(), openTab(req) }
+
+여러 (인스턴스 × 대화)를 탭으로 여는 셸. 옵션은 `mount` 와 같고 `onAllClosed` · `onCollapse`
+가 더 있다. `openTab({ instanceId, conversationId?, title? })` 로 탭을 연다.
+
+## createChat({ base, root?, instance?, agent?, session? }) → Chat
+
+좌표는 주입에서 온다 — `base` 는 대화 스코프의 뿌리(`window.__RELAY_CONTEXT.base`),
+`root` 는 인스턴스 열거의 뿌리다. 마운트 문법을 직접 조립하지 마라.
 
 ### 발화와 파일
 
 - `send(text, opts?)` → `{ reply }` 또는 `{ error }`
   - `opts.scene` — 화면 맥락 스냅샷. 기판이 프롬프트 서문으로 합성하고 이력에는 원문만 남긴다
   - `opts.display` — 화면용 원문. text 에 손으로 맥락을 섞을 때만 쓴다 (기본은 scene)
-  - `opts.attachments` — `[{ path, name? }]`. path 는 `upload` 가 돌려준 workspace 상대경로
+  - `opts.attachments` — `[{ path, name? }]`. path 는 `upload` 가 돌려준 stage 상대경로
   - `opts.agent` — 이 발화만 다른 에이전트로 착지
-- `cancel()` — 진행 중 턴 중단
-- `answer(id, answers)` — 봉투 `ask` 이벤트(에이전트의 질문)의 답 회송. `answers = [{ question, selected[] }]`
-- `reset()` — 현재 슬롯 세션 초기화
+- `cancel()` — 진행 중 턴 중단 (`turn.interrupt`)
+- `answer(id, answers)` — 봉투 `ask` 이벤트의 답 회송. `answers = [{ question, selected[] }]`
+- `reset()` — 현재 세션의 하네스 대화 포인터만 끊는다 (이력은 남는다)
 - `upload(file, onProgress?)` → `{ path, size, name }` — 바이트를 사이드밴드로 올린다.
   원본 파일시스템 경로는 절대 싣지 않는다. 반환된 상대경로가 유일한 참조다
 - `fileUrl(rel, dl?)` — 세션 파일의 URL (`dl: true` 면 다운로드 강제)
+- `close()` — 열린 스트림·구독 정리
+- `refresh()` — 서버 상태로 따라잡기(이력·진행 턴 재부착)
 
 ### 이벤트 — `on(ev, fn)` → 해제 함수
 
 | 이벤트 | 인자 |
 |---|---|
-| `message` | `{ role: "user"\|"bot"\|"sys", text, files?, usage?, model? }` |
-| `busy` | boolean — 큐가 빌 때까지 한 번만 켜진다 |
-| `turn` | `{ remaining }` — 큐 항목이 실제 발사된 순간 |
-| `progress` | 진행 이벤트 `{ event: delta\|tool\|file\|reply\|error, ... }` |
-| `usage` | `{ usage: { input, output, context_window }, model }` |
-| `session` / `reset` / `meta` / `history` | 슬롯 전환·초기화·메타 도착·이력 로드 |
+| `message` | `{ role: "user"\|"bot"\|"sys", text, files?, usage?, context?, model? }` |
+| `busy` | boolean |
+| `turn` | 턴 개설 |
+| `progress` | 봉투 이벤트 원본 `{ event: delta\|tool\|usage\|task\|ask\|file\|reply\|error, ... }` |
+| `parts` | 진행 중 턴의 파트 스냅샷(리듀서 상태) |
+| `usage` | 종결 집계 |
+| `session` / `reset` / `meta` / `history` | 세션 전환·초기화·메타 도착·이력 로드 |
+| `error` | 계약 판정·push 실패의 fail-loud 표면 |
 
 ### 세션 관리
 
-`sessions.list()` / `open(slot)` / `create()` / `rename(slot, label)` / `remove(slot)` /
-`archive(slot, on)` / `pin(slot, on)` — 기판의 세션 장부를 소비한다. 직접 저장소를 만들지 마라.
+`sessions.list()` / `open(id)` / `create()` / `rename(id, label)` / `remove(id)` /
+`archive(id, on)` / `pin(id, on)` — 기판의 세션 장부를 소비한다. 직접 저장소를 만들지 마라.
+**세션 id 는 기판이 발급하는 불투명 문자열이다** — 클라이언트가 짓지 않는다.
 
 ### 하네스 설정
 
-`harness.models()` / `setModel(model)` / `setEffort(level)` / `variants(probe?)` / `setVariant(name)` /
-`setup()` / `info()` / `commands()` / `connect(token)` / `login()` — 전부 기판 API 의 얇은 래퍼다.
-일반 패키지 화면에서 쓸 일은 드물다. 모델·계정 설정 UI 는 콘솔과 위젯이 이미 갖고 있다.
+`harness.info()` / `models()` / `commands()` / `setModel(m)` / `setEffort(l)` — 전부 얇은
+래퍼다. 기판이 `capabilities` 로 선언하지 않은 동사는 호출 즉시 `E_UNSUPPORTED` 로 돌아온다
+(선언 없이 되는 척하지 않는다). 모델·계정 설정 UI 는 콘솔과 위젯이 이미 갖고 있다.
 
 ### 메타
 
 - `ready` — `Promise<ChatMeta>`. 첫 화면 그리기 전에 기다리면 인사말·에이전트 목록이 있다
 - `meta()` → `{ found, display_name, greeting, model, effort, agents, agent }`
-- `history` — 현재 슬롯의 메시지 배열 (로드는 자동)
-- `slot` / `busy` — 현재 슬롯과 진행 여부 getter
+- `history` — 현재 세션의 메시지 배열 (로드는 자동)
+- `session` / `busy` / `capabilities` / `protocol` — getter
+
+## 계약을 직접 말할 때
+
+SDK 없이 왕복하려면 전송 계약 v1(`docs/client-protocol.md`)을 그대로 쓴다:
+
+```
+POST {base}/turns   {message, session, attachments?}   → 202 {turn, session}
+GET  {base}/turns/<turn>/stream                        → SSE
+```
+
+SSE 의 `data:` 한 줄이 봉투 이벤트 JSON 하나다. 종결은 `reply`/`error` 정확히 하나이고,
+스트림의 마지막은 `{event:"turn",status:"settled",ok}` 다 — settled 없이 끊긴 스트림은
+종결이 아니라 절단이므로 빈 답으로 위장하지 마라.
 
 ## 테마 변수
 
@@ -72,12 +102,9 @@ busy 중의 `send` 는 버리지 않고 줄 세운다 — 같은 slot 에 세션
 
 | 변수 | 자리 |
 |---|---|
-| `--rc-accent` | 주색 (진행 표시, 활성 상태) |
-| `--rc-accent-strong` | 강조 텍스트·링크 |
-| `--rc-accent-soft2` | 전송 버튼 |
-| `--rc-bg` | 패널·말풍선 바탕 |
-| `--rc-ground` | 바닥·탭 영역 |
-| `--rc-ink` | 본문 텍스트 |
-| `--rc-soft` / `--rc-faint` | 보조·희미한 텍스트 |
-| `--rc-line` | 경계선 |
-| `--rc-sans` | 글꼴 스택 |
+| `--rc-accent` / `--rc-accent-strong` / `--rc-accent-soft` | 주색·강조·연한 강조 |
+| `--rc-bg` / `--rc-panel` / `--rc-surface` / `--rc-ground` | 바탕 층 |
+| `--rc-ink` / `--rc-fg` / `--rc-fg-dim` / `--rc-soft` / `--rc-faint` | 본문·보조 텍스트 |
+| `--rc-line` / `--rc-line-soft` / `--rc-border` / `--rc-border-soft` | 경계선 |
+| `--rc-ok` / `--rc-err` / `--rc-danger` | 판정 색 |
+| `--rc-sans` / `--rc-mono` / `--rc-radius` | 글꼴·모서리 |

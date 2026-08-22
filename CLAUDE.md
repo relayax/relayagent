@@ -28,8 +28,11 @@ runner/                 the substrate (CLI + daemon). Plain .ts, run with --expe
 relay.manifest.yaml     the grammar: JSON Schema for relay.yaml, with commentary
 relay.yaml              a full worked example manifest
 docs/harness-protocol.md  the harness adapter contract (verbs, envelope events, control channel)
+docs/verb-contract.md     the package verb contract (default export, ctx, optional meta export)
 packages/system         the management shell, itself a package (console, studio, harness adapters)
-lib/relayjs             browser-side client used by package views
+lib/relayjs             browser-side client used by package views (+ `cn` styling util)
+lib/relay-ui            blessed UI atom set for package views (shadcn-based, TS source consumed
+                        via file: + transpilePackages; brand seam = src/tokens.css CSS variables)
 assets/                 project logo
 ```
 
@@ -77,6 +80,75 @@ npm run typecheck
 ```
 
 CI runs exactly this.
+
+## Two build artifacts the daemon serves — both gitignored, both must be rebuilt
+
+**① The chat widget bundle.** The daemon serves it from `lib/relayjs/dist/`
+(`/assets/chat-app.{js,css}`), and that directory is gitignored — a fresh clone does not have it:
+
+```sh
+npm run build:widget   # installs lib/relayjs devDeps, then esbuild → dist/
+```
+
+Touching anything under `lib/relayjs/src/` means rebuilding: the served bundle is the artifact,
+not the source.
+
+**② Package view static exports.** `serveView` serves `surfaces/view/out/` when it exists.
+So editing a view's source and not rebuilding means **the daemon keeps serving the old screen** —
+and neither `typecheck` nor the manifest judgment looks at build output. This actually happened:
+the atomic cut (`2639dae`) put the new widget wiring into the console layout, `out/` was never
+rebuilt, and for two days the served document had the old wiring already gone and the new wiring
+not yet there ("the chat widget is missing").
+
+```sh
+npm run relay -- build <pkg>
+```
+
+**Rebuild only through that command.** A view is served under `/pkg/<installName>/view/`, so Next
+must be built with `basePath` set to that prefix — `next.config.mjs` reads it from
+`RELAY_BASE_PATH`, which `buildView` injects because the install name is only known at install
+time. Running `npx next build` by hand leaves `basePath` empty, every `/_next/...` URL is baked
+root-absolute, and the served page 404s its own stylesheet and chunks: an unstyled console that
+never hydrates. That failure looks nothing like a build error — the build passes.
+
+`npm run validate` judges both halves: `out/` older than its source, and `out/` whose own assets
+are addressed at daemon root instead of the mount. It stays silent when `out/` is absent — CI and
+fresh clones don't build views, and absence is not staleness.
+
+There is no release pipeline in this repo yet, so both steps are manual.
+
+## Where the harness comes from
+
+An agent package ships harness **adapters**, not the tools they drive. Where the tool comes from
+is declared in `requires.binaries` — one vocabulary for "this executable must exist" (2026-08-19,
+merged from a short-lived `harness.variants[].binary` object at the user's direction):
+
+- `requires` is **AND**: when install finishes, everything in the list exists. An entry with only
+  `install` is advisory-and-gate, as before (git — the substrate cannot install it for you).
+- An entry with `manager` + `package` is a **recipe**: if the binary is missing, the substrate
+  installs it under `~/.relay/bin/<pkg>/` and puts that directory first on PATH for the package's
+  spawns. This is what makes AND affordable — before recipes, requiring `codex` would have blocked
+  a claude-only user's install, which is why harness tools could never live in `requires`.
+- A variant's `binary: <name>` is a **reference** to a requires entry, not a second declaration.
+  It exists for one reason: when `setup` fails, the substrate promotes that entry to its own copy
+  and retries once. Plain existence checks pass a gutted install (an npm wrapper whose native
+  binary is gone — the real incident), so setup-failure is the only signal that catches it.
+- Pinned `version` → the substrate's copy is canonical, host ignored (reproducibility).
+  Unpinned → host first; nothing is downloaded that already works (eagerly provisioning all four
+  system variants measured 921 MB).
+- If the manager itself is absent, install fails loud with the entry's `install` guidance.
+  The system package deliberately does not require `kimi` — that would make `uv` a product-wide
+  prerequisite; the kimi variant remains host-elective. npm is already a de-facto prerequisite
+  (view builds and component packing shell out to it).
+- Removing a package removes its provisioned binaries.
+
+Provisioning owns and pins; it does not isolate. Containerizing the harness was considered and
+rejected (2026-08-19): the decisive cost is credentials — subscription logins live in the host
+tool's Keychain, which adapters deliberately do not borrow, and relayos had to convert that axis
+to a substrate-held token when it moved sessions into pods. A substrate-owned host copy keeps the
+workspace a real folder and keeps the Keychain reachable. `harness.variants[].dockerfile` was
+retired the same day; declaring it (or the old object-form `binary`) fails validation with a
+prescription.
 
 ## Language
 

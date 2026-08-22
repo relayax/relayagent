@@ -8,10 +8,11 @@ description: |
     relay.yaml
     assets/icon.svg                  icon
     agents/<name>/AGENT.md           agents[].persona. 스킬 = agents[].skills/<skill>/SKILL.md
-    scripts/<이름>.ts                scripts.source 아래 동사. 기본 수출 async 함수 (input, ctx) => 결과 JSON
+    scripts/<이름>.ts                scripts.source 아래 동사. 기본 수출 async 함수 (input, ctx) => 결과 JSON (+ 선택 meta 수출)
     surfaces/view/                   surfaces.view.source (+ out 선언 시 발행이 빌드해 <source>/<out> 서빙)
+    surfaces/components/             surfaces.components.source — 다른 패키지 view 가 소비하는 npm 패키지(package.json + 소스)
     channels/<name>/                 channels[].source + entry
-    harness/<name>/                  harness.source + entry + dockerfile(선택)
+    harness/<name>/                  harness.variants[].source + entry
     services/<name>/                 services[].source + dockerfile(컨테이너 형) 또는 entry(프로세스 형)
 type: object
 additionalProperties: false
@@ -33,6 +34,18 @@ properties:
     minLength: 1
   icon:
     type: string
+  publisher:
+    description: 발행 주체 좌표 (@scope). 스토어 리스팅·정산이 읽는다 — 개인 기판은 표시 외 소비 없음
+    type: string
+    pattern: '^@[a-z0-9-]+$'
+  released_at:
+    description: 발행일 YYYY-MM-DD. 스토어 리스팅 메타 — 개인 기판은 표시 외 소비 없음
+    type: string
+    pattern: '^\d{4}-\d{2}-\d{2}$'
+  changelog:
+    description: 판 변경 기록(마크다운) — 스토어 리스팅·업그레이드 화면 메타. 저작은 보통 CHANGELOG.md 를 발행이 합성한다
+    type: string
+    minLength: 1
   requires:
     description: |
       호스트 환경 요구 = 설치 관문. validate 는 형태만 판정하고, 설치가 실체를 판정해
@@ -48,7 +61,15 @@ properties:
         items:
           enum: [darwin, linux, win32]
       binaries:
-        description: PATH 에 있어야 하는 실행 파일
+        description: |
+          있어야 하는 실행 파일. requires 는 AND 다 — 설치가 끝나면 목록 전부가 실재한다.
+          install 만 있으면 종전대로 안내와 함께 거부한다(git 처럼 기판이 깔아줄 수 없는 것).
+          manager+package 는 **기판이 직접 채우는 레시피**다: 없으면 기판이
+          ~/.relay/bin/<패키지>/ 에 깔아 그 패키지의 스폰에 PATH 앞으로 준다 — 호스트 전역
+          설치가 없거나 깨져 있어도 패키지가 돈다. 이 레시피가 있어야 하네스 도구를 requires 에
+          올릴 수 있다(없던 시절에는 codex 를 요구하면 claude 만 쓰는 사용자의 설치가 막혔다).
+          manager 는 닫힌집합이다 — 매니페스트가 셸 문자열을 실행시키지 못한다. 매니저 자체가
+          없는 환경은 설치가 fail-loud 한다(install 안내가 있으면 함께 싣는다).
         type: array
         minItems: 1
         items:
@@ -61,6 +82,17 @@ properties:
               pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
             install:
               description: 미충족 판정문에 실리는 설치 안내 (명령 또는 URL)
+              type: string
+              minLength: 1
+            manager:
+              description: 기판이 채울 때 쓰는 패키지 매니저 — package 와 함께만
+              enum: [npm, uv]
+            package:
+              description: 매니저의 패키지 좌표 — manager 와 함께만
+              type: string
+              minLength: 1
+            version:
+              description: 고정 버전. 지정하면 호스트에 무엇이 있든 기판 사본이 정본(재현성 요구)
               type: string
               minLength: 1
       apps:
@@ -108,6 +140,25 @@ properties:
               기판이 그 접두사를 RELAY_BASE_PATH 로 주입한다. 프레임워크의 basePath 를 여기에 맞춰라
               (Next.js: basePath: process.env.RELAY_BASE_PATH). 재빌드는 relay build <패키지>
             $ref: '#/$defs/relpath'
+      components:
+        description: |
+          컴포넌트 수출 — source 가 npm 패키지(package.json + 소스) 그 자체다. 다른 패키지의
+          view 가 edges[].components 선언으로 이 소스를 소비한다: 기판이 설치·발행 시점에
+          npm pack 으로 tgz 를 굽고 소비 view 의 package.json "*" 의존을 file: 로 고정한다 —
+          레지스트리 없음. 규율 셋:
+            좌표    package.json name 은 매니페스트 name 과 같아야 한다(판정 fail-loud) —
+                    소비자 package.json 의 의존 키가 곧 이 좌표다.
+            싱글턴  react 나 UI 킷 같은 공유 라이브러리는 peerDependencies 로만 선언한다.
+                    dependencies 로 안으면 tgz 전개본이 자기 사본을 갖게 되어 소비 view 와
+                    React 인스턴스·context 가 갈린다(조용히 깨지는 축).
+            중첩    컴포넌트 패키지가 다른 패키지의 components 를 소비하는 것은 계약 밖이다 —
+                    해석 순서·순환 게이트를 만드느니 한 단계가 규율이다.
+        type: object
+        additionalProperties: false
+        required: [source]
+        properties:
+          source:
+            $ref: '#/$defs/relpath'
       chat:
         type: object
         additionalProperties: false
@@ -151,40 +202,62 @@ properties:
                           멘션·스레드 참여 같은 플랫폼 관례로 응답 범위를 더 좁힌다(어댑터 소유).
                   봉투    착신 message 는 <channel source="<채널이름>" ...>원문</channel>
                           태그로 감싼다. 발화자 닉네임·대화 키·시각 등 라우팅 맥락은 속성으로
-                          싣는다 — 그룹 대화는 한 slot 에 발화자가 여럿이라 닉네임은 매 착신마다
-                          실어야 세션이 회신 상대를 오인하지 않는다.
-                  착신    POST {RELAY_API}/pkg/{RELAY_NAME}/chat · Authorization: Bearer
-                          {RELAY_TOKEN} · body {message, slot, attachments?}. 동기 호출 —
-                          턴이 종결되면 {reply, model, usage, files} 가 온다.
-                  slot    대화 연속성의 축. <채널이름>-<대화키> 를 [a-zA-Z0-9._-]{1,64} 로
-                          정규화한다. 같은 외부 대화 = 같은 slot = 이어지는 세션. 사람이
-                          읽을 이름은 POST …/session/<slot>/label 로 앉힌다 — slot 원문은
-                          목록에서 정체를 숨긴다. slot(대화)은 영속, 하네스 맥락은 회전
-                          가능: 새 대화 시작은 POST …/session/reset — 이력은 남고 네이티브
-                          세션만 새로 시작한다. /reset 류 플랫폼 명령으로의 번역은 어댑터 소유다.
-                  직렬화  **한 slot 에 동시 착신 금지.** 착신 순서는 외부 발화 순서를
-                          보존한다. 턴 진행 중 새 발화가 오면 갈래는 둘이다: 큐잉(기본) =
-                          종결을 기다려 다음을 착신한다, 쌓인 발화는 하나로 합쳐도 된다.
-                          끼어들기 = POST …/session/<slot>/cancel 로 진행 턴을 끊고 새
-                          발화를 착신한다 — 취소로 끝난 호출의 오류 응답을 외부에 답인 양
-                          내보내지 마라. 다른 slot 끼리는 병렬 자유. 최소 한 번(at-least-once)
-                          배달 플랫폼의 중복 이벤트 dedup 도 어댑터 소유다.
-                  진행    긴 턴의 생존 신호(타이핑 표시·진행 편집)는 GET …/session/<slot>/events
-                          를 폴링해 delta·tool 이벤트로 그린다. 글자 수 제한, 마크다운 방언,
+                          싣는다 — 그룹 대화는 한 session 에 발화자가 여럿이라 닉네임은 매 착신마다
+                          실어야 세션이 회신 상대를 오인하지 않는다. user 속성(플랫폼의 발화자
+                          안정 식별자)은 필수다 — 개인 기판은 게이트에만 쓰지만, org 기판은
+                          이 값으로 발신자를 principal 에 결부한다(결부는 권위 소관).
+                  착신    왕복의 정본은 클라이언트 전송 계약 v1(docs/client-protocol.md)이고,
+                          개설과 관찰이 갈린 두 동사다 — 구 블로킹 POST …/chat 은 은퇴했다.
+                          ① 개설  POST {RELAY_API}/pkg/{RELAY_NAME}/turns · Authorization:
+                                  Bearer {RELAY_TOKEN} · body {message, session, attachments?}
+                                  → 202 {turn, session}. 개설은 턴 종결을 붙들지 않는다.
+                          ② 관찰  GET …/turns/<turn>/stream (SSE). data: 한 줄 = 봉투 이벤트
+                                  JSON 하나이고 어휘는 하네스 봉투 그대로다(delta·tool·usage·
+                                  task·ask·file·reply·error). 스트림의 끝은 수명주기
+                                  {event:"turn",status:"settled",ok} 다 — settled 없이 끊긴
+                                  스트림은 종결이 아니라 절단이므로 빈 답으로 위장하지 마라.
+                                  다시 붙는 문은 GET …/turns/attach?session=<session> 이다.
+                  session 대화 연속성의 축. <채널이름>-<대화키> 를 [a-zA-Z0-9._-]{1,64} 로
+                          정규화한다. 같은 외부 대화 = 같은 session = 이어지는 세션. 사람이
+                          읽을 이름은 POST …/sessions/<session>/rename body {label} 로 앉힌다 —
+                          원문 id 는 목록에서 정체를 숨긴다. session(대화)은 영속, 하네스 맥락은
+                          회전 가능: 새 대화 시작은 POST …/sessions/<session>/reset — 이력은
+                          남고 네이티브 세션만 새로 시작한다. /reset 류 플랫폼 명령으로의
+                          번역은 어댑터 소유다.
+                  직렬화  **기판이 세션의 유일한 직렬화 지점이다**(§5.1-12) — 같은 session 의
+                          턴은 도착순으로 줄 선다. 어댑터 큐는 계약이 아니라 발신 순서를
+                          지키기 위한 자기 몫이고, 쌓인 발화를 하나로 합쳐도 된다. 끼어들기는
+                          POST …/turns/<turn>/interrupt 로 진행 턴을 끊는다 — 취소로 끝난 턴의
+                          오류 이벤트를 외부에 답인 양 내보내지 마라. 다른 session 끼리는 병렬
+                          자유. 최소 한 번(at-least-once) 배달 플랫폼의 중복 이벤트 dedup 도
+                          어댑터 소유다.
+                  진행    긴 턴의 생존 신호(타이핑 표시·진행 편집)는 관찰 스트림의 delta·tool
+                          이벤트로 그린다 — 폴링 축은 은퇴했다. 글자 수 제한, 마크다운 방언,
                           메시지 분할, 레이트리밋 등 외부 표면 형편으로의 번역은 전부
                           어댑터 소유다.
-                  파일    회신 files 는 stage 상대경로 — GET …/file/<경로> 로 받아 네이티브
-                          첨부로 내보낸다. 인바운드 첨부는 POST …/upload 로 stage 에 앉힌
-                          뒤 그 참조를 attachments 로 넘긴다.
+                  파일    회신 파일은 관찰 스트림의 file 이벤트로 온다(path = stage 상대경로) —
+                          GET …/file/<경로> 로 받아 네이티브 첨부로 내보낸다. 인바운드 첨부는
+                          POST …/upload 로 stage 에 앉힌 뒤 그 참조를 attachments 로 넘긴다.
                   발신    stdin 은 기판의 발신 제어 채널이다. 줄 단위 JSON
                           {"type":"post","conversation":"<대화키>","text":"…","files":["<stage 경로>"]?}
                           를 받으면 그 대화에 게시한다 — 트리거 선톡(then.delivery)이 이
-                          길로 온다. 선톡이 대화가 되려면 그 턴은 해당 대화의 slot 에서
-                          돈다(기판 소관) — 사용자의 후속 발화가 같은 slot 에 착신되어
+                          길로 온다. 선톡이 대화가 되려면 그 턴은 해당 대화의 session 에서
+                          돈다(기판 소관) — 사용자의 후속 발화가 같은 session 에 착신되어
                           맥락을 잇는다.
                   실패    비 200 을 침묵으로 뭉개지 마라 — 외부에도 실패로 알린다. 단 내부
                           사정(토큰·경로·스택)은 싣지 않는다. RELAY_TOKEN 과 자격은 외부
                           대화에 절대 노출 금지.
+                  검사    기판 적합성 검사(relay harness-check)는 RELAY_CONFORM=1 로 entry 를
+                          스폰한다. 어댑터는 이때 외부 연결 없이 자기 서술 JSON 한 줄
+                          {"name":"...","protocol":1} 을 stdout 에 내고 0 으로 종료한다 —
+                          자격·네트워크 없이 계약 준수를 기계로 판정하기 위한 문이다.
+                  검증    자격이 실제로 먹히는지는 저장과 별개다("저장됨 ≠ 유효"). 기판이
+                          RELAY_VERIFY=1 + RELAY_CRED_<이름> 으로 entry 를 스폰하면, 어댑터는
+                          소켓·상주 없이 그 자격으로 최소 왕복 한 번(예: 자기 정체 조회)만
+                          돌려 판정 JSON 한 줄 {"ok":true/false,"note":"..."} 를 stdout 에 내고
+                          종료한다 — 상주 프로세스는 건드리지 않는다. note 에 내부 사정을 싣지
+                          마라. 미구현이면 이 문 없이 스폰이 상주로 흐르는데, 그러면 검증이
+                          "저장만" 으로 강등되니 화면이 유효 여부를 정직히 표시하려면 구현하라.
                 env = RELAY_NAME, RELAY_CHANNEL(이 채널 이름), RELAY_API, RELAY_TOKEN.
                 봇 토큰 류 자격은 vault 에 채널 이름 소속으로 앉아(relay connect <패키지>
                 <채널이름>) RELAY_CRED_<이름> 으로 주입된다 — 코드·매니페스트에 박지 마라.
@@ -197,6 +270,54 @@ properties:
             icon:
               description: 채널 배지 아이콘 (패키지 상대경로, 이미지 파일) — 그래프 카드 상단에 배지로 뜬다
               $ref: '#/$defs/relpath'
+            credential:
+              description: |
+                이 채널이 요구하는 자격의 **형태** 선언. 값이 아니라 형태다 — 값은 vault 에 산다.
+                화면(콘솔 채널 다이얼로그)이 이 선언으로 입력 칸을 그린다. 선언이 없으면 화면은
+                원시 붙여넣기 칸으로 물러난다: 제3자 어댑터가 선언 없이도 연결 가능해야 하기 때문이다.
+                자격 형태를 아는 것은 어댑터뿐인데 화면이 그것을 알 길이 없어서, 지금까지는
+                사람이 JSON 을 손으로 조립해야 했다(그 예시가 어댑터의 실제 키와 어긋나 있었다).
+                조립 규칙: 모든 field 에 key 가 있으면 화면이 JSON 객체로 조립해 넘기고,
+                key 없는 field 하나뿐이면 그 값이 곧 자격 문자열이다. 둘을 섞으면 판정 실패다.
+              type: object
+              additionalProperties: false
+              required: [fields]
+              properties:
+                fields:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [label]
+                    properties:
+                      key:
+                        description: 조립될 JSON 키. 생략하면 자격이 문자열 하나라는 뜻(단독일 때만)
+                        type: string
+                        pattern: '^[a-z][a-z0-9_]*$'
+                      label:
+                        type: string
+                        minLength: 1
+                      placeholder:
+                        type: string
+                      secret:
+                        description: 참이면 화면이 값을 가린다. 토큰 류는 참
+                        type: boolean
+                      list:
+                        description: 참이면 쉼표 구분 입력을 배열로 조립한다 (key 있는 필드만)
+                        type: boolean
+                      required:
+                        description: 참이면 이 칸이 비면 화면이 연결을 막는다
+                        type: boolean
+                help:
+                  description: 자격을 어디서 얻는지 — 화면이 링크와 안내로 보여준다
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    url:
+                      type: string
+                    note:
+                      type: string
   harness:
     type: object
     additionalProperties: false
@@ -277,9 +398,14 @@ properties:
                 격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
                 규칙 + 훅 가드로 이중 번역한다 (가드레일이지 샌드박스가 아니다)
               $ref: '#/$defs/relpath'
-            dockerfile:
-              description: 컨테이너 격리 백엔드용 (선택)
-              $ref: '#/$defs/relpath'
+            binary:
+              description: |
+                이 변형이 모는 실행 파일 — requires.binaries[].name **참조**. 레시피(manager·
+                package)는 requires 한 곳에만 산다(같은 사실을 두 곳에 적지 않는다). 참조가
+                걸린 변형은 setup 실패 시 기판이 그 레시피로 사본을 깔고 재시도한다 — 껍데기만
+                남은 호스트 설치(존재하지만 실행 불능)가 존재 검사를 통과해도 여기서 덮인다.
+              type: string
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
             icon:
               description: 어댑터 도구 아이콘 (패키지 상대경로 이미지) — 카드 하네스 필과 설정 목록에 뜬다
               $ref: '#/$defs/relpath'
@@ -321,8 +447,20 @@ properties:
           pattern: '^(~($|/)|/)'
           not:
             pattern: '(^|/)\.\.(/|$)'
+  auth:
+    description: |
+      커넥터 계약 — 몸(서비스) 없는 커넥터 패키지의 자격 형태 선언. upstream 이 REST API 라
+      스크립트(패키지 동사)가 직접 접속하는 패키지는 이 블록이 계약의 전부다. 자격 값은
+      vault 에 패키지 짧은 이름 소속으로 앉고(relay connect <패키지> <짧은이름>), 동사는
+      ctx.credential() 로 요청 시점에 꺼낸다 — env 상주 없음. 호스티드 MCP URL 을 주는
+      커넥터는 이 블록이 아니라 url 서비스(auth 는 서비스 소속)가 정본 — 동시 선언은
+      거부된다(계약 출처는 한 곳). per-user 자격 축(조직 구성원 각자 계정)은 여기가 아니라
+      org.per_user.accounts 소관이다 — 개인용/기업용 문법이 갈라지지 않게 하는 자리.
+    $ref: '#/$defs/auth'
   agents:
-    description: 착지점 = 패키지 짧은 이름과 같은 에이전트. persona 는 agents/<name>/AGENT.md
+    description: |
+      착지점 = default: true 선언 에이전트, 미선언이면 패키지 짧은 이름과 같은 에이전트 관례.
+      persona 는 agents/<name>/AGENT.md
     type: array
     items:
       type: object
@@ -331,6 +469,9 @@ properties:
       properties:
         name:
           $ref: '#/$defs/slug'
+        default:
+          description: main 슬롯 착지점 — 최대 1. 명시 선언은 "짧은 이름과 같은 에이전트" 관례의 상위 호환
+          type: boolean
         persona:
           description: 페르소나 마크다운 파일
           $ref: '#/$defs/relpath'
@@ -351,7 +492,15 @@ properties:
             type: string
             pattern: '^[a-z0-9][a-z0-9-]*\*?$'
   scripts:
-    description: 동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON
+    description: |
+      동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON.
+      동사는 meta 를 함께 수출할 수 있다 — 세션 문(MCP tools/list)이 그 서술과 입력 형을 싣는다:
+      export const meta = { description: "…", input: {type:"object", …}, output: {…} }.
+      이름은 meta 에 없다(파일명이 정본 — 두 곳에 적으면 어긋난다). input/output 은 JSON Schema
+      리터럴이고 기판은 형을 광고만 한다: 검증기는 의존이고 의존성 0 규율이 형 광고보다 먼저다
+      (입력 판정은 동사 본문의 몫). 미지 키는 무시된다 — meta 는 코드지 manifest 가 아니라
+      선언-실체 판정의 대상이 아니다. meta 없는 동사는 무변 — 서술은 기판이 자동 합성하고
+      입력 형은 개방 스키마가 된다.
     type: object
     additionalProperties: false
     required: [source]
@@ -374,6 +523,10 @@ properties:
       properties:
         id:
           $ref: '#/$defs/slug'
+        label:
+          description: 표시명 (선택) — 화면 목록이 id 대신 그린다
+          type: string
+          minLength: 1
         when:
           oneOf:
             - type: object
@@ -439,14 +592,21 @@ properties:
         description:
           type: string
   edges:
-    description: 선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다
+    description: |
+      선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다.
+      소비물은 셋 중 하나다(동시 선언 불가): tools(동사, 런타임 결재) · mission(질의,
+      런타임 결재) · components(제공자의 surfaces.components 를 view 빌드 의존으로 —
+      집행점이 런타임이 아니라 빌드라, 활성화는 빌드 해석 성공이 곧 결재 기록이다)
     type: array
     items:
       type: object
       additionalProperties: false
       required: [provider]
       not:
-        required: [tools, mission]
+        anyOf:
+          - required: [tools, mission]
+          - required: [tools, components]
+          - required: [mission, components]
       properties:
         provider:
           $ref: '#/$defs/provider'
@@ -457,6 +617,43 @@ properties:
         mission:
           type: string
           minLength: 1
+        components:
+          description: provider 의 surfaces.components 소스를 이 패키지 view 의 빌드 의존으로 소비 — true 만
+          const: true
+  host_methods:
+    description: |
+      기판 host 브리지 게이트 선언 — 이 패키지의 동사가 부를 수 있는 host.* 메서드의 캡.
+      선언은 캡이고 집행은 기판 소유다: ring-0 설치 결재가 문을 열고, 선언이 있으면 목록 밖
+      메서드는 거부된다(미선언 = 전체, ring-0 결재가 유일한 경계 — 현행 호환). 고지서에
+      실린다. 개인 기판의 메서드 이름은 host.<동사_스네이크>(예 host.draft_publish),
+      org 기판은 host.<도메인>.<동사>(예 host.members.list) — 두 표기 모두 이 문법 안이다.
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: '^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$'
+  storage:
+    description: |
+      파일 버킷 파사드 선언. services[].disk(몸 디스크)와 전혀 다른 축이다.
+      1인 기판은 v1 에서 판정만 하고 집행하지 않는다(추후 로컬 구현 여지). org 기판은
+      storage-api 로 버킷을 보장한다. 정책은 닫힌 프리셋 — 자유 문자열이 되는 순간
+      기판마다 다른 뜻이 된다.
+    type: object
+    additionalProperties: false
+    required: [buckets]
+    properties:
+      buckets:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name:
+              $ref: '#/$defs/slug'
+            policy:
+              enum: [org-member, owner-only, role-based]
   org:
     description: org 기판이 호스팅할 때만 읽는 확장. 1인 기판과 등록 노드에서는 무시된다
     type: object
@@ -467,7 +664,7 @@ properties:
         additionalProperties: false
         properties:
           accounts:
-            description: 자격 축. url/dir 서비스 이름 또는 edge provider 좌표
+            description: 자격 축. url/dir 서비스 이름, edge provider 좌표, 또는 커넥터 계약(최상위 auth)의 패키지 짧은 이름
             type: array
             items:
               type: string
@@ -527,6 +724,10 @@ $defs:
           env:
             type: string
             pattern: '^[A-Z][A-Z0-9_]*$'
+          service:
+            description: org 기판 자격 브로커의 서비스 키 (예 google-drive) — 브로커 없는 기판은 무시
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
           help:
             type: object
             additionalProperties: false
@@ -554,6 +755,10 @@ $defs:
             const: oauth
           client:
             enum: [dcr, registered]
+          service:
+            description: org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
           oauth_client:
             type: object
             additionalProperties: false

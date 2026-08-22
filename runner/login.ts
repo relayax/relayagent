@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { loadManifest, activeHarness } from "./manifest.ts";
-import { logLine, type Ledger } from "./state.ts";
+import type { Ledger } from "./state.ts";
+import type { Authority } from "./authority-contract.ts";
 
 /**
  * headless 로그인. 대화형 인증은 TTY 를 요구하지만 사람이 볼 터미널 창까지 요구하지는 않는다 —
@@ -23,7 +24,7 @@ export interface LoginProc {
 const procs = new Map<string, LoginProc>();
 const OUT_CAP = 400; // 링버퍼 — 로그인 대화는 짧다. 무한 누적은 데몬 메모리를 먹는다
 
-export function loginStart(ledger: Ledger, pkg: string, opts: { switch?: boolean } = {}): { ok: true; variant: string } {
+export function loginStart(ledger: Ledger, pkg: string, authority: Authority, opts: { switch?: boolean } = {}): { ok: true; variant: string } {
   const rec = ledger.packages[pkg];
   if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
   const m = loadManifest(rec.path);
@@ -53,7 +54,8 @@ export function loginStart(ledger: Ledger, pkg: string, opts: { switch?: boolean
   child.on("exit", (code) => {
     proc.done = true;
     proc.code = code ?? 0;
-    logLine("login", { pkg, variant: v.name, code: proc.code });
+    // 소비 계열 감사 — exit 콜백(동기 문맥)이라 fire-and-forget. 실패는 미처리 거부로 표면화된다
+    void authority.audit("login", { pkg, variant: v.name, code: proc.code });
   });
   child.on("error", (e) => {
     proc.done = true;

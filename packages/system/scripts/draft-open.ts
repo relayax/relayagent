@@ -37,7 +37,7 @@ function serviceStub(name: string, port?: number): string {
 }
 
 export default async function (input: Input, ctx: any) {
-  if (!ctx.host) throw new Error("ring-0 전용");
+  if (!ctx.host) throw new Error(`ring-0 전용 — "${ctx.pkg}" 이 ring-0 설치가 아닙니다: relay list 로 경로를 확인해 relay install <경로> --ring0 (기존 결재·설정은 보존됩니다)`);
   const files: Record<string, string> = { ...(input.files ?? {}) };
   const seedHarness: { source: string; entry: string }[] = [];
   const m = input.manifest;
@@ -77,7 +77,7 @@ export default async function (input: Input, ctx: any) {
         files[prefix + "index.html"] =
           `<!doctype html><meta charset="utf-8"><title>${m.display_name ?? input.name}</title>` +
           `<body style="font-family:sans-serif;padding:40px"><h1>${m.display_name ?? input.name}</h1>` +
-          `<p>${m.description ?? ""}</p><script type="module" src="/assets/chat-widget.js"></script>`;
+          `<p>${m.description ?? ""}</p><link rel="stylesheet" href="/assets/chat-app.css"><script type="module" src="/assets/chat-app.js"></script>`;
       }
     }
 

@@ -5,9 +5,11 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { saveLedger, expandHome, workspacePath, RELAY_HOME, type Grant, type Ledger, type PkgOrigin } from "./state.ts";
 import { loadManifest, judge, activeHarness, disclosure, ManifestError, type Disclosure, type Manifest, type HarnessVariant } from "./manifest.ts";
+import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, type BuildResult } from "./build.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "./entry.ts";
+import { ensureBinary, binaryEnv, provisionForVariant, removeBinaries } from "./binaries.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
 import { sha256File, unpackArtifact } from "./pack.ts";
 import { parse as parseYaml } from "yaml";
@@ -17,6 +19,22 @@ export interface InstallOpts {
   ring0?: boolean;
   /** 폴더 결재 — 세션 cwd. 미지정 = 기본 ~/Relay/<이름>. 이 지정이 GUI 폴더 선택의 CLI 형태다 */
   workspace?: string;
+  /** dir 서비스 결재 — 선언(신청)을 실제 폴더에 바인딩한다: {서비스이름: 경로}.
+   *  "선언은 신청, 활성화는 결재" 의 결재 쓰기 경로(relay install --bind <svc>=<path>). */
+  bindings?: Record<string, string>;
+}
+
+/** dir 서비스 바인딩 검증 — 선언된 dir 서비스만, 경로는 ~ 또는 절대. 결재가 선언을 초과하지 않게 */
+function judgeBindings(m: Manifest, bindings: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!bindings || !Object.keys(bindings).length) return undefined;
+  const dirSvcs = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
+  const out: Record<string, string> = {};
+  for (const [name, p] of Object.entries(bindings)) {
+    if (!dirSvcs.has(name)) throw new ManifestError([`--bind ${name}: 선언된 dir 서비스가 아닙니다 — 결재는 선언을 초과할 수 없습니다`]);
+    if (!/^(~($|\/)|\/)/.test(p) || p.split("/").includes("..")) throw new ManifestError([`--bind ${name}: ~ 또는 절대경로만(.. 금지): ${p}`]);
+    out[name] = p;
+  }
+  return out;
 }
 
 export interface InstallResult {
@@ -28,16 +46,19 @@ export interface InstallResult {
 }
 
 /** requires 실체 판정. 기판은 안내(install)만 전하고 대신 설치하지 않는다 */
-export function judgeRequires(m: Manifest): void {
+export function judgeRequires(m: Manifest, pkgName: string): void {
   const r = m.requires;
   if (!r) return;
   const issues: string[] = [];
   if (r.os?.length && !(r.os as string[]).includes(process.platform)) {
     issues.push(`requires os: ${process.platform} 미지원 (요구: ${r.os.join(", ")})`);
   }
+  // requires 는 AND 다 — 설치가 끝나면 목록 전부가 실재한다. 레시피(manager+package) 있는
+  // 항목은 없을 때 기판이 채우고(ensureBinary ④), 레시피 없는 항목은 안내와 함께 거부한다.
+  // 채우다 실패한 것도 거부다: "기판이 대준다" 는 선언이 조용히 빈 약속이 되면 안 된다.
   for (const b of r.binaries ?? []) {
-    const probe = spawnSync(process.platform === "win32" ? "where" : "which", [b.name], { encoding: "utf8" });
-    if (probe.status !== 0) issues.push(`requires binary 없음: ${b.name}${b.install ? ` (설치: ${b.install})` : ""}`);
+    const t = ensureBinary(pkgName, b);
+    if (!t.ok) issues.push(t.out);
   }
   const appRoots = ["/Applications", path.join(os.homedir(), "Applications"), "/System/Applications"];
   for (const a of r.apps ?? []) {
@@ -60,16 +81,30 @@ function judgeConform(pkgPath: string, m: Manifest): void {
 }
 
 /** variant 전수 setup 을 돌려 쓸 수 있는 하네스를 선출한다 — installPkg 과 activatePrepared 공용 */
-function electHarness(pkgPath: string, m: Manifest): { picked: string | null; out: string } | null {
+function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: string | null; out: string } | null {
   const variants = m.harness?.variants ?? [];
   if (!variants.length) return null;
   const reports: string[] = [];
   let picked: string | null = null;
   for (const v of variants) {
     // Windows 에서는 엔트리 확장자 해석이 필요하다 — 이 레포의 어댑터 실행 규약(spawnEntrySync)을 따른다
-    const r = spawnEntrySync(path.join(pkgPath, v.source, v.entry), ["setup"], { encoding: "utf8" });
+    const entry = path.join(pkgPath, v.source, v.entry);
+    const setup = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(pkgName) });
+    // 실행 파일 실재는 judgeRequires 가 이미 보장했다(AND — 레시피 항목은 기판이 채운다).
+    // 여기 남은 판정은 준비 상태(자격·로그인)와, 존재 검사가 못 거르는 껍데기 설치뿐이다.
+    let r = setup();
+    let note = "";
+    if (r.status !== 0) {
+      // setup 실패 + 변형이 requires 를 참조 — "있는데 안 도는" 부류(네이티브 바이너리 빠진
+      // npm 래퍼 실사고)일 수 있다. 참조된 레시피를 기판 사본으로 강제 승격하고 한 번 재시도.
+      const t = provisionForVariant(pkgName, m, v.binary);
+      if (t) {
+        note = ` · ${t.out}`;
+        if (t.ok) r = setup();
+      }
+    }
     const out = ((r.stdout ?? "") + (r.stderr ?? "")).trim();
-    reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}`);
+    reports.push(`${v.name}: ${r.status === 0 ? "준비됨" : "불가"} — ${out}${note}`);
     if (r.status === 0 && !picked) picked = v.name;
   }
   return { picked, out: reports.join("\n") };
@@ -78,22 +113,28 @@ function electHarness(pkgPath: string, m: Manifest): { picked: string | null; ou
 export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}): InstallResult {
   const abs = path.resolve(dir);
   const m = loadManifest(abs);
-  judgeRequires(m); // 장부에 기록되기 전에 fail-loud
+  const name = opts.name ?? path.basename(abs);
+  judgeRequires(m, name); // 장부에 기록되기 전에 fail-loud — 레시피 항목은 여기서 기판이 채운다
 
   // 계약 적합성은 설치 게이트다. 도구 미설치(환경 미비)와 계약 위반(어댑터 결함)은 다른 축이라
   // conform 은 setup 실패를 위반으로 세지 않는다 — 여기서 막히는 것은 잘못 만든 어댑터뿐이다.
   // 장부 기록 전에 던져야 거부된 패키지가 등재된 채 남지 않는다(judgeRequires 와 같은 자리)
   judgeConform(abs, m);
-  const name = opts.name ?? path.basename(abs);
+  // components edge 는 빌드 의존 — 미해결(미설치 provider·제공 선언 없음·범위 밖)이면
+  // 장부 기록 전에 fail-loud (judgeRequires 와 같은 자리)
+  const components = resolveComponentEdges(ledger, m);
 
   // 재설치는 결재·설정(ring, workspace, model, effort, harness, dirBindings)을 보존한다.
   // 레코드를 통째로 갈면 ring-0 이 조용히 증발한다 — draft.ts 의 publishDraft 와 같은 계약
   const prev = ledger.packages[name];
+  const bindings = judgeBindings(m, opts.bindings);
   ledger.packages[name] = {
     ...(prev ?? {}),
     path: abs,
     ...(opts.workspace ? { workspace: path.resolve(expandHome(opts.workspace)) } : {}),
     ...(opts.ring0 ? { ring: 0 as const } : {}),
+    // dir 결재는 누적 병합 — 재설치가 기존 결재를 증발시키지 않는다(ring 보존과 같은 계약)
+    ...(bindings ? { dirBindings: { ...(prev?.dirBindings ?? {}), ...bindings } } : {}),
   };
   saveLedger(ledger);
   let setup: { ok: boolean; out: string } | undefined;
@@ -101,12 +142,14 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   const current = ledger.packages[name].harness;
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 선출한다
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(abs, m)!;
+    const elected = electHarness(name, abs, m)!;
     ledger.packages[name].harness = elected.picked ?? variants[0].name;
     saveLedger(ledger);
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[name].harness}\n` + elected.out };
   }
-  const build = buildView(name, abs, m);
+  const build = buildView(name, abs, m, components.deps);
+  // 빌드 성공 = components 소비가 실제로 구워졌다 — 그때만 결재가 장부에 앉는다
+  if (build?.ok) recordComponentGrants(ledger, name, components);
   return { name, manifest: m, setup, build };
 }
 
@@ -187,6 +230,8 @@ export interface Prepared {
   registry: string | null;
   manifest: Manifest;
   disclosure: Disclosure;
+  /** 발행 키 사인이 검증됐는가 — null = 무서명(미고정 기판에서만 허용) */
+  signed: boolean;
 }
 
 /**
@@ -197,7 +242,7 @@ export interface Prepared {
 export function prepareArtifact(
   ledger: Ledger,
   file: string,
-  opts: { name?: string; digest?: string; registry?: string | null } = {},
+  opts: { name?: string; digest?: string; registry?: string | null; signature?: EnvelopeSignature } = {},
 ): Prepared {
   const abs = path.resolve(expandHome(file));
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error(`없는 아티팩트: ${file}`);
@@ -205,12 +250,31 @@ export function prepareArtifact(
   if (opts.digest && opts.digest !== digest) {
     throw new Error(`봉인 불일치: 기대 ${opts.digest}\n  실제 ${digest} — 아티팩트를 다시 받으세요`);
   }
+  // 서명 — 봉인(무결)과 다른 축(발행 주체). 사이드카(<file>.sig) 또는 스토어 엔트리로 온다.
+  // RELAY_PUBKEYS 로 발행 키를 고정한 기판은 무서명·미지 키·불일치 전부 fail-loud,
+  // 미고정 기판은 있으면 검증해 표시만 한다(사이드로드 동의 화면의 정직함).
+  let signature = opts.signature;
+  if (!signature && fs.existsSync(abs + ".sig")) {
+    try {
+      signature = JSON.parse(fs.readFileSync(abs + ".sig", "utf8"));
+    } catch { /* 깨진 사이드카 — 무서명으로 취급(고정 기판이면 아래서 거부) */ }
+  }
+  const pinned = pinnedKeys();
+  let signed = false;
+  if (pinned) {
+    if (!signature) throw new Error("서명 없는 봉투 — 이 기판은 RELAY_PUBKEYS 로 발행 키를 고정했습니다");
+    if (!pinned.includes(signature.pub)) throw new Error("고정 키셋에 없는 발행 키 — 봉투를 신뢰할 수 없습니다");
+    if (!verifyDigest(digest, signature)) throw new Error("서명 검증 실패 — 봉인과 사인이 맞지 않습니다");
+    signed = true;
+  } else if (signature) {
+    signed = verifyDigest(digest, signature);
+  }
   const staging = fs.mkdtempSync(path.join(RELAY_HOME, "run", "prepare-"));
   try {
     unpackArtifact(abs, staging);
     const m = loadManifest(staging); // 판정 실패는 여기서 fail-loud
-    judgeRequires(m);
     const { name, fresh } = resolveInstallName(ledger, m.name, opts.name);
+    judgeRequires(m, name);
     const dest = path.join(RELAY_HOME, "releases", name, m.version);
     const digestFile = path.join(dest, ".relay-digest");
     if (fs.existsSync(dest)) {
@@ -246,6 +310,7 @@ export function prepareArtifact(
       registry: opts.registry ?? null,
       manifest: m,
       disclosure: disclosure(m),
+      signed,
     };
   } catch (e) {
     fs.rmSync(staging, { recursive: true, force: true });
@@ -263,7 +328,8 @@ export function prepareArtifact(
 export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts = {}): InstallResult {
   const m = p.manifest;
   judgeConform(p.dir, m);
-  const build = buildView(p.name, p.dir, m);
+  const components = resolveComponentEdges(ledger, m);
+  const build = buildView(p.name, p.dir, m, components.deps);
   if (build && !build.ok) {
     throw new Error(`view 빌드 실패 — 설치를 중단합니다 (릴리스는 ${p.dir} 에 남아 있습니다):\n${build.out}`);
   }
@@ -276,16 +342,19 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
     installedAt: new Date().toISOString(),
   };
   const existing = ledger.packages[p.name];
+  const bindings = judgeBindings(m, opts.bindings);
   if (existing) {
     existing.path = p.dir;
     existing.origin = origin;
     if (opts.workspace) existing.workspace = path.resolve(expandHome(opts.workspace));
+    if (bindings) existing.dirBindings = { ...(existing.dirBindings ?? {}), ...bindings };
   } else {
     ledger.packages[p.name] = {
       path: p.dir,
       origin,
       ...(opts.workspace ? { workspace: path.resolve(expandHome(opts.workspace)) } : {}),
       ...(opts.ring0 ? { ring: 0 as const } : {}),
+      ...(bindings ? { dirBindings: bindings } : {}),
     };
   }
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 재선출한다
@@ -293,11 +362,13 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
   const variants = m.harness?.variants ?? [];
   const current = ledger.packages[p.name].harness;
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(p.dir, m)!;
+    const elected = electHarness(p.name, p.dir, m)!;
     ledger.packages[p.name].harness = elected.picked ?? variants[0].name;
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[p.name].harness}\n` + elected.out };
   }
   saveLedger(ledger);
+  // 장부 등재 뒤에 결재를 앉힌다 — addGrant 는 consumer 의 장부 실재를 요구한다
+  if (build?.ok !== false) recordComponentGrants(ledger, p.name, components);
   return { name: p.name, manifest: m, setup, build: build ?? undefined };
 }
 
@@ -305,14 +376,20 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  return buildView(name, rec.path, m) ?? { ok: true, out: "surfaces.view.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
+  const components = resolveComponentEdges(ledger, m);
+  const build = buildView(name, rec.path, m, components.deps);
+  if (build?.ok) recordComponentGrants(ledger, name, components); // 재빌드 자가치유 — addGrant 는 중복 무해
+  return build ?? { ok: true, out: "surfaces.view.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
 }
 
 // token 자격형은 자격이 기판 손(vault)에 있다 — 동사 실행에도 세션과 같은 주입을 해줘야
 // setup 이 "연결 후에도 미준비" 로 거짓말하지 않는다
-function llmEnv(v: HarnessVariant): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
+  // 기판이 대는 도구가 있으면 그것이 먼저다 — 호스트의 같은 이름 전역 설치보다 앞
+  const env: NodeJS.ProcessEnv = pkg ? { ...binaryEnv(pkg) } : { ...process.env };
   if (v.llm?.auth?.kind === "token" && v.llm.auth.env) {
+    // §8-2 잔여: llmEnv 는 동기 하네스 동사 체인(harnessVerb·probeHarness·electHarness) 깊숙이
+    // 있어 비동기 authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
     const cred = vaultGet(`llm/${v.llm.provider}`);
     if (cred) env[v.llm.auth.env] = cred;
   }
@@ -325,7 +402,7 @@ export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info
   const m = loadManifest(rec.path);
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v) });
+  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v, name) });
   // models·info·commands 는 stdout 이 JSON 계약이다. stderr(강등 사유 등)를 섞으면
   // JSON 해석이 깨져 화면의 모델 목록이 통째로 사라진다 — 진단문은 setup 에만 합친다
   const jsonVerb = verb === "models" || verb === "info" || verb === "commands";
@@ -354,7 +431,9 @@ export function probeHarness(ledger: Ledger, name: string): VariantProbe[] {
   const m = loadManifest(rec.path);
   return (m.harness?.variants ?? []).map((v) => {
     const entry = path.join(rec.path, v.source, v.entry);
-    const env = llmEnv(v);
+    // 조회는 설치하지 않는다 — 다이얼로그를 여는 행위가 수백 MB 를 받아선 안 된다.
+    // 기판 사본이 있으면 PATH 앞이라 그것이 쓰이고, 없으면 호스트 도구로 판정된다.
+    const env = llmEnv(v, name);
     const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env });
     let j: { account?: unknown; protocol?: unknown; capabilities?: unknown; verbs?: unknown } = {};
     try {
@@ -391,6 +470,7 @@ export function connectHarnessToken(ledger: Ledger, name: string, tokenValue: st
   }
   const val = tokenValue.trim();
   if (!val) throw new Error("빈 토큰");
+  // §8-2 잔여: llmEnv 와 같은 사유(동기 체인) — setCredential 이사 보류
   vaultSet(`llm/${v.llm.provider}`, val);
   return harnessVerb(ledger, name, "setup");
 }
@@ -403,7 +483,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -411,7 +491,7 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
   if (!verbs.includes("login")) {
     throw new Error(`이 하네스(${v.name})는 login 동사를 제공하지 않습니다 — 자격 연결은 relay connect llm ${v.llm?.provider ?? "<provider>"} 로 하세요`);
   }
-  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit" });
+  const r = spawnEntrySync(entry, ["login", ...args], { stdio: "inherit", env: binaryEnv(name) });
   return r.status ?? 1;
 }
 
@@ -427,7 +507,7 @@ export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8" });
+  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -461,11 +541,25 @@ export function setHarness(ledger: Ledger, name: string, variant: string): { act
   // 모델 어휘는 하네스 소속이다. 이전 하네스의 모델명이 새 어댑터로 넘어가면 무의미한 --model 이 된다
   delete rec.model;
   saveLedger(ledger);
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), ["setup"], { encoding: "utf8" });
-  return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() } };
+  // 전환도 선출과 같은 계약이다 — setup 실패가 "있는데 안 도는" 부류면 참조된 requires
+  // 레시피를 기판 사본으로 승격하고 한 번 재시도한다(껍데기 npm 래퍼 실사고의 회복 경로).
+  const entry = path.join(rec.path, v.source, v.entry);
+  const run = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(name) });
+  let r = run();
+  let note = "";
+  if (r.status !== 0) {
+    const t = provisionForVariant(name, m, v.binary);
+    if (t) {
+      note = t.ok ? "" : `\n${t.out}`;
+      if (t.ok) r = run();
+    }
+  }
+  return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() + note } };
 }
 
 export function removePkg(ledger: Ledger, name: string): void {
+  // 기판이 깐 도구 사본도 함께 — 남기면 ~/.relay 가 지운 패키지의 CLI 를 계속 품는다
+  removeBinaries(name);
   delete ledger.packages[name];
   ledger.grants = ledger.grants.filter((g) => g.consumer !== name && g.provider !== name);
   saveLedger(ledger);
@@ -473,14 +567,118 @@ export function removePkg(ledger: Ledger, name: string): void {
 
 const bareRef = (ref: string) => ref.replace(/@[^/@]+$/, "");
 
+// ── components edge 해석 — 빌드 의존의 활성화 ────────────────────────────────
+// edges[].components 는 런타임 판정점이 없다(소비가 view 에 구워진다). 그래서 활성화 지점이
+// 빌드다: 여기서 제공 선언·버전 범위를 판정하고 tgz 를 구워 buildView 에 넘기며, 빌드가
+// 성공하면 결재가 장부에 앉는다. 실패는 전부 fail-loud — 선언 없는 소비, 미설치 provider,
+// 범위 밖 버전이 조용히 빌드에 스며들지 않는다.
+
+/** 최소 semver 비교 — prerelease 무시(범위 판정에 충분) */
+function cmpSemver(a: string, b: string): number {
+  const pa = a.split("-")[0].split(".").map(Number);
+  const pb = b.split("-")[0].split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
+}
+
+/** provider 좌표 범위 절 판정. 레지스트리 해석기가 없는 기판이라 어휘를 닫는다 — 미지 문법은 fail-loud */
+function satisfiesRange(version: string, range: string | null): boolean {
+  if (!range || range === "*") return true;
+  const norm = (r: string) => {
+    const p = r.split(".").map((x) => parseInt(x, 10) || 0);
+    return `${p[0] ?? 0}.${p[1] ?? 0}.${p[2] ?? 0}`;
+  };
+  if (range.startsWith("^")) {
+    const base = norm(range.slice(1));
+    if (cmpSemver(version, base) < 0) return false;
+    // ^ 의 상한은 "가장 왼쪽의 0 아닌 자리"가 유지되는 범위다(npm semver 와 같은 규칙):
+    // ^1.2.3 은 <2.0.0, ^0.2.3 은 **<0.3.0**, ^0.0.3 은 <0.0.4. 초기 패키지는 전부 0.x 라
+    // major 만 보면 0.2.3 → 0.3.0 같은 breaking 판이 조용히 통과한다
+    const [bMaj, bMin, bPatch] = base.split(".").map(Number);
+    const v = version.split("-")[0].split(".").map(Number);
+    if (bMaj > 0) return v[0] === bMaj;
+    if (bMin > 0) return v[0] === 0 && v[1] === bMin;
+    return v[0] === 0 && v[1] === 0 && v[2] === bPatch;
+  }
+  if (range.startsWith("~")) {
+    const base = norm(range.slice(1));
+    const [maj, min] = base.split(".");
+    const v = version.split(".");
+    return v[0] === maj && v[1] === min && cmpSemver(version, base) >= 0;
+  }
+  if (range.startsWith(">=")) return cmpSemver(version, norm(range.slice(2))) >= 0;
+  if (/^\d+\.\d+\.\d+/.test(range)) return cmpSemver(version, range) === 0;
+  throw new ManifestError([`components edge 범위 문법 미지원: ${range} — * · ^x.y.z · ~x.y.z · >=x.y.z · 정확 버전만`]);
+}
+
+/** 제공자의 components 소스를 npm pack 으로 굽는다 — tgz 가 소비의 유일한 형태(file: 디렉토리
+ *  심링크는 react 타입 이중 해석을 만든다). 산출은 ~/.relay/components/<제공자> 아래 */
+function packComponents(srcDir: string, providerName: string): string {
+  const dest = path.join(RELAY_HOME, "components", providerName.replace(/[^a-zA-Z0-9._-]/g, "_"));
+  fs.mkdirSync(dest, { recursive: true });
+  const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+  const args = process.platform === "win32"
+    ? ["/d", "/s", "/c", "npm.cmd", "pack", "--pack-destination", dest]
+    : ["pack", "--pack-destination", dest];
+  const r = spawnSync(command, args, { cwd: srcDir, encoding: "utf8", timeout: 120_000 });
+  if (r.status !== 0) {
+    throw new ManifestError([`components pack 실패 (${providerName}): ${((r.stdout ?? "") + (r.stderr ?? "")).trim().slice(-400)}`]);
+  }
+  const file = (r.stdout ?? "").trim().split("\n").pop()?.trim();
+  if (!file) throw new ManifestError([`components pack 산출물 이름을 얻지 못했습니다 (${providerName})`]);
+  return path.join(dest, file);
+}
+
+export interface ComponentResolution {
+  /** bare npm 이름(= provider 매니페스트 name) → 갓 구운 tgz 절대경로 — buildView 입력 */
+  deps: Record<string, string>;
+  /** 빌드 성공 뒤 장부에 앉힐 결재의 provider 설치 이름들 */
+  grants: string[];
+  notes: string[];
+}
+
+export function resolveComponentEdges(ledger: Ledger, m: Manifest): ComponentResolution {
+  const deps: Record<string, string> = {};
+  const grants: string[] = [];
+  const notes: string[] = [];
+  for (const e of m.edges ?? []) {
+    if (e.components !== true) continue;
+    const bare = bareRef(e.provider);
+    const range = e.provider.length > bare.length ? e.provider.slice(bare.length + 1) : null;
+    const installed = resolveProvider(ledger, bare);
+    if (!installed) {
+      throw new ManifestError([`components edge 미해결: ${bare} 가 설치되어 있지 않습니다 — 제공 패키지를 먼저 설치하세요`]);
+    }
+    const pm = loadManifest(ledger.packages[installed].path);
+    const src = pm.surfaces?.components?.source;
+    if (!src) {
+      throw new ManifestError([`components edge 거부: ${bare} 는 surfaces.components 를 선언하지 않습니다 — 소비는 제공 선언을 넘지 못합니다`]);
+    }
+    if (!satisfiesRange(pm.version, range)) {
+      throw new ManifestError([`components edge 버전 불일치: ${bare}@${pm.version} 는 선언 범위 ${range} 를 만족하지 않습니다`]);
+    }
+    deps[pm.name] = packComponents(path.join(ledger.packages[installed].path, src), installed);
+    grants.push(installed);
+    notes.push(`${pm.name}@${pm.version} ← ${installed}`);
+  }
+  return { deps, grants, notes };
+}
+
+/** 빌드 성공 = components 활성화 — 결재를 장부에 앉힌다(addGrant 의 선언 캡·중복 판정을 그대로 지난다) */
+function recordComponentGrants(ledger: Ledger, consumer: string, resolution: ComponentResolution): void {
+  for (const provider of resolution.grants) {
+    addGrant(ledger, { consumer, provider, components: true });
+  }
+}
+
 /** 장부에 들어가는 유일한 문. 스크립트, HTTP, CLI 가 전부 여기를 지난다 */
 export function addGrant(ledger: Ledger, g: Grant): void {
   const consumer = ledger.packages[g.consumer];
   const provider = ledger.packages[g.provider];
   if (!consumer) throw new Error(`미설치 consumer: ${g.consumer}`);
   if (!provider) throw new Error(`미설치 provider: ${g.provider}`);
-  if (g.tools?.length && g.mission) throw new Error("tools 와 mission 동시 결재 불가");
-  if (!g.tools?.length && !g.mission) throw new Error("tools 또는 mission 중 하나는 있어야 합니다");
+  const forms = [g.tools?.length ? 1 : 0, g.mission ? 1 : 0, g.components ? 1 : 0].reduce((a, b) => a + b, 0);
+  if (forms !== 1) throw new Error("tools · mission · components 중 정확히 하나를 결재해야 합니다");
 
   // 선언은 신청, 결재는 활성화. 결재는 선언을 넘지 못한다
   const lineage = loadManifest(provider.path).name;
@@ -500,11 +698,18 @@ export function addGrant(ledger: Ledger, g: Grant): void {
     const over = g.tools.filter((t) => !allowed.has(t));
     if (over.length) throw new Error(`선언 캡 초과: tools ${over.join(", ")} (선언된 tools: ${[...allowed].join(", ") || "없음"})`);
   }
+  if (g.components && !declared.some((e) => e.components === true)) {
+    throw new Error(`선언 캡 초과: components (${g.consumer} 의 edges 에 components 선언 없음)`);
+  }
 
   const dup = ledger.grants.find(
-    (x) => x.consumer === g.consumer && x.provider === g.provider && x.mission === g.mission && JSON.stringify(x.tools) === JSON.stringify(g.tools),
+    (x) =>
+      x.consumer === g.consumer && x.provider === g.provider && x.mission === g.mission &&
+      JSON.stringify(x.tools) === JSON.stringify(g.tools) && (x.components ?? false) === (g.components ?? false),
   );
-  if (!dup) ledger.grants.push({ consumer: g.consumer, provider: g.provider, tools: g.tools, mission: g.mission });
+  if (!dup) {
+    ledger.grants.push({ consumer: g.consumer, provider: g.provider, tools: g.tools, mission: g.mission, ...(g.components ? { components: true } : {}) });
+  }
   saveLedger(ledger);
 }
 

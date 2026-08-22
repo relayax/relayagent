@@ -27,6 +27,60 @@ Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_
 `RELAY_EFFORT`. `RELAY_*` is the substrate-to-adapter namespace; adapters must not mint their own
 `RELAY_*` names except documented operator escape hatches (`RELAY_<CLI>_BIN`).
 
+## The bundle
+
+`RELAY_BUNDLE` is the assembled neutral bundle: `persona.md`, `skills/`, `commands/`,
+`agents/<sub>.md` (delegate persona bodies), and `meta.json`. Translation into the native CLI
+format is the adapter's job, and every translation artifact lands inside the bundle — never in
+the user's config directory or the cwd.
+
+**Workspace memory has one canon: `AGENTS.md` in the workspace.** Memory is agent data, so it
+lives in the granted folder (not in the tool's home, which nothing else can reach, and not in the
+bundle, which rotation empties). Tools whose native convention already reads `AGENTS.md` from cwd
+(codex, kimi) get it for free. A tool with a different convention shuttles via its own rail — the
+claude-code adapter materializes a `CLAUDE.md` containing the single line `@AGENTS.md` before
+spawn, and promotes a lone `CLAUDE.md` into the canon once (content moves to `AGENTS.md`, the
+original becomes the import line). When both files exist independently the adapter must not touch
+either. Home-scoped memory (`~/.claude` and kin) is the tool's own and never crosses — same axis
+as credentials.
+
+**Subagents are substrate-run.** `agents[].dispatch` names who an agent may delegate to; the
+substrate serves that as the `agent_dispatch` MCP tool (gate = the declaration), runs the
+subagent's turn in its **own session** — a first-class citizen of the session list, labeled
+`↳ <name>`, prompt prefixed with the `[서브에이전트 · <pkg> · <name>]` marker the chat renders as
+a delegation card — and returns the reply when it settles. Delegation sessions are keyed by
+`(agent, target)`: naming the same `target` again lands in the same session and continues that
+conversation (one turn per slot, so parallel delegation onto the same target is fenced off at the
+door), `fresh: true` rotates the native pointer exactly like conversation reset, and a target-less
+delegation falls back to a one-off session. Adapters must NOT translate subagents
+into a native mechanism (claude's `--agents`/Task was retired 2026-08-20): native translation made
+the same manifest mean different things per harness — in-context tasks on one CLI, silent
+degradation on the rest — and hid the work from the session ledger. Adapters render the
+delegation roster as a document section pointing at `agent_dispatch` (see the reference adapters);
+a harness with no MCP (pi) states honestly that delegation is unreachable.
+
+**The bundle is also the rotation boundary.** Native-session pointers (a claude session id, a
+codex thread id — whatever the adapter needs to resume its own conversation) live inside the
+bundle too. The substrate never learns their names; instead, conversation reset and harness
+switching rotate the native context by **emptying the bundle** and letting the next turn's
+assembly refill it. Anything an adapter stores outside the bundle survives that rotation and
+becomes a stale-context bug. Native contexts never transfer across adapters — a codex thread
+cannot resume a claude session — so on a harness switch the substrate rotates the pointers and
+hands the new adapter a preamble synthesized from the substrate's own history ledger, which is
+the conversation of record.
+
+`meta.json`: `{pkg, agent, slot?, workspace, stage, hooks: {deny[]}, agents[], mcp, mcpServers?}`.
+The MCP doors:
+
+| Field | Shape | Contract |
+|---|---|---|
+| `mcp` | `{url, authorization}` | The substrate's single MCP door. `authorization` is the literal `Authorization` header value (may be empty). Adapters mount it under the server name `relay`. |
+| `mcpServers` | `{<name>: {url, authorization?, headers?}}` | Additive — multiple doors. Each entry is one HTTP MCP server mounted under `<name>` exactly as given, so native tool names become `mcp__<name>__*` and the embedder controls the vocabulary its surfaces match on. `authorization` is the `Authorization` header value; `headers` is an opaque map of extra HTTP headers for doors that authenticate under other header names. Entries without a `url` are outside the contract and must be dropped, not guessed at. |
+
+When `mcpServers` is present and non-empty the adapter prefers it and ignores `mcp`; absent, the
+single `mcp` door applies unchanged. Embedders that emit `mcpServers` should keep emitting `mcp`
+too, so older adapters keep their single door.
+
 ## The session envelope
 
 `session <prompt>` and `serve` share one envelope. stdout is a JSONL event stream; stdin is a JSONL
@@ -37,7 +91,7 @@ as legacy plain output (protocol 1).
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `delta` | `text` | Streamed fragment of the main-line answer. Subagent text must not be mixed in. |
+| `delta` | `text` | Streamed fragment of the main-line answer. Subagent text must not be mixed in. Emit at whatever granularity the CLI gives you — the substrate is allowed to coalesce (below), so do not batch on the adapter's side. |
 | `tool` | `status: "start"`, `id`, `name`, `detail?` (≤200 chars), `args?` (JSON string, ≤2 KB) | A tool call began. `id` pairs start/end; parallel calls are legal. |
 | `tool` | `status: "end"`, `id`, `name`, `ok`, `result?` (≤8 KB) | The paired call finished. `result` is a display excerpt, not the full output. |
 | `usage` | `input`, `output` | Live token ticker, throttled (≈250 ms). Estimates allowed between exact checkpoints; the final `reply.usage` is authoritative. |
@@ -45,7 +99,7 @@ as legacy plain output (protocol 1).
 | `task` | `id`, `status: "done"`, `ok` | That background task settled. |
 | `ask` | `id`, `questions` | The model asked the user a question (requires capability `ask`). Answer via the `answer` control line; the adapter must resolve unanswered asks itself (timeout with a sensible default) — an unanswered ask must never hang the turn forever. |
 | `file` | `path` (stage-relative) | A successful write landed in the file-exchange stage. |
-| `reply` | `text`, `session`, `model`, `usage {input, output, context_window}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `origin: "task"` marks a spontaneous continuation (below). |
+| `reply` | `text`, `session`, `model`, `usage {input, output, context_window, cache_read?, cache_creation?, cost_usd?}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `usage.input` stays cache-inclusive for compatibility; `cache_read` / `cache_creation` break the cached tokens out (non-cache input = `input − cache_read − cache_creation`) and `cost_usd` is the CLI's own cost ledger when it reports one — all three additive. `origin: "task"` marks a spontaneous continuation (below). |
 | `error` | `message` | Turn failure. Exactly one of `reply`/`error` settles a turn. Failures are never disguised as text. |
 
 ### Control (substrate → adapter, stdin)
@@ -74,6 +128,23 @@ as legacy plain output (protocol 1).
 - **Stall** — the substrate watches for event silence on an in-flight turn
   (`RELAY_TURN_STALL_S`, default 1200 s) and injects `cancel`. Adapters should therefore emit
   events as work happens, not in one batch at the end.
+  A substrate that *also* reclaims the execution container (kills a pod, tears down a sandbox)
+  must put that deadline **strictly after** the cancel deadline, with enough margin for the
+  adapter to settle. Reclaiming at the same threshold races the `cancel` it just sent: the
+  adapter is killed mid-settle and the user gets the substrate's guess ("stalled") instead of the
+  adapter's honest `error`. Cancel is the first layer; reclamation is the backstop for an adapter
+  that did not answer the cancel.
+- **Delta coalescing** — a substrate **may** merge consecutive `delta` events into one before
+  forwarding them onward, as long as it preserves order and concatenation (`text` joined in
+  arrival order) and does not merge across a non-`delta` event. Adapters must not depend on 1:1
+  delivery of the deltas they emit.
+  *Why this is spelled out: an adapter naturally emits one `delta` per CLI token chunk, which is
+  the right granularity at the source. But a substrate whose forwarding hop is expensive — a
+  network POST per event, worse if that POST is synchronous on the read loop — turns that
+  granularity into backpressure on the adapter's own stdout, and can stall the very turn it is
+  reporting. Merging at block boundaries is the measured remedy (relayos, 2026-08). Leaving it
+  unwritten made it look like a local hack rather than a contract-legal substrate choice, which
+  is how such remedies get deleted by the next person.*
 
 ## Declarations
 
