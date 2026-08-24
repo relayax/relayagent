@@ -115,7 +115,11 @@ never hydrates. That failure looks nothing like a build error — the build pass
 are addressed at daemon root instead of the mount. It stays silent when `out/` is absent — CI and
 fresh clones don't build views, and absence is not staleness.
 
-There is no release pipeline in this repo yet, so both steps are manual.
+Release artifacts are cut by `.github/workflows/release.yml`: pushing a `v*` tag (matching
+the root package.json version — mismatch refuses the cut) runs the full judgment, builds the
+widget bundle, and attaches `relay-chat-widget-<tag>.tgz` + `SHA256SUMS` to a GitHub Release.
+Consumers (relayos 등 임베더) pin these artifacts by digest instead of vendoring sources.
+Local rebuilds of the two artifacts above are still needed during development.
 
 ## Where the harness comes from
 
