@@ -73,12 +73,10 @@ jobs:
         run: |
           set -e
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "릴리스 아티팩트 컷 — 소비는 digest lock 으로 (SHA256SUMS 참조).
-
-| artifact | 내용 |
-|---|---|
-| relay-chat-widget-${TAG}.tgz | 채팅 위젯 번들 (chat-app.js + chat-app.css) — 기판이 /assets 로 서빙하는 산출물 |
-| SHA256SUMS | 아티팩트 digest — 소비자 lock 의 기록 원천 |" \
-            out/*.tgz out/SHA256SUMS
+          # 노트는 파일로 조립한다 — YAML 리터럴 블록 안의 0열 마크다운은 블록을 끊는다(실사고).
+          {
+            printf '릴리스 아티팩트 컷 — 소비는 digest lock 으로 (SHA256SUMS 참조).\n\n'
+            printf -- '- relay-chat-widget-%s.tgz : 채팅 위젯 번들(chat-app.js + chat-app.css) — 기판이 /assets 로 서빙하는 산출물\n' "$TAG"
+            printf -- '- SHA256SUMS : 아티팩트 digest — 소비자 lock 의 기록 원천\n'
+          } > out/NOTES.md
+          gh release create "$TAG" --title "$TAG" --notes-file out/NOTES.md out/*.tgz out/SHA256SUMS
