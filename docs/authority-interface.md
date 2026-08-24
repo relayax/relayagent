@@ -25,7 +25,7 @@ relayos-claude/docs/convergence.md §"runner의 두 반쪽" 및 §"OSS 선행 �
    환원된다: **"누구로서, 무엇을, 어떤 자격으로."** 이 문서는 그 질문의 문(門)을 메서드
    단위 계약으로 고정한다. *왜: 질문이 여러 문으로 흩어지면 같은 질문에 두 경로가 다른
    답을 내는 비대칭이 생긴다 — 현행 코드가 이미 이 원칙을 명문화했다
-   (`runner/authority.ts:1-12` 머리 주석, `runner/api.ts:330` "인가 판정은 권위 이음새를
+   (`runner/authority.ts:1-12` 머리 주석, `runner/daemon.ts:330` "인가 판정은 권위 이음새를
    지난다").*
 2. **1인 기판은 로컬 구현, 조직은 원격 구현.** 1인 기판은 로컬 장부(`~/.relay/ledger.json`)·
    vault(Keychain/파일)·OS 사용자가 답한다(`localAuthority`, `runner/authority.ts:20-33`).
@@ -362,10 +362,10 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
 
 | 이음새 | 코드 | 답하는 질문 | 기본 구현 |
 |---|---|---|---|
-| `RunnerIO` | `runner/run.ts` | 스폰 자식의 env 반쪽 — 토큰·자격·기록·문 주소 | `localIO(l)` |
-| `McpIO` | `runner/mcp.ts` | 세션이 보는 도구 목록과 그 집행 | `api.ts localMcpIO` |
-| `SessionIO` | `runner/session.ts` | 한 턴이 딛는 좌표 — 경로·기판 좌표·대화 장부·MCP 문 | `localSessionIO(getLedger)` |
-| `ClientWireIO` | `runner/client-wire.ts` | 계약 표면(client-protocol v1)이 딛는 저장소 — 세션 목록·개설·메타·하네스 조회·설정 쓰기 | `localClientWireIO(getLedger)` |
+| `RunnerIO` | `runner/runtime/services.ts` | 스폰 자식의 env 반쪽 — 토큰·자격·기록·문 주소 | `localIO(l)` |
+| `McpIO` | `runner/runtime/mcp.ts` | 세션이 보는 도구 목록과 그 집행 | `api.ts localMcpIO` |
+| `SessionIO` | `runner/runtime/harness.ts` | 한 턴이 딛는 좌표 — 경로·기판 좌표·대화 장부·MCP 문 | `localSessionIO(getLedger)` |
+| `ClientWireIO` | `runner/runtime/wire.ts` | 계약 표면(client-protocol v1)이 딛는 저장소 — 세션 목록·개설·메타·하네스 조회·설정 쓰기 | `localClientWireIO(getLedger)` |
 
 조립 지점은 `createApi(getLedger, host, ticker, authority, opts)` 하나다 — `opts` 가 나머지
 셋(`wire`·`mcp`·`runner`)과 문의 신뢰 좌표(`door`)를 받고, 전부 미지정이면 1인 기판 현행이다.
@@ -490,8 +490,8 @@ client-protocol v1 을 서빙하는 데 성공했는데, 서빙되는 것이 조
 
 - `runner/authority-contract.ts` — 계약 코드 반쪽 (벤더링 아티팩트)
 - `runner/authority.ts` — 1인 기판 구현 `localAuthority`
-- `runner/api.ts:525-526` — 이음새 배선점 ("조직 임베드는 여기 다른 구현을 꽂는다 — api 는 모른다")
-- `runner/run.ts` `RunnerIO` · `runner/mcp.ts` `McpIO` · `runner/session.ts` `SessionIO` · `runner/client-wire.ts` `ClientWireIO` — 실행 반쪽의 자매 이음새 넷 (§10)
+- `runner/daemon.ts:525-526` — 이음새 배선점 ("조직 임베드는 여기 다른 구현을 꽂는다 — api 는 모른다")
+- `runner/runtime/services.ts` `RunnerIO` · `runner/runtime/mcp.ts` `McpIO` · `runner/runtime/harness.ts` `SessionIO` · `runner/runtime/wire.ts` `ClientWireIO` — 실행 반쪽의 자매 이음새 넷 (§10)
 - relayos-claude/docs/convergence.md — 북극성: runner의 두 반쪽 · OSS 선행 작업 3 · federation 전 3수칙
 - relayos-claude/control-ts/ARCHITECTURE.md — 원격 대응물의 현행 정본 (GoTrue·token:issue·Edge 행·audit)
 - docs/verb-contract.md — ctx 가 소비하는 판정(caller·credential·grant)의 동사 쪽 계약

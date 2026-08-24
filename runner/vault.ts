@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { RELAY_HOME } from "./state.ts";
+import { RELAY_HOME } from "./supply/ledger.ts";
 
 const SERVICE = "relay";
 const FALLBACK = path.join(RELAY_HOME, "vault.json");

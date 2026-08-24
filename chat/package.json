@@ -1,0 +1,55 @@
+{
+  "name": "@relay/chat",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Relay 채팅 위젯과 그 클라이언트. 전송 계약 v1(docs/client-protocol.md)의 클라이언트 반쪽 — 기판(runner)과 같은 버전으로 움직인다. npm 임포트, file: 의존성, 기판 /assets 번들 서빙 세 경로로 소비한다.",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./client": {
+      "types": "./src/index.d.ts",
+      "default": "./src/client.ts"
+    },
+    "./bridge": "./src/bridge.tsx",
+    "./transport": "./src/chat/transport.ts",
+    "./envelope-reducer": "./src/chat/envelope-reducer.ts",
+    "./sse": "./src/sse.ts",
+    "./next-preset.mjs": "./next-preset.mjs"
+  },
+  "files": [
+    "src",
+    "next-preset.mjs"
+  ],
+  "scripts": {
+    "build:chat": "node chat-build.mjs",
+    "build:chat:dev": "node chat-build.mjs --dev",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@assistant-ui/react": "^0.11.0",
+    "@assistant-ui/react-markdown": "^0.11.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "0.24.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0",
+    "typescript": "^7.0.2"
+  },
+  "sideEffects": [
+    "./src/chat/main.tsx"
+  ],
+  "keywords": [
+    "relay",
+    "agent",
+    "chat",
+    "harness"
+  ],
+  "license": "MIT"
+}

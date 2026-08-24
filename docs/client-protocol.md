@@ -2,11 +2,11 @@
 
 브라우저 클라이언트(코어 SDK·채팅 위젯)와 **기판의 문** 사이 HTTP 계약.
 정본은 이 문서(`relayagent-oss/docs/client-protocol.md`)이고, 구현체는 둘이다 —
-OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현체는 이 문서에
+OSS 데몬(`runner/daemon.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현체는 이 문서에
 맞춰 정렬되며, 어느 쪽의 현행 wire 도 정본이 아니다.
 
 > **개정 이력 — 2026-08-24 (계약 무변경, 구현 반쪽의 이음새).** OSS 구현체
-> (`runner/client-wire.ts`)가 **계약 축 이음새 `ClientWireIO`** 를 냈다 — 계약이 규정하는
+> (`runner/runtime/wire.ts`)가 **계약 축 이음새 `ClientWireIO`** 를 냈다 — 계약이 규정하는
 > 표면이 딛는 저장소(세션 목록·개설·메타·하네스 조회·설정 쓰기)와 좌표(세션 이음새)를 인자로
 > 받는다. **이 개정은 wire 를 한 바이트도 바꾸지 않는다**: 동사·shape·코드·capability 어휘
 > 전부 그대로이고, 미주입이면 1인 기판의 현행 동작이 꽂힌다. 정본 문서는 `docs/
@@ -32,7 +32,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 >
 > 이 문서의 wire 표기에는 두 종류가 섞여 있다. **[현행]** 은 실제 파일에서 확인한
 > 기존 엔드포인트(file:line 병기), **[현행 v1]** 은 이 계약이 새로 정의하고 §9 의 컷
-> (2639dae)에서 OSS 데몬에 착지한 경로다 — 구현 정본은 `runner/client-wire.ts`.
+> (2639dae)에서 OSS 데몬에 착지한 경로다 — 구현 정본은 `runner/runtime/wire.ts`.
 > 아직 착지하지 않은 경로(§5.7 state · §5.8 push)만 **[신설]** 로 남는다.
 
 ## 1. 지위와 범위
@@ -53,7 +53,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
    형태면 안 된다. org 의미(principal 바인딩, 멤버, 라이선스)는 계약에 등장하지 않고,
    기판의 문 뒤에서 해석된다(convergence.md:123-125).
 3. 계약의 소비자는 **브라우저 클라이언트**다: 코어 SDK 와 채팅 위젯(React 판 단일화 —
-   번들은 OSS 릴리스 컷에 굽고 기판이 `/assets` 로 서빙한다, runner/api.ts:770-780).
+   번들은 OSS 릴리스 컷에 굽고 기판이 `/assets` 로 서빙한다, runner/daemon.ts:770-780).
    패키지 view 의 동사 호출(`/api/scripts`·MCP)은 이 문서의 범위 밖이다. 같은 문서 안에서
    view 화면과 위젯이 주고받는 인페이지 브리지도 범위 밖이다 — 정본은
    [view-bridge.md](view-bridge.md).
@@ -66,12 +66,12 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 
 5. **인증은 기판 소유다.** 계약은 자격의 운반 위치(쿠키/헤더/없음)를 규정하지 않는다.
    실측: OSS 데몬은 인증 헤더 0 — 127.0.0.1 바인딩 + Host 루프백 검사(DNS rebinding 방어)
-   + 상태 변경 요청의 Origin 검사(CSRF)가 문이다(`runner/api.ts createApi`). 임베더는
+   + 상태 변경 요청의 Origin 검사(CSRF)가 문이다(`runner/daemon.ts createApi`). 임베더는
    `createApi(…, opts.door)` 로 허용 Host·Origin 을 **선언**하고 listen 을 자기가 가져간다 —
    방어를 끄는 스위치가 아니라 집합을 넓히는 선언이다(authority-interface.md §10.3). relayos deployd 는 `relay_edge` 세션 쿠키를
    Bearer JWT 로 승격하고(runtime/deployd/api_turns.go:4, 66-67), 401 은 클라이언트가
    `POST /api/session/refresh` single-flight 후 1회 재시도한다
-   (relayos lib/relayjs/src/transport.ts:41-62). 두 방식 모두 이 계약 위에서 합법이다.
+   (relayos chat/src/transport.ts:41-62). 두 방식 모두 이 계약 위에서 합법이다.
    *왜: 인증을 계약에 넣는 순간 1인 loopback 기판이 org 의 세션 기계를 강제로 지게 되고,
    그 반대면 org 가 무인증을 지게 된다 — 둘 다 임베더 테스트 위반이다.*
    단 하나의 계약 조항: 미인증 판정은 **HTTP 401 + `{error:{code,message}}`** 로
@@ -80,12 +80,12 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
    - **root** — 문의 뿌리. 열거 동사(§5.6)가 여기 산다.
    - **base** — 대화 스코프(패키지 하나/인스턴스 하나)의 뿌리. §5 의 모든 스코프 동사는
      `{base}` 상대 경로다.
-   `/pkg/:pkg`(OSS, runner/client-wire.ts:898)나 `/i/<id>`(relayos,
+   `/pkg/:pkg`(OSS, runner/runtime/wire.ts:898)나 `/i/<id>`(relayos,
    runtime/deployd/upload.go:152)는 **기판의 마운트 지점일 뿐 계약이 아니다**.
    클라이언트 코드에 마운트 문법이 새면 그 클라이언트는 계약 위반이다.
    *왜: 좌표를 경로 문법으로 계약에 넣으면 두 기판 중 하나는 영원히 URL 재작성 프록시를
    유지해야 한다. base 주입이면 기판이 마운트를 마음대로 바꾼다.*
-   relayos 의 `X-Relay-Instance` 헤더(relayos lib/relayjs/src/chat/transport.ts:257-262)는
+   relayos 의 `X-Relay-Instance` 헤더(relayos chat/src/chat/transport.ts:257-262)는
    base 주입이 해결하는 문제의 기판 내부 구현으로 강등된다 — 계약 표면에서 제거.
 
 ## 3. 개막과 판정 — capabilities 문
@@ -127,7 +127,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 
 9. **클라이언트는 절대 throw 하지 않는다.** 모든 호출의 실패는
    `{error: {code, message}}` 봉투로 돌아온다 — 구 코어의 계약을 그대로 유지한다
-   (relayagent-oss lib/relayjs/src/core.js:2, 4-20).
+   (relayagent-oss chat/src/core.js:2, 4-20).
 10. 서버 에러는 **HTTP 상태코드 + `{error:{code,message}}` JSON 본문**이다.
     `code` 는 `E_` 접두 문자열. 계약이 소유하는 코드는 넷뿐이고 —
     `E_PROTOCOL`(§3) · `E_DISCONNECTED`(§5.2) · `E_NO_TURN`(§5.1) ·
@@ -148,7 +148,7 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
     사이드밴드 폴링으로 때웠다. 시작과 관찰을 분리하면 관찰은 몇 번이든 다시 연다.*
     - `attachments[].path` 는 `file.upload`(§5.4)가 돌려준 불투명 참조다.
     - `scene` 은 화면 맥락 서문 — 합성은 기판 몫, 이력에는 원문만 남는다
-      (core.js:160-161 · runner/client-wire.ts:255 의 의미 유지).
+      (core.js:160-161 · runner/runtime/wire.ts:255 의 의미 유지).
     - 같은 세션에 진행 중 턴이 있으면 기판이 **직렬화(큐잉)** 한다 — 클라이언트 큐
       (core.js:116-127)는 은퇴한다. 순서는 도착순.
       *왜: 직렬화를 클라이언트가 하면 화면 두 개가 같은 세션에 붙는 순간 깨진다.
@@ -220,7 +220,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 **커넥션 예산 — 계약 조항이다.** 브라우저의 HTTP/1.1 origin 당 커넥션 예산(6개)을 SSE
 상시 점유가 소진하면 마지막 슬롯을 두고 fetch 와 SSE 재접속이 경주하고, SSE 가 이기는
 순간 모든 호출이 무기한 큐잉된다 — relayos 실사고(2026-07-16, 탭 5개 SSE 상시 점유 →
-새로고침 fetch 수 분간 미도달, relayos lib/relayjs/src/transport.ts:310-312 주석). 그래서:
+새로고침 fetch 수 분간 미도달, relayos chat/src/transport.ts:310-312 주석). 그래서:
 ① `push.subscribe`(§5.8)는 **페이지당 공유 커넥션 1개**, ② 턴 스트림(`turn.stream`)은
 턴 진행 중에만 열고, ③ `turn.attach` 는 신규 커넥션 추가가 아니라 기존 관찰의 **대체
 접속**이다. loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브라우저 origin
@@ -240,7 +240,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     *왜 행에 싣나: 화면의 스레드 문법(`agent-<이름>:~<id>`)은 `:` `~` 를 쓰는데 기판 발급
     세션 id 는 그 문자를 실을 수 없는 기판이 있다(OSS 는 디렉토리명이다). 이름에 정체성을
     싣는 규약은 그래서 이식 불가였고, 메타가 정본이 된다.*
-    정렬: 고정 우선, 그 안에서 최근순(runner/client-wire.ts:459 현행 유지). 라벨 우선순위
+    정렬: 고정 우선, 그 안에서 최근순(runner/runtime/wire.ts:459 현행 유지). 라벨 우선순위
     (사용자 label > auto-label > 첫 발화, client-wire.ts:437-449)는 기판 내부 규칙이다 —
     클라이언트는 `label` 을 그대로 그린다.
 22. **[현행 v1]** `session.create` = `POST {base}/sessions` → `{session}`.
@@ -280,7 +280,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 
 25. `file.upload` = `POST {base}/upload?name=<파일명>` — **본문이 곧 바이트다**
     (raw 스트림, JSON/base64/multipart 비경유). 응답: `{path, size, name}`.
-    [현행 v1: OSS runner/client-wire.ts:712-757 · core.js:207-238. relayos 는 3벌로 흩어진 현행
+    [현행 v1: OSS runner/runtime/wire.ts:712-757 · core.js:207-238. relayos 는 3벌로 흩어진 현행
     (`/api/uploads/<script>` transport.ts:100-127 · `/api/fs/upload` transport.ts:174-262 ·
     `<base>/u/_attachments` chat/runtime.ts:771-806 + upload.go:152-156)을 채팅 첨부에
     한해 이 단일 동사로 접는다 — §9.]
@@ -297,7 +297,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     *왜: 스트림 중 조기 거절은 브라우저에 '네트워크 오류'로만 보인다 — 거절 사유가
     문장으로 오려면 바이트 전에 물어야 한다.*
 27. `file.download` = `GET {base}/file/<path>` (+`?dl=1` 로 attachment 처분),
-    `HEAD` 는 실재 프로브. [현행 v1: runner/client-wire.ts:758-780.]
+    `HEAD` 는 실재 프로브. [현행 v1: runner/runtime/wire.ts:758-780.]
 28. 업로드 진행률은 클라이언트 소관(XHR progress)이다. capability `upload-progress` 는
     "기판의 업로드 경로가 전 구간 스트리밍이라 진행 이벤트가 실제 전송을 반영한다"는
     서버측 선언이다 — 전량 버퍼링 기판은 뺀다.
@@ -308,7 +308,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     verbs, capabilities}}` · `harness.models` = `GET {base}/harness/models` →
     `{ok, value: [...]}` · `harness.commands` = `GET {base}/harness/commands` →
     `{ok, value: [{name, description?, tty?}]}`.
-    [현행 v1: runner/client-wire.ts:783-807. commands 는 패키지 커맨드 + 하네스 네이티브
+    [현행 v1: runner/runtime/wire.ts:783-807. commands 는 패키지 커맨드 + 하네스 네이티브
     커맨드의 병합(client-wire.ts:800-803) — 병합은 기판 몫이다.]
     조회 동사 셋은 각각 동명 capability(`harness-info` · `harness-models` ·
     `harness-commands`, §7) 뒤에 있다 — 하나로 묶지 않는다.
@@ -326,7 +326,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     `{harness?}`. 둘 다 capability `harness-variants` 뒤에 있다.
     *왜 설정 문에 있나: 변형 선택은 자격 행위가 아니라 **설정**이다 — 매니페스트가 후보를
     선언하고(BOM: `harness.variants[]`), 장부가 활성 하나를 든다. `model`·`effort` 와 같은
-    레코드의 같은 성질의 필드이고(runner/state.ts PkgRecord), 선언 밖 이름은 거부된다
+    레코드의 같은 성질의 필드이고(runner/supply/ledger.ts PkgRecord), 선언 밖 이름은 거부된다
     (installer.ts setHarness). 이것을 자격 관리와 한 덩어리로 묶으면, 선언된 후보 중 하나를
     고르는 일까지 계약 밖으로 밀려 화면이 기판마다 갈린다.*
     변형을 바꾸면 기판이 **모델 오버라이드를 지운다** — 모델 어휘는 하네스 소속이라 이전
@@ -338,16 +338,16 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     *왜 버리지 않나: 준비 안 된 하네스로 바꾼 사람에게 아무 말도 안 하면 "왜 안 되지"가
     다음 턴까지 남는다. 후보 **전수** 프로브는 여전히 이 문의 소관이 아니다 — 그건 프로세스
     N개 스폰이고, 기판 소유 콘솔에 이미 그 표면이 있다.*
-31. 하네스 **자격** 동사(connect·login 중계 — runner/api.ts:943-1018)는 이 계약 밖이다.
+31. 하네스 **자격** 동사(connect·login 중계 — runner/daemon.ts:943-1018)는 이 계약 밖이다.
     1인 기판의 콘솔 전용 표면이며, org 기판에서 자격은 문이 아니라 권위(fleet)의 소관이다.
     *왜: 최종사용자 채팅 문에 자격 관리가 섞이면 org 기판이 그 동사들을 401 로 도배해야
     한다 — 게이트할 것과 존재하지 않아야 할 것의 구분이다. 이 선은 **자격 행위와 설정** 사이에
     긋는다(2026-08-19 정정 — 종전에는 variants 전환까지 여기 묶여 있었는데, 그것은 설정이라
     §5.5-30-a 로 옮겼다. 기판이 원치 않으면 capability 를 선언하지 않으면 된다).*
     계약 밖이되 방향은 있다 — 결정 G(2026-08-16): 현행 login 중계의 pty 출력 700ms 폴링
-    (runner/api.ts:918-920 · core.js:393)은 기판 소유 표면에서 SSE 스트림으로 현대화하고,
+    (runner/daemon.ts:918-920 · core.js:393)은 기판 소유 표면에서 SSE 스트림으로 현대화하고,
     relayos 가 실사고로 검증한 무폴링 구조화 플로(begin → 코드 붙여넣기 → complete —
-    relayos lib/relayjs/src/claude-login.tsx:12-15 의 교훈)는 **하네스 어댑터 capability
+    relayos chat/src/claude-login.tsx:12-15 의 교훈)는 **하네스 어댑터 capability
     어휘의 additive 확장**으로 표현한다(어댑터가 선언하면 구조화 플로, 아니면 pty 스트림).
     자격 브로커 축(누가 OAuth 를 수행하나)은 이 계약이 아니라 권위 이음새 소관이다 —
     [authority-interface.md](authority-interface.md) §3.2.
@@ -355,12 +355,16 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 ### 5.6 열거 — capability `enumerate`, root 소속
 
 32. **[현행 v1]** `instances.list` = `GET {root}/instances` → `{instances: [{
-    id, display_name, icon?, chat?: {greeting?}, agents: [string],
+    id, display_name, icon?, greeting?, agents: [string],
     agent: string|null, model?, effort?}]}`.
     - `id` 는 base 마운트의 키다 — 클라이언트는 이 id 로 base URL 을 얻는 기판 제공
       함수를 쓴다(§2).
     - `agent` 는 **착지 에이전트 판정 결과**다. 서버가 판정해서 싣는다(§8).
-    - OSS 는 `/registry`(runner/api.ts:502)의 데이터로 이 동사에 응답한다 — manifest
+    - `greeting` 은 **착지 에이전트의 인사말**이다 — 매니페스트 `agents[].greeting`,
+      판정은 서버(`manifest.landingGreeting`). 새 대화는 정의상 착지에 떨어지므로
+      빈 대화의 첫 줄은 착지의 것이다. 구 `chat?: {greeting?}` 중첩의 자리 —
+      `surfaces.chat` 축이 은퇴하면서 행 레벨 필드로 평평해졌다(2026-08-24).
+    - OSS 는 `/registry`(runner/daemon.ts:502)의 데이터로 이 동사에 응답한다 — manifest
       전량 노출이 아니라 위 닫힌 shape 로 좁혀서. relayos 는 portal/nav 상당이 같은 동사
       뒤에서 응답한다(승인된 예외 1건 — 상세 경로 미확인, 정렬 시 확정).
     *왜 닫힌 shape: 구 코어는 `/registry` 의 manifest 를 클라이언트에서 파헤쳐 메타를
@@ -472,7 +476,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     `[미션 수신: <mission>]` 형으로 온다(생산 정본: runner/protocol.ts:12-14
     `a2aMissionMarker` — 무-consumer 분기는 protocol.ts:13, 호출부 api.ts:311;
     consumer 는 dispatch 의 옵셔널 인자다 api.ts:304). 소비: 위젯이 발신자 카드로 렌더
-    (lib/relayjs/src/widget.js:1276-1277 의 정규식 — ← 그룹을 옵셔널로 매칭). v1 판정:
+    (chat/src/widget.js:1276-1277 의 정규식 — ← 그룹을 옵셔널로 매칭). v1 판정:
     마커 문법은 이 조항이 정본이고, 클라이언트는 여기 명세된 형태(옵셔널 분기 포함)만
     매칭한다 — 자체 변형 정규식 금지.
     *왜 아직 문자열인가: 마커는 이력 원문에 살아야 한다(이력 = 프롬프트 원문 원장).
@@ -480,7 +484,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     문자열을 고정하는 데서 멈춘다.*
 40. **`uploads/` 접두** — 업로드 착지 참조의 접두. 정본: runner/protocol.ts:21-22
     (`UPLOADS_DIR`/`UPLOADS_PREFIX`), 호출부 client-wire.ts:728, 751.
-    기판 내부 소비: 아웃바운드 파일 스캔에서 인바운드 무대 제외(runner/session.ts:402-416).
+    기판 내부 소비: 아웃바운드 파일 스캔에서 인바운드 무대 제외(runner/runtime/harness.ts:402-416).
     v1 판정: 이 접두는 **기판 내부 어휘**로 강등된다 — 클라이언트에게 `path` 는 불투명
     참조다(§5.4-25). 클라이언트가 `uploads/` 를 검사·조립하는 코드는 계약 위반.
 41. **툴 이름 문법** — `a2a__<pkg>__<mission>` · `edge__<pkg>__<tool>`
@@ -490,7 +494,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     v1 판정: 세 접두와 `__` 구분자는 계약 상수다. 클라이언트는 **표시 목적의 분해**만
     허용되고, 이름 조립·권한 추론은 금지다(집행 판정은 서버 스코프 게이트가 정본 —
     api.ts:365-366).
-42. **착지 에이전트 판정** — 정본: runner/manifest.ts:441-448 (`default: true` 명시 선언
+42. **착지 에이전트 판정** — 정본: runner/supply/manifest.ts:441-448 (`default: true` 명시 선언
     > "패키지 짧은 이름과 같은 에이전트" 관례). 구 코어는 이 판정을 클라이언트에서
     재구현했다(core.js:54-66 — 주석 스스로 "기판 landingAgentName 과 같은 판정").
     v1 판정: 재구현 금지 — `instances.list` 응답의 `agent` 필드(§5.6-32)가 판정 결과를
@@ -501,13 +505,13 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 ## 9. 클린 브레이크 — 호환 창 없음
 
 43. **호환 창을 두지 않는다.** 위젯은 `cache-control: no-store` 로 서빙되어
-    (runner/api.ts:777-778) 기판과 원자적으로 함께 움직인다 — 낡은 클라이언트가 새 문에
+    (runner/daemon.ts:777-778) 기판과 원자적으로 함께 움직인다 — 낡은 클라이언트가 새 문에
     붙는 조합이 구조적으로 없다. 구/신 wire 병존 기간, 세대 혼합, 과도기 변환기 모두 금지.
     *왜: 과도기 변환기는 영구 코드가 된다. 위젯-기판 원자성이 공짜로 주는 클린 브레이크를
     쓰지 않을 이유가 없다.*
 44. **버전 판정은 fail-loud** — §3-7. 신 클라이언트가 구 기판을 만나면(capabilities 404)
     `E_PROTOCOL` 을 그린다. 폴백 없음.
-45. **제거되는 구 wire — OSS 데몬** (전부 runner/api.ts):
+45. **제거되는 구 wire — OSS 데몬** (전부 runner/daemon.ts):
     | 구 경로 | 실측 | 대체 |
     |---|---|---|
     | `POST /pkg/:pkg/chat` (블로킹) | 구(삭제됨 — 컷 2639dae) | `POST {base}/turns` + stream |
@@ -517,6 +521,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     | history.busy 3초 감시 폴링 | 구(삭제됨 — 컷 2639dae) | `history.get` 의 `turn` + attach |
     | 클라이언트 slot 발급 | 구(삭제됨 — 컷 2639dae) | `POST {base}/sessions` |
     | `/registry` 의 클라이언트 manifest 파싱 | 구(삭제됨 — 컷 2639dae) | `instances.list` 닫힌 shape |
+    | `instances.list` 의 `chat?: {greeting?}` | 구(삭제됨 — 2026-08-24) | 행 레벨 `greeting?` — 매니페스트 `surfaces.chat` 은퇴, 인사말은 `agents[].greeting` |
     세션 부속(`label`·`archive`·`pin`·`delete`·`history`·`sessions`)과 파일
     (`upload`·`file`)·하네스 조회는 경로 재편만 있고 의미는 승격 유지다.
 46. **폐기·정렬되는 현 wire — relayos**:
@@ -531,13 +536,13 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 47. **마이그레이션 순서** (전송은 무상태 — 세션·이력 데이터는 손대지 않으므로 migrate
     도구가 필요 없다):
     1. 이 문서를 OSS `docs/client-protocol.md` 로 확정.
-    2. **React 위젯 소스 OSS 승격**: relayos `lib/relayjs/src/chat/` 를 OSS 로 승격하고
+    2. **React 위젯 소스 OSS 승격**: relayos `chat/src/chat/` 를 OSS 로 승격하고
        (relay-ui V1 과 같은 승격 레일), **OSS 트리에서** planHttpCall
        (chat/transport.ts:63-138)을 이 계약의 wire 로 재작성한다 — 브리지 method 명
        어휘는 여기서 은퇴.
        *왜 이 단계가 컷보다 먼저인가: 소스 승격 없이는 3의 OSS 컷이 번들을 구울 원료가
        없고, 재작성 없이는 구 deployd wire 를 말하는 위젯이 신 OSS 데몬에 동봉된다.*
-    3. OSS 한 컷: runner/api.ts 에 신 wire 구현(`turn.attach` + 이벤트 장부 재생 포함,
+    3. OSS 한 컷: runner/daemon.ts 에 신 wire 구현(`turn.attach` + 이벤트 장부 재생 포함,
        §5.1-13/14) + 2의 신 transport 를 담은 React 위젯 번들 동봉(`/assets` 다중 파일
        서빙 확장) + 구 wire 삭제 — **같은 커밋**. 위젯 no-store 원자성이 이 컷을
        안전하게 만든다. **클라이언트 프로토콜 버전 1 은 이 컷부터 발효된다** —
@@ -584,7 +589,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `state.get/set` — GET/POST `{base}/state` | 부재 | `host.state` 상당 `/api/host` (view-alignment.md:70 — 상세 미확인) |
 | `push.subscribe` — GET `{base}/events` | 부재 — 3s 유휴 폴링 (core.js:91) | `EventSource /api/events` (transport.ts:336 · chat/transport.ts:383) |
 
-계약 밖 잔류(매핑하지 않음): OSS 설치·스토어·draft·grants·MCP 문(runner/api.ts 의
+계약 밖 잔류(매핑하지 않음): OSS 설치·스토어·draft·grants·MCP 문(runner/daemon.ts 의
 나머지), relayos 스크립트 동사문(`/api/scripts`)·워크스페이스 fs(`/api/fs/*` 일반)·
 `/api/settings/chat-limits`(api_turns.go:308 — org 전역 정책, 계약 승격은 후속 판단)·
 `/api/triggers/mine`(api_turns.go:326)·fs.watch(api_turns.go:364).

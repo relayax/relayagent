@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const HERE = import.meta.dirname;
-const RELAY = path.resolve(HERE, "../../../../runner/relay.ts");
+const RELAY = path.resolve(HERE, "../../../../runner/cli.ts");
 // 설치 이름은 설치 시점에 정해진다. 기본은 이 레포의 ring-0 설치명
 const PKG = process.env.RELAY_PKG ?? "system";
 const WATCH = ["app", "components", "lib", "next.config.mjs", "package.json"];

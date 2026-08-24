@@ -32,16 +32,16 @@ RelayAgent는 자기 화면을 싣고 다니는 에이전트 패키지의 개인
 | 개념 | 의미 |
 | --- | --- |
 | 패키지 | `relay.yaml`을 가진 디렉토리. 매니페스트가 구조와 경로의 정본, 트리가 내용의 정본. |
-| Surfaces | 패키지가 사람을 만나는 면. 중심은 `view`: 패키지가 배송하는 웹 UI로, 설치가 빌드하고 데몬이 `/pkg/<이름>/view/`로 호스팅하며 패키지 토큰으로 자기 에이전트의 동사에 연결된다. `chat`(직접 대화)과 `channels`(Discord, Slack 등 어댑터)는 추가 문 — 채널은 자기가 요구하는 자격의 *형태*를 선언하고(`credential.fields`), 콘솔이 그 선언으로 입력 칸을 그린다(사람이 JSON을 손으로 조립하지 않는다). `components`는 npm 패키지(소스 + `package.json`)를 수출한다 — 다른 패키지의 view가 components edge로 빌드 의존으로 소비하며, 기판이 설치 시점에 tgz로 굽는다(레지스트리 없음). |
+| Surfaces | 패키지가 사람을 만나는 면. 중심은 `view`: 패키지가 배송하는 웹 UI로, 설치가 빌드하고 데몬이 `/pkg/<이름>/view/`로 호스팅하며 패키지 토큰으로 자기 에이전트의 동사에 연결된다. `channels`(Discord, Slack 등 어댑터)는 추가 문 — 채널은 자기가 요구하는 자격의 *형태*를 선언하고(`credential.fields`), 콘솔이 그 선언으로 입력 칸을 그린다(사람이 JSON을 손으로 조립하지 않는다). `components`는 **자립 ESM 번들**을 수출한다(스타일도 그 안에 탄다) — 다른 패키지의 화면이 런타임에 마운트한다: 기판이 번들을 주소로 서빙하고 소비자 문서에 import map을 심으므로, 소비자는 `import { mount } from "<제공자 이름>"`만 쓰고 주소를 조립하지 않는다. React로 저작해도 그대로다 — React가 번들 안에 들어가므로 소비자에게는 프레임워크도 빌드도 필요 없다. |
 | Harness | 패키지에 동봉되어 에이전트를 실행하는 어댑터. 시스템 패키지에 Claude Code, Codex, Kimi, Pi 어댑터 동봉. 동사: `session`, `setup`, `models`, `commands`, `info`(+선택 `login`, `serve` — 턴마다 프로세스를 갈지 않고 stdin 으로 턴을 주입받는 상주 세션). 계약 적합성은 `relay harness-check`가 판정하고, 계약 전문은 [docs/harness-protocol.md](docs/harness-protocol.md)에 있습니다. variant 가 모는 CLI 는 `requires.binaries` 에 선언합니다 — `manager`+`package` 레시피가 있으면 없을 때 기판이 직접 깔고(`~/.relay/bin/<패키지>/`, PATH 앞), variant 의 `binary: <name>` 은 그 항목의 참조라 깨진 호스트 설치도 setup 실패 시 기판 사본으로 대체됩니다. |
-| Agents | 페르소나(`AGENT.md`)와 스킬, 슬래시 커맨드, 서브에이전트 dispatch. 하네스에는 중립 번들로 전달되고, 네이티브 형식으로의 번역은 전부 어댑터 소유. `default: true` 가 착지 에이전트. |
+| Agents | 페르소나(`AGENT.md`)와 스킬, 슬래시 커맨드, 서브에이전트 dispatch, 그리고 선택 `greeting` — 빈 대화의 첫 줄로, 창구가 아니라 말하는 쪽 소속이다. 하네스에는 중립 번들로 전달되고, 네이티브 형식으로의 번역은 전부 어댑터 소유. `default: true` 가 착지 에이전트 — 에이전트를 선언한 패키지는 착지가 정해져야 하고(그 표기 또는 짧은 이름과 같은 에이전트), 아니면 설치가 거부한다. 세션은 페르소나 위에 서므로 `agents[]` 밖 이름으로는 턴이 열리지 않는다. 직접 대화는 선언하지 않는다 — 에이전트가 있고 `view` 가 없으면 `/pkg/<이름>/view/` 에 전체 화면 대화가 공짜로 선다. |
 | Scripts | 동사. `scripts/<이름>.ts`가 `async (input, ctx) => JSON`을 기본 수출. |
 | Services | 형태는 셋뿐. `source`(자기 몸, 컨테이너 또는 프로세스), `url`(원격 MCP 접점, 자격은 여기에만 앉음), `dir`(파일 자원). |
 | Connector | 몸 없는 커넥터 — 동사가 외부 REST API 를 직접 부르는 패키지. 최상위 `auth` 가 자격의 형태만 선언하고, 값은 vault 에 앉아 동사가 `ctx.credential()` 로 호출 시점에 꺼낸다. `url` 서비스와 동시 선언 불가. |
 | Storage | `storage.buckets` — 파일 버킷 파사드. 1인 기판은 판정만 하고, 집행은 org 기판 소유. 서비스의 `disk` 와는 다른 축. |
 | Triggers | cron 또는 이벤트. 에이전트를 프롬프트로 깨우거나 스크립트를 headless로 실행. `delivery: <채널>:<대화키>` 는 그 대화의 slot 에서 턴을 돌리고 reply 를 채널 어댑터로 발신한다. |
 | Missions | 패키지가 다른 패키지에 제공하는 질의응답 능력. |
-| Edges | 다른 패키지의 tools, mission, components에 대한 의존 선언. 선언은 신청이고 활성화는 결재 — components는 집행점이 view 빌드라, 빌드 해석 성공이 곧 결재 기록이다. |
+| Edges | 다른 패키지의 tools, mission, components에 대한 의존 선언. 선언은 신청이고 활성화는 결재 — components는 설치가 edge를 해석할 때 결재가 앉고, 집행점은 기판이 소비자 화면에 심는 import map이다. |
 | Workspace | 패키지의 폴더 결재. 세션의 cwd이며 설치 때 정해져(기본 `~/Relay/<이름>`) 장부에 남는다. |
 | Hooks | 세션 담장. `hooks.deny`가 세션 도구 호출이 닿으면 안 되는 경로를 선언하고, 어댑터가 네이티브 훅으로 번역한다. 기판은 자기 홈(`~/.relay`)을 항상 병합한다. |
 | Grants | 장부에 남는 결재. 결재는 선언을 넘지 못한다. |
@@ -54,7 +54,7 @@ RelayAgent는 자기 화면을 싣고 다니는 에이전트 패키지의 개인
 git clone https://github.com/relayax/relayagent.git
 cd relayagent
 npm install
-alias relay="node --experimental-strip-types runner/relay.ts"
+alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # 매니페스트 판정
 relay install packages/system --ring0 --workspace ~   # 관리 셸을 ring-0으로, 홈 폴더를 workspace로 결재

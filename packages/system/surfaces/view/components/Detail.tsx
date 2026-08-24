@@ -57,7 +57,8 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
       {error ? <div className="banner">{error}</div> : null}
 
       <section style={{ display: "flex", gap: 8 }}>
-        {(m.surfaces?.view || m.surfaces?.chat?.mode === "direct") &&
+        {/* 대화 문은 착지 에이전트의 실재에서 나온다 — 기판 serveView 의 폴백 판정과 같은 규칙 */}
+        {(m.surfaces?.view || (m.agents ?? []).length > 0) &&
         !(typeof window !== "undefined" && window.location.pathname.startsWith(`/pkg/${pkg.name}/view`)) ? (
           <a className="rc-btn accent" style={{ textDecoration: "none" }} href={`/pkg/${pkg.name}/view/`} target="_blank" rel="noreferrer">
             {m.surfaces?.view ? "새 탭에서 확인하기" : "대화하러 가기"}

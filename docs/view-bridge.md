@@ -2,8 +2,8 @@
 
 **같은 브라우저 문서 안**에서 패키지 view 화면과 채팅 위젯이 주고받는 인페이지 계약.
 정본은 이 문서(`relayagent-oss/docs/view-bridge.md`)이고, 구현체는 둘이다 — OSS 부유
-크롬(`lib/relayjs/src/chat/main.tsx` autoFloat)과 relayos RelayProvider 크롬
-(relayos `lib/relayjs/src/agent.tsx`). 두 구현체는 이 문서에 맞춰 정렬되며, 어느 쪽의
+크롬(`chat/src/chat/main.tsx` autoFloat)과 relayos RelayProvider 크롬
+(relayos `chat/src/agent.tsx`). 두 구현체는 이 문서에 맞춰 정렬되며, 어느 쪽의
 현행 wire 도 정본이 아니다.
 
 현재 계약 버전: **1** (초안). 이 축은 client-protocol(브라우저↔기판, HTTP —
@@ -11,9 +11,9 @@
 [harness-protocol.md](harness-protocol.md))와 **별개의 축**이다. client-protocol §1-3 이
 "범위 밖"으로 남겨 둔 자리가 정확히 이 문서다.
 
-> **인용 규약**: OSS 좌표(`lib/relayjs/src/...`)는 현 트리 실측이다 — §8-22 의 ②③④ 컷
+> **인용 규약**: OSS 좌표(`chat/src/...`)는 현 트리 실측이다 — §8-22 의 ②③④ 컷
 > (2026-08-24)이 착지해 OSS 가 전 조항의 정본 구현을 든다. relayos 좌표(relayos
-> `lib/relayjs/src/agent.tsx` 등)는 **동작 원본**이었고, 정렬 컷(§8-22-5 — 2026-08-24)에서
+> `chat/src/agent.tsx` 등)는 **동작 원본**이었고, 정렬 컷(§8-22-5 — 2026-08-24)에서
 > 재벤더링 소비자로 수렴했다(client-protocol §9-47-4 와 같은 레일): agent.tsx 는 크롬만
 > 소유하고 선언·발신 표면은 벤더 bridge 를 재수출한다.
 > 표기: **[현행 v1]** = 이 계약이 정의하고 OSS 에 착지한 조항 · **[현행-위젯]** = 컷 전부터
@@ -47,15 +47,15 @@
 ## 2. 슬롯 좌표 — 조립 단일 지점
 
 5. 대화 스레드 슬롯 문법은 `"main" | "agent-<name>[:<param>][~<id8>]"` 이고, 문법 정본은
-   `lib/relayjs/src/chat/routematch.ts`(스레드 패밀리·sibling·`paramTargets` — 서버
-   parseAgentSlot 의 쌍둥이)다. **조립 지점은 relayjs 바인딩 층 하나다**(`slotFor` —
-   [현행 v1] lib/relayjs/src/bridge.tsx). 뷰 앱 코드와 크롬은 슬롯 문자열을 **손으로**
+   `chat/src/chat/routematch.ts`(스레드 패밀리·sibling·`paramTargets` — 서버
+   parseAgentSlot 의 쌍둥이)다. **조립 지점은 @relay/chat 바인딩 층 하나다**(`slotFor` —
+   [현행 v1] chat/src/bridge.tsx). 뷰 앱 코드와 크롬은 슬롯 문자열을 **손으로**
    조립하지 않는다 — `openChat` 의 `conversation` 에 실어 보낼 값은 바인딩 층이 준 것
    (`useAgentBinding().conversation` 등)뿐이다.
 5-a. **`slotFor` 의 npm 표면 — 서브패스, 루트 아님.** 페이지 선언(§5) 대신 프로바이더 prop
    으로 대상을 못박는 크롬(고정 바인딩)은 `{agent, param}` 을 슬롯 문자열로 바꿔야 하고,
    그 변환의 합법적 통로는 `slotFor` 하나다. 그래서 `slotFor`·`AgentBinding` 은
-   `@relay/relayjs/bridge` 서브패스로 공개한다 — 루트(`@relay/relayjs`)에는 두지 않는다.
+   `@relay/chat/bridge` 서브패스로 공개한다 — 루트(`@relay/chat`)에는 두지 않는다.
    *왜 이 모양인가: 크롬은 §1-1 이 세는 세 역할 중 하나이고 그 자리에는 `mountTabs` 를 직접
    부르는 **임의 임베더**도 앉는다. 표면이 닫혀 있으면 그런 임베더는 패키지 내부 경로를 직접
    수입하거나(핀이 깨지면 같이 깨진다) 문자열을 손으로 붙이게 되는데, 후자가 바로 이 조항이
@@ -87,7 +87,7 @@
 
 7. **[현행 v1]** `chat.open` = `CustomEvent("relay:chat-open", { detail })`,
    `detail: { instance?, conversation?, prefill?, send? }`. 발신 공개 API 는
-   `openChat(opts)` 하나다(정본: lib/relayjs/src/bridge.tsx:59-63 · relayos 현행:
+   `openChat(opts)` 하나다(정본: chat/src/bridge.tsx:59-63 · relayos 현행:
    agent.tsx:89-92 — 정렬 컷에서 재벤더링 수렴, §8-22-5). dispatch 실패(미배선 환경)는
    무시한다 — 브리지는 UX 어포던스이지 데이터 경로가 아니다.
 8. 크롬의 `chat.open` 착지 — **대상 해석 규칙** (OSS: chat/main.tsx:217-237 · relayos:
@@ -132,7 +132,7 @@
 ## 5. 페이지 선언 — scope.declare
 
 14. **[현행 v1]** 선언 표면은 `<AgentScope agent param? targets?>` 와
-    `useAgentBinding()` 이다(정본: lib/relayjs/src/bridge.tsx:131-169 · relayos 현행:
+    `useAgentBinding()` 이다(정본: chat/src/bridge.tsx:131-169 · relayos 현행:
     agent.tsx:878-951 — 정렬 컷에서 재벤더링 수렴). `agent=""` 는 미등록(조건부 바인딩
     관용형)이다.
 15. 중첩 판정: 바인딩 스택에서 **max(id) 승**이다 — 마운트=리바인딩, 언마운트=바깥 복귀,
@@ -155,7 +155,7 @@
     그 창을 닫는다. 바인딩 층 부재(브리지 미사용 뷰)면 응답이 없다 — 크롬의 기본 상태
     (선언 없음)와 일치하므로 레거시 뷰의 동작은 변하지 않는다.*
     *왜 wire 로 승격하나: relayos 는 크롬과 뷰가 한 React 트리라 context 로 건넜다
-    (ActiveBindingCtx — agent.tsx:49, 459-460). OSS 는 뷰 번들(npm relayjs)과 위젯 번들
+    (ActiveBindingCtx — agent.tsx:49, 459-460). OSS 는 뷰 번들(npm @relay/chat)과 위젯 번들
     (`/assets/chat-app.js`)이 분리라 context 가 못 건넌다. wire 로 두면 non-React 뷰도
     선언할 수 있다(임베더 테스트). relayos 크롬이 내부 context 를 유지하는 것은 같은 트리
     안의 합법적 구현이되, 선언 컴포넌트 자체는 OSS 정본을 소비한다(§8).*
@@ -247,8 +247,8 @@
 22. 순서 (client-protocol §9-47 과 같은 "정본 먼저, 컷은 한 번" 레일).
     ①~④ 는 **착지 완료**(2026-08-24 컷 — 부록 A 가 실측 좌표를 든다):
     1. ✅ 이 문서 확정 + client-protocol §1-3 에 상호 참조 한 줄.
-    2. ✅ **OSS relayjs 공개 표면 승격**: `openChat()` · `<AgentScope>` · `useAgentBinding()`
-       · `setScene()` — `lib/relayjs/src/bridge.tsx` 단일 모듈, AgentScope 는 context 가
+    2. ✅ **OSS @relay/chat 공개 표면 승격**: `openChat()` · `<AgentScope>` · `useAgentBinding()`
+       · `setScene()` — `chat/src/bridge.tsx` 단일 모듈, AgentScope 는 context 가
        아니라 §5-16 의 `relay:scope` wire 로 구현(`slotFor` 조립 지점 동반 승격).
        `index.js`/`index.d.ts` 루트 수출 — headless 소비자는 `/client` 서브패스가 여전히
        react 무의존이다. `slotFor`·`AgentBinding` 은 루트가 아니라 `./bridge` 서브패스로

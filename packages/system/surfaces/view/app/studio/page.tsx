@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AgentScope, onAgentTurn } from "@relay/relayjs";
+import { AgentScope, onAgentTurn } from "@relay/chat";
 import { parse as parseYaml, parseDocument } from "yaml";
 import CodeEditor from "@/components/CodeEditor";
 import DeclTree from "@/components/DeclTree";
@@ -665,7 +665,7 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
             <input placeholder="지도, 카탈로그, 설치 화면이 이 문장을 그대로 쓴다" value={desc} onChange={(e) => setDesc(e.target.value)} />
           </label>
           <div className="st-hint">
-            착지 에이전트(이름 = 패키지 이름)와 chat 표면, claude-code 하네스가 함께 스캐폴드된다. 페르소나, 동사, 서비스, 트리거는 스튜디오에서
+            착지 에이전트(이름 = 패키지 이름)와 claude-code 하네스가 함께 스캐폴드된다. 페르소나, 동사, 서비스, 트리거는 스튜디오에서
             붙인다.
           </div>
           {err ? <div className="gx-err">{err}</div> : null}
@@ -684,8 +684,7 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
                     version: "0.1.0",
                     display_name: display.trim() || name,
                     description: desc.trim() || "설명을 적어 주세요.",
-                    surfaces: { chat: { mode: "direct", greeting: "무엇을 도와드릴까요?" } },
-                    agents: [{ name, persona: `agents/${name}/AGENT.md` }],
+                    agents: [{ name, persona: `agents/${name}/AGENT.md`, greeting: "무엇을 도와드릴까요?" }],
                   },
                 });
                 onOpen(name);

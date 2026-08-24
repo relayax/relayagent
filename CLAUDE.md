@@ -12,27 +12,39 @@ not to be clever about them.
 
 ```
 runner/                 the substrate (CLI + daemon). Plain .ts, run with --experimental-strip-types.
-  relay.ts              CLI entry and command dispatch
-  manifest.ts           relay.yaml parsing + judgment against relay.manifest.yaml
-  installer.ts          install: judge, build surfaces, record grants in the ledger
-  api.ts                daemon HTTP API + console hosting
-  session.ts, run.ts    harness sessions
-  draft.ts              edit layer (git-backed drafts) and publish gate
-  scripts.ts            script (verb) execution
-  vault.ts              credentials: macOS Keychain, 0600 file fallback
-  state.ts, tick.ts     ledger, logs, triggers
-  conform.ts            harness/channel contract conformance
-  entry.ts              platform-neutral adapter execution (Windows runs entries via Git Bash)
-  build.ts, login.ts, validate-all.ts
+  cli.ts                terminal entry — a thin dispatcher, nothing else
+  daemon.ts             HTTP entry — Host/Origin guards, route table, boot/shutdown order
+  runtime/              makes a seated package live. One file per executable declaration.
+    harness.ts            harness.variants  — bundle, spawn, envelope, residents
+    scripts.ts            scripts.source    — the package backend (screen · agent · clock · peer call it)
+    services.ts           services·channels — long-running child processes
+    view.ts               surfaces.view     — build AND serve (one prefix predicate, one place)
+    triggers.ts           triggers          — cron sweep and event fire
+    tools.ts              agents·edges·missions — what a session sees, and its enforcement
+    wire.ts               client protocol v1 (turns · sessions · upload · SSE)
+    mcp.ts                MCP protocol (zero dependencies)
+    oauth.ts              connector credential — PKCE/DCR flow, rotation at call time
+    login.ts              harness login relayed through a pty (no token ever seen)
+  supply/               knows what a package is, receives it, seats it, swaps the edition.
+    manifest.ts           the grammar and its judgment (BOM)
+    ledger.ts             install ledger — what is seated, what is granted
+    install.ts            judge -> ledger -> artifacts, once
+    binaries.ts           requires.binaries provisioning
+    conform.ts            adapter contract check (install-time)
+    draft.ts              edit layer (git-backed) and publish gate
+    pack.ts sign.ts registry.ts store.ts   envelope, signature, remote shelf, its HTTP surface
+  spawn.ts                the only place a process is started (Git Bash on Windows)
+  vault.ts                the only place a secret is kept
+  protocol.ts http.ts                      shared vocabulary · HTTP idioms
+  authority.ts authority-contract.ts       the seam an embedder swaps
 
 relay.manifest.yaml     the grammar: JSON Schema for relay.yaml, with commentary
 relay.yaml              a full worked example manifest
 docs/harness-protocol.md  the harness adapter contract (verbs, envelope events, control channel)
 docs/verb-contract.md     the package verb contract (default export, ctx, optional meta export)
 packages/system         the management shell, itself a package (console, studio, harness adapters)
-lib/relayjs             browser-side client used by package views (+ `cn` styling util)
-lib/relay-ui            blessed UI atom set for package views (shadcn-based, TS source consumed
-                        via file: + transpilePackages; brand seam = src/tokens.css CSS variables)
+chat/                   the chat widget and its client — the client half of the wire contract
+                        (docs/client-protocol.md). Moves with the runner, not with a package.
 assets/                 project logo
 ```
 
@@ -60,7 +72,9 @@ assets/                 project logo
   namespaces, no decorators, no parameter properties, nothing that needs emit.
 - No build step and no runtime dependency beyond `yaml`. Do not add dependencies to the root
   `package.json` without a strong reason; a new dependency is a new thing every user must trust.
-- Keep the CLI surface in `runner/relay.ts` a thin dispatcher. Logic belongs in the module.
+- Keep the CLI surface in `runner/cli.ts` a thin dispatcher. Logic belongs in the module.
+- `runtime/` is one file per executable manifest declaration — the grammar is the table of contents.
+  `supply/` calls into `runtime/` (install builds a view); never the reverse, except ring-0's `host.install`.
 
 ## Changing the grammar
 
@@ -68,7 +82,7 @@ Any change to what `relay.yaml` may contain touches four places at once. Change 
 same commit or the change is incomplete:
 
 1. `relay.manifest.yaml` (the schema and its commentary)
-2. `runner/manifest.ts` (parsing and judgment)
+2. `runner/supply/manifest.ts` (parsing and judgment)
 3. `relay.yaml` (the worked example) and any affected `packages/*/relay.yaml`
 4. The README tables, in **all four languages** (`README.md`, `.ko`, `.zh-CN`, `.ja`)
 
@@ -77,29 +91,29 @@ same commit or the change is incomplete:
 ```sh
 npm run validate    # every packages/* manifest must print a passing judgment
 npm run typecheck
-npm test            # runner/*.test.ts — the embed seams, exercised by a real turn (node:test)
+npm test            # runner/**/*.test.ts — the embed seams, exercised by a real turn (node:test)
 ```
 
-Touching anything under `lib/relayjs/src/` adds two more — the widget has its own tsconfig and
+Touching anything under `chat/src/` adds two more — the widget has its own tsconfig and
 its own devDeps, so the root gates do not see it at all:
 
 ```sh
 npm run typecheck:widget
-npm run test:widget   # lib/relayjs/test — slot grammar + tab-shell transitions (node:test)
+npm run test:widget   # chat/test — slot grammar + tab-shell transitions (node:test)
 ```
 
 CI runs exactly these five.
 
 ## Two build artifacts the daemon serves — both gitignored, both must be rebuilt
 
-**① The chat widget bundle.** The daemon serves it from `lib/relayjs/dist/`
+**① The chat widget bundle.** The daemon serves it from `chat/dist/`
 (`/assets/chat-app.{js,css}`), and that directory is gitignored — a fresh clone does not have it:
 
 ```sh
-npm run build:widget   # installs lib/relayjs devDeps, then esbuild → dist/
+npm run build:widget   # installs chat/ devDeps, then esbuild → dist/
 ```
 
-Touching anything under `lib/relayjs/src/` means rebuilding: the served bundle is the artifact,
+Touching anything under `chat/src/` means rebuilding: the served bundle is the artifact,
 not the source.
 
 **② Package view static exports.** `serveView` serves `surfaces/view/out/` when it exists.
@@ -123,6 +137,14 @@ never hydrates. That failure looks nothing like a build error — the build pass
 `npm run validate` judges both halves: `out/` older than its source, and `out/` whose own assets
 are addressed at daemon root instead of the mount. It stays silent when `out/` is absent — CI and
 fresh clones don't build views, and absence is not staleness.
+
+**③ Package component bundles.** `surfaces.components` exports a self-contained ESM bundle that
+other packages' screens mount at runtime; declaring `out` makes install and publish bake it, and
+the daemon serves `<source>/<out>/index.js` at `/pkg/<installName>/components/`. Same staleness
+trap as ②, judged the same way (`staleBuild` against `index.js`), and the same remedy — rebuild
+only through `npm run relay -- build <pkg>`. There is no basePath axis here: the bundle is reached
+by an import map the daemon injects into the consuming document, so it never addresses its own
+assets relative to a mount.
 
 Release artifacts are cut by `.github/workflows/release.yml`: pushing a `v*` tag (matching
 the root package.json version — mismatch refuses the cut) runs the full judgment, builds the
@@ -179,6 +201,6 @@ as a side effect of an unrelated change.
 
 ## Never
 
-- Never commit a build artifact (`*.tsbuildinfo`, `surfaces/*/out`, `node_modules`).
+- Never commit a build artifact (`*.tsbuildinfo`, `surfaces/*/out`, `surfaces/components/dist`, `node_modules`).
 - Never commit an absolute local path, a machine name, or a personal directory.
 - Never commit anything under `~/.relay` (ledger, vault, sessions, logs) as a fixture.
