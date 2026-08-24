@@ -263,7 +263,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     validate: (dir) => validateDir(dir),
     draftOpen: (name, opts) => openDraft(getLedger(), name, opts),
     draftRead: (name, file) => (file ? readDraft(getLedger(), name, file) : readDraft(getLedger(), name)),
-    draftWrite: (name, files, deletes) => writeDraft(name, files ?? {}, deletes ?? []),
+    draftWrite: (name, files, deletes, base) => writeDraft(name, files ?? {}, deletes ?? [], base),
     draftDiff: (name) => diffDraft(name),
     draftCommit: (name, message) => commitDraft(name, message),
     draftValidate: (name) => validateDraft(name),

@@ -1227,7 +1227,31 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       let handle: StreamHandle | null = null;
       const wake = () => { const n = notify; notify = null; if (n) n(); };
 
+      // 턴 신호(view-bridge §6-a relay:turn) — 수명주기 이벤트를 같은 문서의 뷰에 힌트로
+      // 중계한다. 정체성은 슬롯 문자열이 아니라 메타(agent·param)로 싣는다(§5.3-21 관례 —
+      // 수신자는 conversation 을 파싱하지 않는다). 재생(attach·종결 턴 replay)도 다시
+      // 발화한다 — 수신자 반응(재조회)이 멱등이라 무해하고, 덜 가는 힌트가 더 나쁘다.
+      const signalTurn = (phase: "started" | "settled", ok?: boolean): void => {
+        const b = displayBinding(ctx.conversationId);
+        const agent = b.agent || serverAgentOf(ctx.conversationId);
+        const param = b.param || serverParamOf(ctx.conversationId);
+        try {
+          window.dispatchEvent(new CustomEvent("relay:turn", {
+            detail: {
+              phase,
+              ...(typeof ok === "boolean" ? { ok } : {}),
+              ...(agent ? { agent } : {}),
+              ...(param ? { param } : {}),
+              conversation: ctx.conversationId,
+            },
+          }));
+        } catch { /* 미배선 — 무시 */ }
+      };
+
       const onEvent = (ev: WireEvent): void => {
+        if (ev.event === "turn" && (ev.status === "started" || ev.status === "settled")) {
+          signalTurn(ev.status, typeof (ev as any).ok === "boolean" ? (ev as any).ok : undefined);
+        }
         // ask 회송 좌표 — respondAsk 가 (turn, ask) 쌍으로 turn.respond 를 부른다.
         if (ev.event === "ask" && typeof ev.id === "string" && ev.id) {
           _pendingAsks.set(ctx.conversationId, { turn: knownTurnId, ask: ev.id });

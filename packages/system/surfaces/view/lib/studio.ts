@@ -15,6 +15,8 @@ export interface DraftStatus {
   manifest: string;
   tree: string[];
   files: string[];
+  /** 파일별 내용 지문 — draft-write 의 base 로 되돌려주면 동시 편집을 판정한다 */
+  hashes: Record<string, string>;
   changes: DraftChange[];
   lastCommit: { hash: string; message: string; time: number } | null;
   version: { draft: string | null; live: string | null };
@@ -57,12 +59,19 @@ export function draftRead(name: string): Promise<DraftStatus> {
   return callScript("draft-read", { name });
 }
 
-export function draftReadFile(name: string, file: string): Promise<{ file: string; content: string }> {
+export function draftReadFile(name: string, file: string): Promise<{ file: string; content: string; hash: string }> {
   return callScript("draft-read", { name, file });
 }
 
-export function draftWrite(name: string, files: Record<string, string>, deletes?: string[]): Promise<{ written: string[]; deleted: string[] }> {
-  return callScript("draft-write", { name, files, delete: deletes });
+/** base = 파일별 마지막 읽기 지문(opt-in) — 실은 경로가 그 사이 다른 손(빌더·CLI·다른 화면)에
+ *  고쳐졌으면 기판이 아무것도 쓰지 않고 E_CONFLICT 로 실패한다. null = 없는 파일로 알고 있다 */
+export function draftWrite(
+  name: string,
+  files: Record<string, string>,
+  deletes?: string[],
+  base?: Record<string, string | null>,
+): Promise<{ written: string[]; deleted: string[]; hashes: Record<string, string> }> {
+  return callScript("draft-write", { name, files, delete: deletes, base });
 }
 
 export function draftDiff(name: string): Promise<{ changes: DraftChange[]; diff: string }> {
