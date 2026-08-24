@@ -7,7 +7,7 @@ import { MIME, json, esc, readBody, streamFile } from "./http.ts";
 import { spawn } from "node:child_process";
 import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./supply/ledger.ts";
 import { credKey } from "./vault.ts";
-import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
+import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, type ClientWireIO } from "./runtime/wire.ts";
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
@@ -423,7 +423,7 @@ export function createApi(
       }
 
 
-      // ── 서비스 자격면 — 채널 3동사의 자매. services[].url 의 auth(token·oauth)를 화면에서 잇는다.
+      // ── 서비스 자격면 — 채널 3동사의 자매. 밖으로 나가는 두 형(url·api)의 auth(token·oauth)를 화면에서 잇는다.
       // 종전에는 이 축만 CLI 전용이었다(relay connect · relay oauth) — 화면에는 문 자체가 없었다.
       const svcs = p.match(/^\/pkg\/([^/]+)\/services$/);
       if (svcs && req.method === "GET") {
@@ -434,18 +434,21 @@ export function createApi(
         const m = loadManifest(rec.path);
         const services = [];
         for (const sv of m.services ?? []) {
-          // 자격 축이 있는 것은 url 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
-          if (!("url" in sv) || sv.url == null) continue;
-          const a = sv.auth;
+          // 자격 축이 있는 것은 밖으로 나가는 두 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
+          const out = outwardService(sv);
+          if (!out) continue;
+          const a = out.auth;
           services.push({
             name: sv.name,
-            url: sv.url,
+            url: out.base,
+            // 문의 말 — MCP 문(url)이냐 REST 베이스(api)냐. 도구 열이 빈 이유를 화면이 말할 수 있어야 한다
+            form: "url" in sv ? "url" : "api",
             kind: a?.kind ?? "none",
             // 선언 그대로 — 화면이 안내와 입력 칸을 그린다. 값은 실리지 않는다
             help: a?.help ?? null,
             client: a?.client ?? null,
             verifiable: a?.verify?.url != null,
-            tools: sv.tools ?? [],
+            tools: "tools" in sv ? sv.tools ?? [] : [],
             hasCred: (await authority.credential(credKey(pkg, sv.name))) != null,
             oauth: a?.kind === "oauth" ? serviceOAuthStatus(pkg, sv.name) : null,
           });
@@ -463,8 +466,9 @@ export function createApi(
         if (!rec) return void json(res, 404, { error: "미설치 패키지" });
         const man = loadManifest(rec.path);
         const sv = (man.services ?? []).find((x) => x.name === name);
-        if (!sv || !("url" in sv) || sv.url == null) return void json(res, 404, { error: `자격 축이 없는 서비스: ${name}` });
-        const auth = sv.auth;
+        const out = sv ? outwardService(sv) : null;
+        if (!out) return void json(res, 404, { error: `자격 축이 없는 서비스: ${name}` });
+        const auth = out.auth;
 
         if (sst && req.method === "GET") return void json(res, 200, serviceOAuthStatus(pkg, name));
         if (!sop || req.method !== "POST") return void json(res, 405, { error: "POST 만" });
@@ -491,7 +495,7 @@ export function createApi(
         if (auth?.kind !== "oauth") return void json(res, 400, { error: `oauth 자격형이 아닙니다(${auth?.kind ?? "none"}) — token 은 connect 로` });
         const b = await readBody(req);
         try {
-          const run = startServiceOAuth(authority, pkg, name, sv.url, auth, { clientId: b.client_id ? String(b.client_id) : undefined });
+          const run = startServiceOAuth(authority, pkg, name, out.base, auth, { clientId: b.client_id ? String(b.client_id) : undefined });
           return void json(res, 200, { ...run, running: !run.done });
         } catch (e) {
           return void json(res, 409, { error: e instanceof Error ? e.message : String(e) });

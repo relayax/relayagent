@@ -8,6 +8,7 @@ import { startDaemon } from "./daemon.ts";
 import { runSession } from "./runtime/harness.ts";
 import { loadManifest } from "./supply/manifest.ts";
 import { credKey } from "./vault.ts";
+import { outwardService } from "./supply/manifest.ts";
 import { localAuthority } from "./authority.ts";
 
 const [, , cmd, ...args] = process.argv;
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
       const m = loadManifest(rec.path);
       const svc = (m.services ?? []).find((s) => s.name === service);
       // 디스커버리 기점은 선언 주소의 origin 하나다(oauth.ts discoverMeta) — MCP 문이든 REST 베이스든 같은 흐름
-      const outward = svc && ("url" in svc ? { base: svc.url, auth: svc.auth } : "api" in svc ? { base: svc.api, auth: svc.auth } : null);
+      const outward = svc ? outwardService(svc) : null;
       if (!outward) throw new Error(`밖으로 나가는 서비스 아님(url·api 형만): ${service}`);
       if (outward.auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${outward.auth?.kind ?? "none"}) — token 형은 relay connect`);
       const { runOAuthFlow } = await import("./runtime/oauth.ts");
