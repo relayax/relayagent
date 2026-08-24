@@ -393,7 +393,7 @@ async function main(): Promise<void> {
     case "releases": {
       const name = args[0];
       if (!name) throw new Error("사용법: relay releases <이름>");
-      const { listReleases } = await import("./supply/draft.ts");
+      const { listReleases } = await import("./supply/release.ts");
       const rs = listReleases(ledger, name);
       for (const rel of rs) console.log(`${rel.live ? "*" : " "} ${rel.version}\t${new Date(rel.time).toISOString()}`);
       if (!rs.length) console.log("릴리스 없음 — relay publish 로 발행하세요");
@@ -410,7 +410,7 @@ async function main(): Promise<void> {
         break;
       }
       if (r?.error) throw new Error(r.error);
-      const { rollbackRelease } = await import("./supply/draft.ts");
+      const { rollbackRelease } = await import("./supply/release.ts");
       const d = rollbackRelease(ledger, name, version);
       console.log(`롤백됨: ${name}@${d.version} -> ${d.path}`);
       break;

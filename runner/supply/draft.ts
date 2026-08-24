@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument } from "yaml";
 import { RELAY_HOME, saveLedger, type Ledger } from "./ledger.ts";
+import { releasesPath } from "./release.ts";
 import { loadManifest, judge, ManifestError, type Manifest } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "../spawn.ts";
@@ -28,9 +29,6 @@ export function draftPath(name: string): string {
   return path.join(RELAY_HOME, "drafts", name);
 }
 
-function releasesPath(name: string): string {
-  return path.join(RELAY_HOME, "releases", name);
-}
 
 function assertSlug(name: string): void {
   if (!SLUG.test(name ?? "")) {
@@ -461,33 +459,4 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
   return { published: true, name, version, path: snapshot, manifest: m, fresh, setup, build };
 }
 
-export function listReleases(ledger: Ledger, name: string): { version: string; time: number; live: boolean }[] {
-  assertSlug(name);
-  const relRoot = releasesPath(name);
-  if (!fs.existsSync(relRoot)) return [];
-  const livePath = ledger.packages[name]?.path ?? "";
-  return fs
-    .readdirSync(relRoot, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && SEMVER.test(e.name))
-    .map((e) => ({
-      version: e.name,
-      time: fs.statSync(path.join(relRoot, e.name)).mtimeMs,
-      live: path.join(relRoot, e.name) === livePath,
-    }))
-    .sort((a, b) => b.time - a.time);
-}
 
-/** 이전 릴리스로 장부 재전환. 스냅샷은 이미 판정을 통과한 것이지만 손상 대비로 다시 판정한다 */
-export function rollbackRelease(ledger: Ledger, name: string, version: string): { name: string; version: string; path: string; manifest: Manifest } {
-  assertSlug(name);
-  const snapshot = path.join(releasesPath(name), version);
-  if (!fs.existsSync(snapshot)) throw new Error(`없는 릴리스: ${name}@${version}`);
-  const rec = ledger.packages[name];
-  if (!rec) throw new Error(`미설치 패키지: ${name}`);
-  const m = loadManifest(snapshot);
-  rec.path = snapshot;
-  saveLedger(ledger);
-  const build = buildView(name, snapshot, m);
-  if (build && !build.ok) throw new Error(`롤백 빌드 실패: ${build.out}`);
-  return { name, version, path: snapshot, manifest: m };
-}
