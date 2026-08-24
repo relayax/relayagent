@@ -37,7 +37,7 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch,以及可选的 `greeting`——空对话的第一句话,它属于说话的一方,而不属于任何一道门。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体——声明了智能体的包必须确定一个着陆点(用该标记,或用与包同名的智能体),否则安装拒绝。会话立于人格之上,因此 `agents[]` 之外的名字永远打不开一个回合。直接对话无需声明:有智能体而没有 `view`,基座就在 `/pkg/<名称>/view/` 免费立起整屏对话。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
 | Services | 只有三种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点,凭证只挂在这里)、`dir`(文件资源)。 |
-| Connector | 无躯体连接器——动词直接调用外部 REST API 的包。顶层 `auth` 只声明凭证的形态,值存放在 vault 中,动词在调用时通过 `ctx.credential()` 取用。与 `url` 服务互斥。 |
+| Connector | 无躯体连接器——动词调用外部 REST API 的包。以 `api` 服务声明 REST 基址及其 `auth` 形态,凭证存放在 vault 的 `<包>/<服务>` 坐标下。由基座在每次调用时附加,动词从不经手凭证,也无法越出所声明的基址。 |
 | Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。`delivery: <频道>:<会话键>` 让该回合在对应会话的 slot 中运行,并把回复经频道适配器发出。 |
 | Missions | 包向其他包提供的问答能力。 |
 | Edges | 对其他包的 tools、mission 或 components 的依赖声明。声明是申请,激活靠授权——components 在安装解析该 edge 时记录授权,执行点则是基座注入消费方界面的 import map。 |

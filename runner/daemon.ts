@@ -26,7 +26,7 @@ import { verifyChannel } from "./supply/conform.ts";
 import { Ticker } from "./runtime/triggers.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./runtime/login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
-import { serviceAuthHeader } from "./runtime/oauth.ts";
+import { serviceAuthHeader, startServiceOAuth, serviceOAuthStatus, verifyService } from "./runtime/oauth.ts";
 import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -420,6 +420,82 @@ export function createApi(
         stopChannel(pkg, channel);
         const note = startOneChannel(pkg, rec.path, c, runnerIO(l));
         return void json(res, 200, { ok: true, running: channelPid(pkg, channel) != null, note });
+      }
+
+
+      // ── 서비스 자격면 — 채널 3동사의 자매. services[].url 의 auth(token·oauth)를 화면에서 잇는다.
+      // 종전에는 이 축만 CLI 전용이었다(relay connect · relay oauth) — 화면에는 문 자체가 없었다.
+      const svcs = p.match(/^\/pkg\/([^/]+)\/services$/);
+      if (svcs && req.method === "GET") {
+        const l = getLedger();
+        const pkg = decodeURIComponent(svcs[1]);
+        const rec = l.packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const m = loadManifest(rec.path);
+        const services = [];
+        for (const sv of m.services ?? []) {
+          // 자격 축이 있는 것은 url 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
+          if (!("url" in sv) || sv.url == null) continue;
+          const a = sv.auth;
+          services.push({
+            name: sv.name,
+            url: sv.url,
+            kind: a?.kind ?? "none",
+            // 선언 그대로 — 화면이 안내와 입력 칸을 그린다. 값은 실리지 않는다
+            help: a?.help ?? null,
+            client: a?.client ?? null,
+            verifiable: a?.verify?.url != null,
+            tools: sv.tools ?? [],
+            hasCred: (await authority.credential(credKey(pkg, sv.name))) != null,
+            oauth: a?.kind === "oauth" ? serviceOAuthStatus(pkg, sv.name) : null,
+          });
+        }
+        return void json(res, 200, { services, canDisconnect: typeof authority.deleteCredential === "function" });
+      }
+
+      const sop = p.match(/^\/pkg\/([^/]+)\/service\/([^/]+)\/(connect|verify|disconnect|oauth)$/);
+      const sst = p.match(/^\/pkg\/([^/]+)\/service\/([^/]+)\/oauth\/status$/);
+      if (sop || sst) {
+        const mm = (sop ?? sst)!;
+        const pkg = decodeURIComponent(mm[1]);
+        const name = decodeURIComponent(mm[2]);
+        const rec = getLedger().packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        const man = loadManifest(rec.path);
+        const sv = (man.services ?? []).find((x) => x.name === name);
+        if (!sv || !("url" in sv) || sv.url == null) return void json(res, 404, { error: `자격 축이 없는 서비스: ${name}` });
+        const auth = sv.auth;
+
+        if (sst && req.method === "GET") return void json(res, 200, serviceOAuthStatus(pkg, name));
+        if (!sop || req.method !== "POST") return void json(res, 405, { error: "POST 만" });
+
+        if (sop[3] === "connect") {
+          if (auth?.kind !== "token") return void json(res, 400, { error: `token 자격형이 아닙니다(${auth?.kind ?? "none"}) — oauth 는 인가 흐름으로` });
+          const b = await readBody(req);
+          const token = String(b.token ?? "").trim();
+          if (!token) return void json(res, 400, { error: "빈 자격" });
+          await authority.setCredential(credKey(pkg, name), token); // 저장만 — 유효 판정은 verify 소관
+          return void json(res, 200, { ok: true });
+        }
+        if (sop[3] === "verify") {
+          return void json(res, 200, await verifyService(authority, pkg, name, auth));
+        }
+        if (sop[3] === "disconnect") {
+          if (typeof authority.deleteCredential !== "function") {
+            return void json(res, 501, { error: "이 기판의 권위는 자격 폐기를 구현하지 않습니다" });
+          }
+          await authority.deleteCredential(credKey(pkg, name));
+          return void json(res, 200, { ok: true });
+        }
+        // oauth — 흐름을 열고 즉시 돌아온다. 브라우저는 데몬이 연다(사람과 같은 기기)
+        if (auth?.kind !== "oauth") return void json(res, 400, { error: `oauth 자격형이 아닙니다(${auth?.kind ?? "none"}) — token 은 connect 로` });
+        const b = await readBody(req);
+        try {
+          const run = startServiceOAuth(authority, pkg, name, sv.url, auth, { clientId: b.client_id ? String(b.client_id) : undefined });
+          return void json(res, 200, { ...run, running: !run.done });
+        } catch (e) {
+          return void json(res, 409, { error: e instanceof Error ? e.message : String(e) });
+        }
       }
 
       // 대화형 로그인 발화. 인증 자체는 터미널(TTY)이 소유하고 기판은 그 창을 열어 줄 뿐이다

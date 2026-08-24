@@ -12,6 +12,8 @@ export interface AgentDecl {
 export interface ServiceDecl {
   name: string;
   url?: string;
+  /** REST 베이스 — 자격이 이 접두 안에서만 나가는 형 */
+  api?: string;
   dir?: string;
   source?: string;
   dockerfile?: string;

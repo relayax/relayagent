@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddEdgeDialog, { type EdgePrefill } from "@/components/AddEdgeDialog";
 import HarnessDialog from "@/components/HarnessDialog";
 import ChannelDialog from "@/components/ChannelDialog";
+import ServiceDialog from "@/components/ServiceDialog";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
 
 const W = 1180;
@@ -145,6 +146,7 @@ export default function Graph({
   const [dialog, setDialog] = useState<EdgePrefill | null>(null);
   const [harnessDlg, setHarnessDlg] = useState<Pkg | null>(null);
   const [channelDlg, setChannelDlg] = useState<Pkg | null>(null);
+  const [serviceDlg, setServiceDlg] = useState<Pkg | null>(null);
   const persistT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panRef = useRef(pan);
   const scaleRef = useRef(scale);
@@ -490,6 +492,28 @@ export default function Graph({
                     )}
                   </span>
                 ) : null}
+                {(() => {
+                  // 자격 축이 있는 것은 url 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
+                  const svcs = (m?.services ?? []).filter(
+                    (sv) => "url" in sv && sv.url != null && sv.auth != null && sv.auth.kind !== "none",
+                  );
+                  if (!svcs.length) return null;
+                  return (
+                    <span
+                      className="gx-pill dep"
+                      title={`서비스 ${svcs.map((sv) => sv.name).join(" · ")} · 클릭해 연결`}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setServiceDlg(p);
+                      }}
+                    >
+                      {svcs.map((sv) => (
+                        <i key={sv.name}>{sv.name.slice(0, 1).toUpperCase()}</i>
+                      ))}
+                    </span>
+                  );
+                })()}
                 <div className="gx-head">
                   <span className="gx-avatar">
                     {m?.icon ? (
@@ -580,6 +604,9 @@ export default function Graph({
       ) : null}
       {channelDlg ? (
         <ChannelDialog pkg={channelDlg} onClose={() => setChannelDlg(null)} onChanged={onChanged} />
+      ) : null}
+      {serviceDlg ? (
+        <ServiceDialog pkg={serviceDlg} onClose={() => setServiceDlg(null)} onChanged={onChanged} />
       ) : null}
     </div>
   );

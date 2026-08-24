@@ -22,26 +22,30 @@ fails loudly when called. Everything else a verb exports is optional.
 | `pkg` | The verb's own package (install name). |
 | `caller` | `{principal, agent?}` — who this run is for. The substrate fills it; a verb never mints it. |
 | `dir(name)` | Absolute path of a declared `dir` service, with the install-time binding applied. Undeclared names throw. |
-| `service(name)` | `{url, call(tool, args)}` for a declared `url` **or** `source` service. `call` speaks MCP over HTTP. See below. |
-| `credential()` | The connector-contract credential (top-level `auth`), pulled at request time. `null` when undeclared or unconnected. Never cached in env. |
+| `service(name)` | `{url, call(tool, args), fetch(path, init?)}` for a declared service. `call` speaks MCP over HTTP (`url`, `source`); `fetch` speaks REST inside the declared base (`api`). See below. |
 | `dispatch(provider, mission, payload)` | a2a delegation. Requires an approved grant; returns the provider session's reply. |
 | `host` | ring-0 only. The substrate bridge, capped by `host_methods`. `undefined` everywhere else. |
 
 ## Reaching a service
 
-`relay.yaml` declares services in three forms, and `ctx.service(name)` is the single accessor for
-the two that are bodies speaking MCP:
+`relay.yaml` declares services in four forms, and `ctx.service(name)` is the single accessor for the
+three that are doors. The handle carries both doors — `call` for MCP, `fetch` for REST — and calling
+the one a form does not have throws with a message naming the other:
 
 | Declared form | `ctx.service(name)` |
 |---|---|
-| `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). |
-| `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. |
+| `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). `fetch` throws. |
+| `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block (same per-call resolution, same rotation). The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
+| `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. `fetch` throws. |
 | `dir` | Throws, with a message pointing at `ctx.dir(name)`. A folder is not a door. |
 
-One accessor for both body forms is deliberate. Credential and identity are attached where the call
-is made; a second accessor for `source` bodies would be a second place to forget them, and the body
-most likely to need identity — a database container narrowing rows per user — would be exactly the
-one called without it.
+One accessor for every form is deliberate. Credential and identity are attached where the call is
+made; a second accessor for `source` bodies would be a second place to forget them, and the body most
+likely to need identity — a database container narrowing rows per user — would be exactly the one
+called without it. The same reason keeps `api` here rather than in a credential accessor of its own:
+a package that reaches outward reaches through one door, and the credential contract lives on the
+service it belongs to (`services[].auth`, vault coordinate `<pkg>/<service>`) — there is no second
+home for it to drift into.
 
 **Address resolution is injectable.** `ServiceIO.body(pkg, service, port)` returns
 `{url, authorization?}` or `null`, and the substrate's default answers loopback. An embedder whose
@@ -79,6 +83,10 @@ Two paths reach a remote body, and they answer this question the same way:
   seeing the person it is supposed to narrow rows for. It is the same shape as the grant itself,
   which is recorded `consumer → provider`. Note that `x-relay-agent` is then a name from the
   *consumer's* vocabulary; a provider body must read it as identity, never as one of its own agents.
+
+`api` services sit outside this axis on purpose. The upstream is a foreign REST API that does not
+speak relay's vocabulary, so `x-relay-principal` would leak our principals to a third party and buy
+no one anything. An `api` request carries the credential and nothing else.
 
 a2a delegation (`host.dispatch`) does not carry identity this way: it spawns a full session on the
 provider side that stands on the substrate's own principal, and the originating package appears only

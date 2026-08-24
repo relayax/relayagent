@@ -97,6 +97,19 @@ services:
           authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
           token_endpoint: "https://oauth2.googleapis.com/token"
           authorize_params: { access_type: "offline", prompt: "consent" }
+  # api = REST 베이스. 기판이 몸을 띄우지 않는 것은 url 형과 같고, 문의 말이 MCP 가 아닌 것만
+  # 다르다. 동사는 ctx.service("shipping").fetch("/v1/labels", {…}) 로 부르고 자격은 손에 쥐지
+  # 않는다 — 기판이 호출마다 붙이고, 요청은 이 base 접두 밖으로 나가지 못한다.
+  # 몸 없는 커넥터 패키지는 이 선언 하나가 계약의 전부다
+  - name: shipping
+    api: https://api.shipping.example.com
+    auth:
+      kind: token
+      help:
+        url: "https://api.shipping.example.com/settings/tokens"
+        note: "본인 계정으로 API 토큰을 발급해 붙여넣으세요."
+      verify:
+        url: "https://api.shipping.example.com/v1/me"
 
 triggers:
   - id: daily-digest
@@ -125,5 +138,6 @@ edges:
 
 org:
   per_user:
-    accounts: [erp, drive, "@relay/notion"]
+    # 어휘 하나 — url·api·dir 서비스 이름, 또는 edge provider 좌표
+    accounts: [erp, drive, shipping, "@relay/notion"]
     replicas: [browser]

@@ -60,11 +60,14 @@ function printDisclosure(d: import("./supply/manifest.ts").Disclosure, name: str
   for (const f of d.folders) lines.push(`    폴더    ${f.path} 를 만들고 읽고 씁니다 (${f.name})`);
   lines.push(`    폴더    workspace ~/Relay/${name} 이 세션의 땅이 됩니다 (설치 시 변경 가능)`);
   for (const l of d.llm) lines.push(`    LLM     ${l.provider} 계정으로 돕니다 (${l.auth})`);
-  for (const n of d.network) lines.push(`    외부    ${n.url} 로 나갑니다 (자격: ${n.auth})`);
+  // 연결 방법은 자격 형태가 정한다 — token 은 relay connect, oauth 는 relay oauth.
+  // 서비스 이름이 곧 vault 좌표라 옛 커넥터 줄이 하던 안내가 모든 외부 접점으로 넓어졌다
+  const connectHint = (n: { name: string; auth: string }): string =>
+    n.auth === "token" ? ` — relay connect ${name} ${n.name}` : n.auth === "oauth" ? ` — relay oauth ${name} ${n.name}` : "";
+  for (const n of d.network) lines.push(`    외부    ${n.url} 로 나갑니다 (자격: ${n.auth}${connectHint(n)})`);
   for (const w of d.wakeups) lines.push(`    자동    ${w.when} 에 스스로 깨어납니다 (${w.id})`);
   for (const s of d.spawns) lines.push(`    실행    ${s} 를 띄웁니다`);
   for (const b of d.borrows) lines.push(`    차용    ${b} — 활성화는 별도 결재(grant)`);
-  if (d.connector) lines.push(`    자격    커넥터 계약 (${d.connector}) — relay connect ${name} ${name.split("/").pop()} 로 연결`);
   if (d.hostMethods.length) lines.push(`    기판    host 브리지 선언: ${d.hostMethods.join(", ")}`);
   if (d.host.length) lines.push(`    호스트  ${d.host.join(", ")} 가 있어야 합니다`);
   if (d.denied.length) lines.push(`    담장    ${d.denied.join(", ")} 에는 닿지 않겠다고 선언했습니다`);
@@ -231,15 +234,17 @@ async function main(): Promise<void> {
 
     case "oauth": {
       const [pkg, service] = args;
-      if (!pkg || !service) throw new Error("사용법: relay oauth <패키지> <서비스> — auth.kind: oauth 인 url 서비스의 인가 흐름");
+      if (!pkg || !service) throw new Error("사용법: relay oauth <패키지> <서비스> — auth.kind: oauth 인 url·api 서비스의 인가 흐름");
       const rec = ledger.packages[pkg];
       if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
       const m = loadManifest(rec.path);
       const svc = (m.services ?? []).find((s) => s.name === service);
-      if (!svc || !("url" in svc) || svc.url == null) throw new Error(`url 서비스 아님: ${service}`);
-      if (svc.auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${svc.auth?.kind ?? "none"}) — token 형은 relay connect`);
+      // 디스커버리 기점은 선언 주소의 origin 하나다(oauth.ts discoverMeta) — MCP 문이든 REST 베이스든 같은 흐름
+      const outward = svc && ("url" in svc ? { base: svc.url, auth: svc.auth } : "api" in svc ? { base: svc.api, auth: svc.auth } : null);
+      if (!outward) throw new Error(`밖으로 나가는 서비스 아님(url·api 형만): ${service}`);
+      if (outward.auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${outward.auth?.kind ?? "none"}) — token 형은 relay connect`);
       const { runOAuthFlow } = await import("./runtime/oauth.ts");
-      const bundle = await runOAuthFlow(svc.url, svc.auth, {
+      const bundle = await runOAuthFlow(outward.base, outward.auth, {
         clientId: async () => {
           const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
           const v = await new Promise<string>((resolve) => rl.question("등록된 앱의 client_id: ", resolve));

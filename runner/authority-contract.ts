@@ -39,6 +39,9 @@ export interface Authority {
   /** 어떤 자격으로 — 스코프 좌표의 자격 값(요청 시점 발급). 없으면 null */
   credential(scope: string): Promise<string | null>;
   setCredential(scope: string, value: string): Promise<void>;
+  /** 자격 폐기 — 선택 구현(additive, 2026-08-24). 미구현 기판에서는 연결 해제 문이 501 로
+   *  답한다: "지운 척"보다 "이 기판은 못 지운다"가 정직하다. 로컬은 vault 항목 삭제다 */
+  deleteCredential?(scope: string): Promise<void>;
   /** 인가 장부 — grant 는 선언을 초과할 수 없다(쓰기는 단일 결재 문 소관) */
   grants(): Promise<AuthorityGrant[]>;
   /** consumer 가 provider 의 tool 을 소비할 인가가 있는가 */

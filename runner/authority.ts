@@ -13,7 +13,7 @@
 // 이 이음새를 지난다. 동기 계약에 박혀 남은 직결 소비는 `§8-2 잔여` 주석으로 표기되어 있다
 // (build.ts·pack.ts·registry.ts·installer.ts llmEnv·run.ts RunnerIO.credential).
 import { PRINCIPAL, pkgToken, tokenToPkg, logLine, type Grant, type Ledger } from "./supply/ledger.ts";
-import { vaultGet, vaultSet } from "./vault.ts";
+import { vaultGet, vaultSet, vaultDelete } from "./vault.ts";
 import { addGrant, removeGrant as ledgerRemoveGrant } from "./supply/install.ts";
 
 export type { Authority, AuthorityGrant } from "./authority-contract.ts";
@@ -27,6 +27,7 @@ export function localAuthority(getLedger: () => Ledger): Authority {
     packageForToken: async (token) => tokenToPkg(getLedger(), token),
     credential: async (scope) => vaultGet(scope),
     setCredential: async (scope, value) => vaultSet(scope, value),
+    deleteCredential: async (scope) => vaultDelete(scope),
     grants: async () => getLedger().grants,
     grantForTool: async (consumer, provider, tool) =>
       getLedger().grants.find((g) => g.consumer === consumer && g.provider === provider && (g.tools ?? []).includes(tool)) ?? null,

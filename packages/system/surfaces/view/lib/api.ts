@@ -150,5 +150,57 @@ export function restartChannel(pkg: string, channel: string): Promise<{ ok: bool
   return post(`/pkg/${encodeURIComponent(pkg)}/channel/${encodeURIComponent(channel)}/restart`, {});
 }
 
+// ── 서비스 자격 — 채널 3동사의 자매. services[].url 의 auth 축(token · oauth) ────────
+
+export interface OAuthRunView {
+  running: boolean;
+  done: boolean;
+  ok: boolean;
+  error: string | null;
+  started: number;
+}
+
+export interface ServiceStatusView {
+  name: string;
+  url: string;
+  kind: "none" | "token" | "oauth";
+  /** 선언 그대로의 안내 — 발급처 링크와 한 줄 설명. 화면이 이걸로 안내를 그린다 */
+  help: { url?: string; note?: string } | null;
+  /** oauth 의 client 축: "registered" 면 사람이 client_id 를 공급해야 한다(DCR 불가) */
+  client: string | null;
+  /** auth.verify 선언 여부 — 없으면 기판이 유효를 판정할 수 없다(저장만) */
+  verifiable: boolean;
+  tools: string[];
+  hasCred: boolean;
+  oauth: OAuthRunView | null;
+}
+
+export function serviceStatus(pkg: string): Promise<{ services: ServiceStatusView[]; canDisconnect: boolean }> {
+  return getJson(`/pkg/${encodeURIComponent(pkg)}/services`);
+}
+
+/** token 형 자격 저장만 — 유효 판정은 verify 소관 */
+export function connectService(pkg: string, service: string, token: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/connect`, { token });
+}
+
+/** auth.verify 선언대로 실왕복 한 번 */
+export function verifyService(pkg: string, service: string): Promise<{ ok: boolean; note: string }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/verify`, {});
+}
+
+export function disconnectService(pkg: string, service: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/disconnect`, {});
+}
+
+/** 인가 흐름을 연다 — 브라우저는 데몬이 띄운다. 즉시 돌아오고 진행은 폴링으로 본다 */
+export function startServiceOAuth(pkg: string, service: string, clientId?: string): Promise<OAuthRunView> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth`, clientId ? { client_id: clientId } : {});
+}
+
+export function serviceOAuthStatus(pkg: string, service: string): Promise<OAuthRunView> {
+  return getJson(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth/status`);
+}
+
 // 마켓 화면은 OSS 콘솔에서 걷어냈다 (스토어 UI 는 데스크탑 앱의 몫).
 // 설치 2단 관문의 데몬 API(/install/prepare · /install/activate)는 프로토콜로 살아 있다.

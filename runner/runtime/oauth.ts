@@ -209,3 +209,85 @@ export async function serviceAuthHeader(authority: Authority, pkg: string, servi
   if (auth?.kind === "oauth") return (await oauthHeader(authority, pkg, service)) ?? undefined;
   return undefined;
 }
+
+// ── 화면에서 여는 흐름 ───────────────────────────────────────────────────────
+// CLI(relay oauth)는 흐름이 끝날 때까지 프로세스가 서서 기다리면 되지만, 화면은 그럴 수
+// 없다: 브라우저 왕복이 사람의 속도로 흐른다. 그래서 시작과 조회를 가른다 —
+// 하네스 headless 로그인(login.ts)이 같은 모양을 pty 로 푼 것과 같은 관용구다.
+// 브라우저는 데몬이 연다(runOAuthFlow 의 기본 open) — 데몬과 사람이 같은 기기에 있다는
+// 전제는 기판 전체의 전제(loopback 문)와 같다.
+
+interface OAuthRun {
+  started: number;
+  done: boolean;
+  ok: boolean;
+  error: string | null;
+}
+
+const runs = new Map<string, OAuthRun>();
+
+/** 흐름 시작 — 즉시 돌아온다. 진행은 serviceOAuthStatus 로 본다.
+ *  같은 (pkg, service)의 흐름이 이미 돌고 있으면 거절한다(브라우저 창 둘이 뜨는 혼란 방지) */
+export function startServiceOAuth(
+  authority: Authority,
+  pkg: string,
+  service: string,
+  serviceUrl: string,
+  auth: AuthDecl,
+  opts: { clientId?: string } = {},
+): OAuthRun {
+  const key = credKey(pkg, service);
+  const cur = runs.get(key);
+  if (cur && !cur.done) throw new Error("이미 진행 중인 인가 흐름이 있습니다 — 브라우저 창을 확인하세요");
+  const run: OAuthRun = { started: Date.now(), done: false, ok: false, error: null };
+  runs.set(key, run);
+  void runOAuthFlow(serviceUrl, auth, {
+    // client: registered — 화면이 미리 받아 실어 준다. 없으면 흐름이 사유와 함께 실패한다
+    clientId: opts.clientId ? async () => opts.clientId! : undefined,
+  })
+    .then(async (bundle) => {
+      await authority.setCredential(key, JSON.stringify(bundle));
+      run.ok = true;
+    })
+    .catch((e) => {
+      run.error = e instanceof Error ? e.message : String(e);
+    })
+    .finally(() => {
+      run.done = true;
+      void authority.audit("oauth", { pkg, service, ok: run.ok, ...(run.error ? { error: run.error } : {}) });
+    });
+  return run;
+}
+
+export function serviceOAuthStatus(pkg: string, service: string): OAuthRun & { running: boolean } {
+  const r = runs.get(credKey(pkg, service)) ?? { started: 0, done: true, ok: false, error: null };
+  return { ...r, running: !r.done };
+}
+
+// ── auth.verify 집행 ─────────────────────────────────────────────────────────
+// 문법에 있던 선언(auth.verify.{url,headers})의 집행자다. 없던 동안 "저장됨 ≠ 유효"를
+// 서비스 축에서는 아무도 판정하지 않았다 — 채널은 verifyChannel 이 이미 하던 일이다.
+// 판정은 실왕복 하나: 조립된 자격으로 선언된 url 을 두드려 2xx 면 유효다.
+
+export async function verifyService(
+  authority: Authority,
+  pkg: string,
+  service: string,
+  auth: AuthDecl | undefined,
+): Promise<{ ok: boolean; note: string }> {
+  if (!auth || auth.kind === "none") return { ok: true, note: "자격이 필요 없는 서비스입니다" };
+  if (!auth.verify?.url) return { ok: false, note: "auth.verify 미선언 — 이 서비스는 기판이 검증할 수 없습니다(저장만 됩니다)" };
+  const header = await serviceAuthHeader(authority, pkg, service, auth);
+  if (!header) return { ok: false, note: "자격이 없습니다 — 먼저 연결하세요" };
+  try {
+    const res = await fetch(auth.verify.url, {
+      headers: { ...(auth.verify.headers ?? {}), authorization: header },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return { ok: true, note: `${res.status} ${res.statusText}` };
+    // 본문 앞머리만 싣는다 — 자격 값이 에코될 수 있는 자리라 길게 나르지 않는다
+    return { ok: false, note: `${res.status} ${res.statusText}${res.status === 401 || res.status === 403 ? " — 자격이 거부되었습니다" : ""}` };
+  } catch (e) {
+    return { ok: false, note: `왕복 실패: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
