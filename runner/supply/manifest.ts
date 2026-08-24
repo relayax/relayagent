@@ -71,8 +71,6 @@ export interface Manifest {
   edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean }[];
   /** ring-0 host 브리지 게이트 선언 — host.* 캡. 미선언 = 전체(ring-0 결재가 경계) */
   host_methods?: string[];
-  /** 파일 버킷 파사드 — 1인 기판은 판정만, 집행은 org 기판 소유 */
-  storage?: { buckets?: { name: string; policy?: string }[] };
   org?: unknown;
 }
 
@@ -124,9 +122,8 @@ const SIZE = /^\d+(Mi|Gi)$/;
 const TOP_KEYS = new Set([
   "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog",
   "requires", "surfaces", "harness", "hooks", "auth", "agents", "scripts", "services",
-  "triggers", "missions", "edges", "host_methods", "storage", "org",
+  "triggers", "missions", "edges", "host_methods", "org",
 ]);
-const STORAGE_POLICIES = new Set(["org-member", "owner-only", "role-based"]);
 
 /** 필드별 허용 범위 — 분·시·일·월·요일. 요일 7 은 일요일의 별칭(0 과 같다) */
 const CRON_BOUNDS: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
@@ -315,7 +312,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
   const h = m.harness;
   const variants = h?.variants ?? [];
   const vNames = new Set<string>();
-  // 미지 키는 거부한다 — 최상위·surfaces·storage 와 같은 규율(194·205·465행). 조용히 받으면
+  // 미지 키는 거부한다 — 최상위·surfaces 와 같은 규율(194·205·465행). 조용히 받으면
   // 은퇴한 어휘가 계속 저작되고 "판정 통과" 가 그것을 승인해 준다. 실사고: dockerfile 은
   // 스키마에만 있고 판정·소비·봉투가 전부 없었는데, 워크드 예제가 그걸 가르치고 있었다.
   const VARIANT_KEYS = new Set(["name", "source", "entry", "binary", "icon", "llm"]);
@@ -518,18 +515,6 @@ export function judge(m: Manifest, pkgPath?: string): void {
     }
   }
 
-  if (m.storage != null) {
-    for (const k of Object.keys(m.storage)) if (k !== "buckets") issues.push(`미지 storage 키: ${k}`);
-    const buckets = m.storage.buckets;
-    if (!Array.isArray(buckets) || buckets.length === 0) issues.push("storage.buckets: 비어 있지 않은 목록");
-    const bNames = new Set<string>();
-    for (const b of Array.isArray(buckets) ? buckets : []) {
-      if (!SLUG.test(b?.name ?? "")) issues.push(`storage.buckets 이름 형식 위반: ${b?.name}`);
-      else if (bNames.has(b.name)) issues.push(`storage.buckets 이름 중복: ${b.name}`);
-      else bNames.add(b.name);
-      if (b?.policy != null && !STORAGE_POLICIES.has(b.policy)) issues.push(`storage.buckets[${b?.name}].policy 닫힌집합 위반(org-member|owner-only|role-based): ${b?.policy}`);
-    }
-  }
 
   if (issues.length) throw new ManifestError(issues);
 }

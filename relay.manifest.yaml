@@ -669,28 +669,6 @@ properties:
     items:
       type: string
       pattern: '^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$'
-  storage:
-    description: |
-      파일 버킷 파사드 선언. services[].disk(몸 디스크)와 전혀 다른 축이다.
-      1인 기판은 v1 에서 판정만 하고 집행하지 않는다(추후 로컬 구현 여지). org 기판은
-      storage-api 로 버킷을 보장한다. 정책은 닫힌 프리셋 — 자유 문자열이 되는 순간
-      기판마다 다른 뜻이 된다.
-    type: object
-    additionalProperties: false
-    required: [buckets]
-    properties:
-      buckets:
-        type: array
-        minItems: 1
-        items:
-          type: object
-          additionalProperties: false
-          required: [name]
-          properties:
-            name:
-              $ref: '#/$defs/slug'
-            policy:
-              enum: [org-member, owner-only, role-based]
   org:
     description: org 기판이 호스팅할 때만 읽는 확장. 1인 기판과 등록 노드에서는 무시된다
     type: object

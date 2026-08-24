@@ -38,7 +38,6 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | Scripts | 動詞。`scripts/<名前>.ts` が `async (input, ctx) => JSON` をデフォルトエクスポート。 |
 | Services | 形は 3 つだけ。`source`(自分の身体、コンテナまたはプロセス)、`url`(リモート MCP エンドポイント、資格情報はここだけに付く)、`dir`(ファイル資源)。 |
 | Connector | 身体のないコネクタ——動詞が外部 REST API を直接呼ぶパッケージ。トップレベル `auth` は資格情報の形だけを宣言し、値は vault に置かれ、動詞が呼び出し時に `ctx.credential()` で取り出す。`url` サービスとは同時宣言不可。 |
-| Storage | `storage.buckets`——ファイルバケットのファサード。個人基板は判定のみ、執行は組織基板の責務。サービスの `disk` とは別の軸。 |
 | Triggers | cron またはイベント。プロンプトでエージェントを起こすか、スクリプトを headless で実行。`delivery: <チャネル>:<会話キー>` はその会話の slot でターンを回し、返信をチャネルアダプタから送出する。 |
 | Missions | パッケージが他のパッケージに提供する質疑応答能力。 |
 | Edges | 他パッケージの tools・mission・components への依存宣言。宣言は申請であり、有効化は承認——components はインストールが edge を解決した時点で承認が記録され、実行点は基盤が消費側の画面に差し込む import map である。 |
