@@ -1,8 +1,8 @@
 "use client";
 
 /* 서비스 연결 다이얼로그 — 채널(ChannelDialog)·하네스(HarnessDialog)의 세 번째 자매.
-   다루는 축은 services[].url 의 auth 다: 패키지의 동사가 남의 몸(Notion·ERP…)을 부를 때
-   기판이 붙이는 자격.
+   다루는 축은 밖으로 나가는 두 형(services[].url = MCP 문, services[].api = REST 베이스)의
+   auth 다: 패키지의 동사가 남의 몸(Notion·ERP…)을 부를 때 기판이 붙이는 자격.
 
    앞의 둘과 결정적으로 다른 점: 이 자격은 **자식 프로세스에 안 나간다**. 동사가
    ctx.service(name).call() 을 부르면 기판이 헤더를 조립한다 — 그래서 화면도 "값을 넣는 곳"이
@@ -174,7 +174,7 @@ export default function ServiceDialog({
         <div className="gx-mbody">
           {err ? <div className="gx-err">{err}</div> : null}
           {services.length === 0 ? (
-            <div className="gx-hint">이 패키지에는 자격이 필요한 서비스(services[].url)가 없습니다.</div>
+            <div className="gx-hint">이 패키지에는 자격이 필요한 서비스(services[].url · services[].api)가 없습니다.</div>
           ) : (
             <div className={`lv${busy ? " busy" : ""}`}>
               {services.map((s) => {
@@ -187,7 +187,7 @@ export default function ServiceDialog({
                       <span className="lv-tx">
                         <span className="lv-t">
                           {s.name}
-                          <span style={{ color: "var(--rc-faint)", font: "11px var(--rc-ui)" }}> · {s.kind}</span>
+                          <span style={{ color: "var(--rc-faint)", font: "11px var(--rc-ui)" }}> · {s.form === "api" ? "REST" : "MCP"} · {s.kind}</span>
                         </span>
                         <span className="lv-s"><span style={{ color: st.color }}>{st.dot}</span> {st.text}</span>
                       </span>

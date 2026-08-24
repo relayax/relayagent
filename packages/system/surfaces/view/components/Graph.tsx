@@ -10,7 +10,7 @@ import AddEdgeDialog, { type EdgePrefill } from "@/components/AddEdgeDialog";
 import HarnessDialog from "@/components/HarnessDialog";
 import ChannelDialog from "@/components/ChannelDialog";
 import ServiceDialog from "@/components/ServiceDialog";
-import type { EdgeView, Pkg, Registry } from "@/lib/types";
+import { isOutward, type EdgeView, type Pkg, type Registry } from "@/lib/types";
 
 const W = 1180;
 const CARD_W = 200;
@@ -493,9 +493,9 @@ export default function Graph({
                   </span>
                 ) : null}
                 {(() => {
-                  // 자격 축이 있는 것은 url 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
+                  // 자격 축이 있는 것은 밖으로 나가는 두 형(url·api)뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
                   const svcs = (m?.services ?? []).filter(
-                    (sv) => "url" in sv && sv.url != null && sv.auth != null && sv.auth.kind !== "none",
+                    (sv) => isOutward(sv) && sv.auth != null && sv.auth.kind !== "none",
                   );
                   if (!svcs.length) return null;
                   return (
