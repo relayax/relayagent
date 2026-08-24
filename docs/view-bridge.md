@@ -49,9 +49,21 @@
 5. 대화 스레드 슬롯 문법은 `"main" | "agent-<name>[:<param>][~<id8>]"` 이고, 문법 정본은
    `lib/relayjs/src/chat/routematch.ts`(스레드 패밀리·sibling·`paramTargets` — 서버
    parseAgentSlot 의 쌍둥이)다. **조립 지점은 relayjs 바인딩 층 하나다**(`slotFor` —
-   [현행-relayos] agent.tsx:29-33; 승격 후 OSS relayjs 가 같은 함수를 소유한다). 뷰 앱
-   코드와 크롬은 슬롯 문자열을 조립하지 않는다 — `openChat` 의 `conversation` 에 실어
-   보낼 값은 바인딩 층이 준 것(`useAgentBinding().conversation` 등)뿐이다.
+   [현행 v1] lib/relayjs/src/bridge.tsx). 뷰 앱 코드와 크롬은 슬롯 문자열을 **손으로**
+   조립하지 않는다 — `openChat` 의 `conversation` 에 실어 보낼 값은 바인딩 층이 준 것
+   (`useAgentBinding().conversation` 등)뿐이다.
+5-a. **`slotFor` 의 npm 표면 — 서브패스, 루트 아님.** 페이지 선언(§5) 대신 프로바이더 prop
+   으로 대상을 못박는 크롬(고정 바인딩)은 `{agent, param}` 을 슬롯 문자열로 바꿔야 하고,
+   그 변환의 합법적 통로는 `slotFor` 하나다. 그래서 `slotFor`·`AgentBinding` 은
+   `@relay/relayjs/bridge` 서브패스로 공개한다 — 루트(`@relay/relayjs`)에는 두지 않는다.
+   *왜 이 모양인가: 크롬은 §1-1 이 세는 세 역할 중 하나이고 그 자리에는 `mountTabs` 를 직접
+   부르는 **임의 임베더**도 앉는다. 표면이 닫혀 있으면 그런 임베더는 패키지 내부 경로를 직접
+   수입하거나(핀이 깨지면 같이 깨진다) 문자열을 손으로 붙이게 되는데, 후자가 바로 이 조항이
+   금지하는 것이다 — 닫아 두는 쪽이 §2-5 를 어기게 만든다. 반대로 루트에 두면 뷰 앱 코드의
+   자동완성에 뜬다: 앱의 슬롯 원천은 `useAgentBinding()` 뿐이어야 하므로(위) 루트는 비운다.
+   서브패스는 "나는 크롬이다"라는 명시적 선언이고, `./client`(headless·react 무의존)와 같은
+   결의 관객 분리다. `slotFor` 자체는 `{agent, param} → string` 순수 함수라 org 의미
+   (principal·멤버·라이선스)가 없다 — §1-3 익명 제3자 임베더 테스트를 통과한다.*
 6. 슬롯은 **씨앗 좌표**다. 첫 발화 때 `session.create` 가 기판 발급 불투명 id 로 민팅하고
    (client-protocol §5.3-22), 그 뒤 대화 정체성의 정본은 세션 메타(`agent`·`param`,
    §5.3-21)다. 브리지는 민팅 전 좌표만 나른다 — 민팅 후 재바인딩은 위젯 내부
@@ -217,6 +229,18 @@
     이 계약의 개정 없이 바뀔 수 있다. 브리지 어휘는 전부 `relay:`(콜론) 접두다.
     `relay-turn-phase`(스폰 내레이션 — 전송→첫 이벤트 구간의 스테이지)와 §6-a 의
     `relay:turn`(수명주기)은 입자가 다른 별개 축이다 — 전자는 내부 잔류, 후자가 계약이다.
+21-a. **계약 밖 잔류 ② — 로그아웃 동기화(`src/auth-sync.ts`).** `relay-auth`
+    BroadcastChannel + `relay-auth-logout` storage 키로 "어느 뷰가 로그아웃했다"를 같은
+    브라우징 컨텍스트에 중계한다. 소비자는 위젯 번들 내부(Chat.tsx AccountMenu·useAuthWatch)
+    뿐이고, **npm 표면(exports)에는 열지 않는다.** *왜 §2-5-a 와 결론이 갈리나: 인증은 이
+    계약에도 client-protocol 에도 없는 기판 소유 축이고(client-protocol §2-5), 이 모듈의
+    동작은 신원을 전제한다 — 발신자(로그아웃 메뉴)는 principal 을 주입한 기판에서만 렌더되고,
+    `installAuthWatch()` 는 실패 시 `/login` 으로 **경로를 못박아** 이동한다. 무신원 loopback
+    기판(OSS 기본)에는 발신자도 그 라우트도 없어 감시가 잠잔다. 즉 `slotFor` 와 달리 이건
+    org 형태의 자리다: 지금 모양 그대로 공개하면 마운트 문법 하나(`/login`)와 신원 전제
+    하나를 npm 계약에 굳히게 되고, §1-3 익명 제3자 임베더 테스트를 통과하지 못한다. 뒤에
+    임의 임베더가 이 축을 요구하면 리디렉트 대상을 인자로 받는 중립 표면으로 **재설계해서**
+    열 일이지, 지금 함수를 그대로 내보낼 일이 아니다.*
 
 ## 8. 착지 계획 — OSS 승격 순서
 
@@ -227,7 +251,8 @@
        · `setScene()` — `lib/relayjs/src/bridge.tsx` 단일 모듈, AgentScope 는 context 가
        아니라 §5-16 의 `relay:scope` wire 로 구현(`slotFor` 조립 지점 동반 승격).
        `index.js`/`index.d.ts` 루트 수출 — headless 소비자는 `/client` 서브패스가 여전히
-       react 무의존이다.
+       react 무의존이다. `slotFor`·`AgentBinding` 은 루트가 아니라 `./bridge` 서브패스로
+       열렸다(§2-5-a — 관객 분리).
     3. ✅ **OSS 위젯 크롬 정합**: autoFloat 에 `relay:chat-open` 리스너(§4-8 해석 규칙) +
        prefill/send 재시도-until-ack 중계(§4-10) + `relay:scope` 착지(§5-17 preview
        openTab, 닫힘-이월 포함). 위젯 발화의 scene 동승(§6-19, runtime.ts). 위젯 번들

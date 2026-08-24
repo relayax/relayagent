@@ -79,7 +79,15 @@ npm run validate    # every packages/* manifest must print a passing judgment
 npm run typecheck
 ```
 
-CI runs exactly this.
+Touching anything under `lib/relayjs/src/` adds two more — the widget has its own tsconfig and
+its own devDeps, so the root gates do not see it at all:
+
+```sh
+npm run typecheck:widget
+npm run test:widget   # lib/relayjs/test — slot grammar + tab-shell transitions (node:test)
+```
+
+CI runs exactly these four.
 
 ## Two build artifacts the daemon serves — both gitignored, both must be rebuilt
 

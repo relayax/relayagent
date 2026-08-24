@@ -16,7 +16,8 @@
  *
  * 슬롯 문자열("main" | "agent-<name>[:<param>]")의 조립은 이 파일의 slotFor 단일 지점이다
  * (§2-5) — 앱 코드에 노출 금지, openChat 의 conversation 에는 useAgentBinding().conversation
- * 등 바인딩 층이 준 값만 싣는다.
+ * 등 바인딩 층이 준 값만 싣는다. 크롬이 부를 slotFor·AgentBinding 은 npm 루트가 아니라
+ * "@relay/relayjs/bridge" 서브패스로 연다(§2-5) — 루트는 뷰 앱의 표면이다.
  *
  * SSR(Next static export 프리렌더) 안전: window 접근은 전부 dispatch·effect 안에서만.
  */
@@ -34,9 +35,11 @@ export interface AgentBinding {
 }
 
 /** 슬롯 문자열 조립 — 유일한 조립 지점(view-bridge §2-5). 문법 정본은 chat/routematch.ts.
- *  export 는 **크롬 전용**이다(relayos ChatPanel 의 고정 바인딩 등 — 바인딩 층의 단일 구현을
- *  크롬이 소비한다). 앱 코드는 이걸 부르지 않는다 — 앱의 슬롯 원천은 useAgentBinding() 뿐.
- *  npm 루트(index.js)에 재수출하지 않는 이유다. */
+ *  export 는 **크롬 전용**이다: 페이지 선언(AgentScope) 대신 프로바이더 prop 으로 대상을
+ *  못박는 셸(실측: relayos ChatPanel 의 고정 바인딩)이 바인딩 층의 단일 구현을 소비한다.
+ *  앱 코드는 이걸 부르지 않는다 — 앱의 슬롯 원천은 useAgentBinding() 뿐이라 npm **루트**
+ *  (index.js)에는 재수출하지 않고, 크롬은 "@relay/relayjs/bridge" 서브패스로 받는다.
+ *  임의 임베더도 같은 문을 쓴다(§1-1 의 크롬 역할) — 손으로 조립하면 §2-5 위반이다. */
 export function slotFor(binding: AgentBinding | null | undefined): string {
   if (!binding || !binding.agent) return "main";
   return "agent-" + binding.agent + (binding.param ? ":" + binding.param : "");

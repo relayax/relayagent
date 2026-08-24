@@ -38,6 +38,13 @@ jobs:
       - name: Typecheck the chat widget
         run: npm run typecheck:widget
 
+      # 타입 검사는 위젯의 **문법**만 본다. 대화 슬롯 문법(routematch — 서버 parseAgentSlot 의
+      # 쌍둥이)과 탭 셸의 순수 전이(미리보기 자리·새 대화 기준·좌표 제자리 교체)는 타입이
+      # 통과해도 조용히 뒤집히는 축이라 별도 게이트가 필요하다. esbuild(이미 devDep)로 TS 를
+      # 적재해 node:test 로 돌린다 — 새 의존은 없다.
+      - name: Test the chat widget
+        run: npm run test:widget
+
       - name: Validate every package manifest
         run: npm run validate
 

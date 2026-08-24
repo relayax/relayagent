@@ -14,6 +14,7 @@
       "types": "./src/index.d.ts",
       "default": "./src/client.ts"
     },
+    "./bridge": "./src/bridge.tsx",
     "./transport": "./src/chat/transport.ts",
     "./envelope-reducer": "./src/chat/envelope-reducer.ts",
     "./sse": "./src/sse.ts",
@@ -26,7 +27,8 @@
   "scripts": {
     "build:chat": "node chat-build.mjs",
     "build:chat:dev": "node chat-build.mjs --dev",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "tailwind-merge": "^3.0.0"
