@@ -241,3 +241,46 @@ export function createChat(opts: CreateChatOptions): ChatClient;
 
 export type { ClassValue } from "./ui.js";
 export { cn } from "./ui.js";
+
+// ── 뷰-채팅 인페이지 브리지 (정본: docs/view-bridge.md — 실구현 src/bridge.tsx) ──
+// 같은 문서의 도킹 위젯과 말하는 뷰 발신 표면. 전달은 wire(CustomEvent)다 — 뷰 번들과
+// 위젯 번들은 별개 산출물이라 모듈 공유가 없다(§1-4 스큐 전제, additive-only).
+
+import type { ReactNode } from "react";
+
+export interface OpenChatOptions {
+  /** 컴포저 프리필 — 사용자가 검토 후 전송(크롬이 재시도-until-ack 로 위젯에 중계, §4-10) */
+  prefill?: string;
+  /** 자동 전송 — 컴포저 submit 과 같은 큐 의미론(턴 실행 중=큐잉, §4-13) */
+  send?: string;
+  /** 대상 대화 슬롯 — useAgentBinding().conversation 등 바인딩 층이 준 값만(§2-5 조립 금지) */
+  conversation?: string;
+  /** 대상 인스턴스 id — 생략 시 크롬 자신의 좌표로 해석(§4-8) */
+  instance?: string;
+}
+
+/** 채팅 독 제어(§4-7) — 패널을 열고 위젯에 중계한다. 대상 없는 prefill/send 는 페이지 선언
+ *  슬롯(AgentScope)으로 가고, 선언이 없으면 대상 전환 없이 활성 탭에 꽂힌다(§4-8) */
+export function openChat(opts?: OpenChatOptions): void;
+
+/** 화면 맥락 스냅샷(§6, latest-wins) — 위젯의 이후 발화가 turn.send 의 scene 서문(§5.1-12)
+ *  으로 싣는다. null = 해제. 화면 상태가 바뀔 때마다 밀어 둔다(push 모델 — 발화가 뷰를
+ *  기다리지 않는다) */
+export function setScene(scene: string | null): void;
+
+export interface AgentScopeProps {
+  /** relay.yaml agents: 의 에이전트 이름. "" 이면 등록하지 않는다(조건부 바인딩 관용형) */
+  agent: string;
+  /** 스레드 키 — 임의 값. number 는 문자열화된다 */
+  param?: string | number;
+  /** 이 에이전트가 다룰 수 있는 작업 대상 전체(선택) — 채팅 "대상 추가" 후보(§5-18) */
+  targets?: string[];
+  children?: ReactNode;
+}
+
+/** 서브트리의 활성 에이전트 선언(§5) — 투명 래퍼(DOM 추가 없음). 중첩=안쪽 승, 형제=후승
+ *  (§5-15). 변화마다 relay:scope wire 로 크롬에 전달돼 그 대화가 미리보기 탭으로 끌려온다 */
+export function AgentScope(props: AgentScopeProps): ReactNode;
+
+/** 현재 활성 선언 + 슬롯 문자열(읽기 전용) — openChat 의 conversation 에 실을 유일한 원천 */
+export function useAgentBinding(): { agent?: string; param?: string; conversation: string };
