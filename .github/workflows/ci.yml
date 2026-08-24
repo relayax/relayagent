@@ -48,6 +48,11 @@ jobs:
       - name: Validate every package manifest
         run: npm run validate
 
+      # 이음새 테스트(runner/*.test.ts) — 주입점은 기본 구현이 유일한 소비자라, 실행으로
+      # 밟지 않으면 임베더가 꽂는 날까지 죽어 있어도 아무도 모른다. 의존 0(node:test).
+      - name: Test the runner seams
+        run: npm test
+
   hygiene:
     name: hygiene
     runs-on: ubuntu-latest

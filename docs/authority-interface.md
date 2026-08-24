@@ -14,6 +14,9 @@ relayos-claude/docs/convergence.md §"runner의 두 반쪽" 및 §"OSS 선행 �
 > 이사했다. 동기 계약에 박혀 이사가 시그니처 연쇄를 일으키는 지점만 `§8-2 잔여` 주석으로
 > 남는다(§8-2 게이트 참조). §4.4(세션 스코프)는 **편입하지 않기로 확정**. 남은 것은
 > §8 3단계(control-ts 어댑터)다.
+>
+> 실행 반쪽의 자매 이음새(RunnerIO · McpIO · SessionIO)는 §10 에 기록한다 — 권위 계약이
+> §6.1 로 밀어낸 축들의 착지처라, 임베더가 꽂는 네 계약을 한 페이지에서 찾게 한다.
 
 ## 1. 목적
 
@@ -350,11 +353,69 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
    소비자가 어느 기판에도 없다(relayos 는 Edge 행 단위로 접음). 필요해지는 날 additive 로
    추가한다 — §4.4.
 
-## 10. 참조
+## 10. 실행 반쪽의 이음새 — 자매 셋
+
+§6.1 이 권위 계약에서 밀어낸 것(스폰·세션·문)은 사라지지 않는다. 실행 반쪽에도 같은
+모양의 주입점이 있고, 임베더가 꽂는 계약은 넷(권위 + 아래 셋)이다. 형이 하나인 것이
+관례다: **작은 함수 묶음을 인자로 받고, 미주입이면 1인 기판 구현이 꽂힌다(additive).**
+익명의 제3자 임베더 테스트도 그대로 적용된다 — 어느 형에도 org 어휘가 없다.
+
+| 이음새 | 코드 | 답하는 질문 | 기본 구현 |
+|---|---|---|---|
+| `RunnerIO` | `runner/run.ts` | 스폰 자식의 env 반쪽 — 토큰·자격·기록·문 주소 | `localIO(l)` |
+| `McpIO` | `runner/mcp.ts` | 세션이 보는 도구 목록과 그 집행 | `api.ts localMcpIO` |
+| `SessionIO` | `runner/session.ts` | 한 턴이 딛는 좌표 — 경로·기판 좌표·대화 장부·MCP 문 | `localSessionIO(getLedger)` |
+
+### 10.1 `SessionIO` (2026-08-24 착지)
+
+`runSession(input)` 의 `input.io` 로 들어가고, 미주입이면 `localSessionIO`(RELAY_HOME 세션
+살림 · `history.jsonl` 파일 장부 · 단일 기판 문)가 꽂힌다. `recoverDanglingTurns` ·
+`autoTitleSession` 도 같은 이음새를 마지막 인자로 받는다.
+
+| 멤버 | 계약 | 로컬 구현 |
+|---|---|---|
+| `sessionDir(pkg, slot)` | 세션 살림 — 번들·진행 장부·슬롯 메타(agent·param·label·harness)가 이 아래 | `state.ts sessionDir` |
+| `workspaceDir(pkg)` | 세션 cwd 의 뿌리. `harness.workdir` 은 이 아래 상대경로 | `state.ts workspaceDir`(폴더 결재) |
+| `stageDir(pkg)` | 파일 교환 무대 | `state.ts stageDir` |
+| `apiUrl` | 자식이 보는 기판 문 주소 — env `RELAY_API` 이자 번들 `mcp` 문의 뿌리 | `API_URL` |
+| `denyRoots` | 선언과 무관하게 병합되는 담장 뿌리 | `[RELAY_HOME]` |
+| `appendMessage(pkg, slot, msg)` | 대화 장부 append (`SessionMessage` 한 줄) | `history.jsonl` append |
+| `readMessages(pkg, slot)` | 대화 장부 읽기 — 인수인계 서문·자동 제목·끊긴 턴 복구가 같은 답을 본다 | `history.jsonl` 파싱 |
+| `mcpServers(pkg, agent, slot, relay)` | 번들 `meta.mcpServers`. 기판 문(`relay`)을 인자로 받아 실을지·이름을 바꿀지·자기 문만 낼지 정한다. 빈 답 = 필드 없음(현행) | `() => ({})` |
+
+1. **대화 장부는 "백엔드 교체"이지 "통째 위임"이 아니다.** 파일이 정본인 기판과 다른
+   저장소가 정본인 임베더가 갈리는 유일한 축이라 이음새가 필요하지만, 위임의 방향은
+   쓰기·읽기 양쪽이어야 한다. *왜: 하네스 전환 인수인계(서문 합성)·자동 제목·끊긴 턴
+   복구가 전부 장부를 되읽어야 성립한다. 쓰기만 위임하면 읽는 좌표가 모듈에 남아 반쪽
+   이음새가 되고, 임베더의 정본과 기판이 읽는 이력이 갈린다.*
+2. **다중 MCP 문은 additive 다.** `mcp`(단일)는 항상 나가고 `mcpServers` 는 이음새가
+   답할 때만 붙는다 — 계약은 docs/harness-protocol.md §The bundle 이 정본. *왜: 구형
+   어댑터(codex·kimi)는 단일 문만 읽는다. 복수만 내면 그 어댑터들의 문이 통째로 닫힌다.*
+3. **열지 않은 축과 이유** (인터페이스는 소비자가 있을 때만 판다):
+   - *진행 명부(`live`·`residents`)* — 담는 것이 `ChildProcess` 핸들과 그 stdin 이라
+     원격 구현이 물리적으로 불가능하다(핸들은 프로세스 지역). 취소·상주 은퇴는 이미
+     내보낸 함수(`cancelSession`·`retireResident*`)로 임베더가 부른다.
+   - *도구 조달(`binaries.ts binaryEnv`)* — 기판 사본 디렉토리가 없으면 PATH 를 건드리지
+     않는 항등이다. 도구를 실행 이미지에 동봉하는 임베더에서 이미 무해하다.
+   - *진행 이벤트 장부(`events.jsonl`)* — 턴마다 비우는 스크래치이고, 밖으로 흐르는 축은
+     `EnvelopeTap` 이 이미 갖고 있다. 파일 자리는 주입된 `sessionDir` 을 따라간다.
+   - *슬롯 열거(`listSessionSlots`)* — 목록·이력 조회는 세션 실행이 아니라 기판 표면의
+     일이라 session.ts 밖(client-wire.ts)에도 같은 열거가 산다. 한쪽만 인자화하면 두
+     열거가 갈린다. 좌표를 옮긴 임베더는 자기 저장소를 열거하고 슬롯 이름만 넘긴다.
+4. **아직 이음새가 없는 자리 — persona 본문.** `composeBundle` 의 페르소나는 manifest 가
+   선언한 파일(+ 슬롯 `param` 한 줄)이 전부다. 임베더가 자기 문장을 얹으려면 주입점이
+   필요하지만, 자유 주입은 "매니페스트가 BOM"(CLAUDE.md 규율 1)과 정면으로 부딪힌다 —
+   무엇을 얹을 수 있는가를 먼저 계약으로 정한 뒤에 여는 축이다.
+5. **게이트**: `runner/session-io.test.ts` 가 스텁 이음새로 턴을 돌려 주입 경로를 밟는다
+   (좌표·문 주소·담장·장부·다중 문 + 미주입 시 현행 무변). *왜 실행 테스트인가: 기본
+   구현이 계속 유일한 소비자라, 밟지 않으면 임베더가 꽂는 날까지 죽은 이음새인 줄 모른다.*
+
+## 11. 참조
 
 - `runner/authority-contract.ts` — 계약 코드 반쪽 (벤더링 아티팩트)
 - `runner/authority.ts` — 1인 기판 구현 `localAuthority`
 - `runner/api.ts:525-526` — 이음새 배선점 ("조직 임베드는 여기 다른 구현을 꽂는다 — api 는 모른다")
+- `runner/run.ts` `RunnerIO` · `runner/mcp.ts` `McpIO` · `runner/session.ts` `SessionIO` — 실행 반쪽의 자매 이음새 셋 (§10)
 - relayos-claude/docs/convergence.md — 북극성: runner의 두 반쪽 · OSS 선행 작업 3 · federation 전 3수칙
 - relayos-claude/control-ts/ARCHITECTURE.md — 원격 대응물의 현행 정본 (GoTrue·token:issue·Edge 행·audit)
 - docs/verb-contract.md — ctx 가 소비하는 판정(caller·credential·grant)의 동사 쪽 계약

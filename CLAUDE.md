@@ -77,6 +77,7 @@ same commit or the change is incomplete:
 ```sh
 npm run validate    # every packages/* manifest must print a passing judgment
 npm run typecheck
+npm test            # runner/*.test.ts — the embed seams, exercised by a real turn (node:test)
 ```
 
 Touching anything under `lib/relayjs/src/` adds two more — the widget has its own tsconfig and
@@ -87,7 +88,7 @@ npm run typecheck:widget
 npm run test:widget   # lib/relayjs/test — slot grammar + tab-shell transitions (node:test)
 ```
 
-CI runs exactly these four.
+CI runs exactly these five.
 
 ## Two build artifacts the daemon serves — both gitignored, both must be rebuilt
 

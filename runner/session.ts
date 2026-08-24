@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
+import { API_URL, RELAY_HOME, loadLedger, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
 import { spawnEntry, spawnEntrySync } from "./entry.ts";
 import { binaryEnv } from "./binaries.ts";
@@ -29,11 +29,122 @@ function tap(pkg: string, slot: string, ev: { event: string; [k: string]: unknow
   } catch { /* 방청자 사정 — 턴에 전가하지 않는다 */ }
 }
 
+// ── 세션 이음새 ────────────────────────────────────────────────────────────
+// 한 턴이 딛는 좌표를 모듈 좌표(./state.ts)가 아니라 인자로 받는 주입점. 실행 이음새
+// (run.ts RunnerIO — 스폰의 env 를 나르는 손)·문 이음새(mcp.ts McpIO — 세션이 보는 도구
+// 목록과 그 집행)의 세 번째 자매이고, 셋의 형이 같다: 작은 함수 묶음을 인자로 받고 미주입
+// 이면 1인 기판의 현행 구현이 꽂힌다. 익명의 제3자 임베더 테스트 — 이 형은 특정 조직 기판을
+// 모른다: 세션이 서는 자리가 디렉토리 셋, 대화가 (append, read) 장부, 문이 (이름 → url·헤더)
+// 목록인 것뿐이고, 어느 답도 밖의 형상을 요구하지 않는다.
+//
+// 무엇을 인자화했는가 (2026-08-24):
+//  · 경로(sessionDir·workspaceDir·stageDir) — 임베더의 세션 살림은 다른 땅에 앉는다. 번들·
+//    진행 장부·슬롯 메타가 전부 sessionDir 하위라 디렉토리 하나로 따라온다.
+//  · 기판 좌표(apiUrl·denyRoots) — 자식이 보는 문 주소(env RELAY_API·번들 mcp 문의 뿌리)와
+//    선언과 무관하게 병합되는 담장 뿌리. RunnerIO.apiUrl 의 세션측 쌍둥이다.
+//  · 대화 장부(appendMessage·readMessages) — 이 이음새의 갈림길. 파일(history.jsonl)이 정본인
+//    기판과 다른 저장소가 정본인 임베더가 갈리는 유일한 축이라 **백엔드를 갈아 끼운다**.
+//    "장부를 통째로 임베더에 위임"(세션은 아무것도 쓰지 않는다)은 택하지 않았다: 하네스 전환
+//    인수인계·자동 제목·끊긴 턴 복구가 전부 장부를 되읽어야 성립하므로, 쓰기만 위임하면 읽는
+//    좌표가 모듈에 남아 반쪽 이음새가 된다.
+//  · MCP 문(mcpServers) — 번들 meta 의 다중 문(harness-protocol §The bundle). 기본 답은 빈
+//    map 이라 현행(단일 meta.mcp)이 그대로 나간다.
+//
+// 열지 않은 축과 이유 (인터페이스는 소비자가 있을 때만 판다):
+//  · 진행 명부(live·residents Map) — 담는 것이 ChildProcess 핸들과 그 stdin 이다. 원격 구현이
+//    물리적으로 불가능하고(핸들은 프로세스 지역), 취소·상주 은퇴는 이미 내보낸 함수
+//    (cancelSession·retireResident*)로 임베더가 부른다. 인자화하면 구현이 하나뿐인 형이 된다.
+//  · 도구 조달(binaries.ts binaryEnv) — 기판 사본 디렉토리가 없으면 PATH 를 건드리지 않는
+//    항등이다. 도구를 실행 이미지에 동봉하는 임베더에서 이미 무해한 항등이라 열 이유가 없다.
+//  · 진행 이벤트 장부(events.jsonl) — 턴마다 비우는 스크래치이고, 밖으로 흐르는 축은
+//    EnvelopeTap 이 이미 갖고 있다. 파일 자리는 주입된 sessionDir 을 따라간다.
+//  · 슬롯 열거(listSessionSlots) — 목록·이력 조회는 세션 실행이 아니라 기판 표면의 일이라 이
+//    파일 밖(client-wire.ts)에도 같은 열거가 산다. 한쪽만 인자화하면 두 열거가 갈린다.
+
+/** 대화 장부 한 줄 — 파일 정본(history.jsonl)의 행 형상 그대로다. 저장소가 무엇이든 세션이
+ *  쓰고 읽는 것은 이 형뿐이다. user 의 text 는 첨부·화면맥락 서문이 붙지 않은 원문이고,
+ *  bot 의 files 는 그 턴의 stage 산출물, model·usage·context 는 봉투 reply 의 장부다 */
+export interface SessionMessage {
+  /** ISO 8601 */
+  t: string;
+  role: "user" | "bot";
+  text: string;
+  files?: { path: string; name: string }[];
+  model?: string | null;
+  usage?: unknown;
+  context?: unknown;
+}
+
+/** MCP 문 하나 — 번들 계약(harness-protocol §The bundle)의 항목 형상 */
+export interface McpDoor {
+  url: string;
+  /** Authorization 헤더 값 */
+  authorization?: string;
+  /** 다른 이름으로 인증하는 문의 불투명 추가 헤더 */
+  headers?: Record<string, string>;
+}
+
+export interface SessionIO {
+  /** 세션 살림 — 번들·진행 장부·슬롯 메타(agent·param·label·harness)가 이 아래 앉는다 */
+  sessionDir(pkg: string, slot: string): string;
+  /** 세션 cwd 의 뿌리. harness.workdir 선언은 이 아래 상대경로로 해석된다 */
+  workspaceDir(pkg: string): string;
+  /** 파일 교환 무대 — 첨부가 앉고 이 턴의 산출물이 나온다 */
+  stageDir(pkg: string): string;
+  /** 자식이 보는 기판 문 주소 — 자식 env RELAY_API 이자 번들 mcp 문의 뿌리 */
+  apiUrl: string;
+  /** 패키지 선언과 무관하게 모든 세션에 병합되는 담장 뿌리 — 기판 장기의 좌표 */
+  denyRoots: string[];
+  /** 대화 장부 append. 물음은 턴 시작에, 답은 종결에 앉는다(실패 턴의 답도 남는다) */
+  appendMessage(pkg: string, slot: string, msg: SessionMessage): void;
+  /** 대화 장부 읽기(오래된 것부터) — 하네스 전환 인수인계·자동 제목·끊긴 턴 복구가 같은 답을 본다 */
+  readMessages(pkg: string, slot: string): SessionMessage[];
+  /** 이 세션이 볼 MCP 문들 = 번들 meta.mcpServers. 기판 문(relay)을 인자로 주므로 그대로
+   *  실을지·이름을 바꿀지·자기 문만 낼지는 구현이 정한다. 빈 답이면 meta.mcpServers 를 아예
+   *  내지 않는다 — 구형 단일 meta.mcp 만 나가는 현행 그대로다 */
+  mcpServers(pkg: string, agent: string, slot: string, relay: McpDoor): Record<string, McpDoor>;
+}
+
+/** 1인 기판의 기본 이음새 — RELAY_HOME 세션 살림, 파일 정본 장부(history.jsonl), 단일 기판 문.
+ *  인자 미주입 시 이것이 꽂히므로 기존 소비자는 무영향이다. 장부는 getLedger 를 늦게 부른다:
+ *  workspace 결재만 장부를 보고, 그마저 turn 시점에야 필요하다(권위 이음새와 같은 관용구) */
+export function localSessionIO(getLedger: () => Ledger): SessionIO {
+  return {
+    sessionDir,
+    workspaceDir: (pkg) => workspaceDir(getLedger(), pkg),
+    stageDir,
+    apiUrl: API_URL,
+    denyRoots: [RELAY_HOME],
+    appendMessage: (pkg, slot, msg) => {
+      fs.appendFileSync(path.join(sessionDir(pkg, slot), "history.jsonl"), JSON.stringify(msg) + "\n");
+    },
+    readMessages: (pkg, slot) => {
+      let raw: string;
+      try {
+        raw = fs.readFileSync(path.join(sessionDir(pkg, slot), "history.jsonl"), "utf8");
+      } catch {
+        return []; // 이력 없는 슬롯 — 첫 턴
+      }
+      const out: SessionMessage[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          out.push(JSON.parse(line) as SessionMessage);
+        } catch { /* 부서진 줄은 건너뛴다 */ }
+      }
+      return out;
+    },
+    mcpServers: () => ({}),
+  };
+}
+
 export interface SessionInput {
   ledger: Ledger;
   pkg: string;
   /** 권위 이음새 — 미지정이면 1인 기판의 로컬 권위. 신원 토큰·principal·LLM 자격·감사가 이 문을 지난다 */
   authority?: Authority;
+  /** 세션 이음새 — 미지정이면 1인 기판의 로컬 좌표. 경로·대화 장부·MCP 문이 이 문을 지난다 */
+  io?: SessionIO;
   agent?: string;
   prompt?: string;
   slot?: string;
@@ -75,8 +186,8 @@ function safeAttachments(atts: SessionInput["attachments"]): { path: string; nam
  * (harness-protocol) 번들을 비우는 것이 이름을 모른 채 전부 회전시키는 유일한 방법이고,
  * 조립(composeBundle)이 바로 뒤에서 빈 자리를 다시 채운다.
  */
-function harnessHandoff(pkg: string, slot: string, variantName: string): string {
-  const dir = sessionDir(pkg, slot);
+function harnessHandoff(io: SessionIO, pkg: string, slot: string, variantName: string): string {
+  const dir = io.sessionDir(pkg, slot);
   const marker = path.join(dir, "harness");
   let last = "";
   try {
@@ -87,28 +198,16 @@ function harnessHandoff(pkg: string, slot: string, variantName: string): string 
   fs.rmSync(path.join(dir, "bundle"), { recursive: true, force: true });
   fs.rmSync(marker, { force: true }); // 이 턴이 실패해도 다음 턴이 다시 인수인계하도록
 
-  const hist = path.join(dir, "history.jsonl");
-  let lines: string[] = [];
-  try {
-    lines = fs.readFileSync(hist, "utf8").trim().split("\n");
-  } catch {
-    return ""; // 이력 없는 슬롯 — 이어받을 것이 없다
-  }
+  const msgs = io.readMessages(pkg, slot);
   // 최근 대화 꼬리 — 메시지당·전체 상한을 걸어 서문이 컨텍스트를 삼키지 않게 한다
   const MSG_CAP = 600;
   const TOTAL_CAP = 6_000;
   const rows: string[] = [];
   let total = 0;
-  for (let i = lines.length - 1; i >= 0 && total < TOTAL_CAP; i--) {
-    let m: { role?: string; text?: string };
-    try {
-      m = JSON.parse(lines[i]);
-    } catch {
-      continue;
-    }
-    const text = String(m.text ?? "").trim();
+  for (let i = msgs.length - 1; i >= 0 && total < TOTAL_CAP; i--) {
+    const text = String(msgs[i].text ?? "").trim();
     if (!text) continue;
-    const row = `${m.role === "user" ? "사용자" : "에이전트"}: ${text.length > MSG_CAP ? text.slice(0, MSG_CAP) + " …" : text}`;
+    const row = `${msgs[i].role === "user" ? "사용자" : "에이전트"}: ${text.length > MSG_CAP ? text.slice(0, MSG_CAP) + " …" : text}`;
     rows.unshift(row);
     total += row.length;
   }
@@ -116,8 +215,8 @@ function harnessHandoff(pkg: string, slot: string, variantName: string): string 
   return `[대화 인수인계 — 이 대화는 지금까지 다른 하네스(${last})로 진행됐고 방금 ${variantName} 로 전환됐다. 이전 도구의 네이티브 세션 맥락은 이어지지 않는다. 아래 최근 대화 기록을 맥락으로 삼아 자연스럽게 이어서 답하라. 이 안내와 기록 자체는 사용자에게 언급하지 마라]\n${rows.join("\n")}`;
 }
 
-function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string, pkg: string, token: string, ground: { workspace: string; stage: string }): string {
-  const bundle = path.join(sessionDir(pkg, slot), "bundle");
+function composeBundle(io: SessionIO, pkgPath: string, m: Manifest, agent: string, slot: string, pkg: string, token: string, ground: { workspace: string; stage: string }): string {
+  const bundle = path.join(io.sessionDir(pkg, slot), "bundle");
   fs.mkdirSync(path.join(bundle, "agents"), { recursive: true });
 
   const decl = (m.agents ?? []).find((a) => a.name === agent);
@@ -145,7 +244,7 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
   // 단수 표현은 목록을 하나의 이름으로 오해하게 한다. 권한 축이 아니라 맥락 한 줄이다.
   let slotParam = "";
   try {
-    slotParam = fs.readFileSync(path.join(sessionDir(pkg, slot), "param"), "utf8").trim();
+    slotParam = fs.readFileSync(path.join(io.sessionDir(pkg, slot), "param"), "utf8").trim();
   } catch { /* 메타 없음 — 대상 무주입 */ }
   if (slotParam) {
     const targets = paramTargets(slotParam);
@@ -155,6 +254,14 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
   }
   fs.writeFileSync(path.join(bundle, "persona.md"), persona);
 
+  const relay: McpDoor = {
+    // session = 이 번들의 슬롯 — agent_dispatch 완료 배달의 회신 주소다
+    url: `${io.apiUrl}/mcp/${encodeURIComponent(pkg)}?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(slot)}`,
+    authorization: `Bearer ${token}`,
+  };
+  // 다중 문은 이음새가 답한다(기본은 빈 답 = 현행). 복수 선언이 있어도 단일 mcp 를 함께 내는
+  // 것이 계약이다 — 구형 어댑터(codex·kimi)는 mcp 만 읽는다 (harness-protocol §The bundle)
+  const doors = io.mcpServers(pkg, agent, slot, relay);
   const meta = {
     pkg,
     agent,
@@ -162,18 +269,15 @@ function composeBundle(pkgPath: string, m: Manifest, agent: string, slot: string
     greeting: m.surfaces?.chat?.greeting,
     workspace: ground.workspace,
     stage: ground.stage,
-    // 담장 선언. 기판 홈은 패키지 선언과 무관하게 기판이 무조건 병합한다 — 협상 불가.
+    // 담장 선언. 기판 장기의 좌표는 패키지 선언과 무관하게 기판이 무조건 병합한다 — 협상 불가.
     // 번역(네이티브 훅·권한 규칙)은 어댑터 소유. 도구 호출 레벨 가드레일이지 OS 샌드박스가 아니다
-    hooks: { deny: [RELAY_HOME, ...(m.hooks?.deny ?? [])] },
+    hooks: { deny: [...io.denyRoots, ...(m.hooks?.deny ?? [])] },
     agents: (decl?.dispatch ?? []).map((sub) => ({
       name: sub,
       description: `${m.display_name} 패키지의 ${sub} 서브에이전트`,
     })),
-    mcp: {
-      // session = 이 번들의 슬롯 — agent_dispatch 완료 배달의 회신 주소다
-      url: `${API_URL}/mcp/${encodeURIComponent(pkg)}?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(slot)}`,
-      authorization: `Bearer ${token}`,
-    },
+    mcp: relay,
+    ...(Object.keys(doors).length ? { mcpServers: doors } : {}),
   };
   fs.writeFileSync(path.join(bundle, "meta.json"), JSON.stringify(meta, null, 2));
   return bundle;
@@ -215,6 +319,9 @@ interface Resident {
   child: ChildProcess;
   pkg: string;
   slot: string;
+  /** 상주를 편 턴의 세션 이음새 — 유휴 턴(자발 continuation)의 장부·진행 기록이 이 좌표로 간다.
+   *  슬롯의 좌표는 턴마다 바뀌지 않으므로 재사용 턴이 이것을 갱신하지 않는다 */
+  io: SessionIO;
   /** 상주를 가른 조립 지문 — 모델·강도·자격·설치 경로가 달라지면 낡은 상주를 은퇴시킨다 */
   fp: string;
   idle: ReturnType<typeof setTimeout> | null;
@@ -355,11 +462,11 @@ function armIdle(key: string, r: Resident): void {
 // reply 는 이력에 bot 메시지로 앉히고, 나머지는 진행 장부에 남겨 위젯이 줍게 한다
 function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): void {
   try {
-    fs.appendFileSync(path.join(sessionDir(r.pkg, r.slot), "events.jsonl"), JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+    fs.appendFileSync(path.join(r.io.sessionDir(r.pkg, r.slot), "events.jsonl"), JSON.stringify({ t: Date.now(), ...ev }) + "\n");
   } catch { /* 세션 디렉토리가 지워짐 — 기록만 포기 */ }
   tap(r.pkg, r.slot, ev);
   if (ev.event === "reply") {
-    appendBot(r.pkg, r.slot, String(ev.text ?? ""), {
+    appendBot(r.io, r.pkg, r.slot, String(ev.text ?? ""), {
       model: typeof ev.model === "string" ? ev.model : null,
       usage: ev.usage ?? null,
       context: ev.context ?? null,
@@ -367,7 +474,7 @@ function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): vo
   }
 }
 
-function acquireResident(pkg: string, slot: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
+function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
   const key = `${pkg}/${slot}`;
   const cur = residents.get(key);
   if (cur && cur.fp === fp && cur.child.exitCode === null) {
@@ -379,7 +486,7 @@ function acquireResident(pkg: string, slot: string, entry: string, env: Record<s
   }
   if (cur) retireEntry(key, cur);
   const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  const r: Resident = { child, pkg, slot, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now() };
+  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now() };
   child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
@@ -422,6 +529,7 @@ function acquireResident(pkg: string, slot: string, entry: string, env: Record<s
 
 function residentTurn(
   authority: Authority,
+  io: SessionIO,
   pkg: string,
   slot: string,
   entry: string,
@@ -434,7 +542,7 @@ function residentTurn(
 ): Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }> {
   return new Promise((resolve, reject) => {
     const key = `${pkg}/${slot}`;
-    const r = acquireResident(pkg, slot, entry, env, cwd, fp);
+    const r = acquireResident(io, pkg, slot, entry, env, cwd, fp);
     live.set(key, r.child);
     r.lastEvent = Date.now();
     // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
@@ -527,6 +635,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const rec = input.ledger.packages[input.pkg];
   if (!rec) throw new Error(`미설치 패키지: ${input.pkg}`);
   const authority = input.authority ?? localAuthority(() => input.ledger);
+  const io = input.io ?? localSessionIO(() => input.ledger);
   const m = loadManifest(rec.path);
   // 대화의 에이전트 정체성 — 명시 > 슬롯의 agent 메타(위임 세션이 심는다) > 착지.
   // 메타가 없으면 착지로 가는 종전 동작 그대로다. 메타는 선언 검증을 거친다: 임의 문자열이
@@ -534,7 +643,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   let slotAgent: string | undefined;
   if (!input.agent && input.slot) {
     try {
-      const cand = fs.readFileSync(path.join(sessionDir(input.pkg, input.slot), "agent"), "utf8").trim();
+      const cand = fs.readFileSync(path.join(io.sessionDir(input.pkg, input.slot), "agent"), "utf8").trim();
       if (cand && (m.agents ?? []).some((a) => a.name === cand)) slotAgent = cand;
     } catch { /* 메타 없음 — 착지로 */ }
   }
@@ -544,15 +653,15 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
 
   // cwd = workspace = 설치 때 결재된 폴더 (기본 ~/Relay/<이름>, system 은 ~ 로 결재).
   // harness.workdir 선언은 workspace 하위 상대경로로 해석한다
-  const workdir = path.join(workspaceDir(input.ledger, input.pkg), m.harness?.workdir ?? "");
+  const workdir = path.join(io.workspaceDir(input.pkg), m.harness?.workdir ?? "");
   fs.mkdirSync(workdir, { recursive: true });
-  const stage = stageDir(input.pkg);
+  const stage = io.stageDir(input.pkg);
   const variant = activeHarness(m, rec.harness);
   if (!variant) throw new Error(`하네스 미동봉 패키지: ${input.pkg} — relay.yaml 에 harness.variants 를 선언하고 어댑터를 동봉하세요`);
   // 인수인계 판정은 번들 조립보다 앞이어야 한다 — 회전(번들 삭제)이 조립 뒤에 오면
   // 이 턴이 방금 조립된 번들을 지우고, 앞에 오면 조립이 빈 자리를 새로 채운다
-  const handoff = harnessHandoff(input.pkg, slot, variant.name);
-  const bundle = composeBundle(rec.path, m, agent, slot, input.pkg, token, { workspace: workdir, stage });
+  const handoff = harnessHandoff(io, input.pkg, slot, variant.name);
+  const bundle = composeBundle(io, rec.path, m, agent, slot, input.pkg, token, { workspace: workdir, stage });
   const entry = path.join(rec.path, variant.source, variant.entry);
 
   const env: Record<string, string> = {
@@ -560,12 +669,14 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     RELAY_NAME: input.pkg,
     RELAY_AGENT: agent,
     RELAY_PRINCIPAL: authority.principal(),
-    RELAY_API: API_URL,
+    RELAY_API: io.apiUrl,
     RELAY_TOKEN: token,
     RELAY_SESSION: slot,
     RELAY_BUNDLE: bundle,
   };
-  // 기판이 대는 도구가 있으면 PATH 앞에 — 호스트의 깨진 전역 설치보다 먼저 걸려야 한다
+  // 기판이 대는 도구가 있으면 PATH 앞에 — 호스트의 깨진 전역 설치보다 먼저 걸려야 한다.
+  // 이 축은 이음새에 없다: 기판 사본 디렉토리가 없으면 PATH 를 건드리지 않는 항등이라,
+  // 도구를 실행 이미지에 동봉하는 임베더에서 그대로 무해하다
   Object.assign(env, binaryEnv(input.pkg, env));
   if (variant?.llm?.auth?.kind === "token" && variant.llm.auth.env) {
     // LLM 토큰 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다
@@ -615,11 +726,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   }
 
   // 이 턴의 진행 이벤트 장부 — 위젯이 폴링해 delta·tool 진행을 그린다. 턴마다 새로 시작한다
-  const eventsFile = path.join(sessionDir(input.pkg, slot), "events.jsonl");
+  const eventsFile = path.join(io.sessionDir(input.pkg, slot), "events.jsonl");
   fs.writeFileSync(eventsFile, "");
   // 질문은 턴이 끝나기를 기다리지 않는다. 답변까지 모아서 마지막에 한 번 쓰면
   // 도중에 기판이 죽었을 때 질문까지 통째로 사라진다 — 물음은 지금, 답은 끝나고
-  appendUser(input.pkg, slot, input.prompt ?? "", atts);
+  appendUser(io, input.pkg, slot, input.prompt ?? "", atts);
   const stageBefore = stageSnapshot(stage);
   const evFiles: { path: string; name: string }[] = [];
 
@@ -627,7 +738,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다.
   // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
   const turn = resident
-    ? residentTurn(authority, input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
+    ? residentTurn(authority, io, input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
     : new Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }>((resolve, reject) => {
       const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
       live.set(key, child);
@@ -696,7 +807,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   try {
     r = await turn;
   } catch (e) {
-    appendBot(input.pkg, slot, `오류: ${e instanceof Error ? e.message : String(e)}`);
+    appendBot(io, input.pkg, slot, `오류: ${e instanceof Error ? e.message : String(e)}`);
     throw e;
   }
   // 어댑터가 종결 본문을 못 준 턴 — 화면에 "(빈 응답)" 을 띄우기 전에 이 턴에 흘렀던
@@ -708,26 +819,23 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
 
   const seen = new Set(evFiles.map((f) => f.path));
   const files = [...evFiles, ...stageDiffFiles(stage, stageBefore).filter((f) => !seen.has(f.path))];
-  appendBot(input.pkg, slot, r.reply, { model: r.model, usage: r.usage, context: r.context, files });
+  appendBot(io, input.pkg, slot, r.reply, { model: r.model, usage: r.usage, context: r.context, files });
   // 이 슬롯의 마지막 턴을 돈 변형 — 다음 턴의 인수인계 판정 기준. 성공한 턴만 기록한다:
   // 실패 턴 뒤 재시도에도 서문이 다시 실려야 새 하네스가 맥락 없이 시작하지 않는다
-  fs.writeFileSync(path.join(sessionDir(input.pkg, slot), "harness"), variant.name);
+  fs.writeFileSync(path.join(io.sessionDir(input.pkg, slot), "harness"), variant.name);
   return { ...r, files };
 }
 
 // 대화 이력은 기판 장부다. 하네스가 자기 세션(claude jsonl)을 따로 갖더라도,
-// 세션 목록·전환·복원은 기판이 답해야 하므로 여기서 쌓는다.
+// 세션 목록·전환·복원은 기판이 답해야 하므로 여기서 쌓는다. 어디에 쌓이는가는 이음새가
+// 답하고(SessionIO.appendMessage — 1인 기판은 history.jsonl), 무엇이 한 줄인가는 여기 규율이다.
 // 이력의 user text 는 첨부 서문 없는 원문이다 — 첨부는 files 필드로 따로 앉는다 (위젯이 칩으로 그림).
 // bot 의 files 는 아웃바운드(이 턴의 stage 산출물), model·usage 는 봉투 reply 의 장부다
 const HISTORY_TEXT_CAP = 16_384;
 
-function writeRecord(pkg: string, slot: string, rec: object): void {
-  fs.appendFileSync(path.join(sessionDir(pkg, slot), "history.jsonl"), JSON.stringify(rec) + "\n");
-}
-
-function appendUser(pkg: string, slot: string, prompt: string, files: { path: string; name: string }[] = []): void {
+function appendUser(io: SessionIO, pkg: string, slot: string, prompt: string, files: { path: string; name: string }[] = []): void {
   if (!prompt.trim() && !files.length) return;
-  writeRecord(pkg, slot, {
+  io.appendMessage(pkg, slot, {
     t: new Date().toISOString(),
     role: "user",
     text: prompt.slice(0, HISTORY_TEXT_CAP),
@@ -736,12 +844,13 @@ function appendUser(pkg: string, slot: string, prompt: string, files: { path: st
 }
 
 function appendBot(
+  io: SessionIO,
   pkg: string,
   slot: string,
   reply: string,
   extra: { model?: string | null; usage?: unknown; context?: unknown; files?: { path: string; name: string }[] } = {},
 ): void {
-  writeRecord(pkg, slot, {
+  io.appendMessage(pkg, slot, {
     t: new Date().toISOString(),
     role: "bot",
     text: reply.slice(0, HISTORY_TEXT_CAP),
@@ -773,16 +882,12 @@ function deltaText(eventsFile: string): string {
 // 실패는 조용히 삼킨다: 제목은 편의지 대화의 기능이 아니다
 const titling = new Set<string>();
 
-export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string): Promise<void> {
+export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string, io: SessionIO = localSessionIO(() => ledger)): Promise<void> {
   const key = `${pkg}/${slot}`;
   if (titling.has(key)) return;
-  const dir = sessionDir(pkg, slot);
+  const dir = io.sessionDir(pkg, slot);
   if (fs.existsSync(path.join(dir, "label")) || fs.existsSync(path.join(dir, "auto-label"))) return;
-  const hist = path.join(dir, "history.jsonl");
-  if (!fs.existsSync(hist)) return;
-  const msgs = fs.readFileSync(hist, "utf8").trim().split("\n")
-    .map((l) => { try { return JSON.parse(l) as { role?: string; text?: string }; } catch { return null; } })
-    .filter(Boolean) as { role?: string; text?: string }[];
+  const msgs = io.readMessages(pkg, slot);
   const user = msgs.find((m) => m.role === "user");
   const bot = msgs.find((m) => m.role === "bot");
   if (!user || !bot) return; // 완결된 첫 교환이 있어야 제목이 선다
@@ -796,7 +901,7 @@ export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string
       "사용자: " + String(user.text ?? "").slice(0, 500),
       "어시스턴트: " + String(bot.text ?? "").slice(0, 500),
     ].join("\n");
-    const r = await runSession({ ledger, pkg, prompt, slot: tmp });
+    const r = await runSession({ ledger, pkg, prompt, slot: tmp, io });
     const title = String(r.reply ?? "")
       .split("\n").map((s) => s.trim()).filter(Boolean)[0]
       ?.replace(/^["'`「『]+|["'`」』.]+$/g, "").slice(0, 40) ?? "";
@@ -808,11 +913,14 @@ export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string
     titling.delete(key);
     // 상주 하네스가 켜져 있으면 제목 턴이 임시 슬롯의 상주를 남긴다 — TTL 을 기다리지 않고 은퇴시킨다
     retireResident(pkg, tmp);
-    fs.rmSync(sessionDir(pkg, tmp), { recursive: true, force: true });
+    fs.rmSync(io.sessionDir(pkg, tmp), { recursive: true, force: true });
   }
 }
 
-/** 한 패키지가 가진 세션 슬롯 목록 — 복구는 슬롯 단위로 돈다 */
+/** 한 패키지가 가진 세션 슬롯 목록 — 복구는 슬롯 단위로 돈다. 이 열거는 이음새 밖이다:
+ *  목록·이력 조회는 세션 실행이 아니라 기판 표면의 일이라 이 파일 밖(client-wire.ts)에도
+ *  같은 열거가 산다 — 한쪽만 인자화하면 두 열거가 갈린다. 좌표를 옮긴 임베더는 자기 저장소를
+ *  열거하고 슬롯 이름만 넘긴다(recoverDanglingTurns 는 io 를 받는다) */
 export function listSessionSlots(pkg: string): string[] {
   const root = path.join(RELAY_HOME, "sessions", pkg);
   if (!fs.existsSync(root)) return [];
@@ -825,22 +933,14 @@ export function listSessionSlots(pkg: string): string[] {
  * 중간 텍스트로 답을 복구한다. 흐른 말이 없으면 끊겼다는 사실이라도 남긴다.
  * 데몬이 뜰 때 한 번만 돈다 — 도는 중인 턴을 죽은 것으로 오인하지 않기 위해서다.
  */
-export function recoverDanglingTurns(pkg: string, slot: string): boolean {
-  const dir = sessionDir(pkg, slot);
-  const hist = path.join(dir, "history.jsonl");
-  if (!fs.existsSync(hist)) return false;
-  const lines = fs.readFileSync(hist, "utf8").trim().split("\n").filter(Boolean);
-  if (!lines.length) return false;
-  let last: { role?: string } | null = null;
-  try {
-    last = JSON.parse(lines[lines.length - 1]);
-  } catch {
-    return false;
-  }
-  if (last?.role !== "user") return false;
+export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = localSessionIO(loadLedger)): boolean {
+  const msgs = io.readMessages(pkg, slot);
+  if (!msgs.length) return false;
+  if (msgs[msgs.length - 1]?.role !== "user") return false;
 
-  const text = deltaText(path.join(dir, "events.jsonl"));
+  const text = deltaText(path.join(io.sessionDir(pkg, slot), "events.jsonl"));
   appendBot(
+    io,
     pkg,
     slot,
     text
