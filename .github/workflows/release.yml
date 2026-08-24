@@ -1,0 +1,84 @@
+# release — 태그(v*)가 릴리스 아티팩트 컷이다 (수렴 독트린 "릴리스 아티팩트 규율":
+# 소비자(relayos 등 임베더)는 트리 사본이 아니라 여기서 나온 아티팩트를 digest lock 으로
+# 소비한다 — convergence "정본은 밖, pin, 무패치"의 아티팩트 반쪽).
+#
+# 규율:
+#  - 판정 먼저, 컷은 그 다음 — typecheck·위젯 typecheck·manifest 판정을 전부 통과해야
+#    아티팩트가 존재한다. 판정 실패 = 릴리스 실패 (경고 없음, 판정만).
+#  - 태그 = 버전 정본. 루트 package.json version 과 불일치하면 컷을 거부한다 —
+#    "v0.2.0 태그인데 내용물은 0.3.0" 이 digest lock 뒤에 숨는 사고를 원천 차단.
+#  - 아티팩트마다 SHA256SUMS 동봉 — 소비자의 lock 이 기록할 digest 의 원천.
+#
+# 현재 아티팩트 (위젯 슬라이스 — 후속 슬라이스가 relayjs/relay-ui npm pack 을 추가한다):
+#  - relay-chat-widget-<tag>.tgz : lib/relayjs/dist 의 chat-app.js + chat-app.css
+#    (기판이 /assets 로 서빙하는 번들 그 자체 — 소스가 아니라 산출물이 상품이다)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  cut:
+    name: cut (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Tag ↔ package.json 버전 정합 판정
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          VER="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$VER" ]; then
+            echo "::error::태그($TAG)와 package.json 버전(v$VER)이 다릅니다 — 컷 거부"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Typecheck the chat widget
+        run: npm run typecheck:widget
+
+      - name: Validate every package manifest
+        run: npm run validate
+
+      - name: Build the chat widget bundle
+        run: npm run build:widget
+
+      - name: Pack artifacts + SHA256SUMS
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p out
+          tar -czf "out/relay-chat-widget-${TAG}.tgz" -C lib/relayjs/dist chat-app.js chat-app.css
+          (cd out && sha256sum ./*.tgz > SHA256SUMS)
+          cat out/SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "릴리스 아티팩트 컷 — 소비는 digest lock 으로 (SHA256SUMS 참조).
+
+| artifact | 내용 |
+|---|---|
+| relay-chat-widget-${TAG}.tgz | 채팅 위젯 번들 (chat-app.js + chat-app.css) — 기판이 /assets 로 서빙하는 산출물 |
+| SHA256SUMS | 아티팩트 digest — 소비자 lock 의 기록 원천 |" \
+            out/*.tgz out/SHA256SUMS
