@@ -24,6 +24,10 @@ export interface ServiceDecl {
   auth?: { kind?: string; env?: string };
 }
 
+/** 밖으로 나가는 두 형(url = MCP 문, api = REST 베이스)만 자격 축을 갖는다 — runner 의
+ *  outwardService 와 같은 판정이다. source(몸)·dir(폴더)에는 auth 자리가 없다 */
+export const isOutward = (s: ServiceDecl): boolean => s.url != null || s.api != null;
+
 export interface EdgeDecl {
   provider: string;
   tools?: string[];

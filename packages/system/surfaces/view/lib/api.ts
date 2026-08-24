@@ -49,6 +49,11 @@ export function approveGrant(g: Grant): Promise<{ ok: boolean }> {
 }
 
 
+/** 설치 제거 — ring-0 동사(pkg-remove). 역의존(이 앱을 쓰는 앱)은 화면이 제거 앞에 보여 준다 */
+export function removePkg(name: string): Promise<{ removed: string }> {
+  return callScript("pkg-remove", { name });
+}
+
 export async function callScript<T = any>(name: string, input: unknown): Promise<T> {
   const data = await post(`/pkg/system/script/${name}`, { input });
   return (data.result ?? data) as T;
@@ -163,6 +168,8 @@ export interface OAuthRunView {
 export interface ServiceStatusView {
   name: string;
   url: string;
+  /** 문의 말 — url = MCP 문, api = REST 베이스. 도구 열이 빈 이유가 여기에 있다 */
+  form: "url" | "api";
   kind: "none" | "token" | "oauth";
   /** 선언 그대로의 안내 — 발급처 링크와 한 줄 설명. 화면이 이걸로 안내를 그린다 */
   help: { url?: string; note?: string } | null;

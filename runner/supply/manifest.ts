@@ -516,6 +516,18 @@ export function judge(m: Manifest, pkgPath?: string): void {
   if (issues.length) throw new ManifestError(issues);
 }
 
+/**
+ * 밖으로 나가는 두 형의 공통 축 — url 은 MCP 문, api 는 REST 베이스이고, 자격 계약(auth)·
+ * vault 좌표(<pkg>/<name>)·OAuth 인가 기점(origin)이 셋 다 같다. source(몸)·dir(폴더)에는
+ * auth 자리가 없어 null 이다. 형을 묻는 자리마다 조건을 다시 쓰면 한 곳이 빠졌을 때 그 형만
+ * 화면이나 CLI 에서 조용히 사라진다 — 자격을 못 잇는 서비스는 없는 서비스와 같다.
+ */
+export function outwardService(s: ServiceDecl): { name: string; base: string; auth?: AuthDecl } | null {
+  if ("url" in s && s.url != null) return { name: s.name, base: s.url, auth: s.auth };
+  if ("api" in s && s.api != null) return { name: s.name, base: s.api, auth: s.auth };
+  return null;
+}
+
 export function activeHarness(m: Manifest, selected?: string): HarnessVariant | null {
   const vs = m.harness?.variants ?? [];
   return vs.find((v) => v.name === selected) ?? vs[0] ?? null;
