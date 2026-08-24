@@ -56,7 +56,6 @@ export interface Manifest {
     variants?: { name: string; source: string; entry?: string; icon?: string; llm?: { provider?: string; icon?: string } }[];
     workdir?: string;
   };
-  hooks?: { deny?: string[] };
   agents?: AgentDecl[];
   scripts?: { source: string };
   services?: ServiceDecl[];

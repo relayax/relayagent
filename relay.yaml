@@ -38,10 +38,6 @@ harness:
         auth: { kind: oauth }
   workdir: work/
 
-hooks:
-  deny:
-    - ~/Documents/세무
-
 agents:
   - name: orders
     default: true            # main 슬롯 착지점 (최대 1) — 미선언이면 "짧은 이름과 같은 에이전트" 관례

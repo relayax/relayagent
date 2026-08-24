@@ -24,8 +24,8 @@ you ask us not to.
 
 ## In scope
 
-- Escaping the session's granted ground: a session touching a path outside its workspace,
-  declared `dir` services, or otherwise defeating `hooks.deny`
+- Escaping the session's granted ground: a session touching a path outside its workspace or its
+  declared `dir` services
 - Reading `~/.relay` from a session (the substrate home is denied to every session, always)
 - Credential exposure: a secret reaching the tree, a log, a manifest, an API response, or another
   package

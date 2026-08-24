@@ -70,7 +70,6 @@ function printDisclosure(d: import("./supply/manifest.ts").Disclosure, name: str
   for (const b of d.borrows) lines.push(`    차용    ${b} — 활성화는 별도 결재(grant)`);
   if (d.hostMethods.length) lines.push(`    기판    host 브리지 선언: ${d.hostMethods.join(", ")}`);
   if (d.host.length) lines.push(`    호스트  ${d.host.join(", ")} 가 있어야 합니다`);
-  if (d.denied.length) lines.push(`    담장    ${d.denied.join(", ")} 에는 닿지 않겠다고 선언했습니다`);
   const nots: string[] = [];
   if (!d.network.length) nots.push("인터넷으로 나가지 않고");
   if (!d.wakeups.length) nots.push("스스로 깨어나지 않고");
