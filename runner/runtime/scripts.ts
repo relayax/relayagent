@@ -2,11 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { expandHome, type Grant, type Ledger } from "../supply/ledger.ts";
-import { credKey } from "../vault.ts";
 import { serviceAuthHeader } from "./oauth.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, shortName, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { loadManifest, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
 
 export interface HostBridge {
   registry(): unknown;
@@ -59,15 +58,41 @@ export interface ScriptMeta {
   [key: string]: unknown;
 }
 
+/**
+ * 서비스 손잡이 — 형이 넷이어도 접근자는 하나라서 두 문을 다 싣는다. 자기 형이 아닌 문은
+ * 사유를 실어 되돌린다(fail-loud): 형마다 다른 손잡이를 주면 저작자가 "몸이 무엇이냐"를 먼저
+ * 외워야 하고, 그 순간 자격·신원이 한 문으로 모이지 않는다 (dir 분기와 같은 결).
+ */
+export interface ServiceHandle {
+  url: string;
+  /** url·source 형 — MCP over HTTP */
+  call(tool: string, args: unknown): Promise<unknown>;
+  /** api 형 — 선언된 base 접두 안쪽으로만 나가는 REST 요청. Authorization 은 기판이 붙인다 */
+  fetch(path: string, init?: RequestInit): Promise<Response>;
+}
+
 export interface ScriptCtx {
   pkg: string;
   caller: CallerIdentity;
   dir(name: string): string;
-  service(name: string): { call(tool: string, args: unknown): Promise<unknown>; url: string };
-  /** 커넥터 계약(최상위 auth)의 자격 — vault 의 패키지 짧은 이름 슬롯을 요청 시점에 읽는다. 미연결·미선언 = null */
-  credential(): string | null;
+  service(name: string): ServiceHandle;
   dispatch(provider: string, mission: string, payload: string): Promise<string>;
   host?: HostBridge;
+}
+
+/**
+ * api 요청 좌표 — 선언 base 의 접두 밖은 거부한다. 집행이 없으면 매니페스트의 base 선언과
+ * 고지서의 "이 주소로 나갑니다"가 지킬 수 없는 약속이 된다: 자격이 붙은 요청이 어디로든
+ * 갈 수 있으면 선언은 광고지 사실이 아니다. 다른 호스트의 절대 URL 도, 상대 경로의 ../ 도,
+ * base 가 경로를 가질 때의 루트 탈출(/foo)도 이 판정 하나로 같이 막힌다.
+ */
+export function apiTarget(base: string, p: string, name: string): string {
+  const root = base.endsWith("/") ? base : base + "/";
+  const u = new URL(p, root);
+  if (u.href !== base && !u.href.startsWith(root)) {
+    throw new Error(`api 서비스 base 밖 요청: ${name} — ${u.href} 는 ${base} 접두 밖입니다`);
+  }
+  return u.href;
 }
 
 // 몸 주소 이음새 — "이 패키지의 이 source 서비스가 어디서 듣는가"의 답 하나.
@@ -156,8 +181,6 @@ export function makeCtx(
   caller: CallerIdentity,
   hostBridge: HostBridge | null,
   authority: Authority,
-  /** runScript 가 authority.credential 로 선발급한 커넥터 자격 — ctx.credential 의 동기 계약(verb-contract) 유지용 */
-  connectorCred: string | null,
   io: ServiceIO = localServiceIO,
 ): ScriptCtx {
   const rec = ledger.packages[pkg];
@@ -166,33 +189,52 @@ export function makeCtx(
     pkg,
     caller,
     dir: (name) => resolveDirService(ledger, pkg, m, name),
-    // 서비스 선언 세 형이 한 접근자를 지난다 — 저작자가 "몸이 url 이냐 source 냐"를 외우지
-    // 않아야 자격·신원이 한 문으로 모인다. 형마다 다른 접근자를 두면 그 문을 안 지나는 몸이
-    // 생기고, 신원 없이 불리는 비대칭이 바로 거기서 난다.
+    // 서비스 선언 네 형이 한 접근자를 지난다 — 저작자가 "몸이 url 이냐 api 냐 source 냐"를
+    // 외우지 않아야 자격·신원이 한 문으로 모인다. 형마다 다른 접근자를 두면 그 문을 안 지나는
+    // 몸이 생기고, 신원 없이 불리는 비대칭이 바로 거기서 난다.
     service: (name) => {
       const svc = (m.services ?? []).find((s) => s.name === name);
       if (!svc) throw new Error(`미선언 서비스: ${name}`);
-      // dir 형은 파일 경로지 MCP 문이 아니다 — 사유를 실어 되돌린다(조용한 해석 금지)
+      // dir 형은 파일 경로지 부를 문이 아니다 — 사유를 실어 되돌린다(조용한 해석 금지)
       if ("dir" in svc && svc.dir != null) {
-        throw new Error(`dir 서비스는 ctx.service 대상이 아닙니다: ${name} — 경로는 ctx.dir("${name}"), MCP 호출은 url·source 형`);
+        throw new Error(`dir 서비스는 ctx.service 대상이 아닙니다: ${name} — 경로는 ctx.dir("${name}"), 호출은 url·api·source 형`);
       }
-      // 신원(caller)은 두 형에서 같은 규칙으로 실린다: 원격 몸이 "누구로서"를 모르면
+      // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
+      // 풀어 헤더로 붙이고(oauth 번들은 만료 60초 전 자동 회전, oauth.ts) 목적지는 apiTarget 이
+      // 선언 base 안으로 묶는다. 신원 헤더(x-relay-*)는 싣지 않는다 — 남의 REST API 에 우리
+      // principal 을 흘리는 축이 되고, 저쪽은 그 어휘를 모른다.
+      if ("api" in svc && svc.api != null) {
+        const a = svc as Extract<ServiceDecl, { api: string }>;
+        return {
+          url: a.api,
+          call: () => {
+            throw new Error(`api 서비스는 MCP 문이 아닙니다: ${name} — REST 요청은 ctx.service("${name}").fetch(경로, init)`);
+          },
+          fetch: async (p, init) => {
+            const target = apiTarget(a.api, p, name);
+            const headers = new Headers(init?.headers);
+            const authHeader = await serviceAuthHeader(authority, pkg, name, a.auth);
+            if (authHeader) headers.set("authorization", authHeader);
+            return await fetch(target, { ...init, headers });
+          },
+        };
+      }
+      // 신원(caller)은 남은 두 형에서 같은 규칙으로 실린다: 원격 몸이 "누구로서"를 모르면
       // 자격 하나로 모든 행을 본다. 자격만 형마다 출처가 다르다 —
       // url 형은 선언된 auth 의 해석(호출 시점 — oauth 번들은 만료 60초 전 자동 회전, oauth.ts),
       // source 형은 문법에 auth 자리가 없어 이음새가 주는 것뿐이다(없으면 없는 대로).
+      const noFetch = (): never => {
+        throw new Error(`MCP 문에는 fetch 가 없습니다: ${name} — 도구 호출은 ctx.service("${name}").call(도구, 인자)`);
+      };
       if ("url" in svc && svc.url != null) {
         const u = svc as Extract<ServiceDecl, { url: string }>;
-        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller) };
+        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch };
       }
       const src = svc as Extract<ServiceDecl, { source: string }>;
       const body = io.body(pkg, name, src.port ?? null);
       if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
-      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller) };
+      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch };
     },
-    // 커넥터 계약 자격 — env 상주 없이 동사 실행 시점에 authority 를 지나 선발급된 값이다.
-    // ctx.credential 의 동기 계약(verb-contract)과 권위 이음새의 비동기 계약이 여기서 만난다:
-    // 회전·revoke 는 다음 동사 실행부터 선다 (RunnerIO.credential 의 "스폰 전 선발급"과 같은 결)
-    credential: () => connectorCred,
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
       return hostBridge.dispatch(provider, mission, payload, pkg);
@@ -220,9 +262,7 @@ export async function runScript(
   const mtime = fs.statSync(file).mtimeMs;
   const mod = await import(pathToFileURL(file).href + "?t=" + mtime);
   if (typeof mod.default !== "function") throw new Error(`script 계약 위반(기본 수출 함수 아님): ${name}`);
-  // 커넥터 자격 선발급 — ctx.credential 이 동기 계약이라 여기(비동기 문맥)서 이음새를 지난다
-  const connectorCred = m.auth && m.auth.kind !== "none" ? await authority.credential(credKey(pkg, shortName(pkg))) : null;
-  const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, connectorCred, io);
+  const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, io);
   return await mod.default(input ?? {}, ctx);
 }
 

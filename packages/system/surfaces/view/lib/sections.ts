@@ -124,13 +124,13 @@ export const SECTIONS: SectionDef[] = [
     key: "services",
     label: "services",
     yamlKey: "services",
-    hint: "패키지의 자원. source 자기 몸(프로세스·컨테이너), url 원격 MCP 접점, dir 폴더. 자격은 url 서비스의 auth 에만 앉는다.",
+    hint: "패키지의 자원. source 자기 몸(프로세스·컨테이너), url 원격 MCP 문, api 원격 REST 베이스, dir 폴더. 자격(auth)은 밖으로 나가는 두 형에 앉고 좌표는 vault 의 <패키지>/<서비스> 다.",
     declared: (m) => !!m.services?.length,
     items: (m, files) =>
       (m.services ?? []).map((s) => ({
         id: s.name,
         title: s.name,
-        sub: s.url ? "원격 MCP" : s.dir ? `폴더 ${s.dir}` : s.dockerfile ? "컨테이너" : "프로세스",
+        sub: s.url ? "원격 MCP" : s.api ? `REST ${s.api}` : s.dir ? `폴더 ${s.dir}` : s.dockerfile ? "컨테이너" : "프로세스",
         files: under(files, s.source),
       })),
   },

@@ -61,8 +61,6 @@ export interface Manifest {
     workdir?: string;
   };
   hooks?: { deny?: string[] };
-  /** 커넥터 계약 — 몸(서비스) 없는 커넥터의 자격 형태. url 서비스와 동시 선언 불가 */
-  auth?: AuthDecl;
   agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
@@ -88,9 +86,12 @@ export interface HarnessVariant {
   llm?: { provider: string; auth?: AuthDecl; /** provider(모델) 아이콘 */ icon?: string };
 }
 
+/** 서비스 네 형. 바깥으로 나가는 둘(url = MCP 문, api = REST 베이스)만 자격 계약을 갖고,
+ *  좌표는 vault 의 <pkg>/<서비스 이름>(credKey) 하나다 — 계약의 집은 여기 한 곳이다 */
 export type ServiceDecl =
   | { name: string; source: string; dockerfile?: string; entry?: string; disk?: string; resources?: { memory?: string; cpu?: number }; port?: number }
   | { name: string; url: string; tools?: string[]; auth?: AuthDecl }
+  | { name: string; api: string; auth?: AuthDecl }
   | { name: string; dir: string };
 
 export interface AuthDecl {
@@ -121,9 +122,18 @@ const SIZE = /^\d+(Mi|Gi)$/;
 // 기판마다 다른 뜻이 되는 방언의 문이 열린다. 확장(org 의미)은 org 블록 한 곳으로만 들어온다
 const TOP_KEYS = new Set([
   "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog",
-  "requires", "surfaces", "harness", "hooks", "auth", "agents", "scripts", "services",
+  "requires", "surfaces", "harness", "hooks", "agents", "scripts", "services",
   "triggers", "missions", "edges", "host_methods", "org",
 ]);
+
+// 은퇴한 어휘 — 거부는 미지 키와 같지만 문장이 달라야 한다. "미지 키"로 뭉뚱그리면 옛 패키지가
+// 어디로 옮길지 모른 채 막힌다: 은퇴는 삭제가 아니라 이사이므로 판정이 이사 경로를 싣는다
+const RETIRED_KEYS: Record<string, string> = {
+  auth:
+    "최상위 auth 는 은퇴했습니다 — 자격 계약의 집은 services 한 곳입니다. api 형으로 옮기세요" +
+    " (- name: <패키지 짧은 이름>, api: <REST 베이스 URL>, auth: {…}). 이름을 패키지 짧은 이름으로" +
+    " 두면 vault 좌표(<패키지>/<이름>)가 그대로라 다시 연결하지 않아도 됩니다",
+};
 
 /** 필드별 허용 범위 — 분·시·일·월·요일. 요일 7 은 일요일의 별칭(0 과 같다) */
 const CRON_BOUNDS: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
@@ -152,7 +162,7 @@ export function validCron(expr: string): boolean {
   });
 }
 
-/** auth 블록 공용 판정 — services[].auth · harness llm.auth · 최상위 auth 가 같은 어휘를 쓴다 */
+/** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다 */
 function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[]): void {
   if (!a) return;
   if (!["none", "token", "oauth"].includes(a.kind)) {
@@ -208,7 +218,8 @@ export function judge(m: Manifest, pkgPath?: string): void {
 
   if (m.schema !== "relay/v1") issues.push(`schema: relay/v1 필요`);
   for (const k of Object.keys(m as unknown as Record<string, unknown>)) {
-    if (!TOP_KEYS.has(k)) issues.push(`미지 최상위 키: ${k}`);
+    if (RETIRED_KEYS[k]) issues.push(`${k}: ${RETIRED_KEYS[k]}`);
+    else if (!TOP_KEYS.has(k)) issues.push(`미지 최상위 키: ${k}`);
   }
   for (const f of ["name", "version", "display_name", "description"] as const) {
     if (typeof m[f] !== "string" || m[f].trim() === "") issues.push(`${f}: 필수`);
@@ -423,9 +434,9 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!SLUG.test(s.name ?? "")) issues.push(`service 이름 형식 위반: ${(s as { name?: string }).name}`);
     if (svcNames.has(s.name)) issues.push(`service 이름 중복: ${s.name}`);
     svcNames.add(s.name);
-    const forms = ["source", "url", "dir"].filter((k) => (s as Record<string, unknown>)[k] != null);
+    const forms = ["source", "url", "api", "dir"].filter((k) => (s as Record<string, unknown>)[k] != null);
     if (forms.length !== 1) {
-      issues.push(`services[${s.name}]: source | url | dir 중 정확히 하나`);
+      issues.push(`services[${s.name}]: source | url | api | dir 중 정확히 하나`);
       continue;
     }
     if ("source" in s && s.source != null) {
@@ -441,16 +452,13 @@ export function judge(m: Manifest, pkgPath?: string): void {
       for (const t of s.tools ?? []) if (!SLUG.test(t)) issues.push(`services[${s.name}].tools 형식 위반: ${t}`);
       judgeAuth(s.auth, `services[${s.name}].auth`, issues);
     }
-    if ("dir" in s && s.dir != null && badPath(s.dir, true)) issues.push(`services[${s.name}].dir: 상대경로 또는 ~ 경로만`);
-  }
-  // 커넥터 계약 — 몸 없는 커넥터의 자격 형태 선언. url 서비스(자격이 서비스 소속)와는
-  // 계약 출처가 겹치므로 동시 선언을 거부한다: 계약 출처는 한 곳이어야 결재가 한 곳에 선다
-  if (m.auth) {
-    judgeAuth(m.auth, "auth", issues);
-    if (m.auth.kind === "none") issues.push("auth: 커넥터 계약에 none 은 무의미 — 블록을 제거하세요");
-    if ((m.services ?? []).some((s) => "url" in s && s.url != null)) {
-      issues.push("auth: url 서비스와 최상위 auth 동시 선언 불가 — 계약 출처는 한 곳");
+    // api 형 = REST 베이스. base 는 집행의 근거다 — 동사의 요청이 이 접두 밖으로 못 나가므로
+    // (scripts.ts apiTarget) 고지서의 "이 주소로 나갑니다"가 선언이 아니라 사실이 된다
+    if ("api" in s && s.api != null) {
+      if (!/^https?:\/\//.test(s.api)) issues.push(`services[${s.name}].api: http(s) URL 필요`);
+      judgeAuth(s.auth, `services[${s.name}].auth`, issues);
     }
+    if ("dir" in s && s.dir != null && badPath(s.dir, true)) issues.push(`services[${s.name}].dir: 상대경로 또는 ~ 경로만`);
   }
   // 채널은 서비스와 자격 이름공간(credKey)을 공유한다 — 이름이 겹치면 vault 키가 충돌한다
   for (const n of chNames) {
@@ -590,7 +598,8 @@ export function declaredPaths(m: Manifest): DeclaredPath[] {
 export interface Disclosure {
   /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더 */
   folders: { name: string; path: string }[];
-  /** services[].url — 밖으로 나가는 접점과 자격의 형태 */
+  /** services[].url(MCP 문) · services[].api(REST 베이스) — 밖으로 나가는 접점과 자격의 형태.
+   *  name 은 자격 좌표이기도 하다(vault <pkg>/<name>) — 화면이 "무엇으로 연결하는가"를 그린다 */
   network: { name: string; url: string; auth: string }[];
   /** triggers — 사용자가 없어도 스스로 깨어나는 시점 */
   wakeups: { id: string; when: string }[];
@@ -606,8 +615,6 @@ export interface Disclosure {
   spawns: string[];
   /** channels — 외부 대화 문 */
   channels: string[];
-  /** 최상위 auth — 몸 없는 커넥터 계약의 자격 형태 (없으면 null) */
-  connector: string | null;
   /** host_methods — 기판 host 브리지 게이트 선언 */
   hostMethods: string[];
   /** 요구 범위. 위험이 아니라 넓이 — 화면 미터가 이 값을 그린다 */
@@ -626,6 +633,7 @@ export function disclosure(m: Manifest): Disclosure {
   for (const s of m.services ?? []) {
     if ("dir" in s && s.dir != null) folders.push({ name: s.name, path: s.dir });
     else if ("url" in s && s.url != null) network.push({ name: s.name, url: s.url, auth: s.auth?.kind ?? "none" });
+    else if ("api" in s && s.api != null) network.push({ name: s.name, url: s.api, auth: s.auth?.kind ?? "none" });
     else if ("source" in s && s.source != null) spawns.push(`${s.name} (${s.dockerfile ? "컨테이너" : "프로세스"})`);
   }
   const wakeups = (m.triggers ?? []).map((t) => ({
@@ -643,18 +651,17 @@ export function disclosure(m: Manifest): Disclosure {
     `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
-  const connector = m.auth?.kind ?? null;
   const hostMethods = m.host_methods ?? [];
 
   // 요구 범위 판정. high = 사용자 시야 밖에서 움직일 수 있는 선언(자동 실행, 외부 접점,
   // 자기 프로세스, 타 패키지 차용, 기판 host 브리지). medium = 호스트나 대화 표면을 넓게
   // 쓰는 선언. 나머지 low
   const risk: Disclosure["risk"] =
-    wakeups.length || network.length || spawns.length || borrows.length || connector || hostMethods.length
+    wakeups.length || network.length || spawns.length || borrows.length || hostMethods.length
       ? "high"
       : host.length || channels.length || (m.hooks?.deny?.length ?? 0)
         ? "medium"
         : "low";
 
-  return { folders, network, wakeups, llm, host, denied: m.hooks?.deny ?? [], borrows, spawns, channels, connector, hostMethods, risk };
+  return { folders, network, wakeups, llm, host, denied: m.hooks?.deny ?? [], borrows, spawns, channels, hostMethods, risk };
 }
