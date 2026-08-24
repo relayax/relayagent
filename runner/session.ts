@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, loadLedger, sessionDir, workspaceDir, stageDir, type Ledger } from "./state.ts";
+import { API_URL, RELAY_HOME, loadLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "./state.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
 import { spawnEntry, spawnEntrySync } from "./entry.ts";
 import { binaryEnv } from "./binaries.ts";
@@ -58,8 +58,10 @@ function tap(pkg: string, slot: string, ev: { event: string; [k: string]: unknow
 //    항등이다. 도구를 실행 이미지에 동봉하는 임베더에서 이미 무해한 항등이라 열 이유가 없다.
 //  · 진행 이벤트 장부(events.jsonl) — 턴마다 비우는 스크래치이고, 밖으로 흐르는 축은
 //    EnvelopeTap 이 이미 갖고 있다. 파일 자리는 주입된 sessionDir 을 따라간다.
-//  · 슬롯 열거(listSessionSlots) — 목록·이력 조회는 세션 실행이 아니라 기판 표면의 일이라 이
-//    파일 밖(client-wire.ts)에도 같은 열거가 산다. 한쪽만 인자화하면 두 열거가 갈린다.
+//  · 슬롯 열거(listSessionSlots) — 목록 조회는 세션 실행이 아니라 기판 표면의 일이다. 그 자리는
+//    계약 축 이음새가 가져갔다(client-wire.ts ClientWireIO.listSessions, 2026-08-24) — 여기에도
+//    같은 열거를 내면 두 열거가 갈린다. 이력 **읽기**는 반대로 여기가 정본이다: 계약 축의
+//    history.get 이 아래 readMessages 를 지난다(중복 리더 금지).
 
 /** 대화 장부 한 줄 — 파일 정본(history.jsonl)의 행 형상 그대로다. 저장소가 무엇이든 세션이
  *  쓰고 읽는 것은 이 형뿐이다. user 의 text 는 첨부·화면맥락 서문이 붙지 않은 원문이고,
@@ -121,7 +123,9 @@ export function localSessionIO(getLedger: () => Ledger): SessionIO {
     readMessages: (pkg, slot) => {
       let raw: string;
       try {
-        raw = fs.readFileSync(path.join(sessionDir(pkg, slot), "history.jsonl"), "utf8");
+        // sessionPath 인 이유: 읽기가 살림을 만들면 안 된다. 계약 축의 이력 조회(client-wire
+        // history.get)가 이 문을 지나므로, 없는 세션의 조회 하나가 목록에 유령 행을 세운다
+        raw = fs.readFileSync(path.join(sessionPath(pkg, slot), "history.jsonl"), "utf8");
       } catch {
         return []; // 이력 없는 슬롯 — 첫 턴
       }
@@ -918,9 +922,9 @@ export async function autoTitleSession(ledger: Ledger, pkg: string, slot: string
 }
 
 /** 한 패키지가 가진 세션 슬롯 목록 — 복구는 슬롯 단위로 돈다. 이 열거는 이음새 밖이다:
- *  목록·이력 조회는 세션 실행이 아니라 기판 표면의 일이라 이 파일 밖(client-wire.ts)에도
- *  같은 열거가 산다 — 한쪽만 인자화하면 두 열거가 갈린다. 좌표를 옮긴 임베더는 자기 저장소를
- *  열거하고 슬롯 이름만 넘긴다(recoverDanglingTurns 는 io 를 받는다) */
+ *  목록 조회는 세션 실행이 아니라 기판 표면의 일이라 계약 축 이음새가 그 자리를 갖는다
+ *  (client-wire.ts ClientWireIO.listSessions). 좌표를 옮긴 임베더는 자기 저장소를 열거하고
+ *  슬롯 이름만 넘긴다(recoverDanglingTurns 는 io 를 받는다) */
 export function listSessionSlots(pkg: string): string[] {
   const root = path.join(RELAY_HOME, "sessions", pkg);
   if (!fs.existsSync(root)) return [];

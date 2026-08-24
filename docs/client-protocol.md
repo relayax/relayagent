@@ -5,6 +5,14 @@
 OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현체는 이 문서에
 맞춰 정렬되며, 어느 쪽의 현행 wire 도 정본이 아니다.
 
+> **개정 이력 — 2026-08-24 (계약 무변경, 구현 반쪽의 이음새).** OSS 구현체
+> (`runner/client-wire.ts`)가 **계약 축 이음새 `ClientWireIO`** 를 냈다 — 계약이 규정하는
+> 표면이 딛는 저장소(세션 목록·개설·메타·하네스 조회·설정 쓰기)와 좌표(세션 이음새)를 인자로
+> 받는다. **이 개정은 wire 를 한 바이트도 바꾸지 않는다**: 동사·shape·코드·capability 어휘
+> 전부 그대로이고, 미주입이면 1인 기판의 현행 동작이 꽂힌다. 정본 문서는 `docs/
+> authority-interface.md` §10.2. *왜 계약 문서에 적나: §1-1 이 "구현체는 둘"이라고 선언한
+>것의 종착이 바뀌었기 때문이다 — 아래 §1-1 참조.*
+>
 > **개정 이력 — 2026-08-18 (v1 초안 내 additive).** 두 번째 구현체(relayos)가 실사고로 얻은
 > 개념을 계약으로 승격했다: 재전송 수렴(§5.1-12) · `settled` 이후 무이벤트(§6-36) ·
 > delta 입자 비보장(§6-35) · 대화축 취소 `cancel-by-session`(§4·§7). protocol 정수는 **1 그대로**다
@@ -32,6 +40,15 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 1. **정본 = OSS.** 계약 문서는 relayagent-oss `docs/` 에 산다. relayos 는 소비자다
    (relayos-claude/docs/convergence.md:113 "계약 정본은 OSS docs/").
    *왜: 정본은 밖, 의존은 relayos→OSS 한 방향이라는 수렴 독트린의 배당이다.*
+   **구현체 둘은 종착이 아니다 (2026-08-24 정정).** 처음 이 문서는 "정본 하나, 구현체 둘"을
+   그대로 종착으로 적었다. 그런데 같은 계약에 구현이 둘이면 판정도 둘이고, 실사고 하나가
+   한쪽에서만 고쳐지는 날이 온다(§5.2-20 의 가짜완료가 정확히 그런 경위로 relayos 에만
+   있었다). 종착은 **구현 하나 + 기판별 이음새 구현**이다: OSS 구현체가 계약 축 이음새
+   (`ClientWireIO` — authority-interface.md §10.2)를 내고, org 기판은 그 뒤에 자기 저장소를
+   꽂는다. 그때 org 문에 남는 것은 인증·마운트·경계이지 계약의 두 번째 구현이 아니다.
+   *왜 이것이 계약 조항인가: "익명의 제3자 임베더 테스트"(:2)는 계약의 **형**만이 아니라
+   계약의 **구현체가 하나로 설 수 있는가**에도 걸린다. 임베더가 저장소를 꽂을 자리가 없으면
+   임베더는 계약을 다시 구현하는 수밖에 없고, 그 순간 :2 는 문서에서만 참이 된다.*
 2. **익명의 제3자 임베더 테스트.** 이 계약의 어떤 동사·필드도 relayos 만 쓸 수 있는
    형태면 안 된다. org 의미(principal 바인딩, 멤버, 라이선스)는 계약에 등장하지 않고,
    기판의 문 뒤에서 해석된다(convergence.md:123-125).
@@ -48,8 +65,10 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
 ## 2. 계약이 규정하지 않는 것 — 인증과 좌표
 
 5. **인증은 기판 소유다.** 계약은 자격의 운반 위치(쿠키/헤더/없음)를 규정하지 않는다.
-   실측: OSS 데몬은 인증 헤더 0 — 127.0.0.1 바인딩(runner/api.ts:963) + Host 루프백
-   검사(runner/api.ts:492-497)가 문이다. relayos deployd 는 `relay_edge` 세션 쿠키를
+   실측: OSS 데몬은 인증 헤더 0 — 127.0.0.1 바인딩 + Host 루프백 검사(DNS rebinding 방어)
+   + 상태 변경 요청의 Origin 검사(CSRF)가 문이다(`runner/api.ts createApi`). 임베더는
+   `createApi(…, opts.door)` 로 허용 Host·Origin 을 **선언**하고 listen 을 자기가 가져간다 —
+   방어를 끄는 스위치가 아니라 집합을 넓히는 선언이다(authority-interface.md §10.3). relayos deployd 는 `relay_edge` 세션 쿠키를
    Bearer JWT 로 승격하고(runtime/deployd/api_turns.go:4, 66-67), 401 은 클라이언트가
    `POST /api/session/refresh` single-flight 후 1회 재시도한다
    (relayos lib/relayjs/src/transport.ts:41-62). 두 방식 모두 이 계약 위에서 합법이다.
@@ -527,6 +546,12 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
        트랙 — 확정 결정 C)하고, 위젯은 **OSS 릴리스 아티팩트의 번들을 재벤더링해
        소비**한다(확정 결정 B). relayos 트리의 `chat/` 직접 편집은 이 컷부터 **금지**다 —
        고칠 일은 OSS 커밋 → pin bump (convergence.md 불변 1 "정본은 밖, 무패치").
+       **4-a. 두 번째 구현체의 소거 (2026-08-24 추가).** 4 는 착지했고(relayos
+       `deploy/images/deployd/api_contract.go`), 그 정렬만으로는 구현이 여전히 둘이다.
+       소거의 선행 조건은 OSS 의 계약 축 이음새였고 그것이 이 컷에서 섰다(`ClientWireIO`).
+       남은 것은 org 쪽 작업이다: 임베디드 데몬에 이음새 구현(control 저장소)을 꽂고,
+       문에는 인증·마운트·경계만 남긴다. 계약 문서가 요구하는 것은 하나뿐이다 — **소거
+       뒤에도 같은 판정기를 지날 것**(아래 5).
     5. conformance: `relay harness-check` 상당의 client-check 를 후속으로 — 두 구현체가
        같은 판정기를 지나야 "정본 하나, 구현체 둘"이 문서 밖에서도 참이 된다.
 

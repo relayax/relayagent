@@ -9,7 +9,7 @@ import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, ca
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, type Manifest, type ServiceDecl } from "./manifest.ts";
 import { runSession, retireResident, retireResidents, setEnvelopeTap, isSessionBusy } from "./session.ts";
-import { handleClientWire, tapSessionEvent } from "./client-wire.ts";
+import { handleClientWire, tapSessionEvent, type ClientWireIO } from "./client-wire.ts";
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, prepareArtifact, activatePrepared, type Prepared } from "./installer.ts";
@@ -18,7 +18,7 @@ import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft
 import { saveLedger } from "./state.ts";
 import { assetsAtDaemonRoot } from "./build.ts";
 import { logLine } from "./state.ts";
-import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, localIO } from "./run.ts";
+import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, localIO, type RunnerIO } from "./run.ts";
 import { verifyChannel } from "./conform.ts";
 import { Ticker } from "./tick.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./login.ts";
@@ -72,6 +72,49 @@ const SELF_ORIGINS = new Set([
   `http://localhost:${API_PORT}`,
   `http://[::1]:${API_PORT}`,
 ]);
+
+/** 문의 신뢰 좌표 — 임베더가 **넓히는 선언**만 할 수 있다. 끄는 스위치는 없다.
+ *
+ *  왜 목록이고 술어가 아닌가: DNS rebinding 방어(아래 Host 검사)의 의도는 "Host 가 **선언된
+ *  집합** 안이어야 한다"이고, loopback 이름 셋은 1인 기판의 그 집합일 뿐이다. 술어를 받으면
+ *  `() => true` 가 합법이 되어 방어가 형태만 남는다. 목록을 받으면 임베더는 자기 Service DNS
+ *  이름을 적을 수 있고 방어는 그대로다.
+ *
+ *  왜 env 가 아닌가: 환경변수는 사용자가 넘길 수 있는 문턱이라, 인증 없는 데몬이 실수로
+ *  밖에 서는 길이 된다. 코드로만 넘긴다 — 임베더는 자기 문을 앞에 세운 뒤 이것을 쓴다. */
+export interface ApiDoor {
+  /** 추가로 허용할 Host 이름(포트 무관, 대소문자 무시). loopback 셋은 항상 통과한다 */
+  hosts?: string[];
+  /** 상태 변경 요청의 추가 허용 Origin(정확 문자열, 대소문자 무시) */
+  origins?: string[];
+  /** listen 좌표. 미지정 = 현행(127.0.0.1:API_PORT) · false = 임베더가 반환된 서버를 직접 listen.
+   *  소켓을 넓히는 것만으로는 문이 열리지 않는다 — Host 선언이 짝으로 있어야 한다 */
+  listen?: false | { port?: number; host?: string };
+}
+
+/** MCP 문 이음새(mcp.ts McpIO)를 세울 때 문이 아는 것 — 임베더가 기본 구현을 감싸거나 갈아 끼운다 */
+export interface McpDoorContext {
+  ledger: Ledger;
+  authority: Authority;
+  host: HostBridge;
+  pkg: string;
+  agent: string;
+  /** 발신 슬롯 — 위임 완료 배달의 회신 주소. 구 번들은 null */
+  session: string | null;
+}
+
+/** createApi 의 이음새 주입점 — 전부 미지정이면 1인 기판 현행 그대로다(additive).
+ *  권위(4번째 인자)와 함께, 임베더가 데몬 문에서 갈아 끼울 수 있는 축의 전부다 */
+export interface ApiOptions {
+  /** 계약 축(client-protocol v1)의 저장소 — 세션 목록·이력·무대·설정 쓰기·하네스 조회 */
+  wire?: ClientWireIO;
+  /** 세션이 보는 도구 문 — 미지정이면 localMcpIO */
+  mcp?: (ctx: McpDoorContext) => McpIO;
+  /** 스폰의 env 반쪽 — 미지정이면 localIO(장부 HMAC·vault·홈 로그).
+   *  임베더 장부에 secret 이 없으면 그 기본값의 토큰이 조용히 틀린다 */
+  runner?: (ledger: Ledger) => RunnerIO;
+  door?: ApiDoor;
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -683,12 +726,22 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
 
-// 권위 이음새 — 1인 기판은 로컬 권위(기본값). 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다)
-export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Ticker, authority: Authority = localAuthority(getLedger)): http.Server {
+// 권위 이음새 — 1인 기판은 로컬 권위(기본값). 조직 임베드는 여기 다른 구현을 꽂는다(api 는 모른다).
+// opts 는 나머지 이음새의 같은 자리다(계약 축·문·스폰·문의 신뢰 좌표) — 전부 additive.
+export function createApi(
+  getLedger: () => Ledger,
+  host: HostBridge,
+  ticker: Ticker,
+  authority: Authority = localAuthority(getLedger),
+  opts: ApiOptions = {},
+): http.Server {
   // 신 wire 의 턴 장부는 세션이 흘리는 봉투를 방청해 쌓인다 — 이 배선이 없으면 stream/attach 가
   // reply 만 보고 delta·tool 이 통째로 사라진다(왕복은 성공하는데 스트리밍만 죽는 형태)
   setEnvelopeTap(tapSessionEvent);
-  const wire = { getLedger, authority };
+  const wire = { getLedger, authority, io: opts.wire };
+  const runnerIO = (l: Ledger): RunnerIO => (opts.runner ?? localIO)(l);
+  const extraHosts = new Set((opts.door?.hosts ?? []).map((h) => h.toLowerCase()));
+  const extraOrigins = new Set((opts.door?.origins ?? []).map((o) => o.toLowerCase()));
   const server = http.createServer(async (req, res) => {
     try {
       // URL 파싱은 try 안에서 — "//" 같은 기형 경로의 파싱 예외가 밖으로 새면
@@ -696,9 +749,12 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const p = url.pathname;
       // DNS rebinding 방어: 외부 도메인을 127.0.0.1 로 재바인딩한 브라우저 요청은
-      // Host 가 그 도메인으로 오므로 여기서 끊긴다. loopback 이름만 통과
+      // Host 가 그 도메인으로 오므로 여기서 끊긴다. 통과 집합은 loopback 이름 셋 + 임베더가
+      // **선언한** 이름(ApiDoor.hosts)뿐이다 — 미선언 이름은 여전히 403 이라 방어는 그대로다
       const hostHdr = String(req.headers.host ?? "");
-      if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(hostHdr)) {
+      if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(hostHdr)
+        && !extraHosts.has(hostHdr.toLowerCase())
+        && !extraHosts.has(hostHdr.replace(/:\d+$/, "").toLowerCase())) {
         return void json(res, 403, { error: `허용되지 않은 Host: ${hostHdr}` });
       }
       // CSRF 방어: Host 검사는 DNS rebinding 만 막는다. 아무 웹페이지나 이 데몬으로 상태를
@@ -707,9 +763,9 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       // GET/HEAD 요청에 Origin 을 반드시 싣는다는 성질이 유일한 판별점이다: 실려 있으면
       // 데몬 자신의 오리진이어야 하고, 없으면 브라우저 밖(어댑터·CLI·컨테이너)이라 통과다
       if (req.method !== "GET" && req.method !== "HEAD") {
-        const reqOrigin = String(req.headers.origin ?? "");
-        if (reqOrigin && !SELF_ORIGINS.has(reqOrigin.toLowerCase())) {
-          return void json(res, 403, { error: `허용되지 않은 Origin: ${reqOrigin}` });
+        const reqOrigin = String(req.headers.origin ?? "").toLowerCase();
+        if (reqOrigin && !SELF_ORIGINS.has(reqOrigin) && !extraOrigins.has(reqOrigin)) {
+          return void json(res, 403, { error: `허용되지 않은 Origin: ${req.headers.origin}` });
         }
       }
       if (p === "/" || p === "") {
@@ -966,7 +1022,8 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         const l = getLedger();
         const r = activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
         stopServices(held.p.name); // 업데이트라면 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다
-        const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest)];
+        const rio = runnerIO(l);
+        const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest, rio), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest, rio)];
         ticker.emit(held.p.fresh ? "relay.package.installed" : "relay.package.published", { pkg: held.p.name, version: held.p.version });
         return void json(res, 200, { name: r.name, fresh: held.p.fresh, version: held.p.version, setup: r.setup ?? null, build: r.build ?? null, services: notes });
       }
@@ -1040,7 +1097,11 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         if (owner !== pkg) return void json(res, 401, { error: "토큰 불일치" });
         const agent = url.searchParams.get("agent") ?? landingAgentName(loadManifest(getLedger().packages[pkg].path)) ?? "";
         // session = 발신 슬롯(composeBundle 이 mcp url 에 싣는다) — 위임 완료 배달의 목적지
-        return void (await handleMcp(getLedger(), authority, host, pkg, agent, await readBody(req), res, url.searchParams.get("session")));
+        const ledger = getLedger();
+        const session = url.searchParams.get("session");
+        // 문 이음새 주입점 — 미지정이면 handleMcp 의 기본값(localMcpIO)이 그대로 선다
+        const mcpIO = opts.mcp?.({ ledger, authority, host, pkg, agent, session });
+        return void (await handleMcp(ledger, authority, host, pkg, agent, await readBody(req), res, session, mcpIO));
       }
 
       const hs = p.match(/^\/pkg\/([^/]+)\/harness$/);
@@ -1122,7 +1183,7 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
         }
         // restart — 옛 상주를 죽이고 다시 스폰한다(새 자격 반영). 정체 가드가 겹침 레이스를 막는다
         stopChannel(pkg, channel);
-        const note = startOneChannel(pkg, rec.path, c, localIO(l));
+        const note = startOneChannel(pkg, rec.path, c, runnerIO(l));
         return void json(res, 200, { ok: true, running: channelPid(pkg, channel) != null, note });
       }
 
@@ -1185,6 +1246,11 @@ export function createApi(getLedger: () => Ledger, host: HostBridge, ticker: Tic
       json(res, 500, { error: String(e) });
     }
   });
-  server.listen(API_PORT, "127.0.0.1");
+  // listen 좌표. false 면 소켓의 주인은 임베더다 — 반환된 서버를 자기가 연다(자기 문 뒤에서).
+  // 여기서 열지 않는 것이 요점이다: 우리가 loopback 을 먼저 열어 두면 임베더가 원치 않는
+  // 리스너가 하나 더 서고, 그 문에는 인증이 없다
+  if (opts.door?.listen !== false) {
+    server.listen(opts.door?.listen?.port ?? API_PORT, opts.door?.listen?.host ?? "127.0.0.1");
+  }
   return server;
 }
