@@ -30,7 +30,7 @@
 여러 (인스턴스 × 대화)를 탭으로 여는 셸. 옵션은 `mount` 와 같고 `onAllClosed` · `onCollapse`
 가 더 있다. `openTab({ instanceId, conversationId?, title? })` 로 탭을 연다.
 
-## 뷰-채팅 브리지 — openChat · AgentScope · setScene
+## 뷰-채팅 브리지 — openChat · AgentScope · setScene · onAgentTurn
 
 같은 문서의 도킹 위젯(자동 부유 크롬)과 말하는 인페이지 표면. `@relay/chat` **루트
 임포트**에서 온다 — 위젯 번들 자산이 아니라 의존성이다. 정본 계약은 기판 리포
@@ -51,9 +51,15 @@
 - `setScene(text | null)` — 화면 맥락 스냅샷(latest-wins). 위젯의 이후 발화가
   `turn.send` 의 scene 서문으로 싣는다(합성은 기판 몫, 이력에는 발화 원문만 남는다).
   `null` = 해제. 화면 상태가 바뀔 때마다 밀어 둔다 — 발화가 뷰를 기다리지 않는다.
+- `onAgentTurn(fn)` → 해지 함수 — **브리지의 유일한 역방향**. 같은 문서의 위젯이 시작·관찰한
+  턴의 수명주기를 흘린다: `{ phase: "started"|"settled", ok?, agent?, param?, conversation? }`.
+  **힌트다. 상태로 쓰지 말고 재조회의 트리거로만 써라** — 그래야 마운트 전 유실도, 재생
+  중복 발화도 무해해진다(정본은 언제나 기판이다). 매칭은 `agent`·`param` 으로 한다 —
+  `conversation` 은 불투명 문자열이라 파싱·비교의 근거가 아니다. 다른 탭·채널·위임
+  서브세션의 활동은 이 축에 오지 않는다.
 
 ```tsx
-import { AgentScope, openChat, setScene } from "@relay/chat";
+import { AgentScope, openChat, setScene, onAgentTurn } from "@relay/chat";
 
 <AgentScope agent="builder" param={pkgName} targets={allPkgs}>
   <Workbench />
@@ -64,6 +70,9 @@ openChat({ prefill: `다음 로드가 실패했어요. 고쳐주세요:\n${detai
 
 // 선택이 바뀔 때마다 화면 맥락 갱신:
 setScene(`사용자가 보고 있는 화면: ${pkgName} 워크벤치, 선택된 항목 ${sel}`);
+
+// 에이전트가 일을 끝내면 화면을 다시 읽는다 (payload 는 안 쓴다 — 트리거로만):
+useEffect(() => onAgentTurn((s) => { if (s.phase === "settled") void reload(); }), []);
 ```
 
 ## createChat({ base, root?, instance?, agent?, session? }) → Chat
