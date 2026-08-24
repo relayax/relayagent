@@ -42,7 +42,6 @@ One package is one directory. A single manifest (`relay.yaml`) declares everythi
 | Missions | Q&A capabilities a package offers to other packages. |
 | Edges | Declared dependencies on another package's tools, mission, or components. Declaration is an application; activation is a grant — for components the grant is recorded when install resolves the edge, and the enforcement point is the import map the substrate injects into the consuming screen. |
 | Workspace | The folder grant of a package: the cwd of its sessions, chosen at install (default `~/Relay/<name>`), recorded in the ledger. |
-| Hooks | Session fences. `hooks.deny` lists paths the session's tool calls must not touch; adapters translate it into native hooks. The substrate always merges its own home (`~/.relay`) in. |
 | Grants | Approvals recorded in the ledger. A grant can never exceed a declaration. |
 
 ## Quickstart
@@ -114,7 +113,7 @@ The grammar is [relay.manifest.yaml](relay.manifest.yaml), a JSON Schema with co
 3. **Declarations are caps, grants are approvals.** `edges` and `dir` services in the manifest are applications. Activation happens at install or via `relay grant`, lands in the ledger, and can never exceed what was declared.
 4. **Credentials never live in the tree.** Manifests declare only the shape of auth (`none`, `token`, `oauth`). Values sit in the vault: macOS Keychain, with a `0600` file fallback.
 5. **Harness-neutral agents.** Agents ship as a neutral bundle (persona, skills, commands, meta). Translating it into any native format is entirely the adapter's job, so packages are not married to one CLI.
-6. **Minimal ground.** A session stands on one granted folder: its workspace, confirmed at install. One more folder means a `dir` service, and paths a session must never touch go in `hooks.deny`. The substrate home (`~/.relay`) is denied to every session, always.
+6. **Minimal ground.** A session stands on one granted folder: its workspace, confirmed at install. One more folder means a `dir` service. The substrate home (`~/.relay`) is denied to every session, always.
 
 At the root of these six principles sits one premise: **everything can be expressed as an agent package.**
 

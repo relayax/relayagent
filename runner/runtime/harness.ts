@@ -283,9 +283,10 @@ function composeBundle(io: SessionIO, pkgPath: string, m: Manifest, agent: strin
     greeting: decl?.greeting,
     workspace: ground.workspace,
     stage: ground.stage,
-    // 담장 선언. 기판 장기의 좌표는 패키지 선언과 무관하게 기판이 무조건 병합한다 — 협상 불가.
-    // 번역(네이티브 훅·권한 규칙)은 어댑터 소유. 도구 호출 레벨 가드레일이지 OS 샌드박스가 아니다
-    hooks: { deny: [...io.denyRoots, ...(m.hooks?.deny ?? [])] },
+    // 담장은 기판 장기의 좌표뿐이다. 패키지가 자기 담장을 선언하던 문법(hooks)은 은퇴했다 —
+    // 방어 대상이 곧 선언 주체라 적대적 패키지는 선언을 비우면 그만이었고, 결재할 사람도 없었다.
+    // 번역(네이티브 훅·권한 규칙)은 어댑터 소유. 가드레일이지 OS 샌드박스가 아니다
+    hooks: { deny: [...io.denyRoots] },
     agents: (decl?.dispatch ?? []).map((sub) => ({
       name: sub,
       description: `${m.display_name} 패키지의 ${sub} 서브에이전트`,

@@ -82,13 +82,6 @@ export const SECTIONS: SectionDef[] = [
       })),
   },
   {
-    key: "hooks",
-    label: "hooks",
-    yamlKey: "hooks",
-    hint: "세션 담장. deny 경로는 세션의 도구 호출이 닿지 못한다. 기판 홈(~/.relay)은 선언과 무관하게 항상 막힌다.",
-    declared: (m) => !!m.hooks,
-  },
-  {
     key: "agents",
     label: "agents",
     yamlKey: "agents",

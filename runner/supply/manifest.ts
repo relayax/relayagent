@@ -60,7 +60,6 @@ export interface Manifest {
     variants?: HarnessVariant[];
     workdir?: string;
   };
-  hooks?: { deny?: string[] };
   agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
@@ -122,7 +121,7 @@ const SIZE = /^\d+(Mi|Gi)$/;
 // 기판마다 다른 뜻이 되는 방언의 문이 열린다. 확장(org 의미)은 org 블록 한 곳으로만 들어온다
 const TOP_KEYS = new Set([
   "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog",
-  "requires", "surfaces", "harness", "hooks", "agents", "scripts", "services",
+  "requires", "surfaces", "harness", "agents", "scripts", "services",
   "triggers", "missions", "edges", "host_methods", "org",
 ]);
 
@@ -368,16 +367,6 @@ export function judge(m: Manifest, pkgPath?: string): void {
   }
   if (h?.workdir && badPath(h.workdir)) issues.push(`harness.workdir: workspace 하위 상대경로만: ${h.workdir}`);
 
-  // hooks.deny 는 호스트 경로다 — ~ 또는 절대경로. 기판은 ~/.relay 를 선언과 무관하게 항상 병합한다
-  if (m.hooks) {
-    if (m.hooks.deny && m.hooks.deny.length === 0) issues.push("hooks.deny: 빈 목록 불가");
-    for (const d of m.hooks.deny ?? []) {
-      if (typeof d !== "string" || !/^(~($|\/)|\/)/.test(d) || d.split("/").includes("..")) {
-        issues.push(`hooks.deny 는 ~ 또는 절대경로만(.. 금지): ${d}`);
-      }
-    }
-  }
-
   const agents = m.agents ?? [];
   const agentNames = new Set<string>();
   const scriptNames = pkgPath && m.scripts?.source ? listScripts(pkgPath, m) : null;
@@ -607,8 +596,6 @@ export interface Disclosure {
   llm: { provider: string; auth: string }[];
   /** requires — 호스트에 미리 있어야 하는 것 */
   host: string[];
-  /** hooks.deny — 닿지 않겠다고 스스로 선언한 경로 */
-  denied: string[];
   /** edges — 다른 패키지에서 빌리겠다고 신청한 능력 */
   borrows: string[];
   /** services[].source — 패키지가 띄우는 프로세스·컨테이너 */
@@ -659,9 +646,9 @@ export function disclosure(m: Manifest): Disclosure {
   const risk: Disclosure["risk"] =
     wakeups.length || network.length || spawns.length || borrows.length || hostMethods.length
       ? "high"
-      : host.length || channels.length || (m.hooks?.deny?.length ?? 0)
+      : host.length || channels.length
         ? "medium"
         : "low";
 
-  return { folders, network, wakeups, llm, host, denied: m.hooks?.deny ?? [], borrows, spawns, channels, hostMethods, risk };
+  return { folders, network, wakeups, llm, host, borrows, spawns, channels, hostMethods, risk };
 }

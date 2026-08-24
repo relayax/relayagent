@@ -109,7 +109,6 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
   if (d.borrows.length) rows.push(`<div><dt>빌림</dt><dd>${esc(d.borrows.join(" · "))}</dd></div>`);
   if (d.spawns.length) rows.push(`<div><dt>프로세스</dt><dd>${esc(d.spawns.join(" · "))}</dd></div>`);
   if (d.hostMethods.length) rows.push(`<div><dt>기판</dt><dd>host 브리지 <code>${esc(d.hostMethods.join(", "))}</code></dd></div>`);
-  if (d.denied.length) rows.push(`<div><dt>담장</dt><dd>${esc(d.denied.join(", "))} 에는 닿지 않습니다</dd></div>`);
 
   const nots: string[] = [];
   if (!d.network.length) nots.push("인터넷으로 나가지 않고");

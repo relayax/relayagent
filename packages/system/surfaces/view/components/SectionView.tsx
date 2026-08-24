@@ -275,29 +275,6 @@ function HarnessItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   );
 }
 
-function HooksView({ ctx }: { ctx: SectionCtx }) {
-  const deny = ctx.manifest.hooks?.deny ?? [];
-  const [v, setV] = useState(deny.join("\n"));
-  useEffect(() => setV(deny.join("\n")), [deny.join("\n")]);
-  return (
-    <div className="st-form">
-      <label className="st-field">
-        <span>deny (줄마다 하나 — ~ 또는 절대경로)</span>
-        <textarea
-          rows={5}
-          value={v}
-          placeholder={"~/Documents/세무"}
-          onChange={(e) => setV(e.target.value)}
-          onBlur={() => {
-            const list = v.split("\n").map((x) => x.trim()).filter(Boolean);
-            ctx.apply((d) => (list.length ? d.setIn(["hooks", "deny"], list) : d.deleteIn(["hooks"])));
-          }}
-        />
-      </label>
-    </div>
-  );
-}
-
 function AgentsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [name, setName] = useState("");
@@ -757,8 +734,6 @@ export default function SectionView({ sec, item, ctx }: { sec: string; item: str
         return <SurfacesLanding def={def} ctx={ctx} />;
       case "harness":
         return <HarnessLanding def={def} ctx={ctx} />;
-      case "hooks":
-        return <HooksView ctx={ctx} />;
       case "agents":
         return <AgentsLanding def={def} ctx={ctx} />;
       case "scripts":
