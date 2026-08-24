@@ -401,7 +401,7 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
      내보낸 함수(`cancelSession`·`retireResident*`)로 임베더가 부른다.
    - *도구 조달(`binaries.ts binaryEnv`)* — 기판 사본 디렉토리가 없으면 PATH 를 건드리지
      않는 항등이다. 도구를 실행 이미지에 동봉하는 임베더에서 이미 무해하다.
-   - *진행 이벤트 장부(`events.jsonl`)* — 턴마다 비우는 스크래치이고, 밖으로 흐르는 축은
+   - *턴 장부(`turns/<id>.jsonl`)* — 자리는 sessionDir 을 따라가고, 밖으로 흐르는 축은
      `EnvelopeTap` 이 이미 갖고 있다. 파일 자리는 주입된 `sessionDir` 을 따라간다.
    - *슬롯 열거(`listSessionSlots`)* — 목록·이력 조회는 세션 실행이 아니라 기판 표면의
      일이라 session.ts 밖(client-wire.ts)에도 같은 열거가 산다. 한쪽만 인자화하면 두

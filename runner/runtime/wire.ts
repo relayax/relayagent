@@ -73,7 +73,7 @@ export const CLIENT_PROTOCOL = 1;
 //    SSE 라이터와 Promise 사슬이라 프로세스 지역이다(SessionIO 가 진행 명부를 열지 않은 것과
 //    같은 근거). 게다가 세션 직렬화는 계약이 **기판에게 맡긴 판정**이다(§5.1-12 "기판만이 세션의
 //    유일한 직렬화 지점") — 인자화하면 그 불변식이 구현마다 갈린다. 턴 장부의 **파일 자리**는
-//    주입된 session.sessionDir 을 따라간다(events.jsonl 과 같은 처리).
+//    주입된 session.sessionDir 을 따라간다(세션의 턴 장부와 같은 자리).
 //  · 취소·회송·busy(cancelSession·deliverAnswer·isSessionBusy·retireResident) — 착지점이
 //    session.ts 의 진행 명부(ChildProcess 핸들·stdin)다. 턴을 이 데몬이 돌리는 한 같은 프로세스
 //    안이고, 돌리지 않는 기판이면 이 파일이 애초에 그 문의 서버가 아니다.
@@ -265,10 +265,10 @@ function openSse(req: http.IncomingMessage, res: http.ServerResponse): Sse {
 }
 
 // ── 턴 단위 이벤트 장부(§6-35 리플레이 원천) ─────────────────────────────────
-// 현행 events.jsonl(session.ts)은 턴마다 truncate 되어 종결 턴 재생(§5.1-13)과
+// 턴당 파일이다(구 events.jsonl 은 슬롯당 하나라 턴마다 truncate 되어 종결 턴 재생(§5.1-13)과
 // attach 처음부터 재생(§5.1-14)의 원천이 못 된다. 신 wire 는 턴마다 독립 장부를 쓴다:
 //   ~/.relay/sessions/<pkg>/<slot>/turns/<turnId>.jsonl
-// 장부 한 줄 = {t, ...봉투이벤트} — events.jsonl 과 같은 어휘라 라이브 SSE 와 재생이
+// 장부 한 줄 = {t, ...봉투이벤트} — 세션과 wire 가 같은 어휘로 쓰므로 라이브 SSE 와 재생이
 // 같은 JSON 을 나른다(§5.2-18 의 단일 축).
 
 const TURNS_DIR = "turns";
@@ -315,12 +315,22 @@ function activeTurn(pkg: string, session: string): TurnRecord | null {
   return sessionQueues.get(sessionKey(pkg, session))?.[0] ?? null;
 }
 
-/** 장부 기록 + 라이브 중계 — 봉투 이벤트는 번역 없이 그대로 나른다(§6-35 데몬=파이프) */
+/** 라이브 중계 + 상태 — 봉투 이벤트는 번역 없이 그대로 나른다(§6-35 데몬=파이프).
+ *  기록하지 않는다: 세션이 이미 같은 줄을 장부에 썼다(harness.ts appendEvent). */
+function relayTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
+  if (ev.event === "reply" || ev.event === "error") t.settledEnvelope = true;
+  if (ev.event === "file" && typeof ev.path === "string") t.announcedFiles.add(ev.path);
+  const line = JSON.stringify({ t: Date.now(), ...ev });
+  for (const s of [...t.sinks]) s.write(line);
+}
+
+/** wire 자신이 내는 이벤트 — 개설·종결·합성 reply·stage diff 고지. 세션이 모르는 것들이라
+ *  여기가 유일한 writer 다. 세션의 기록과 한 파일에 붙지만 append 는 순차라 섞이지 않는다 */
 function appendTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
   const line = JSON.stringify({ t: Date.now(), ...ev });
   try {
     fs.appendFileSync(t.file, line + "\n");
-  } catch { /* 세션 삭제 경합 — 기록만 포기, 라이브 중계는 계속 (session.ts idleEvent 와 같은 판정) */ }
+  } catch { /* 세션 삭제 경합 — 기록만 포기, 라이브 중계는 계속 */ }
   if (ev.event === "reply" || ev.event === "error") t.settledEnvelope = true;
   if (ev.event === "file" && typeof ev.path === "string") t.announcedFiles.add(ev.path);
   for (const s of [...t.sinks]) s.write(line);
@@ -336,7 +346,9 @@ function appendTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
 export function tapSessionEvent(pkg: string, slot: string, ev: EnvelopeEvent): void {
   const t = activeTurn(pkg, slot);
   if (!t || t.status !== "running") return;
-  appendTurnEvent(t, ev);
+  // 기록은 세션이 이미 했다(SessionInput.turnLedger) — 여기서는 라이브 중계와 상태만.
+  // 한 봉투를 두 자리에서 쓰던 이중 기록의 해소점이다
+  relayTurnEvent(t, ev);
 }
 
 function settleTurn(t: TurnRecord, ok: boolean): void {
@@ -384,6 +396,9 @@ async function runTurn(deps: ClientWireDeps, io: ClientWireIO, t: TurnRecord, bo
       agent: body.agent ? String(body.agent) : undefined,
       attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
       scene: body.scene ? String(body.scene) : undefined,
+      // 이 턴의 장부 — 세션이 봉투를 여기 직접 쓴다. 종전에는 세션이 events.jsonl 에,
+      // wire 가 tap 으로 같은 봉투를 여기 또 썼다(같은 줄을 두 파일에 두 번)
+      turnLedger: t.file,
     });
     // 무대 산출물 고지 — 구 wire 는 이것을 응답의 files 로 실어 보냈다(구 POST /chat).
     // 신 wire 의 자리는 봉투 어휘의 file 이벤트다(§6-35): stage diff 로만 발견된 파일은
@@ -428,7 +443,7 @@ function pruneTurnLedgers(dir: string): void {
 }
 
 function enqueueTurn(deps: ClientWireDeps, io: ClientWireIO, pkg: string, session: string, body: any): TurnRecord {
-  // 턴 장부의 파일 자리는 주입된 세션 좌표를 따라간다(session.ts events.jsonl 과 같은 처리)
+  // 턴 장부의 파일 자리는 주입된 세션 좌표를 따라간다(세션도 같은 자리에 쓴다)
   const dir = path.join(io.session.sessionDir(pkg, session), TURNS_DIR);
   fs.mkdirSync(dir, { recursive: true });
   pruneTurnLedgers(dir);

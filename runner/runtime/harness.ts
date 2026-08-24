@@ -56,8 +56,8 @@ function tap(pkg: string, slot: string, ev: { event: string; [k: string]: unknow
 //    (cancelSession·retireResident*)로 임베더가 부른다. 인자화하면 구현이 하나뿐인 형이 된다.
 //  · 도구 조달(binaries.ts binaryEnv) — 기판 사본 디렉토리가 없으면 PATH 를 건드리지 않는
 //    항등이다. 도구를 실행 이미지에 동봉하는 임베더에서 이미 무해한 항등이라 열 이유가 없다.
-//  · 진행 이벤트 장부(events.jsonl) — 턴마다 비우는 스크래치이고, 밖으로 흐르는 축은
-//    EnvelopeTap 이 이미 갖고 있다. 파일 자리는 주입된 sessionDir 을 따라간다.
+//  · 턴 장부(turns/<id>.jsonl) — 자리는 주입된 sessionDir 을 따라가고, 파일은 wire 가
+//    개설한 턴이면 그쪽이 정한다(SessionInput.turnLedger). 밖으로 흐르는 축은 EnvelopeTap.
 //  · 슬롯 열거(listSessionSlots) — 목록 조회는 세션 실행이 아니라 기판 표면의 일이다. 그 자리는
 //    계약 축 이음새가 가져갔다(client-wire.ts ClientWireIO.listSessions, 2026-08-24) — 여기에도
 //    같은 열거를 내면 두 열거가 갈린다. 이력 **읽기**는 반대로 여기가 정본이다: 계약 축의
@@ -157,6 +157,12 @@ export interface SessionInput {
   attachments?: { path: string; name?: string }[];
   /** 화면 맥락 스냅샷 — 프롬프트 서문으로만 붙는다. 이력의 user text 는 원문으로 남는다 (첨부와 같은 계약) */
   scene?: string;
+  /** 이 턴의 장부 파일. wire 가 개설한 턴은 그 turns/<id>.jsonl 을 넘긴다 —
+   *  넘기지 않으면(CLI·트리거·a2a) 세션이 같은 자리에 자기 id 로 하나 뜬다.
+   *  종전에는 세션이 events.jsonl(턴마다 truncate)에, wire 가 턴 장부에 같은 봉투를
+   *  두 번 썼다. 쓰는 자리를 하나로 모으면 어휘도 하나가 된다 — "슬롯의 스크래치"가 사라지고
+   *  모든 턴이 관찰·재생 가능한 장부를 갖는다(a2a·트리거 턴도 마찬가지). */
+  turnLedger?: string;
 }
 
 export interface SessionResult {
@@ -175,6 +181,11 @@ export interface SessionResult {
 
 // 첨부는 프롬프트 앞에 경로로 붙는다. 첨부의 실체는 stage 에 앉으므로 cwd 와 무관하게
 // 절대경로로 준다 (이미지는 비전). 사용자는 경로를 보지 않는다 — 위젯이 칩으로 보여줄 뿐이다
+/** 턴 장부의 자리. wire 의 TURNS_DIR 과 같은 문법이라 열거·재생이 한 규칙을 본다 */
+export function turnLedgerPath(io: SessionIO, pkg: string, slot: string, id: string): string {
+  return path.join(io.sessionDir(pkg, slot), "turns", id + ".jsonl");
+}
+
 function safeAttachments(atts: SessionInput["attachments"]): { path: string; name: string }[] {
   return (atts ?? [])
     .map((a) => ({ path: String(a.path ?? ""), name: String(a.name ?? path.basename(String(a.path ?? ""))) }))
@@ -335,6 +346,9 @@ interface Resident {
   tasks: Set<string>;
   /** 마지막 봉투 이벤트 시각 — 스톨 워치독의 근거 */
   lastEvent: number;
+  /** 마지막 턴의 장부 — 유휴 턴(자발 continuation)의 이벤트가 여기 남는다.
+   *  턴마다 갱신된다: 유휴 이벤트는 "직전 턴에 이어진 것"이라 그 장부가 제 자리다 */
+  ledgerFile: string | null;
 }
 
 const residents = new Map<string, Resident>();
@@ -465,7 +479,7 @@ function armIdle(key: string, r: Resident): void {
 // reply 는 이력에 bot 메시지로 앉히고, 나머지는 진행 장부에 남겨 위젯이 줍게 한다
 function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): void {
   try {
-    fs.appendFileSync(path.join(r.io.sessionDir(r.pkg, r.slot), "events.jsonl"), JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+    if (r.ledgerFile) appendEvent(r.ledgerFile, ev);
   } catch { /* 세션 디렉토리가 지워짐 — 기록만 포기 */ }
   tap(r.pkg, r.slot, ev);
   if (ev.event === "reply") {
@@ -489,7 +503,7 @@ function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string
   }
   if (cur) retireEntry(key, cur);
   const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now() };
+  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now(), ledgerFile: null };
   child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
@@ -548,6 +562,7 @@ function residentTurn(
     const r = acquireResident(io, pkg, slot, entry, env, cwd, fp);
     live.set(key, r.child);
     r.lastEvent = Date.now();
+    r.ledgerFile = eventsFile; // 이 턴 이후의 유휴 이벤트도 같은 장부에 남는다
     // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
     const stall = setInterval(() => {
       if (Date.now() - r.lastEvent < STALL_MS) return;
@@ -572,7 +587,7 @@ function residentTurn(
       fn();
     };
     r.sink = (ev) => {
-      fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+      appendEvent(eventsFile, ev);
       tap(pkg, slot, ev);
       if (ev.event === "reply") {
         finish(() => resolve({
@@ -743,8 +758,9 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   }
 
   // 이 턴의 진행 이벤트 장부 — 위젯이 폴링해 delta·tool 진행을 그린다. 턴마다 새로 시작한다
-  const eventsFile = path.join(io.sessionDir(input.pkg, slot), "events.jsonl");
-  fs.writeFileSync(eventsFile, "");
+  // 장부 자리: wire 가 개설한 턴이면 그 파일, 아니면(CLI·트리거·a2a) 세션이 하나 뜬다
+  const eventsFile = input.turnLedger ?? turnLedgerPath(io, input.pkg, slot, crypto.randomUUID());
+  fs.mkdirSync(path.dirname(eventsFile), { recursive: true });
   // 질문은 턴이 끝나기를 기다리지 않는다. 답변까지 모아서 마지막에 한 번 쓰면
   // 도중에 기판이 죽었을 때 질문까지 통째로 사라진다 — 물음은 지금, 답은 끝나고
   appendUser(io, input.pkg, slot, input.prompt ?? "", atts);
@@ -786,7 +802,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
           raw += line + "\n";
           return;
         }
-        fs.appendFileSync(eventsFile, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+        appendEvent(eventsFile, ev as { event: string; [k: string]: unknown });
         // 위 가드(typeof ev.event !== "string" 조기 반환)가 이미 증명한 형 — 인덱스 시그니처라 좁혀지지 않는다
         tap(input.pkg, slot, ev as { event: string; [k: string]: unknown });
         if (ev.event === "reply") {
@@ -879,8 +895,34 @@ function appendBot(
 }
 
 /** 진행 장부에 흘렀던 본류 텍스트를 이어 붙인다 — 종결 본문이 없는 턴의 대타 */
+/** 슬롯의 가장 최근 턴 장부 — 끊긴 턴 복구가 읽는다. 종전의 events.jsonl(슬롯당 하나,
+ *  턴마다 truncate)이 하던 일을 "가장 최근 파일"이 대신한다 */
+function latestTurnLedger(io: SessionIO, pkg: string, slot: string): string {
+  const dir = path.join(io.sessionDir(pkg, slot), "turns");
+  let best = "";
+  let bestAt = -1;
+  try {
+    for (const e of fs.readdirSync(dir)) {
+      if (!e.endsWith(".jsonl")) continue;
+      const f = path.join(dir, e);
+      const at = fs.statSync(f).mtimeMs;
+      if (at > bestAt) { bestAt = at; best = f; }
+    }
+  } catch { /* 턴 없음 */ }
+  return best;
+}
+
+/** 장부 한 줄 — wire 의 appendTurnEvent 와 같은 형({t, ...봉투}). 두 writer 가 한 파일에
+ *  붙지만 append 는 순차라 섞이지 않는다: 세션은 턴 도중, wire 는 개설·종결에 쓴다 */
+function appendEvent(file: string, ev: { event: string; [k: string]: unknown }): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, JSON.stringify({ t: Date.now(), ...ev }) + "\n");
+  } catch { /* 세션 삭제 경합 — 기록만 포기, 턴은 계속 (wire appendTurnEvent 와 같은 판정) */ }
+}
+
 function deltaText(eventsFile: string): string {
-  if (!fs.existsSync(eventsFile)) return "";
+  if (!eventsFile || !fs.existsSync(eventsFile)) return "";
   let out = "";
   for (const l of fs.readFileSync(eventsFile, "utf8").split("\n")) {
     if (!l.trim()) continue;
@@ -955,7 +997,7 @@ export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = 
   if (!msgs.length) return false;
   if (msgs[msgs.length - 1]?.role !== "user") return false;
 
-  const text = deltaText(path.join(io.sessionDir(pkg, slot), "events.jsonl"));
+  const text = deltaText(latestTurnLedger(io, pkg, slot));
   appendBot(
     io,
     pkg,
