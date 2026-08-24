@@ -1,8 +1,10 @@
 node_modules/
 .next/
 out/
-# 위젯 번들 산출물 (lib/relayjs chat-build.mjs) — 릴리스 컷이 굽는다, 트리에 커밋 금지
-lib/relayjs/dist/
+# 위젯 번들 산출물 (chat/ chat-build.mjs) — 릴리스 컷이 굽는다, 트리에 커밋 금지
+chat/dist/
+# 컴포넌트 번들 산출물 (surfaces.components.out) — 설치·발행이 굽는다
+dist/
 .DS_Store
 *.log
 .env

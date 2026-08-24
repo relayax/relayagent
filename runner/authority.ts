@@ -12,9 +12,9 @@
 // 서비스 자격(oauth.ts)·스폰 이음새(run.ts localIO)·트리거(tick.ts)·로그인(login.ts)이 전부
 // 이 이음새를 지난다. 동기 계약에 박혀 남은 직결 소비는 `§8-2 잔여` 주석으로 표기되어 있다
 // (build.ts·pack.ts·registry.ts·installer.ts llmEnv·run.ts RunnerIO.credential).
-import { PRINCIPAL, pkgToken, tokenToPkg, logLine, type Grant, type Ledger } from "./state.ts";
+import { PRINCIPAL, pkgToken, tokenToPkg, logLine, type Grant, type Ledger } from "./supply/ledger.ts";
 import { vaultGet, vaultSet } from "./vault.ts";
-import { addGrant, removeGrant as ledgerRemoveGrant } from "./installer.ts";
+import { addGrant, removeGrant as ledgerRemoveGrant } from "./supply/install.ts";
 
 export type { Authority, AuthorityGrant } from "./authority-contract.ts";
 import type { Authority } from "./authority-contract.ts";

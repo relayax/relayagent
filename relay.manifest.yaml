@@ -10,13 +10,13 @@ description: |
     agents/<name>/AGENT.md           agents[].persona. 스킬 = agents[].skills/<skill>/SKILL.md
     scripts/<이름>.ts                scripts.source 아래 동사. 기본 수출 async 함수 (input, ctx) => 결과 JSON (+ 선택 meta 수출)
     surfaces/view/                   surfaces.view.source (+ out 선언 시 발행이 빌드해 <source>/<out> 서빙)
-    surfaces/components/             surfaces.components.source — 다른 패키지 view 가 소비하는 npm 패키지(package.json + 소스)
+    surfaces/components/             surfaces.components.source (+ out 선언 시 발행이 굽는다) — 다른 패키지 화면이 마운트하는 자립 번들
     channels/<name>/                 channels[].source + entry
     harness/<name>/                  harness.variants[].source + entry
     services/<name>/                 services[].source + dockerfile(컨테이너 형) 또는 entry(프로세스 형)
 type: object
 additionalProperties: false
-required: [schema, name, version, display_name, description, surfaces]
+required: [schema, name, version, display_name, description]
 properties:
   schema:
     const: relay/v1
@@ -122,6 +122,11 @@ properties:
           items:
             const: darwin
   surfaces:
+    description: |
+      패키지가 세상에 내미는 창구들. 전부 저작물이 사는 경로 선언이다 — 선언 없는 창구는 없다.
+      선택 블록이다: 트리거·채널로만 도는 패키지, 몸 없는 커넥터는 창구가 없을 수 있다.
+      "사람이 직접 대화할 수 있는가" 는 여기가 아니라 agents[] 가 답한다 — 에이전트가 있고
+      view 가 없으면 기판이 /pkg/<이름>/view/ 에 전체 화면 대화를 세운다(선언 아닌 도출).
     type: object
     additionalProperties: false
     properties:
@@ -142,32 +147,46 @@ properties:
             $ref: '#/$defs/relpath'
       components:
         description: |
-          컴포넌트 수출 — source 가 npm 패키지(package.json + 소스) 그 자체다. 다른 패키지의
-          view 가 edges[].components 선언으로 이 소스를 소비한다: 기판이 설치·발행 시점에
-          npm pack 으로 tgz 를 굽고 소비 view 의 package.json "*" 의존을 file: 로 고정한다 —
-          레지스트리 없음. 규율 셋:
-            좌표    package.json name 은 매니페스트 name 과 같아야 한다(판정 fail-loud) —
-                    소비자 package.json 의 의존 키가 곧 이 좌표다.
-            싱글턴  react 나 UI 킷 같은 공유 라이브러리는 peerDependencies 로만 선언한다.
-                    dependencies 로 안으면 tgz 전개본이 자기 사본을 갖게 되어 소비 view 와
-                    React 인스턴스·context 가 갈린다(조용히 깨지는 축).
-            중첩    컴포넌트 패키지가 다른 패키지의 components 를 소비하는 것은 계약 밖이다 —
-                    해석 순서·순환 게이트를 만드느니 한 단계가 규율이다.
+          컴포넌트 수출 — 다른 패키지의 화면이 마운트하는 **자립 번들**. 소비는 빌드가 아니라
+          런타임이다: 기판이 번들을 주소로 서빙하고, 소비자 문서에 import map 을 심어 제공자
+          매니페스트 name 을 그 주소로 해석한다. 소비자 코드는 `import { mount } from "<제공자
+          name>"` 뿐이고 주소를 조립하지 않는다(마운트 문법은 기판 소유 — surfaces.view 와 같은
+          규율). 빌드형 뷰는 같은 bare 이름을 external 로 넘기면 되므로 **저작 표면이 무빌드
+          HTML 과 빌드형 뷰에서 같다**.
+
+          계약은 수출 하나다:
+            export function mount(el: HTMLElement, props?: object): { unmount(): void }
+
+          규율 셋:
+            자립    번들은 자기 런타임을 안고 나온다 — React 로 저작하면 React 가 번들 안에
+                    들어간다. 소비자에게 프레임워크를 요구하지 마라(무빌드 HTML 이 첫 관객이다).
+                    크기 때문에 react 를 external 로 빼고 싶어지면 입자를 굵게 잡아라(패키지당
+                    번들 하나) — external 은 소비자에게 런타임 제공 전제를 만들고, 그 순간
+                    무빌드 소비가 죽는다.
+            스타일  스타일도 번들 안에 탄다(마운트 때 심는다). 옆에 CSS 파일로 내지 마라 —
+                    소비자가 그 주소를 알아야 하는데 주소에는 제공자의 **설치 이름**이 들어간다.
+                    같은 패키지가 다른 이름으로 서는 순간 깨지고, 기판만 아는 좌표를 소비자가
+                    조립하는 꼴이다(2026-08-24 실측에서 이 구멍이 드러났다). 한 파일이면 그 축이
+                    없다. 내부 클래스는 계약이 아니다 — 테마 seam 은 CSS 변수로 노출하라
+                    (채팅 위젯의 --rc-* 가 선례).
+            입자    이 축은 **기능 조각**의 형태다(패널, 목록, 지도 — 자기 사각형을 스스로 관리
+                    하는 것). 디자인 원자(Button, Card)는 여기 앉지 않는다: children 과 context 와
+                    ref 가 명령형 마운트 경계를 넘지 못하고, 런타임 사본이 번들마다 실린다.
+                    원자 공유가 필요해지면 소스 합성을 별도 문법으로 세울 일이지 이 축을 늘릴
+                    일이 아니다.
         type: object
         additionalProperties: false
         required: [source]
         properties:
           source:
             $ref: '#/$defs/relpath'
-      chat:
-        type: object
-        additionalProperties: false
-        required: [mode]
-        properties:
-          mode:
-            enum: [direct, none]
-          greeting:
-            type: string
+          out:
+            description: |
+              빌드 산출 디렉토리. 선언하면 설치·발행이 <source> 에서 npm install(최초) +
+              npm run build 를 돌린다. 산출 안의 index.js 가 진입점이자 전부다(스타일 동봉).
+              미선언 = <source> 를 그대로 서빙한다(빌드 없는 손저작 ESM).
+              번들은 /pkg/<설치이름>/components/ 아래로 선다. 재빌드는 relay build <패키지>
+            $ref: '#/$defs/relpath'
       channels:
         description: |
           외부 대화 표면(Discord, Slack, 메일 등)을 잇는 상주 어댑터들. 어댑터는 글루다:
@@ -460,7 +479,12 @@ properties:
   agents:
     description: |
       착지점 = default: true 선언 에이전트, 미선언이면 패키지 짧은 이름과 같은 에이전트 관례.
-      persona 는 agents/<name>/AGENT.md
+      persona 는 agents/<name>/AGENT.md.
+      **에이전트를 선언했으면 착지가 정해져야 한다** — 명시도 관례도 착지를 못 정하면 설치가
+      거부한다. 착지 없이 통과시키면 대화의 문이 없는 패키지가 서고, 턴은 페르소나 없는
+      세션으로 강등된다. 세션은 페르소나 위에 서므로 선언 밖 이름으로는 턴이 열리지 않는다:
+      기본 페르소나 합성은 은퇴했고(조용한 강등), 개설(POST /turns)의 명시 agent 도
+      민팅과 같이 E_BAD_AGENT 로 거절된다
     type: array
     items:
       type: object
@@ -470,11 +494,21 @@ properties:
         name:
           $ref: '#/$defs/slug'
         default:
-          description: main 슬롯 착지점 — 최대 1. 명시 선언은 "짧은 이름과 같은 에이전트" 관례의 상위 호환
+          description: |
+            main 슬롯 착지점 — 최대 1. 명시 선언은 "짧은 이름과 같은 에이전트" 관례의 상위 호환.
+            에이전트 이름이 패키지 짧은 이름과 다르면 이 선언이 착지를 정하는 유일한 길이다
           type: boolean
         persona:
           description: 페르소나 마크다운 파일
           $ref: '#/$defs/relpath'
+        greeting:
+          description: |
+            빈 대화의 첫 인사말. 인사말은 창구가 아니라 말하는 쪽 소속이다 — 같은 에이전트가
+            chat·Discord·트리거 선톡 어디로 나가든 같은 입이고, 에이전트가 여럿이면 인사말도
+            여럿이다. 세션 번들 meta.json 에 그 에이전트 몫이 실리고, 착지 에이전트의 것이
+            instances 열거의 greeting 으로 나간다
+          type: string
+          minLength: 1
         skills:
           description: 스킬 디렉토리 (<skill>/SKILL.md) — 하네스 네이티브 스킬로 조립
           $ref: '#/$defs/relpath'
@@ -595,8 +629,8 @@ properties:
     description: |
       선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다.
       소비물은 셋 중 하나다(동시 선언 불가): tools(동사, 런타임 결재) · mission(질의,
-      런타임 결재) · components(제공자의 surfaces.components 를 view 빌드 의존으로 —
-      집행점이 런타임이 아니라 빌드라, 활성화는 빌드 해석 성공이 곧 결재 기록이다)
+      런타임 결재) · components(제공자의 surfaces.components 번들을 이 패키지 화면이 마운트 —
+      설치 시점 해석이 결재이고, 집행은 기판이 심는 import map 이다)
     type: array
     items:
       type: object
@@ -618,7 +652,10 @@ properties:
           type: string
           minLength: 1
         components:
-          description: provider 의 surfaces.components 소스를 이 패키지 view 의 빌드 의존으로 소비 — true 만
+          description: |
+            provider 의 surfaces.components 번들을 이 패키지 화면이 마운트 — true 만.
+            설치가 해석하면 기판이 소비자 문서에 import map 을 심는다: provider 매니페스트
+            name 이 그 번들 주소가 된다. 화면은 `import { mount } from "<provider name>"`.
           const: true
   host_methods:
     description: |

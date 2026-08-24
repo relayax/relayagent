@@ -27,16 +27,16 @@
     "node": ">=22.6"
   },
   "bin": {
-    "relay": "./runner/relay.ts"
+    "relay": "./runner/cli.ts"
   },
   "scripts": {
-    "relay": "node --experimental-strip-types runner/relay.ts",
+    "relay": "node --experimental-strip-types runner/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test runner/*.test.ts",
-    "validate": "node --experimental-strip-types runner/validate-all.ts",
-    "build:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run build:chat",
-    "typecheck:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run typecheck",
-    "test:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run test",
+    "test": "node --experimental-strip-types --test runner/**/*.test.ts",
+    "validate": "node --experimental-strip-types tools/validate-all.ts",
+    "build:widget": "npm --prefix chat install --silent && npm --prefix chat run build:chat",
+    "typecheck:widget": "npm --prefix chat install --silent && npm --prefix chat run typecheck",
+    "test:widget": "npm --prefix chat install --silent && npm --prefix chat run test",
     "pack:contract": "node tools/pack-contract.mjs"
   },
   "dependencies": {

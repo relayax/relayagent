@@ -2,9 +2,9 @@
 // 판정 계약 패키지(@relay/contract) 패킹 — 릴리스 아티팩트 relay-contract-<tag>.tgz 의 원료.
 // 임베더(relayos control-ts 판정 정본 뷰 · lib/sdk MCP 문 합성 뷰)가 소스 사본 대신 소비할
 // npm 패키지를 굽는다. 내용물은 자기 완결 계약 3파일 + 문법 정본:
-//   runner/manifest.ts            판정기 (judge · disclosure · declaredPaths)
+//   runner/supply/manifest.ts            판정기 (judge · disclosure · declaredPaths)
 //   runner/authority-contract.ts  권위 이음새 계약 (의존성 0)
-//   runner/mcp.ts                 MCP 문 합성 (의존성 0)
+//   runner/runtime/mcp.ts                 MCP 문 합성 (의존성 0)
 //   relay.manifest.yaml           문법 정본 (판정기의 주석 짝)
 //
 // .js + .d.ts 로 굽는 이유(실측 2026-08-24): tsc 소비자(control-ts)는 node_modules 의 .ts 를
@@ -39,7 +39,7 @@ mkdirSync(stage, { recursive: true });
 execFileSync(
   join(repo, "node_modules", ".bin", "tsc"),
   [
-    "runner/manifest.ts", "runner/authority-contract.ts", "runner/mcp.ts",
+    "runner/supply/manifest.ts", "runner/authority-contract.ts", "runner/runtime/mcp.ts",
     "--ignoreConfig",
     "--module", "commonjs", "--target", "ES2022", "--esModuleInterop",
     "--declaration", "--strict", "--skipLibCheck", "--types", "node",

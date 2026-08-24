@@ -49,7 +49,7 @@ export const SECTIONS: SectionDef[] = [
     key: "surfaces",
     label: "surfaces",
     yamlKey: "surfaces",
-    hint: "패키지가 세상에 내미는 표면. view 화면, chat 직접 대화, channels 외부 대화 어댑터.",
+    hint: "패키지가 세상에 내미는 창구. view 화면, components 번들 수출, channels 외부 대화 어댑터. 직접 대화는 선언이 아니라 agents[] 에서 도출된다.",
     declared: (m) => !!m.surfaces,
     items: (m, files) => {
       const out: SectionItem[] = [];
@@ -60,9 +60,6 @@ export const SECTIONS: SectionDef[] = [
           sub: m.surfaces.view.out ? `${m.surfaces.view.source} (빌드: ${m.surfaces.view.out})` : `${m.surfaces.view.source} (정적)`,
           files: under(files, m.surfaces.view.source),
         });
-      }
-      if (m.surfaces?.chat) {
-        out.push({ id: "chat", title: "chat", sub: m.surfaces.chat.mode, files: [] });
       }
       for (const c of m.surfaces?.channels ?? []) {
         out.push({ id: `channel:${c.name}`, title: c.name, sub: "채널 어댑터", files: under(files, c.source) });

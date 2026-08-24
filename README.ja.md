@@ -32,16 +32,16 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 | 概念 | 意味 |
 | --- | --- |
 | パッケージ | `relay.yaml` を持つディレクトリ。マニフェストが構造とパスの正本、ツリーが内容の正本。 |
-| Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`chat`(直接対話)と `channels`(Discord、Slack などのアダプタ)は追加の扉——チャネルは必要な資格情報の*形*を宣言し(`credential.fields`)、コンソールがその宣言から入力欄を描く(人が JSON を手で組み立てない)。`components` は npm パッケージ(ソース + `package.json`)をエクスポートし、他パッケージの view が components edge でビルド依存として消費する——基盤がインストール時に tgz へ固め、レジストリは介在しない。 |
+| Surfaces | パッケージが人と接する面。中心は `view`:パッケージが同梱するウェブ UI で、インストールがビルドし、デーモンが `/pkg/<名前>/view/` でホストし、パッケージトークンで自分のエージェントの動詞につながる。`channels`(Discord、Slack などのアダプタ)は追加の扉——チャネルは必要な資格情報の*形*を宣言し(`credential.fields`)、コンソールがその宣言から入力欄を描く(人が JSON を手で組み立てない)。`components` は**自己完結した ESM バンドル**(スタイルもその中に入る)をエクスポートし、他パッケージの画面が実行時にマウントする:基盤がバンドルをアドレスで配信し、消費側のドキュメントに import map を差し込むため、消費側は `import { mount } from "<提供元の名前>"` と書くだけでアドレスを組み立てない。React で書いても同じ——React はバンドルの中に入るので、消費側にフレームワークもビルドも要らない。 |
 | Harness | パッケージに同梱され、エージェントを実行するアダプタ。システムパッケージには Claude Code、Codex、Kimi、Pi のアダプタが同梱。動詞は `session`、`setup`、`models`、`commands`、`info`(任意で `login`、および `serve` — ターンごとにプロセスを起こさず stdin でターンを受け取る常駐セッション)。契約適合性は `relay harness-check` が判定し、契約の全文は [docs/harness-protocol.md](docs/harness-protocol.md) にあります。variant が駆動する CLI は `requires.binaries` に宣言します — `manager`+`package` のレシピがあれば、欠けている場合に基盤が自分でインストールし(`~/.relay/bin/<pkg>/`、PATH の先頭)、variant の `binary: <name>` はその項目への参照なので、壊れたホストインストールも setup 失敗時に基盤のコピーへ置き換えられます。 |
-| Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。`default: true` がランディングエージェント。 |
+| Agents | ペルソナ(`AGENT.md`)にスキル、スラッシュコマンド、サブエージェントへの dispatch、そして任意の `greeting`——空の対話の最初の一行で、扉ではなく話す側に属する。harness へは中立バンドルとして渡され、ネイティブ形式への翻訳はすべてアダプタの責務。`default: true` がランディングエージェント——エージェントを宣言したパッケージはランディングが定まらなければならず(このフラグ、またはパッケージ短縮名と同じエージェント)、さもなければインストールが拒否する。セッションはペルソナの上に立つので、`agents[]` の外の名前でターンが開くことはない。直接対話は宣言しない——エージェントがあって `view` がなければ `/pkg/<名前>/view/` に全画面の対話が無償で立つ。 |
 | Scripts | 動詞。`scripts/<名前>.ts` が `async (input, ctx) => JSON` をデフォルトエクスポート。 |
 | Services | 形は 3 つだけ。`source`(自分の身体、コンテナまたはプロセス)、`url`(リモート MCP エンドポイント、資格情報はここだけに付く)、`dir`(ファイル資源)。 |
 | Connector | 身体のないコネクタ——動詞が外部 REST API を直接呼ぶパッケージ。トップレベル `auth` は資格情報の形だけを宣言し、値は vault に置かれ、動詞が呼び出し時に `ctx.credential()` で取り出す。`url` サービスとは同時宣言不可。 |
 | Storage | `storage.buckets`——ファイルバケットのファサード。個人基板は判定のみ、執行は組織基板の責務。サービスの `disk` とは別の軸。 |
 | Triggers | cron またはイベント。プロンプトでエージェントを起こすか、スクリプトを headless で実行。`delivery: <チャネル>:<会話キー>` はその会話の slot でターンを回し、返信をチャネルアダプタから送出する。 |
 | Missions | パッケージが他のパッケージに提供する質疑応答能力。 |
-| Edges | 他パッケージの tools・mission・components への依存宣言。宣言は申請であり、有効化は承認——components は実行点が view ビルドにあるため、ビルド解決の成功がそのまま承認の記録になる。 |
+| Edges | 他パッケージの tools・mission・components への依存宣言。宣言は申請であり、有効化は承認——components はインストールが edge を解決した時点で承認が記録され、実行点は基盤が消費側の画面に差し込む import map である。 |
 | Workspace | パッケージのフォルダ承認。セッションの cwd で、インストール時に決まり(デフォルト `~/Relay/<名前>`)台帳に残る。 |
 | Hooks | セッションの柵。`hooks.deny` がセッションのツール呼び出しが触れてはならないパスを宣言し、アダプタがネイティブフックへ翻訳する。基板は自分の家(`~/.relay`)を常にマージする。 |
 | Grants | 台帳に残る承認。承認は宣言を超えられない。 |
@@ -54,7 +54,7 @@ RelayAgent は、自分の画面を携えて出荷されるエージェントパ
 git clone https://github.com/relayax/relayagent.git
 cd relayagent
 npm install
-alias relay="node --experimental-strip-types runner/relay.ts"
+alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # マニフェストを判定
 relay install packages/system --ring0 --workspace ~   # 管理シェルを ring-0 で、ホームフォルダを workspace として承認

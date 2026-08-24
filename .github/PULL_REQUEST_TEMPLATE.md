@@ -22,5 +22,5 @@ npm run validate
 - [ ] Runner code uses type-only TypeScript syntax (no enums, namespaces, decorators, parameter properties)
 - [ ] No credential, absolute local path, or build artifact is committed
 - [ ] If this changes what `relay.yaml` may contain, all four are updated in this PR:
-      `relay.manifest.yaml`, `runner/manifest.ts`, the example manifests, and the README tables in all four languages
+      `relay.manifest.yaml`, `runner/supply/manifest.ts`, the example manifests, and the README tables in all four languages
 - [ ] This stays inside the personal-substrate scope (no org account / multi-user governance features)

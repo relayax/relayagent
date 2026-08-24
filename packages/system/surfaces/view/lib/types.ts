@@ -1,6 +1,8 @@
 export interface AgentDecl {
   name: string;
   persona?: string;
+  /** 빈 대화의 첫 줄 — 창구가 아니라 말하는 쪽 소속이다 */
+  greeting?: string;
   skills?: string;
   commands?: string;
   dispatch?: string[];
@@ -46,7 +48,6 @@ export interface Manifest {
   };
   surfaces?: {
     view?: { source: string; out?: string };
-    chat?: { mode: string; greeting?: string };
     channels?: { name: string; source: string; entry: string; icon?: string }[];
   };
   harness?: {

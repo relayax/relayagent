@@ -10,7 +10,7 @@ export default {
   trailingSlash: true,
   basePath,
   images: { unoptimized: true },
-  // 설치가 무인으로 굽는다. 루트를 명시해 lockfile 추측을 막되, file: 의존성(@relay/relayjs =
-  // <레포>/lib/relayjs 심링크)이 루트 밖으로 나가지 않도록 레포 루트를 못박는다
+  // 설치가 무인으로 굽는다. 루트를 명시해 lockfile 추측을 막되, file: 의존성(@relay/chat =
+  // <레포>/chat 심링크)이 루트 밖으로 나가지 않도록 레포 루트를 못박는다
   turbopack: { root: path.resolve(import.meta.dirname, "../../../..") },
 };

@@ -25,9 +25,9 @@ Requirements: Node.js 22.6 or later. The runner is plain TypeScript executed wit
 git clone https://github.com/relayax/relayagent.git
 cd relayagent
 npm install
-alias relay="node --experimental-strip-types runner/relay.ts"
+alias relay="node --experimental-strip-types runner/cli.ts"
 
-npm run build:widget                       # chat widget bundle → lib/relayjs/dist/
+npm run build:widget                       # chat widget bundle → chat/dist/
 relay install packages/system --ring0       # management shell; --ring0 opens the host bridge
 relay daemon
 ```
@@ -35,7 +35,7 @@ relay daemon
 Two things the daemon serves are **build artifacts, and both are gitignored** — a fresh clone has
 neither, and neither is built by CI:
 
-- **the chat widget bundle** (`lib/relayjs/dist/` → `/assets/chat-app.{js,css}`): `npm run build:widget`
+- **the chat widget bundle** (`chat/dist/` → `/assets/chat-app.{js,css}`): `npm run build:widget`
 - **a package's view** (`surfaces/view/out/` → `/pkg/<name>/view/`): `relay install` and
   `relay build <pkg>` bake it
 
@@ -74,7 +74,7 @@ If your change touches what `relay.yaml` may contain, it must touch all four of 
 same PR, or it is incomplete:
 
 1. `relay.manifest.yaml` (the schema and its commentary)
-2. `runner/manifest.ts` (parsing and judgment)
+2. `runner/supply/manifest.ts` (parsing and judgment)
 3. `relay.yaml` and any affected `packages/*/relay.yaml`
 4. The README tables in **all four languages** (`README.md`, `.ko`, `.zh-CN`, `.ja`)
 
@@ -90,7 +90,7 @@ same PR, or it is incomplete:
 - **Channel adapters** (Telegram, email, web widget): map an external identity to a principal and
   dispatch through `RELAY_API`.
 - **Service recipes**: working `url` service declarations (auth, verify) for popular SaaS.
-- **Conformance checks**: extend the harness and channel contract checks in `runner/conform.ts`.
+- **Conformance checks**: extend the harness and channel contract checks in `runner/supply/conform.ts`.
 - **Docs and translations.**
 
 ## Scope

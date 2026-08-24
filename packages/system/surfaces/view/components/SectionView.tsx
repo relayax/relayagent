@@ -168,11 +168,6 @@ function SurfacesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
           + view 표면 선언
         </button>
       ) : null}
-      {!m.surfaces?.chat ? (
-        <button className="rc-btn add" onClick={() => ctx.apply((d) => set(d, ["surfaces", "chat"], { mode: "direct", greeting: "무엇을 도와드릴까요?" }))}>
-          + chat 표면 선언
-        </button>
-      ) : null}
     </>
   );
 }
@@ -189,24 +184,6 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
         <FileCards item={item} ctx={ctx} missing={v && !item.files.length ? [{ path: `${v.source}/index.html`, make: () => ctx.createFile(`${v.source}/index.html`, `<!doctype html><meta charset="utf-8"><title>view</title>`) }] : []} />
         <button className="rc-btn" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "view"]))}>
           view 선언 삭제
-        </button>
-      </div>
-    );
-  }
-  if (id === "chat") {
-    const c = m.surfaces?.chat;
-    return (
-      <div className="st-form">
-        <label className="st-field">
-          <span>mode</span>
-          <select value={c?.mode ?? "direct"} onChange={(e) => ctx.apply((d) => set(d, ["surfaces", "chat", "mode"], e.target.value))}>
-            <option value="direct">direct (직접 대화)</option>
-            <option value="none">none</option>
-          </select>
-        </label>
-        <Field label="인사말" value={c?.greeting ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "chat", "greeting"], x))} />
-        <button className="rc-btn" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "chat"]))}>
-          chat 선언 삭제
         </button>
       </div>
     );
@@ -365,6 +342,7 @@ function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   return (
     <div className="st-form">
       <Field label="persona (마크다운 파일)" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
+      <Field label="인사말 (선택 — 빈 대화의 첫 줄)" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
       <Field label="skills 디렉토리 (선택)" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
       <Field label="commands 디렉토리 (선택)" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
       <Field label="dispatch (서브에이전트, 쉼표)" value={(a.dispatch ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], listField(x)))} />

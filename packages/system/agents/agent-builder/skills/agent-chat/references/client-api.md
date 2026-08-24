@@ -6,7 +6,7 @@
   런타임 URL 로 임포트한다(`import { mount } from "/assets/chat-app.js"`).
   `window.RelayChat = { mount, mountTabs }` 전역도 같이 선다 — ESM 을 못 쓰는 임베더용.
 - `/assets/chat-app.css` — 그 UI 의 스타일. 같이 링크해야 한다.
-- `@relay/relayjs` 의 `createChat` — UI 없는 클라이언트(headless). 자산이 아니라 **의존성**이다
+- `@relay/chat` 의 `createChat` — UI 없는 클라이언트(headless). 자산이 아니라 **의존성**이다
   (기판 레포 안에서는 `file:`). 번들은 `createChat` 을 수출하지 않는다.
 
 공통 계약: 모든 호출은 throw 하지 않는다. 실패는 `{ error: { code, message } }` 로 돌아온다.
@@ -32,7 +32,7 @@
 
 ## 뷰-채팅 브리지 — openChat · AgentScope · setScene
 
-같은 문서의 도킹 위젯(자동 부유 크롬)과 말하는 인페이지 표면. `@relay/relayjs` **루트
+같은 문서의 도킹 위젯(자동 부유 크롬)과 말하는 인페이지 표면. `@relay/chat` **루트
 임포트**에서 온다 — 위젯 번들 자산이 아니라 의존성이다. 정본 계약은 기판 리포
 `docs/view-bridge.md`.
 
@@ -53,7 +53,7 @@
   `null` = 해제. 화면 상태가 바뀔 때마다 밀어 둔다 — 발화가 뷰를 기다리지 않는다.
 
 ```tsx
-import { AgentScope, openChat, setScene } from "@relay/relayjs";
+import { AgentScope, openChat, setScene } from "@relay/chat";
 
 <AgentScope agent="builder" param={pkgName} targets={allPkgs}>
   <Workbench />

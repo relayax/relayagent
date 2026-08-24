@@ -29,9 +29,6 @@ surfaces:
   view:
     source: surfaces/view
     out: out
-  chat:
-    mode: direct
-    greeting: "설치된 패키지와 연결 상태를 묻거나, 새 에이전트 패키지를 만들어 보세요."
   channels:
     # 참조 어댑터(의존성 0 — 네이티브 WebSocket/fetch). 자격을 연결하지 않으면 스폰 즉시
     # 안내를 남기고 조용히 물러난다. credential 선언이 화면의 입력 칸을 그린다 — 없으면
@@ -122,6 +119,7 @@ harness:
 agents:
   - name: system
     persona: agents/system/AGENT.md
+    greeting: "설치된 패키지와 연결 상태를 묻거나, 새 에이전트 패키지를 만들어 보세요."
     commands: agents/system/commands
     dispatch: [agent-builder]
   - name: agent-builder

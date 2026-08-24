@@ -46,15 +46,21 @@ description: 에이전트 패키지에 대화 표면(채팅)을 붙일 때 읽�
 
 ### 1. 대화만 있으면 된다 — 화면 없이
 
-패키지가 대화형 도우미라 전용 화면이 필요 없는 경우. 매니페스트 선언으로 끝난다:
+패키지가 대화형 도우미라 전용 화면이 필요 없는 경우. **아무것도 선언하지 않아도 된다** —
+에이전트가 있고 `surfaces.view` 가 없으면 기판이 `/pkg/<이름>/view/` 에 전체 화면 대화를
+세운다. 대화 표면은 선언이 아니라 `agents[]` 에서 도출된다.
+
+첫 인사말만 얹고 싶으면 그 말을 하는 에이전트에 붙인다:
 
 ```yaml
-surfaces:
-  chat: { mode: direct, greeting: 무엇을 도와드릴까요? }
+agents:
+  - name: 일기
+    persona: agents/일기/AGENT.md
+    greeting: 무엇을 도와드릴까요?
 ```
 
-view 디렉토리 없이도 기판이 `/pkg/<이름>/view/` 에 전체 화면 대화를 만들어 준다.
-greeting 은 빈 대화의 시작 인사말로 그려진다.
+greeting 은 빈 대화의 시작 인사말로 그려지고, 세션 번들 meta.json 에도 그 에이전트 몫이
+실린다. 에이전트가 여럿이면 인사말도 각자 갖는다 — 화면이 그리는 것은 착지 에이전트의 것이다.
 
 ### 2. 화면이 있고, 대화는 보조 — 자동 마운트
 
@@ -93,11 +99,11 @@ conversationId, title })` 로 탭을 연다.
 
 말풍선 하나, 한 줄 입력처럼 UI 자체가 앱 디자인에 녹아야 하는 경우에만. 길이 둘이다:
 
-**(a) SDK 를 의존성으로** — `@relay/relayjs` 의 `createChat` 이 전송 큐·이력·업로드·세션
+**(a) SDK 를 의존성으로** — `@relay/chat` 의 `createChat` 이 전송 큐·이력·업로드·세션
 관리를 준다. 기판 레포 안에서는 `file:` 의존성으로 잡는다:
 
 ```js
-import { createChat } from "@relay/relayjs";
+import { createChat } from "@relay/chat";
 const ctx = window.__RELAY_CONTEXT;
 const chat = createChat({ base: ctx.base, root: ctx.root, instance: ctx.instanceId });
 chat.on("message", (m) => render(m));   // { role: "user"|"bot"|"sys", text }

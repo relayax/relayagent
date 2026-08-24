@@ -1,6 +1,6 @@
 # Verb contract
 
-The contract between the substrate (`runner/scripts.ts`) and a package verb — one TypeScript file
+The contract between the substrate (`runner/runtime/scripts.ts`) and a package verb — one TypeScript file
 under `scripts.source`, named `<verb>.ts`. The file name is the verb's name. A session sees exactly
 the verbs its agent declared in `agents[].scripts`, through the substrate's MCP door
 (`tools/list`, `tools/call`).

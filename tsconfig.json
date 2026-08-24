@@ -7,5 +7,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["runner/**/*.ts", "packages/system/scripts/**/*.ts"]
+  "include": ["runner/**/*.ts", "tools/**/*.ts", "packages/system/scripts/**/*.ts"]
 }
