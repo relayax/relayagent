@@ -97,6 +97,23 @@ useEffect(() => onAgentTurn((s) => { if (s.phase === "settled") void reload(); }
 `onAgentTurn` 의 payload 는 **재조회 트리거로만** 쓴다. 상태로 쓰면 이벤트 한 번 유실에
 화면이 멈춘다 — 정본은 언제나 기판이고, 화면은 다시 물어보면 된다.
 
+**무빌드 화면도 같은 왕복을 쓴다.** 브리지의 전달은 CustomEvent 라서 npm 임포트가 필요 없다 —
+`@relay/chat` 은 그 위에 얹은 React 편의일 뿐이다. `index.html` 한 장이면 이렇게 쓴다:
+
+```js
+// 화면 → 위젯
+window.dispatchEvent(new CustomEvent("relay:scene", { detail: { scene: `오퍼 "${offer}" 편집 중` } }));
+
+// 위젯 → 화면
+window.addEventListener("relay:turn", (e) => {
+  if (e.detail?.phase === "settled") void reload();
+});
+```
+
+이 배선을 넣기 전 offer-workbook 화면은 **6초마다 폴링**하고 있었다 — 코치가 답을 저장해도
+최대 6초 뒤에야 진행률이 움직였다. 신호를 받으니 그 자리에서 따라오고, 폴링은 30초 그물로
+물러났다(신호는 힌트지 보장이 아니다 — 다른 탭·채널에서 고친 것은 이 축에 오지 않는다).
+
 ## 데이터의 거처
 
 화면이 만드는 것은 사람이 열 수 있는 파일이어야 한다. `services[].dir` 로 폴더를 선언하고,
