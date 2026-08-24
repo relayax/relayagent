@@ -32,8 +32,11 @@ export interface AgentBinding {
   targets?: string[];
 }
 
-/** 슬롯 문자열 조립 — 유일한 조립 지점(view-bridge §2-5). 문법 정본은 chat/routematch.ts. */
-function slotFor(binding: AgentBinding | null | undefined): string {
+/** 슬롯 문자열 조립 — 유일한 조립 지점(view-bridge §2-5). 문법 정본은 chat/routematch.ts.
+ *  export 는 **크롬 전용**이다(relayos ChatPanel 의 고정 바인딩 등 — 바인딩 층의 단일 구현을
+ *  크롬이 소비한다). 앱 코드는 이걸 부르지 않는다 — 앱의 슬롯 원천은 useAgentBinding() 뿐.
+ *  npm 루트(index.js)에 재수출하지 않는 이유다. */
+export function slotFor(binding: AgentBinding | null | undefined): string {
   if (!binding || !binding.agent) return "main";
   return "agent-" + binding.agent + (binding.param ? ":" + binding.param : "");
 }
