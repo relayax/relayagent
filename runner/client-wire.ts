@@ -12,19 +12,154 @@ import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { RELAY_HOME, sessionDir, stageDir, saveLedger, type Ledger } from "./state.ts";
-import { runSession, cancelSession, autoTitleSession, deliverAnswer, isSessionBusy, retireResident } from "./session.ts";
+import { RELAY_HOME, sessionDir, sessionPath, saveLedger, type Ledger } from "./state.ts";
+import {
+  runSession,
+  cancelSession,
+  autoTitleSession,
+  deliverAnswer,
+  isSessionBusy,
+  retireResident,
+  retireResidents,
+  localSessionIO,
+  type SessionIO,
+} from "./session.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "./manifest.ts";
-import { harnessVerb } from "./installer.ts";
+import { harnessVerb, setHarness } from "./installer.ts";
 import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX } from "./protocol.ts";
 import type { Authority } from "./authority-contract.ts";
 
 /** 클라이언트 프로토콜 버전 — §9-47-3 의 컷부터 발효. 하네스 봉투 protocol(현재 3)과 별개 축 */
 export const CLIENT_PROTOCOL = 1;
 
+// ── 계약 축 이음새 ──────────────────────────────────────────────────────────
+// 계약(docs/client-protocol.md)이 규정하는 표면이 딛는 **저장소**를 모듈 좌표(./state.ts ·
+// ./installer.ts)가 아니라 인자로 받는 주입점. 실행 반쪽 자매 셋(run.ts RunnerIO — 스폰 env ·
+// mcp.ts McpIO — 세션이 보는 도구 문 · session.ts SessionIO — 한 턴이 딛는 좌표)의 네 번째이고,
+// 넷의 형이 같다: 작은 함수 묶음을 인자로 받고 미주입이면 1인 기판 구현이 꽂힌다(additive).
+// 익명의 제3자 임베더 테스트 — 이 형에 org 어휘(principal 바인딩·멤버·라이선스·control)는 없다:
+// 세션 목록이 행 배열이고, 이력이 SessionIO 의 장부이고, 하네스 조회가 (패키지, 동사) → 값이고,
+// 설정 쓰기가 patch → 결과인 것뿐이다.
+//
+// 왜 필요한가(relayos I1 실측, 2026-08-24): 임베디드 데몬이 pod 안에서 이 계약을 서빙하는데
+// 서빙되는 것이 조직 권위가 아니라 pod 로컬 `~/.relay` 였다. `ClientWireDeps={getLedger,
+// authority}` 만으로는 장부(설치·인가)와 권위만 갈아 끼워지고, **계약 축의 저장소**(세션 목록·
+// 대화 이력·무대·설정 쓰기·하네스 조회)는 모듈 좌표에 고정이라 임베더가 손댈 자리가 없었다.
+//
+// 무엇을 인자화했는가:
+//  · session(SessionIO) — 한 턴이 딛는 좌표 전부. 턴을 실제로 여는 곳이 이 파일이므로 runSession
+//    에 실리는 이음새도 여기서 온다. 턴 장부(turns/<id>.jsonl)·업로드 무대·번들 회전이 전부
+//    이 좌표를 딛는다 — 계약 축과 실행 축이 **같은 좌표**를 봐야 화면과 하네스가 갈리지 않는다.
+//  · 대화 이력 — 새 멤버가 아니다. history.get 은 session.readMessages 를 지난다: 파일이 정본인
+//    기판과 다른 저장소가 정본인 임베더가 갈리는 축은 이미 SessionIO 가 열었고, 여기 같은 축을
+//    또 내면 리더가 둘이 되어 한쪽만 고쳐지는 날 조용히 갈린다.
+//  · 세션 목록·개설·메타·삭제(listSessions·createSession·updateSession·removeSession) —
+//    SessionIO 가 "기판 표면의 일"이라며 열지 않고 남긴 자리가 여기다. 목록이 그 저장소에서
+//    오지 않으면 임베더의 대화가 화면에 없다. 정렬(§5.3-21 고정 우선·최근순)과 판정(선언 밖
+//    에이전트·param 홀로서기·라벨 상한)은 계약이라 이 파일에 남는다 — 구현은 저장만 한다.
+//  · 하네스 조회(harnessQuery·harnessCapabilities) — "어떤 모델·커맨드가 있는가"의 정본이
+//    1인 기판은 동봉 어댑터 프로세스이고 임베더는 자기 카탈로그다. 개막 capability 투영을
+//    별도 동사로 둔 이유는 캐시다: 1인 기판은 이 답이 어댑터 프로세스 1회 비용이라 캐시가
+//    필요하고, 그 무효화 키(어댑터 파일 mtime)는 구현만 안다. info 를 통째로 캐시하면 그 안의
+//    계정 상태까지 굳어 로그인이 화면에 늦게 선다.
+//  · 설정 쓰기(setHarnessConfig) — 이 파일이 장부를 쓰는 유일한 자리(§5.5-30/30-a)다. 쪼개서
+//    saveLedger 만 열면 반쪽이 된다: 변형 전환은 installer.setHarness 가 **자기 안에서** 장부를
+//    쓰므로, 그 절반이 임베더 몰래 ~/.relay 로 샌다 — 200 {ok:true} 를 받고 다음 조회에 값이
+//    없는 조용한 갈림이다(requirePkg 머리의 실사고와 같은 형).
+//
+// 열지 않은 축과 이유 (인터페이스는 소비자가 있을 때만 판다):
+//  · 턴 큐·사슬·sinks(turns·sessionQueues·sessionChains·TurnRecord.sinks) — 담는 것이 살아 있는
+//    SSE 라이터와 Promise 사슬이라 프로세스 지역이다(SessionIO 가 진행 명부를 열지 않은 것과
+//    같은 근거). 게다가 세션 직렬화는 계약이 **기판에게 맡긴 판정**이다(§5.1-12 "기판만이 세션의
+//    유일한 직렬화 지점") — 인자화하면 그 불변식이 구현마다 갈린다. 턴 장부의 **파일 자리**는
+//    주입된 session.sessionDir 을 따라간다(events.jsonl 과 같은 처리).
+//  · 취소·회송·busy(cancelSession·deliverAnswer·isSessionBusy·retireResident) — 착지점이
+//    session.ts 의 진행 명부(ChildProcess 핸들·stdin)다. 턴을 이 데몬이 돌리는 한 같은 프로세스
+//    안이고, 돌리지 않는 기판이면 이 파일이 애초에 그 문의 서버가 아니다.
+//  · 인스턴스 열거(/instances) — 이미 갈아 끼워져 있다. getLedger()+manifest 파생이라 임베더가
+//    장부 투영만 주면 그대로 자기 행을 낸다(relayos I0 실측 ②).
+//  · capabilities 목록 자체 — 파생값이다. 열거·업로드 스트리밍은 이 파일의 구현이 참이라 무조건
+//    이고, 하네스 계열은 harnessCapabilities 의 투영이다. push·state 는 이 파일에 라우트 자체가
+//    없어 선언할 것이 없다 — 그 축을 여는 것은 계약 개정(§5.7·§5.8)이지 이음새가 아니다.
+//  · 업로드 상한(MAX_UPLOAD)·마운트 문법(/pkg/<pkg>) — 전자는 소비자가 없고, 후자는 계약이
+//    "기판의 마운트 지점일 뿐"이라 규정한 축이다(§2-6). 임베더는 자기 문에서 재마운트한다.
+
+/** 세션 목록 한 행(§5.3-21) — 저장소가 무엇이든 계약이 보는 것은 이 형뿐이다.
+ *  정렬은 이 파일이 한다(구현은 아무 순서나 답해도 된다) */
+export interface SessionRow {
+  session: string;
+  label: string;
+  /** epoch ms — 최근순 정렬 축 */
+  updated: number;
+  archived: boolean;
+  pinned: boolean;
+  /** 이 대화의 정체성(§5.3-21 additive) — 착지 에이전트가 아닌 대화가 밝힌다 */
+  agent?: string;
+  param?: string;
+}
+
+/** 개설 시점의 대화 바인딩(§5.3-22) — 판정을 통과한 값만 온다 */
+export interface SessionBinding {
+  agent?: string;
+  param?: string;
+}
+
+/** 세션 메타 갱신(§5.3-23). 키가 있는 축만 바뀐다 */
+export interface SessionPatch {
+  /** null = 사용자 라벨 해제(자동 라벨 복귀) */
+  label?: string | null;
+  archived?: boolean;
+  pinned?: boolean;
+}
+
+/** 하네스 조회 3동사의 답(§5.5-29) — value 는 어댑터 계약의 JSON 값. 비 JSON 답은 원문 문자열 */
+export interface HarnessAnswer {
+  ok: boolean;
+  value: unknown;
+}
+
+/** 설정 쓰기 요청(§5.5-30/30-a). 키 부재 = 손대지 않음, null = 오버라이드 해제 */
+export interface HarnessConfigPatch {
+  model?: string | null;
+  effort?: string | null;
+  /** 변형 전환 — 이 전환이 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) */
+  harness?: string;
+}
+
+/** 설정 쓰기의 결과 — 응답의 판정값이 여기서 온다 */
+export interface HarnessConfig {
+  model: string | null;
+  effort: string | null;
+  harness: string | null;
+  /** 전환이 돌린 setup 판정 — 전환 요청일 때만 실린다 */
+  ready?: { ok: boolean; note: string };
+}
+
+export interface ClientWireIO {
+  /** 한 턴이 딛는 좌표 — runSession·autoTitle 에 그대로 실리고, 턴 장부·무대·번들 회전도
+   *  이 좌표를 딛는다. 이력 조회(history.get)는 이 이음새의 readMessages 를 지난다 */
+  session: SessionIO;
+  /** 계약 목록의 원천(§5.3-21) — 순서는 상관없다(정렬은 계약이 한다) */
+  listSessions(pkg: string): SessionRow[] | Promise<SessionRow[]>;
+  /** 세션 개설 — 기판 발급 불투명 id 를 돌려준다(§5.3-22). 바인딩은 판정을 통과한 값이다 */
+  createSession(pkg: string, binding: SessionBinding): string | Promise<string>;
+  /** 메타 갱신 — false = 없는 세션(계약은 404 E_NO_SESSION 으로 답한다) */
+  updateSession(pkg: string, slot: string, patch: SessionPatch): boolean | Promise<boolean>;
+  /** 세션 제거 — 저장소에서 이 대화의 자취를 지운다. 진행 중 상주 은퇴는 계약이 먼저 한다 */
+  removeSession(pkg: string, slot: string): void | Promise<void>;
+  /** 하네스 조회 3동사(§5.5-29) */
+  harnessQuery(pkg: string, verb: "info" | "models" | "commands"): HarnessAnswer | Promise<HarnessAnswer>;
+  /** 개막(§3-7)이 투영할 어댑터 capability. null = 하네스 조회 축 자체가 없다(동사도 함께 죽는다) */
+  harnessCapabilities(pkg: string): string[] | null | Promise<string[] | null>;
+  /** 모델·강도·변형 설정의 영속(§5.5-30/30-a) — 이 계약 축이 장부를 쓰는 유일한 자리 */
+  setHarnessConfig(pkg: string, patch: HarnessConfigPatch): HarnessConfig | Promise<HarnessConfig>;
+}
+
 export interface ClientWireDeps {
   getLedger: () => Ledger;
   authority: Authority;
+  /** 계약 축 이음새 — 미주입이면 1인 기판 좌표(localClientWireIO) */
+  io?: ClientWireIO;
 }
 
 // ── http 보조 — api.ts 관용구의 사본 (컷에서 단일화) ─────────────────────────
@@ -257,7 +392,7 @@ function settleTurn(t: TurnRecord, ok: boolean): void {
   turns.delete(t.id);
 }
 
-async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<void> {
+async function runTurn(deps: ClientWireDeps, io: ClientWireIO, t: TurnRecord, body: any): Promise<void> {
   if (t.status === "settled") return; // 대기 중 interrupt 로 이미 종결된 턴
   t.status = "running";
   // 수명주기 started(§6-36) — 관찰이 어느 턴에 붙었는지의 에코. 장부 첫 줄이라 attach 재생에서도 맨 앞
@@ -268,6 +403,9 @@ async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<
       ledger: deps.getLedger(),
       pkg: t.pkg,
       authority: deps.authority,
+      // 계약 축과 실행 축이 같은 좌표를 딛는다 — 여기서 세션 이음새를 안 실으면 화면이 보는
+      // 대화(이 파일의 history.get)와 하네스가 쌓는 대화가 서로 다른 저장소로 갈린다
+      io: io.session,
       prompt: String(body.message ?? ""),
       slot: t.session,
       // agent 미지정 개설은 runSession 이 슬롯의 agent 메타로 폴백한다 — 위임 대화에
@@ -295,7 +433,7 @@ async function runTurn(deps: ClientWireDeps, t: TurnRecord, body: any): Promise<
   }
   settleTurn(t, ok);
   // 첫 교환이 완결된 무명 세션의 자동 제목 — 구 /chat 관용구 유지(fire-and-forget)
-  void autoTitleSession(deps.getLedger(), t.pkg, t.session).catch(() => { /* 제목 실패는 무시 */ });
+  void autoTitleSession(deps.getLedger(), t.pkg, t.session, io.session).catch(() => { /* 제목 실패는 무시 */ });
 }
 
 function pruneTurnLedgers(dir: string): void {
@@ -318,8 +456,9 @@ function pruneTurnLedgers(dir: string): void {
   for (const f of dated.slice(0, dated.length - TURN_LEDGER_KEEP)) fs.rmSync(f.p, { force: true });
 }
 
-function enqueueTurn(deps: ClientWireDeps, pkg: string, session: string, body: any): TurnRecord {
-  const dir = path.join(sessionDir(pkg, session), TURNS_DIR);
+function enqueueTurn(deps: ClientWireDeps, io: ClientWireIO, pkg: string, session: string, body: any): TurnRecord {
+  // 턴 장부의 파일 자리는 주입된 세션 좌표를 따라간다(session.ts events.jsonl 과 같은 처리)
+  const dir = path.join(io.session.sessionDir(pkg, session), TURNS_DIR);
   fs.mkdirSync(dir, { recursive: true });
   pruneTurnLedgers(dir);
   const id = crypto.randomUUID();
@@ -341,7 +480,7 @@ function enqueueTurn(deps: ClientWireDeps, pkg: string, session: string, body: a
   q.push(t);
   sessionQueues.set(key, q);
   // 같은 세션의 진행 중 턴 뒤에 도착순으로 직렬화한다(§5.1-12) — 클라이언트 큐는 은퇴
-  const chain = (sessionChains.get(key) ?? Promise.resolve()).then(() => runTurn(deps, t, body));
+  const chain = (sessionChains.get(key) ?? Promise.resolve()).then(() => runTurn(deps, io, t, body));
   sessionChains.set(key, chain.catch(() => { /* runTurn 은 던지지 않는다 — 사슬 보존 그물 */ }));
   return t;
 }
@@ -349,14 +488,14 @@ function enqueueTurn(deps: ClientWireDeps, pkg: string, session: string, body: a
 // 턴 id 는 서버 발급(randomUUID)이라 이 문법이 전부다 — 경로 인자의 탈출 방지 검증
 const TURN_ID_RE = /^[A-Za-z0-9-]{1,80}$/;
 
-/** 디스크의 종결 턴 장부 찾기 — 데몬 재기동 후에도 stream 재생(§5.1-13)이 성립하는 근거 */
-function findTurnFile(pkg: string, id: string): string | null {
+/** 종결 턴 장부 찾기 — 데몬 재기동 후에도 stream 재생(§5.1-13)이 성립하는 근거.
+ *  후보 슬롯은 계약 목록에서 온다: 좌표를 옮긴 임베더는 자기 저장소를 열거하고, 이 파일은
+ *  그 슬롯의 세션 좌표 아래에서 장부를 찾는다. 기판 내부 슬롯("_" 접두 — 자동 제목의 임시
+ *  세션)은 목록에 없고 wire 가 턴을 열지도 않으므로 후보가 아니다 */
+async function findTurnFile(io: ClientWireIO, pkg: string, id: string): Promise<string | null> {
   if (!TURN_ID_RE.test(id)) return null;
-  const root = path.join(RELAY_HOME, "sessions", pkg);
-  if (!fs.existsSync(root)) return null;
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    const f = path.join(root, e.name, TURNS_DIR, id + ".jsonl");
+  for (const row of await io.listSessions(pkg)) {
+    const f = path.join(io.session.sessionDir(pkg, row.session), TURNS_DIR, id + ".jsonl");
     if (fs.existsSync(f)) return f;
   }
   return null;
@@ -411,119 +550,173 @@ function replaySettledFile(req: http.IncomingMessage, res: http.ServerResponse, 
   sse.close();
 }
 
-// ── capabilities(§3·§7) — 미구현은 목록에서 뺀다, 선언해 놓고 실패는 위반 ────
+// ── 1인 기판의 계약 축 이음새 — RELAY_HOME 세션 살림·동봉 어댑터·파일 장부 ──────
+// 미주입 시 이것이 꽂히므로 기존 소비자는 무영향이다. 장부는 getLedger 를 늦게 부른다
+// (권위·세션 이음새와 같은 관용구 — 요청마다 신선한 장부를 본다).
 
 // effort capability 는 하네스 어댑터 capability 의 투영(§7)이다. 어댑터 info 는 프로세스
-// 1회 비용이라 entry mtime 캐시로 어댑터당 한 번만 돈다(session.ts serveCache 와 같은 결)
+// 1회 비용이라 entry mtime 캐시로 어댑터당 한 번만 돈다(session.ts serveCache 와 같은 결).
+// 캐시가 담는 것은 **파생된 capability 목록**이지 info 원문이 아니다 — info 에는 계정 상태처럼
+// 어댑터 파일과 무관하게 변하는 값이 실려서, 통째로 굳히면 로그인이 화면에 늦게 선다
 const capsCache = new Map<string, { mtime: number; caps: string[] }>();
-
-function harnessAdapterCaps(deps: ClientWireDeps, pkg: string): string[] | null {
-  const rec = deps.getLedger().packages[pkg];
-  if (!rec) return null;
-  let m: Manifest;
-  try {
-    m = loadManifest(rec.path);
-  } catch {
-    return null;
-  }
-  const v = activeHarness(m, rec.harness);
-  if (!v) return null; // 하네스 미동봉 — harness 조회 동사 자체가 없다
-  const entry = path.join(rec.path, v.source, v.entry);
-  let mtime: number;
-  try {
-    mtime = fs.statSync(entry).mtimeMs;
-  } catch {
-    return null;
-  }
-  const hit = capsCache.get(entry);
-  if (hit && hit.mtime === mtime) return hit.caps;
-  let caps: string[] = [];
-  try {
-    const r = harnessVerb(deps.getLedger(), pkg, "info");
-    const j = JSON.parse(r.out || "{}");
-    if (Array.isArray(j.capabilities)) caps = j.capabilities.filter((c: unknown): c is string => typeof c === "string");
-  } catch { /* info 불달 — 어댑터 capability 없음으로 판정(선언 못 하는 것이 정직) */ }
-  capsCache.set(entry, { mtime, caps });
-  return caps;
-}
-
-// ── 세션·이력 조회 — api.ts 구 라우트와 같은 정본(디스크)을 읽되 계약 shape 로 ─
 
 function sessionsRoot(pkg: string): string {
   return path.join(RELAY_HOME, "sessions", pkg);
 }
 
-/** §5.3-21 — 고정 우선, 그 안에서 최근순. 라벨 우선순위(label > auto-label > 첫 발화)는 기판 내부 규칙 */
-function listSessionRows(pkg: string): { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string; param?: string }[] {
-  const root = sessionsRoot(pkg);
-  if (!fs.existsSync(root)) return [];
-  const rows: { session: string; label: string; updated: number; archived: boolean; pinned: boolean; agent?: string; param?: string }[] = [];
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
-    // "_" 접두 슬롯은 기판 내부용(자동 제목 등의 임시 세션) — 목록에 내지 않는다
-    if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
-    const dir = path.join(root, e.name);
-    const hist = path.join(dir, "history.jsonl");
-    let label = "";
-    for (const f of ["label", "auto-label"]) {
-      const p = path.join(dir, f);
-      if (fs.existsSync(p)) label = fs.readFileSync(p, "utf8").trim();
-      if (label) break;
+export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
+  const meta = (dir: string, name: string): string => {
+    try {
+      return fs.readFileSync(path.join(dir, name), "utf8").trim();
+    } catch {
+      return ""; // 메타 없음
     }
-    if (!label && fs.existsSync(hist)) {
-      try {
-        label = String(JSON.parse(fs.readFileSync(hist, "utf8").split("\n", 1)[0]).text ?? "").slice(0, 40);
-      } catch {
-        label = "";
+  };
+  return {
+    session: localSessionIO(getLedger),
+
+    /** 라벨 우선순위(사용자 label > auto-label > 첫 발화)는 기판 내부 규칙이다 — 계약은 label 만 본다 */
+    listSessions: (pkg) => {
+      const root = sessionsRoot(pkg);
+      if (!fs.existsSync(root)) return [];
+      const rows: SessionRow[] = [];
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        // "_" 접두 슬롯은 기판 내부용(자동 제목 등의 임시 세션) — 목록에 내지 않는다
+        if (!e.isDirectory() || !SLOT_RE.test(e.name) || e.name.startsWith("_")) continue;
+        const dir = path.join(root, e.name);
+        const hist = path.join(dir, "history.jsonl");
+        let label = meta(dir, "label") || meta(dir, "auto-label");
+        if (!label && fs.existsSync(hist)) {
+          try {
+            label = String(JSON.parse(fs.readFileSync(hist, "utf8").split("\n", 1)[0]).text ?? "").slice(0, 40);
+          } catch {
+            label = "";
+          }
+        }
+        const rowAgent = meta(dir, "agent");
+        const rowParam = meta(dir, "param");
+        rows.push({
+          session: e.name,
+          ...(rowAgent ? { agent: rowAgent } : {}),
+          ...(rowParam ? { param: rowParam } : {}),
+          label: label || e.name,
+          updated: fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs,
+          archived: fs.existsSync(path.join(dir, "archived")),
+          pinned: fs.existsSync(path.join(dir, "pinned")),
+        });
       }
-    }
-    const updated = fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs;
-    // agent 메타(위임 세션의 정체성) — §5.3-24 additive. 화면이 이 값으로 대화의 에이전트
-    // 칩을 세우고, 없으면 종전(착지) 그대로다
-    let rowAgent = "";
-    let rowParam = "";
-    try {
-      rowAgent = fs.readFileSync(path.join(dir, "agent"), "utf8").trim();
-    } catch { /* 메타 없음 */ }
-    try {
-      rowParam = fs.readFileSync(path.join(dir, "param"), "utf8").trim();
-    } catch { /* 메타 없음 */ }
-    rows.push({
-      session: e.name,
-      ...(rowAgent ? { agent: rowAgent } : {}),
-      ...(rowParam ? { param: rowParam } : {}),
-      label: label || e.name,
-      updated,
-      archived: fs.existsSync(path.join(dir, "archived")),
-      pinned: fs.existsSync(path.join(dir, "pinned")),
-    });
-  }
-  rows.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated - a.updated);
-  return rows;
+      return rows;
+    },
+
+    createSession: (pkg, binding) => {
+      // 세션 id 는 기판 발급 불투명 문자열(§5.3-22) — SLOT_RE 는 내부 문법일 뿐 계약이 아니다
+      const id = "s-" + Date.now().toString(36) + "-" + crypto.randomBytes(4).toString("hex");
+      const dir = sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
+      if (binding.agent) fs.writeFileSync(path.join(dir, "agent"), binding.agent);
+      if (binding.param) fs.writeFileSync(path.join(dir, "param"), binding.param);
+      return id;
+    },
+
+    updateSession: (pkg, slot, patch) => {
+      const dir = sessionPath(pkg, slot);
+      if (!fs.existsSync(dir)) return false;
+      if ("label" in patch) {
+        // marker/라벨 파일 하나가 상태의 전부 — 이력은 그대로 두고 목록의 자리만 옮긴다(§5.3-23)
+        if (patch.label) fs.writeFileSync(path.join(dir, "label"), patch.label);
+        else fs.rmSync(path.join(dir, "label"), { force: true });
+      }
+      for (const [key, marker] of [["archived", "archived"], ["pinned", "pinned"]] as const) {
+        if (!(key in patch)) continue;
+        const p = path.join(dir, marker);
+        if (patch[key]) fs.writeFileSync(p, "");
+        else fs.rmSync(p, { force: true });
+      }
+      return true;
+    },
+
+    // sessionPath 인 이유: 삭제가 살림을 먼저 만들면 안 된다(없는 세션의 삭제가 빈 디렉토리를 남긴다)
+    removeSession: (pkg, slot) => fs.rmSync(sessionPath(pkg, slot), { recursive: true, force: true }),
+
+    harnessQuery: (pkg, verb) => {
+      const r = harnessVerb(getLedger(), pkg, verb);
+      let value: unknown;
+      try {
+        value = JSON.parse(r.out);
+      } catch {
+        value = r.out; // 비 JSON 답 — 원문 그대로가 정직하다
+      }
+      return { ok: r.ok, value };
+    },
+
+    harnessCapabilities: (pkg) => {
+      const rec = getLedger().packages[pkg];
+      if (!rec) return null;
+      let m: Manifest;
+      try {
+        m = loadManifest(rec.path);
+      } catch {
+        return null;
+      }
+      const v = activeHarness(m, rec.harness);
+      if (!v) return null; // 하네스 미동봉 — harness 조회 동사 자체가 없다
+      const entry = path.join(rec.path, v.source, v.entry);
+      let mtime: number;
+      try {
+        mtime = fs.statSync(entry).mtimeMs;
+      } catch {
+        return null;
+      }
+      const hit = capsCache.get(entry);
+      if (hit && hit.mtime === mtime) return hit.caps;
+      let caps: string[] = [];
+      try {
+        const j = JSON.parse(harnessVerb(getLedger(), pkg, "info").out || "{}");
+        if (Array.isArray(j.capabilities)) caps = j.capabilities.filter((c: unknown): c is string => typeof c === "string");
+      } catch { /* info 불달 — 어댑터 capability 없음으로 판정(선언 못 하는 것이 정직) */ }
+      capsCache.set(entry, { mtime, caps });
+      return caps;
+    },
+
+    setHarnessConfig: (pkg, patch) => {
+      const l = getLedger();
+      const rec = l.packages[pkg];
+      if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
+      let ready: { ok: boolean; note: string } | undefined;
+      // 변형 전환이 먼저다 — setHarness 가 모델 오버라이드를 지우므로(모델 어휘는 하네스 소속),
+      // 같은 요청의 model 이 그 뒤에 앉아야 지워지지 않는다. 미선언 이름은 거부된다.
+      // 전환은 setup 을 이미 돌린다 — 그 판정을 버리지 않는다: 준비 안 된 하네스로 바꾼 사람에게
+      // 아무 말도 안 하면 다음 턴이 실패할 때까지 "왜 안 되지" 가 남는다(실사고: 네이티브
+      // 바이너리가 빠진 codex 로 전환 → 무신호)
+      if (patch.harness) {
+        const r = setHarness(l, pkg, patch.harness);
+        ready = { ok: r.setup.ok, note: r.setup.out.split("\n").slice(0, 2).join(" · ") };
+      }
+      if ("model" in patch) rec.model = patch.model ?? undefined;
+      if ("effort" in patch) rec.effort = patch.effort ?? undefined;
+      saveLedger(l);
+      return { model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, ...(ready ? { ready } : {}) };
+    },
+  };
 }
 
-/** history.jsonl → 계약 message shape(§5.3-24: role·text·files?·usage?·context?·model?) */
-function historyMessages(pkg: string, slot: string, limit: number): Record<string, unknown>[] {
-  const file = path.join(sessionsRoot(pkg), slot, "history.jsonl");
-  if (!fs.existsSync(file)) return [];
-  const out: Record<string, unknown>[] = [];
-  for (const l of fs.readFileSync(file, "utf8").trim().split("\n").slice(-limit)) {
-    let rec: any;
-    try {
-      rec = JSON.parse(l);
-    } catch {
-      continue;
-    }
-    if (!rec || typeof rec !== "object") continue;
-    out.push({
-      role: String(rec.role ?? ""),
-      text: String(rec.text ?? ""),
-      ...(rec.files ? { files: rec.files } : {}),
-      ...(rec.usage ? { usage: rec.usage } : {}),
-      ...(rec.context ? { context: rec.context } : {}),
-      ...(rec.model ? { model: rec.model } : {}),
-    });
-  }
-  return out;
+// ── 계약이 소유하는 판정 — 이음새가 아니라 이 파일이 답하는 것 ────────────────
+
+/** §5.3-21 정렬 — 고정 우선, 그 안에서 최근순. 구현은 아무 순서나 답해도 계약 순서로 나간다 */
+function sortSessionRows(rows: SessionRow[]): SessionRow[] {
+  return [...rows].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated - a.updated);
+}
+
+/** 대화 장부 → 계약 message shape(§5.3-24: role·text·files?·usage?·context?·model?).
+ *  장부의 원천은 세션 이음새다 — 계약 축이 자기 리더를 따로 가지면 임베더의 정본과 화면이 갈린다 */
+function historyMessages(io: ClientWireIO, pkg: string, slot: string, limit: number): Record<string, unknown>[] {
+  return io.session.readMessages(pkg, slot).slice(-limit).map((rec) => ({
+    role: String(rec.role ?? ""),
+    text: String(rec.text ?? ""),
+    ...(rec.files ? { files: rec.files } : {}),
+    ...(rec.usage ? { usage: rec.usage } : {}),
+    ...(rec.context ? { context: rec.context } : {}),
+    ...(rec.model ? { model: rec.model } : {}),
+  }));
 }
 
 /** 착지 에이전트의 패키지 커맨드 — harness.commands 병합의 기판 반쪽(api.ts pkgCommands 사본, 컷에서 단일화) */
@@ -549,6 +742,8 @@ function pkgCommandRows(ledger: Ledger, pkg: string): { name: string; descriptio
 
 export interface WireCtx {
   deps: ClientWireDeps;
+  /** 해석된 계약 축 이음새 — deps.io 또는 1인 기판 기본 구현 */
+  io: ClientWireIO;
   req: http.IncomingMessage;
   res: http.ServerResponse;
   url: URL;
@@ -572,12 +767,12 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/capabilities$/,
-    handler: ({ deps, res, pkg }) => {
+    handler: async ({ deps, io, res, pkg }) => {
       requirePkg(deps.getLedger(), pkg);
       // enumerate: /registry 재포장으로 구현(§5.6-32) · upload-progress: 업로드가 전 구간
       // 스트리밍이라 진행률이 실제를 반영한다(§5.4-28, 아래 upload 핸들러가 그 구현)
       const caps = ["enumerate", "upload-progress"];
-      const adapter = harnessAdapterCaps(deps, pkg);
+      const adapter = await io.harnessCapabilities(pkg);
       if (adapter) {
         // 하네스 조회 3동사는 어댑터 필수 동사(info/models/commands)의 중계라 하네스가 있으면 산다
         caps.push("harness-info", "harness-models", "harness-commands");
@@ -598,12 +793,12 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/turns$/,
-    handler: async ({ deps, req, res, pkg }) => {
+    handler: async ({ deps, io, req, res, pkg }) => {
       requirePkg(deps.getLedger(), pkg);
       const b = await readBody(req);
       const session = String(b.session ?? "");
       if (!SLOT_RE.test(session)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${session}`);
-      const t = enqueueTurn(deps, pkg, session, b);
+      const t = enqueueTurn(deps, io, pkg, session, b);
       // 202 — 턴 종결을 붙들지 않는다(§5.1-12). 관찰은 stream/attach 로 몇 번이든 다시 연다
       json(res, 202, { turn: t.id, session });
     },
@@ -627,12 +822,12 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/stream$/,
-    handler: ({ deps, req, res, pkg, m }) => {
+    handler: async ({ deps, io, req, res, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       const id = m[1];
       const t = turns.get(id);
       if (t && t.pkg === pkg) return void openLiveStream(t, req, res);
-      const file = findTurnFile(pkg, id); // 데몬 재기동 이전의 종결 턴 — 디스크 장부 재생
+      const file = await findTurnFile(io, pkg, id); // 데몬 재기동 이전의 종결 턴 — 장부 재생
       if (!file) throw new WireError(404, "E_NO_TURN", `없는 턴: ${id}`);
       replaySettledFile(req, res, file, id);
     },
@@ -641,13 +836,13 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/interrupt$/,
-    handler: ({ deps, res, pkg, m }) => {
+    handler: async ({ deps, io, res, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       const t = turns.get(m[1]);
       // 종결과 함께 메모리에서 내려간 턴 — 장부가 남아 있으면 "있었지만 끝난 턴"이라
       // ok:false 로 답한다(애초에 없는 턴의 404 와 구별한다)
       if (!t || t.pkg !== pkg) {
-        if (findTurnFile(pkg, m[1])) return void json(res, 200, { ok: false });
+        if (await findTurnFile(io, pkg, m[1])) return void json(res, 200, { ok: false });
         throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
       }
       if (t.status === "queued") {
@@ -664,12 +859,12 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/respond$/,
-    handler: async ({ deps, req, res, pkg, m }) => {
+    handler: async ({ deps, io, req, res, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       const t = turns.get(m[1]);
       // 종결한 턴에는 회송할 ask 가 없다 — interrupt 와 같은 판정(장부 있음 = ok:false)
       if (!t || t.pkg !== pkg) {
-        if (findTurnFile(pkg, m[1])) return void json(res, 200, { ok: false });
+        if (await findTurnFile(io, pkg, m[1])) return void json(res, 200, { ok: false });
         throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
       }
       const b = await readBody(req);
@@ -683,21 +878,22 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/sessions$/,
-    handler: ({ deps, res, pkg }) => {
+    handler: async ({ deps, io, res, pkg }) => {
       requirePkg(deps.getLedger(), pkg);
-      json(res, 200, { sessions: listSessionRows(pkg) });
+      json(res, 200, { sessions: sortSessionRows(await io.listSessions(pkg)) });
     },
   },
   {
     methods: ["POST"],
     scope: "base",
     pattern: /^\/sessions$/,
-    handler: async ({ deps, req, res, pkg }) => {
+    handler: async ({ deps, io, req, res, pkg }) => {
       const ledger = deps.getLedger();
       requirePkg(ledger, pkg);
       // 대화 바인딩(§5.3-22 additive) — 화면 스레드 문법의 param 축은 기판 발급 id 에 실을 수
       // 없으므로 민팅 순간이 바인딩이 wire 에 닿는 유일한 자리다. 판정은 선언이다(agents[] 밖 =
-      // 400). 기록된 메타는 §5.3-21 행으로 되돌아가고, runSession 이 페르소나 문맥으로 주입한다
+      // 400). 기록된 메타는 §5.3-21 행으로 되돌아가고, runSession 이 페르소나 문맥으로 주입한다.
+      // 판정은 계약이 하고 저장만 이음새에 맡긴다 — 구현이 갈려도 같은 것을 거절한다
       const b = await readBody(req);
       const agent = String(b.agent ?? "").trim();
       const param = String(b.param ?? "").trim();
@@ -706,11 +902,7 @@ export const WIRE_ROUTES: WireRoute[] = [
       }
       if (param && !agent) throw new WireError(400, "E_BAD_PARAM", "param 은 agent 없이 설 수 없다");
       if (param.length > 256) throw new WireError(400, "E_BAD_PARAM", "param 이 너무 길다(≤256)");
-      // 세션 id 는 기판 발급 불투명 문자열(§5.3-22) — SLOT_RE 는 내부 문법일 뿐 계약이 아니다
-      const id = "s-" + Date.now().toString(36) + "-" + crypto.randomBytes(4).toString("hex");
-      const dir = sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
-      if (agent) fs.writeFileSync(path.join(dir, "agent"), agent);
-      if (param) fs.writeFileSync(path.join(dir, "param"), param);
+      const id = await io.createSession(pkg, { ...(agent ? { agent } : {}), ...(param ? { param } : {}) });
       json(res, 200, { session: id });
     },
   },
@@ -718,7 +910,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/sessions\/([^/]+)\/history$/,
-    handler: ({ deps, res, pkg, m }) => {
+    handler: ({ deps, io, res, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       const slot = m[1];
       if (!SLOT_RE.test(slot)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${slot}`);
@@ -726,35 +918,34 @@ export const WIRE_ROUTES: WireRoute[] = [
       // turn 은 wire 가 개설한 턴만 안다(attach 가능한 턴만 싣는 것이 정직하다)
       const t = activeTurn(pkg, slot);
       const busy = t != null || isSessionBusy(pkg, slot);
-      json(res, 200, { messages: historyMessages(pkg, slot, 200), busy, ...(t ? { turn: t.id } : {}) });
+      json(res, 200, { messages: historyMessages(io, pkg, slot, 200), busy, ...(t ? { turn: t.id } : {}) });
     },
   },
   {
     methods: ["POST"],
     scope: "base",
     pattern: /^\/sessions\/([^/]+)\/(rename|archive|pin|delete|reset)$/,
-    handler: async ({ deps, req, res, pkg, m }) => {
+    handler: async ({ deps, io, req, res, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       const slot = m[1];
       const op = m[2];
       if (!SLOT_RE.test(slot)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${slot}`);
-      const dir = path.join(sessionsRoot(pkg), slot);
+      // 메타 3동사(§5.3-23) — 상한·빈 문자열 의미는 계약이 쥐고, 저장은 이음새가 한다.
+      // false = 없는 세션(구현이 자기 저장소로 판정한다)
+      const patch = async (p: SessionPatch): Promise<void> => {
+        if (!(await io.updateSession(pkg, slot, p))) throw new WireError(404, "E_NO_SESSION", `없는 세션: ${slot}`);
+      };
       if (op === "rename") {
-        if (!fs.existsSync(dir)) throw new WireError(404, "E_NO_SESSION", `없는 세션: ${slot}`);
         const b = await readBody(req);
         const label = String(b.label ?? "").trim().slice(0, 80);
-        if (label) fs.writeFileSync(path.join(dir, "label"), label);
-        else fs.rmSync(path.join(dir, "label"), { force: true }); // 빈 문자열 = 자동 라벨 복귀(§5.3-23)
+        await patch({ label: label || null }); // 빈 문자열 = 자동 라벨 복귀(§5.3-23)
         return void json(res, 200, { ok: true });
       }
       if (op === "archive" || op === "pin") {
-        if (!fs.existsSync(dir)) throw new WireError(404, "E_NO_SESSION", `없는 세션: ${slot}`);
         const b = await readBody(req);
-        // marker 파일 하나가 상태의 전부 — 이력은 그대로 두고 목록의 자리만 옮긴다(§5.3-23)
-        const marker = path.join(dir, op === "archive" ? "archived" : "pinned");
+        // 이력은 그대로 두고 목록의 자리만 옮긴다(§5.3-23)
         const on = op === "archive" ? !!b.archived : !!b.pinned;
-        if (on) fs.writeFileSync(marker, "");
-        else fs.rmSync(marker, { force: true });
+        await patch(op === "archive" ? { archived: on } : { pinned: on });
         return void json(res, 200, { ok: true, ...(op === "archive" ? { archived: on } : { pinned: on }) });
       }
       if (op === "delete") {
@@ -765,16 +956,17 @@ export const WIRE_ROUTES: WireRoute[] = [
             settleTurn(t, false);
           }
         }
-        retireResident(pkg, slot); // 상주가 지워진 번들 경로를 물고 있으면 안 된다
-        fs.rmSync(dir, { recursive: true, force: true });
+        retireResident(pkg, slot); // 상주가 지워진 번들 경로를 물고 있으면 안 된다 — 프로세스 지역 정리
+        await io.removeSession(pkg, slot);
         return void json(res, 200, { ok: true });
       }
       // reset — 이력은 두고 하네스 대화 포인터만 끊는다(§5.3-23). 포인터 파일 이름은 어댑터
       // 소유(claude-session·codex-thread·…)라 기판이 열거할 수 없다 — 종전엔 claude-session
       // 만 하드코딩해서 다른 하네스의 reset 이 무동작이었다. 번들을 통째로 비우는 것이
       // 이름을 모른 채 전부 회전시키는 유일한 방법이고, 다음 턴의 조립이 다시 채운다.
+      // 이음새 밖인 이유: 번들은 이 턴을 돌리는 쪽의 작업물이라 세션 좌표를 그대로 딛는다.
       retireResident(pkg, slot); // 상주가 낡은 대화를 메모리에 물고 있으면 포인터를 지워도 대화가 이어진다
-      fs.rmSync(path.join(sessionDir(pkg, slot), "bundle"), { recursive: true, force: true });
+      fs.rmSync(path.join(io.session.sessionDir(pkg, slot), "bundle"), { recursive: true, force: true });
       json(res, 200, { ok: true });
     },
   },
@@ -784,7 +976,7 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/upload$/,
-    handler: ({ deps, req, res, url, pkg }) => {
+    handler: ({ deps, io, req, res, url, pkg }) => {
       requirePkg(deps.getLedger(), pkg);
       // 업로드 프로브(§5.4-26) — 바이트 전송 없이 인가·상한을 선판정한다. 2xx = 통과
       if (String(req.headers["x-upload-probe"] ?? "") === "1") {
@@ -796,7 +988,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       // 본문이 곧 바이트다(§5.4-25) — 전 구간 스트리밍(capability upload-progress 의 실체)
       const rawName = String(url.searchParams.get("name") ?? "file");
       const name = (rawName.split(/[\\/]/).pop() ?? "file").replace(/^\.+/, "_").slice(0, 128) || "file";
-      const dir = path.join(stageDir(pkg), UPLOADS_DIR);
+      // 무대 좌표는 세션 이음새가 답한다 — 첨부가 앉는 자리와 하네스가 읽는 자리가 같아야 한다
+      const dir = path.join(io.session.stageDir(pkg), UPLOADS_DIR);
       fs.mkdirSync(dir, { recursive: true });
       let target = path.join(dir, name);
       if (fs.existsSync(target)) {
@@ -830,10 +1023,10 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET", "HEAD"],
     scope: "base",
     pattern: /^\/file\/(.+)$/,
-    handler: ({ deps, req, res, url, pkg, m }) => {
+    handler: ({ deps, io, req, res, url, pkg, m }) => {
       requirePkg(deps.getLedger(), pkg);
       // stage 봉인 아래에서만(§5.4-27). HEAD 는 실재 프로브
-      const root = path.normalize(stageDir(pkg));
+      const root = path.normalize(io.session.stageDir(pkg));
       const target = path.normalize(path.join(root, decodeURIComponent(m[1])));
       if (target !== root && !target.startsWith(root + path.sep)) throw new WireError(403, "E_FORBIDDEN", "경로 탈출");
       if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) throw new WireError(404, "E_NO_FILE", "없는 파일");
@@ -855,25 +1048,20 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/harness\/(info|models|commands)$/,
-    handler: ({ deps, res, pkg, m }) => {
+    handler: async ({ deps, io, res, pkg, m }) => {
       const rec = requirePkg(deps.getLedger(), pkg);
       const man = loadManifest(rec.path);
-      // capability 미선언(하네스 미동봉) 동사 호출은 404 + 봉투(§3-8) — 코드는 기판 소유 어휘
+      // capability 미선언(하네스 미동봉) 동사 호출은 404 + 봉투(§3-8) — 코드는 기판 소유 어휘.
+      // 선언(BOM)의 판정은 이 파일이 쥔다 — 이음새는 "무엇이 답인가"만 답한다
       if (!activeHarness(man, rec.harness)) throw new WireError(404, "E_NO_HARNESS", `하네스 미동봉 패키지: ${pkg}`);
       const verb = m[1] as "info" | "models" | "commands";
-      const r = harnessVerb(deps.getLedger(), pkg, verb);
-      let value: unknown;
-      try {
-        value = JSON.parse(r.out);
-      } catch {
-        value = r.out;
-      }
+      const r = await io.harnessQuery(pkg, verb);
       if (verb === "commands") {
         // 패키지 커맨드 + 하네스 네이티브 커맨드의 병합 — 병합은 기판 몫(§5.5-29)
-        const fromHarness = Array.isArray(value) ? value : [];
+        const fromHarness = Array.isArray(r.value) ? r.value : [];
         return void json(res, 200, { ok: r.ok, value: [...pkgCommandRows(deps.getLedger(), pkg), ...fromHarness] });
       }
-      json(res, 200, { ok: r.ok, value });
+      json(res, 200, { ok: r.ok, value: r.value });
     },
   },
   {
@@ -897,40 +1085,34 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["POST"],
     scope: "base",
     pattern: /^\/model$/,
-    handler: async ({ deps, req, res, pkg }) => {
-      const l = deps.getLedger();
-      const rec = requirePkg(l, pkg) as { model?: string; effort?: string; harness?: string };
+    handler: async ({ deps, io, req, res, pkg }) => {
+      requirePkg(deps.getLedger(), pkg);
       const b = await readBody(req);
-      // 변형 전환이 먼저다 — setHarness 가 모델 오버라이드를 지우므로(모델 어휘는 하네스
-      // 소속), 같은 요청의 model 이 그 뒤에 앉아야 지워지지 않는다. 미선언 이름은 거부된다.
-      // 전환은 setup 을 이미 돌린다(installer.setHarness) — 그 판정을 버리지 않는다.
-      // 준비 안 된 하네스로 바꾼 사람에게 아무 말도 안 하면, 다음 턴이 실패할 때까지
-      // "왜 안 되지" 가 남는다. 실사고: 네이티브 바이너리가 빠진 codex 로 전환 → 무신호.
-      let ready: { ok: boolean; note: string } | null = null;
-      if (b.harness) {
-        const { setHarness } = await import("./installer.ts");
-        const { retireResidents } = await import("./session.ts");
-        retireResidents(pkg); // 상주는 이전 하네스로 떠 있다 — 콘솔 전환 라우트(api.ts)와 같은 동반 조치
-        try {
-          const r = setHarness(l, pkg, String(b.harness));
-          ready = { ok: r.setup.ok, note: r.setup.out.split("\n").slice(0, 2).join(" · ") };
-        } catch (e) {
-          throw new WireError(400, "E_BAD_REQUEST", String(e instanceof Error ? e.message : e));
-        }
+      // 계약 어휘 → patch. 키 부재와 "값 비움"이 다른 뜻이라 null 로 가른다(§5.5-30)
+      const patch: HarnessConfigPatch = {};
+      if (b.harness) patch.harness = String(b.harness);
+      if ("model" in b) patch.model = b.model ? String(b.model) : null;
+      if ("effort" in b) patch.effort = b.effort ? String(b.effort) : null;
+      // 상주는 이전 하네스로 떠 있다 — 콘솔 전환 라우트(api.ts)와 같은 동반 조치.
+      // 이음새 밖인 이유: 상주 명부는 이 프로세스의 것이다(취소·은퇴와 같은 축)
+      if (patch.harness) retireResidents(pkg);
+      let cfg: HarnessConfig;
+      try {
+        cfg = await io.setHarnessConfig(pkg, patch);
+      } catch (e) {
+        // 전환 요청의 거절은 요청 결함이다(미선언 변형 등) — 그 외는 그물이 500 으로 받는다
+        if (!patch.harness) throw e;
+        throw new WireError(400, "E_BAD_REQUEST", String(e instanceof Error ? e.message : e));
       }
-      if ("model" in b) rec.model = b.model ? String(b.model) : undefined;
-      if ("effort" in b) rec.effort = b.effort ? String(b.effort) : undefined;
-      saveLedger(l);
       // known 은 경고가 아니라 판정 정보다(§5.5-30) — 저장은 되고, 어댑터가 세션에서 거부하면 그 턴이 실패한다
       let known: boolean | null = null;
-      if (rec.model) {
+      if (cfg.model) {
         try {
-          const r = harnessVerb(l, pkg, "models");
-          const arr = JSON.parse(r.out);
-          if (Array.isArray(arr)) known = arr.includes(rec.model);
+          const r = await io.harnessQuery(pkg, "models");
+          if (Array.isArray(r.value)) known = r.value.includes(cfg.model);
         } catch { /* models 불달 — 판정 불가 */ }
       }
-      json(res, 200, { ok: true, model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, known, ...(ready ? { ready } : {}) });
+      json(res, 200, { ok: true, model: cfg.model, effort: cfg.effort, harness: cfg.harness, known, ...(cfg.ready ? { ready: cfg.ready } : {}) });
     },
   },
 
@@ -970,6 +1152,20 @@ export const WIRE_ROUTES: WireRoute[] = [
 
 // ── 부착 함수 — Phase 2 가 api.ts 에 한 줄로 마운트한다 ──────────────────────
 
+// 미주입 deps 의 기본 이음새는 deps 하나당 한 번만 세운다 — 요청마다 새로 만들면 구현이
+// 안에 둔 캐시·상태가 매번 버려진다. deps 는 조립 지점(createApi)이 한 번 만드는 객체다
+const defaultIOs = new WeakMap<ClientWireDeps, ClientWireIO>();
+
+function wireIO(deps: ClientWireDeps): ClientWireIO {
+  if (deps.io) return deps.io;
+  let io = defaultIOs.get(deps);
+  if (!io) {
+    io = localClientWireIO(deps.getLedger);
+    defaultIOs.set(deps, io);
+  }
+  return io;
+}
+
 /**
  * 신 wire dispatch. 매치되면 응답까지 책임지고 true, 아니면 손대지 않고 false 를 돌려
  * 호출측(api.ts)의 나머지 라우팅이 이어진다. base 마운트 문법(/pkg/<pkg>)은 기판 소유이며
@@ -983,10 +1179,11 @@ export async function handleClientWire(
 ): Promise<boolean> {
   const method = (req.method ?? "GET").toUpperCase();
   const p = url.pathname;
+  const io = wireIO(deps);
 
   const run = async (route: WireRoute, pkg: string, m: RegExpMatchArray): Promise<boolean> => {
     try {
-      await route.handler({ deps, req, res, url, pkg, m });
+      await route.handler({ deps, io, req, res, url, pkg, m });
     } catch (e) {
       if (e instanceof WireError) fail(res, e.status, e.code, e.message);
       else fail(res, 500, "E_INTERNAL", e instanceof Error ? e.message : String(e));

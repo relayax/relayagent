@@ -15,8 +15,8 @@ relayos-claude/docs/convergence.md §"runner의 두 반쪽" 및 §"OSS 선행 �
 > 남는다(§8-2 게이트 참조). §4.4(세션 스코프)는 **편입하지 않기로 확정**. 남은 것은
 > §8 3단계(control-ts 어댑터)다.
 >
-> 실행 반쪽의 자매 이음새(RunnerIO · McpIO · SessionIO)는 §10 에 기록한다 — 권위 계약이
-> §6.1 로 밀어낸 축들의 착지처라, 임베더가 꽂는 네 계약을 한 페이지에서 찾게 한다.
+> 실행 반쪽의 자매 이음새(RunnerIO · McpIO · SessionIO · ClientWireIO)는 §10 에 기록한다 —
+> 권위 계약이 §6.1 로 밀어낸 축들의 착지처라, 임베더가 꽂는 다섯 계약을 한 페이지에서 찾게 한다.
 
 ## 1. 목적
 
@@ -353,10 +353,10 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
    소비자가 어느 기판에도 없다(relayos 는 Edge 행 단위로 접음). 필요해지는 날 additive 로
    추가한다 — §4.4.
 
-## 10. 실행 반쪽의 이음새 — 자매 셋
+## 10. 실행 반쪽의 이음새 — 자매 넷
 
-§6.1 이 권위 계약에서 밀어낸 것(스폰·세션·문)은 사라지지 않는다. 실행 반쪽에도 같은
-모양의 주입점이 있고, 임베더가 꽂는 계약은 넷(권위 + 아래 셋)이다. 형이 하나인 것이
+§6.1 이 권위 계약에서 밀어낸 것(스폰·세션·문·계약 표면)은 사라지지 않는다. 실행 반쪽에도
+같은 모양의 주입점이 있고, 임베더가 꽂는 계약은 다섯(권위 + 아래 넷)이다. 형이 하나인 것이
 관례다: **작은 함수 묶음을 인자로 받고, 미주입이면 1인 기판 구현이 꽂힌다(additive).**
 익명의 제3자 임베더 테스트도 그대로 적용된다 — 어느 형에도 org 어휘가 없다.
 
@@ -365,6 +365,10 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
 | `RunnerIO` | `runner/run.ts` | 스폰 자식의 env 반쪽 — 토큰·자격·기록·문 주소 | `localIO(l)` |
 | `McpIO` | `runner/mcp.ts` | 세션이 보는 도구 목록과 그 집행 | `api.ts localMcpIO` |
 | `SessionIO` | `runner/session.ts` | 한 턴이 딛는 좌표 — 경로·기판 좌표·대화 장부·MCP 문 | `localSessionIO(getLedger)` |
+| `ClientWireIO` | `runner/client-wire.ts` | 계약 표면(client-protocol v1)이 딛는 저장소 — 세션 목록·개설·메타·하네스 조회·설정 쓰기 | `localClientWireIO(getLedger)` |
+
+조립 지점은 `createApi(getLedger, host, ticker, authority, opts)` 하나다 — `opts` 가 나머지
+셋(`wire`·`mcp`·`runner`)과 문의 신뢰 좌표(`door`)를 받고, 전부 미지정이면 1인 기판 현행이다.
 
 ### 10.1 `SessionIO` (2026-08-24 착지)
 
@@ -410,12 +414,84 @@ narrowSessionScope(pkg: string, agent: string, declared: string[]): Promise<stri
    (좌표·문 주소·담장·장부·다중 문 + 미주입 시 현행 무변). *왜 실행 테스트인가: 기본
    구현이 계속 유일한 소비자라, 밟지 않으면 임베더가 꽂는 날까지 죽은 이음새인 줄 모른다.*
 
+### 10.2 `ClientWireIO` (2026-08-24 착지)
+
+`handleClientWire(deps, …)` 의 `deps.io` 로 들어가고(조립은 `createApi` 의 `opts.wire`),
+미주입이면 `localClientWireIO`(RELAY_HOME 세션 살림 · 동봉 어댑터 조회 · 파일 장부 쓰기)가
+꽂힌다. 계약 정본은 [client-protocol.md](client-protocol.md) — 이 이음새는 그 계약의 **저장소
+반쪽**이고, 계약이 규정하는 판정(정렬·상한·선언 대조·오류 코드)은 이음새 밖에 남는다.
+
+**왜 이 이음새가 필요했나 (relayos I1 실측, 2026-08-24).** 임베디드 데몬이 pod 안에서
+client-protocol v1 을 서빙하는 데 성공했는데, 서빙되는 것이 조직 권위가 아니라 pod 로컬
+`~/.relay` 였다. `ClientWireDeps = {getLedger, authority}` 로는 장부(설치·인가)와 권위만
+갈아 끼워지고 계약 축의 저장소는 모듈 좌표에 고정이라, org 문(deployd `api_contract.go`)이
+같은 계약의 **두 번째 구현체**로 남을 수밖에 없었다. 이음새가 없으면 "구현체 둘"은 사실
+서술이지 소거 근거가 아니다.
+
+| 멤버 | 계약 | 로컬 구현 |
+|---|---|---|
+| `session` (`SessionIO`) | 한 턴이 딛는 좌표 — `runSession`·`autoTitleSession` 에 그대로 실리고, 턴 장부·업로드 무대·번들 회전도 이 좌표를 딛는다. **이력 조회도 이 문의 `readMessages`** | `localSessionIO(getLedger)` |
+| `listSessions(pkg)` | 계약 목록의 원천(§5.3-21). 순서는 상관없다 — 정렬은 계약이 한다 | `~/.relay/sessions/<pkg>` 열거 + 라벨·마커·메타 파일 |
+| `createSession(pkg, binding)` | 기판 발급 불투명 id(§5.3-22). 바인딩은 판정을 통과한 값 | `s-<t36>-<hex>` 민팅 + `agent`·`param` 메타 |
+| `updateSession(pkg, slot, patch)` | 라벨·보관·고정(§5.3-23). `false` = 없는 세션 → 계약이 404 `E_NO_SESSION` | `label` 파일 + `archived`·`pinned` 마커 |
+| `removeSession(pkg, slot)` | 저장소에서 이 대화의 자취를 지운다 | 세션 살림 `rm -rf` |
+| `harnessQuery(pkg, verb)` | 하네스 조회 3동사(§5.5-29)의 값 | `installer.harnessVerb` (어댑터 프로세스) |
+| `harnessCapabilities(pkg)` | 개막(§3-7)이 투영할 어댑터 capability. `null` = 조회 축 부재 | 어댑터 `info` + entry mtime 캐시 |
+| `setHarnessConfig(pkg, patch)` | 모델·강도·변형의 영속(§5.5-30/30-a) — 계약 축이 장부를 쓰는 유일한 자리 | `installer.setHarness` + `PkgRecord` + `saveLedger` |
+
+1. **이력은 새 멤버가 아니다 — `SessionIO.readMessages` 로 수렴한다.** 파일이 정본인 기판과
+   다른 저장소가 정본인 임베더가 갈리는 축은 §10.1 이 이미 열었다. *왜 또 열지 않나: 같은
+   장부에 리더가 둘이면 한쪽만 고쳐지는 날 소리 없이 갈린다 — 화면이 보는 대화와 하네스가
+   잇는 대화가 다른 저장소를 가리키는 형태다.* 같은 이유로 턴 실행도 이 이음새의 `session` 을
+   `runSession` 에 싣는다: 계약 축과 실행 축이 같은 좌표를 딛는 것이 이 편입의 본체다.
+   부수 소득 하나 — 이력 읽기가 살림을 만들지 않도록 `state.ts` 에 `sessionPath`(비생성)를
+   두고 `localSessionIO.readMessages` 가 그것을 쓴다. 종전 좌표(`sessionDir`)로 읽으면 없는
+   세션의 조회 한 번이 빈 디렉토리를 남기고, 그 디렉토리가 목록에 유령 행으로 선다.
+2. **세션 열거는 §10.1 이 "기판 표면의 일"이라며 남긴 자리다.** `session.ts listSessionSlots`
+   는 복구용 슬롯 열거로 남고, 계약 목록의 정본은 이쪽 하나다.
+3. **설정 쓰기를 `saveLedger` 로 쪼개지 않은 이유.** 변형 전환은 `installer.setHarness` 가
+   **자기 안에서** 장부를 쓴다. 쓰기의 절반만 이음새로 빼면 나머지 절반이 임베더 몰래
+   `~/.relay` 로 새고, 화면은 `200 {ok:true}` 를 받는데 다음 조회에 값이 없다 — 반쪽 이음새는
+   조용한 갈림이다. 그래서 §5.5 의 쓰기 동사를 통째로 넘기고, `known` 판정과 상주 은퇴는
+   계약 쪽에 남긴다.
+4. **열지 않은 축과 이유** (인터페이스는 소비자가 있을 때만 판다):
+   - *턴 큐·사슬·SSE sinks* — 담는 것이 살아 있는 응답 라이터와 Promise 사슬이라 프로세스
+     지역이다(§10.1 의 진행 명부와 같은 근거). 게다가 세션 직렬화는 계약이 기판에게 맡긴
+     판정이다(§5.1-12) — 인자화하면 그 불변식이 구현마다 갈린다. 턴 장부의 **파일 자리**는
+     주입된 `session.sessionDir` 을 따라간다.
+   - *취소·회송·busy(`cancelSession`·`deliverAnswer`·`isSessionBusy`·`retireResident`)* —
+     착지점이 `session.ts` 의 진행 명부(`ChildProcess` 핸들·stdin)다. 턴을 이 데몬이 돌리는
+     한 같은 프로세스 안이고, 돌리지 않는 기판이면 이 파일이 애초에 그 문의 서버가 아니다.
+   - *세션 reset* — 번들 회전은 이 턴을 돌리는 쪽의 작업물이라 세션 좌표를 그대로 딛는다.
+     org 문이 reset 을 control 동사로 갖는 것은 org 가 **턴을 다른 곳에서 돌리기** 때문이고,
+     임베디드 데몬에서는 그 전제가 사라진다.
+   - *인스턴스 열거(`/instances`)* — 이미 갈아 끼워져 있다. `getLedger()` + manifest 파생이라
+     임베더가 장부 투영만 주면 자기 행을 낸다(relayos I0 실측).
+   - *capabilities 목록 자체* — 파생값이다. `push`·`state` 는 이 파일에 라우트가 없어 선언할
+     것이 없다 — 그 축을 여는 것은 계약 개정(§5.7·§5.8)이지 이음새가 아니다.
+5. **게이트**: `runner/client-wire-io.test.ts` 가 스텁 이음새로 **실제 HTTP 왕복**을 밟는다
+   (개막·개설 판정·목록 정렬·이력·업로드/다운로드·설정 쓰기·SSE 턴 관찰·장부 재생 +
+   미주입 시 현행 무변). *왜 서버를 세우나: 턴 관찰은 응답 스트림의 수명이 곧 판정(§5.2-20)
+   이라 가짜 `res` 로는 밟히지 않는다.*
+
+### 10.3 문의 신뢰 좌표 — `createApi(opts.door)` (2026-08-24 착지)
+
+이음새는 아니지만 같은 조립 지점의 축이라 여기 적는다. 1인 기판의 문은 인증이 없고, 그
+자리를 **loopback 바인딩 + Host 검사(DNS rebinding 방어) + Origin 검사(CSRF)** 셋이 지킨다.
+임베더는 자기 문(ingress)을 앞에 세우므로 이 셋의 좌표가 다르다.
+
+| 축 | 형 | 판정 |
+|---|---|---|
+| `door.hosts` | 허용 Host **이름 목록** | 술어가 아니라 목록인 이유: 술어를 받으면 `() => true` 가 합법이 되어 방어가 형태만 남는다. 목록이면 "Host 는 선언된 집합 안" 이라는 **의도가 그대로** 유지되고, loopback 셋은 1인 기판의 그 집합일 뿐이 된다 |
+| `door.origins` | 추가 허용 Origin | 상태 변경 요청의 CSRF 판정. 임베더의 화면은 자기 오리진에서 서빙되므로 선언이 필요하다. 미선언은 종전대로 데몬 자신의 오리진뿐 |
+| `door.listen` | `false` 또는 `{port, host}` | `false` = 반환된 서버를 임베더가 직접 연다. env 레버(`RELAY_BIND`)를 두지 않은 이유: 환경변수는 사용자가 넘길 수 있는 문턱이라, 인증 없는 데몬이 실수로 밖에 서는 길이 된다. **소켓을 넓히는 것만으로는 문이 열리지 않는다** — Host 선언이 짝으로 있어야 한다 |
+
 ## 11. 참조
 
 - `runner/authority-contract.ts` — 계약 코드 반쪽 (벤더링 아티팩트)
 - `runner/authority.ts` — 1인 기판 구현 `localAuthority`
 - `runner/api.ts:525-526` — 이음새 배선점 ("조직 임베드는 여기 다른 구현을 꽂는다 — api 는 모른다")
-- `runner/run.ts` `RunnerIO` · `runner/mcp.ts` `McpIO` · `runner/session.ts` `SessionIO` — 실행 반쪽의 자매 이음새 셋 (§10)
+- `runner/run.ts` `RunnerIO` · `runner/mcp.ts` `McpIO` · `runner/session.ts` `SessionIO` · `runner/client-wire.ts` `ClientWireIO` — 실행 반쪽의 자매 이음새 넷 (§10)
 - relayos-claude/docs/convergence.md — 북극성: runner의 두 반쪽 · OSS 선행 작업 3 · federation 전 3수칙
 - relayos-claude/control-ts/ARCHITECTURE.md — 원격 대응물의 현행 정본 (GoTrue·token:issue·Edge 행·audit)
 - docs/verb-contract.md — ctx 가 소비하는 판정(caller·credential·grant)의 동사 쪽 계약

@@ -105,8 +105,15 @@ export function tokenToPkg(l: Ledger, token: string): string | null {
   return null;
 }
 
+/** 세션 살림의 좌표 — **만들지 않는다**. 실재를 전제하지 않는 소비(이력 읽기·삭제·열거)의
+ *  자리다. sessionDir 로 읽으면 없는 세션을 조회하는 것만으로 빈 살림이 생기고, 그 빈 디렉토리가
+ *  목록에 유령 행으로 선다(라벨 = 슬롯 이름) */
+export function sessionPath(pkg: string, slot: string): string {
+  return path.join(RELAY_HOME, "sessions", pkg, slot.replace(/[^a-zA-Z0-9._-]/g, "_"));
+}
+
 export function sessionDir(pkg: string, slot: string): string {
-  const d = path.join(RELAY_HOME, "sessions", pkg, slot.replace(/[^a-zA-Z0-9._-]/g, "_"));
+  const d = sessionPath(pkg, slot);
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
