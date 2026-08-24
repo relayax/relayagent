@@ -22,7 +22,9 @@ export interface HostBridge {
   // 수정 레이어 (draft.ts). 설치본은 실행 중이라 직접 만지지 않는다 — 편집은 draft, 반영은 publish
   draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[] }): unknown;
   draftRead(name: string, file?: string): unknown;
-  draftWrite(name: string, files?: Record<string, string>, deletes?: string[]): unknown;
+  /** base = 파일별 마지막 읽기 지문(draft-read 의 hash) — 실으면 그 사이 다른 손의 수정을
+   *  E_CONFLICT 로 판정한다(동시 편집 방어, opt-in). null = 없는 파일로 알고 있다 */
+  draftWrite(name: string, files?: Record<string, string>, deletes?: string[], base?: Record<string, string | null>): unknown;
   draftDiff(name: string): unknown;
   draftCommit(name: string, message: string): unknown;
   draftValidate(name: string): unknown;

@@ -284,3 +284,20 @@ export function AgentScope(props: AgentScopeProps): ReactNode;
 
 /** 현재 활성 선언 + 슬롯 문자열(읽기 전용) — openChat 의 conversation 에 실을 유일한 원천 */
 export function useAgentBinding(): { agent?: string; param?: string; conversation: string };
+
+/** 턴 신호(§6-a) — 위젯이 같은 문서에서 시작·관찰한 턴의 수명주기. 브리지의 유일한 역방향 */
+export interface AgentTurnSignal {
+  phase: "started" | "settled";
+  /** settled 의 성패 — started 에는 없다 */
+  ok?: boolean;
+  /** 대화 정체성 메타 — 매칭은 이걸로(슬롯 문자열 파싱 금지, §5.3-21 관례) */
+  agent?: string;
+  param?: string;
+  /** 위젯 내부 대화 좌표(불투명) — 표시용. 파싱·비교 금지 */
+  conversation?: string;
+}
+
+/** relay:turn 구독(§6-a) — 힌트다: payload 를 상태로 쓰지 말고 재조회 트리거로만 쓴다
+ *  (SoT = 기판). 마운트 전 유실·재생(attach) 중복 발화가 전부 무해해지는 소비 형태.
+ *  해지 함수를 돌려준다 */
+export function onAgentTurn(fn: (signal: AgentTurnSignal) => void): () => void;

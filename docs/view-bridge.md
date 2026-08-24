@@ -13,8 +13,9 @@
 
 > **인용 규약**: OSS 좌표(`lib/relayjs/src/...`)는 현 트리 실측이다 — §8-22 의 ②③④ 컷
 > (2026-08-24)이 착지해 OSS 가 전 조항의 정본 구현을 든다. relayos 좌표(relayos
-> `lib/relayjs/src/agent.tsx` 등)는 **동작 원본**이었고, 정렬 컷(§8-22-5)에서 재벤더링
-> 소비자로 수렴한다(client-protocol §9-47-4 와 같은 레일).
+> `lib/relayjs/src/agent.tsx` 등)는 **동작 원본**이었고, 정렬 컷(§8-22-5 — 2026-08-24)에서
+> 재벤더링 소비자로 수렴했다(client-protocol §9-47-4 와 같은 레일): agent.tsx 는 크롬만
+> 소유하고 선언·발신 표면은 벤더 bridge 를 재수출한다.
 > 표기: **[현행 v1]** = 이 계약이 정의하고 OSS 에 착지한 조항 · **[현행-위젯]** = 컷 전부터
 > OSS 위젯에 있던 수신부(원출처 구 deployd 셸 중계).
 
@@ -65,6 +66,7 @@
 | `chat.send` | 뷰 → 크롬 → 위젯 | 자동 전송 — 컴포저 submit 과 같은 큐 의미론 |
 | `scope.declare` | 뷰 → 크롬 | 페이지 정체성 선언 — "이 화면의 대화는 이것" |
 | `scene.set` | 뷰 → 위젯 | 화면 맥락 서문 공급 — turn.send 의 `scene` 필드 |
+| `turn.signal` | 위젯 → 뷰 | 턴 수명주기 힌트 — "에이전트가 일을 시작했다/끝냈다" (§6-a, 유일한 역방향) |
 
 `chat.prefill`/`chat.send` 는 wire 에서 `chat.open` 의 detail 필드로 실려 온다(§4-7) —
 패널이 닫혀 있으면 열어야 꽂을 자리가 생기므로, 열기와 주입은 한 동사의 두 필드다.
@@ -177,6 +179,33 @@
     그대로). 구 위젯(이 조항 이전 번들)이 scene 을 싣지 않는 것은 계약 위반이 아니다 —
     스큐 규율(§1-4)의 적용례다.
 
+## 6-a. 턴 신호 — turn.signal (역방향)
+
+20-a. **[현행 v1]** `turn.signal` = `CustomEvent("relay:turn", { detail })`,
+    `detail: { phase: "started" | "settled", ok?, agent?, param?, conversation? }`.
+    **계약의 유일한 역방향 동사다** — 발신자는 위젯(같은 문서에서 턴을 시작·관찰하는 유일한
+    참여자, 발신 chat/runtime.ts signalTurn), 수신자는 뷰(수신 표면 `onAgentTurn()` —
+    bridge.tsx). `phase` 는 client-protocol §6-36 수명주기 이벤트의 투영이고, `ok` 는
+    settled 에만 실린다. `agent`·`param` 은 대화 정체성 메타(client-protocol §5.3-21)다 —
+    **매칭은 메타로 한다**, `conversation`(위젯 내부 대화 좌표)은 불투명 표시용이고 뷰가
+    파싱·비교하면 안 된다(슬롯 문자열은 클라이언트 계약이 아니다).
+    *왜 위젯이 직발신인가(크롬 무경유): 턴 관찰은 위젯 소유이고, 수신자(뷰)는 문서 그
+    자체라 마운트 후엔 상시 실재다 — chat.open 의 fire-and-forget 이 성립한 것과 같은
+    근거(§4-12). 마운트 전 유실은 아래 힌트 시맨틱이 무해하게 만든다.*
+20-b. **힌트 시맨틱 — 수신자 규율.** 이 이벤트는 ack 없는 fire-and-forget 이고, 뷰는
+    detail 을 **상태로 쓰지 않는다** — 재조회(pull)의 트리거로만 쓴다. 정본은 언제나
+    기판이다(draft-read·history 등 — relayos "이벤트는 힌트, SoT=DB" 판정과 같은 결).
+    이 소비 형태만이 세 구멍을 전부 닫는다: ① 뷰 하이드레이션 전 발화 유실(뷰는 마운트
+    시 어차피 pull 한다) ② 재생 중복 — attach·종결 턴 replay 가 같은 started/settled 를
+    다시 발화한다(재조회는 멱등) ③ 구 위젯(이 조항 이전 번들)의 무발신(힌트 부재 = 그냥
+    현행 UX, 스큐 규율 §1-4).
+20-c. **경계 — 같은 문서의 턴만.** 다른 탭·채널(슬랙 등)·CLI·위임 서브세션
+    (agent_dispatch)이 일으킨 활동은 이 축에 오지 않는다 — 그건 기판 push
+    (client-protocol §5.8 `push.subscribe`)의 소관이고, 크롬이 그 커넥션을 소유해 이
+    어휘로 재방송하는 승격은 push 착지와 함께 별도 개정으로 온다(§8-22-6). 이 축의
+    임무는 지배 루프 하나다: 사용자가 지금 보는 화면에서 시킨 일이 끝났을 때, 그 화면이
+    스스로 신선해지는 것.
+
 ## 7. 성장 규율과 계약 밖 잔류
 
 21. 이 문서의 이벤트·필드 어휘가 전부다. 새 이벤트, 새 detail 필드 = 이 문서의 개정이다.
@@ -186,6 +215,8 @@
     `relay-turn-phase` · `relay-turn-usage` · `relay-overrides-changed`,
     runtime.ts:307, 1004, 1024, 1133)는 번들 내부 어휘다 — 뷰가 구독·발신하면 안 되고,
     이 계약의 개정 없이 바뀔 수 있다. 브리지 어휘는 전부 `relay:`(콜론) 접두다.
+    `relay-turn-phase`(스폰 내레이션 — 전송→첫 이벤트 구간의 스테이지)와 §6-a 의
+    `relay:turn`(수명주기)은 입자가 다른 별개 축이다 — 전자는 내부 잔류, 후자가 계약이다.
 
 ## 8. 착지 계획 — OSS 승격 순서
 
@@ -203,23 +234,36 @@
        재컷(`npm run build:widget`). main.tsx · ChatTabs.tsx 의 "relay:chat-open 착지"
        주석이 이 컷에서 비로소 사실이 됐다.
     4. ✅ 패키지 작성자 문서(`agent-chat/references/client-api.md`)에 브리지 항목 추가.
-    5. **relayos 정렬**(잔여): AgentScope·openChat 는 OSS 재벤더링으로 수렴하고, agent.tsx
-       는 크롬(도킹·중계)만 소유한다 — 크롬의 선언 수신은 내부 context 지름길에서
-       `relay:scope` 착지로 옮긴다. 위젯 갱신은 재벤더링 — `chat/` 직접 편집 금지
-       (client-protocol §9-47-4 규율 그대로).
+    5. ✅ **relayos 정렬**(2026-08-24): AgentScope·openChat·setScene·slotFor 는 OSS
+       재벤더링(chat 사이트 — bridge.tsx 동승)으로 수렴했고, agent.tsx 는 크롬(도킹·중계·
+       착지)만 소유한다 — 선언 수신은 내부 context 지름길이 아니라 `relay:scope` 착지
+       (agent.tsx useDeclaredScope, 마운트 시 `relay:scope-request` 발신 §5-16-a 포함)다.
+       relayos index.ts 는 bridge 심볼을 재수출만 한다. 위젯 갱신은 재벤더링 — `chat/`
+       직접 편집 금지(client-protocol §9-47-4 규율 그대로). **relayos 서빙 번들의 정본은
+       OSS 릴리스 아티팩트**(relayagent.lock releases.chat-widget)라, 위젯 쪽 새 어휘가
+       박스에 닿는 것은 릴리스 digest bump 와 함께다 — 소스 사이트 핀은 dev 반복·org
+       수입(bridge)용으로 먼저 간다.
+    6. ✅ **역방향 첫 동사 — turn.signal**(2026-08-24 후속 컷, §6-a): 위젯 발신
+       (runtime.ts signalTurn) + 뷰 수신 표면 `onAgentTurn()`(bridge.tsx — index 루트
+       수출 동반). 첫 소비자는 시스템 콘솔 스튜디오(settled → draft 재조회 + 작업 중 칩).
+       (잔여) 크롬의 기판 push 재방송 승격 — client-protocol §5.8 `push.subscribe` 의
+       OSS 착지와 함께 별도 개정: 다른 탭·채널·위임 발 활동이 같은 `relay:turn` 어휘로
+       들어오고, 발신 주체가 위젯 단독에서 크롬 동승으로 넓어진다(§6-a-20-c).
 
 ## 부록 A — 이벤트 ↔ 현행 실측 전량 매핑
 
 OSS 열은 §8-22 ②③ 컷(2026-08-24) 이후의 현 트리 실측이다. relayos 열은 정렬 컷(§8-22-5)
-전의 현행 — 정렬 후에는 발신·선언이 OSS 재벤더링으로 수렴한다.
+이후의 현행 — 발신·선언은 벤더 bridge(OSS 재벤더링 사본)로 수렴했고, relayos 소유는
+크롬(agent.tsx)의 착지·중계뿐이다. 줄 번호 대신 심볼로 적는다(벤더 사본은 핀마다 이동).
 
 | 계약 이벤트 | OSS 실측 | relayos 실측 |
 |---|---|---|
-| `relay:chat-open` (발신) | `openChat` bridge.tsx:59-63 | `openChat` agent.tsx:89-92 · ScriptErrorBar agent.tsx:752 |
-| `relay:chat-open` (착지) | autoFloat chat/main.tsx:217-237 | useChatDock agent.tsx:187 · ChatChrome agent.tsx:500 |
-| `relay:chat-prefill`(+ack) | 수신 Chat.tsx:2152-2167 · 발신(재시도) chat/main.tsx:190-215, 235 | 발신(재시도) agent.tsx:480-497 |
-| `relay:chat-send`(+ack) | 수신 Chat.tsx:2184-2199 · 발신(재시도) chat/main.tsx:190-215, 236 | 발신(재시도) agent.tsx:480-498 |
-| `relay:scope` | 발신 bridge.tsx:92-102 · 착지 chat/main.tsx:243-262 | 부재 — context 로 대신(ActiveBindingCtx, 정렬 시 §8-22-5) |
-| `relay:scope-request` | 발신 chat/main.tsx(autoFloat) · 응답 bridge.tsx | 부재 — 정렬 시 크롬이 발신(§5-16-a) |
-| `relay:scene` | 발신 bridge.tsx:68-70 · 소비 chat/runtime.ts:899-909, 1295-1296 | 부재 |
-| (openTab preview 푸시) | 수신 ChatTabs.tsx:703-731 · 발신 chat/main.tsx:243-262 | 발신 agent.tsx:200-210 |
+| `relay:chat-open` (발신) | `openChat` bridge.tsx:59-63 | 벤더 bridge(index.ts 재수출) · 소비 실례 ScriptErrorBar sendToBuilder(agent.tsx) |
+| `relay:chat-open` (착지) | autoFloat chat/main.tsx:217-237 | useChatDock onOpen · ChatChrome onOpen(agent.tsx) |
+| `relay:chat-prefill`(+ack) | 수신 Chat.tsx:2152-2167 · 발신(재시도) chat/main.tsx:190-215, 235 | 발신(재시도) ChatChrome relay(agent.tsx) · 수신은 벤더 chat/Chat.tsx |
+| `relay:chat-send`(+ack) | 수신 Chat.tsx:2184-2199 · 발신(재시도) chat/main.tsx:190-215, 236 | 발신(재시도) ChatChrome relay(agent.tsx) · 수신은 벤더 chat/Chat.tsx |
+| `relay:scope` | 발신 bridge.tsx:92-102 · 착지 chat/main.tsx:243-262 | 발신 벤더 bridge · 착지 useDeclaredScope(agent.tsx) |
+| `relay:scope-request` | 발신 chat/main.tsx(autoFloat) · 응답 bridge.tsx | 발신 useDeclaredScope(agent.tsx) · 응답 벤더 bridge |
+| `relay:scene` | 발신 bridge.tsx:68-70 · 소비 chat/runtime.ts:899-909, 1295-1296 | 발신·소비 전부 벤더 사본(bridge·chat/runtime) |
+| `relay:turn` | 발신 chat/runtime.ts(signalTurn — makeAdapter onEvent) · 수신 bridge.tsx onAgentTurn · 소비 studio/page.tsx | 발신·수신 전부 벤더 사본 — 서빙 번들 반영은 릴리스 digest bump 와 함께(§8-22-5) |
+| (openTab preview 푸시) | 수신 ChatTabs.tsx:703-731 · 발신 chat/main.tsx:243-262 | 발신 useChatDock(agent.tsx) · 수신은 벤더 chat/ChatTabs.tsx |

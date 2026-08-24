@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AgentScope, onAgentTurn } from "@relay/relayjs";
 import { parse as parseYaml, parseDocument } from "yaml";
 import CodeEditor from "@/components/CodeEditor";
 import DeclTree from "@/components/DeclTree";
@@ -59,7 +60,14 @@ function Studio() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  // 동시 편집 판정에 걸린 파일 — 배너가 "새 내용 읽기 / 덮어쓰기" 를 묻는다
+  const [conflict, setConflict] = useState<string | null>(null);
+  // 이 패키지의 빌더 대화에서 턴이 도는 중 (relay:turn started↔settled)
+  const [agentBusy, setAgentBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 경로별 마지막 읽기 지문 — draft-write 의 base. 디바운스 발화 시점에 읽어야 하므로
+  // (in-flight 저장이 지문을 갱신하는 사이 잡힌 클로저가 낡은 값을 들 수 있다) ref 다
+  const bufHash = useRef<Record<string, string | null>>({});
 
   const say = useCallback((kind: LogLine["kind"], text: string, href?: string) => {
     setLog((l) => [{ kind, text, href }, ...l].slice(0, 200));
@@ -124,6 +132,7 @@ function Studio() {
   const effFile = file ?? (!sec && !isNew && pkg ? "relay.yaml" : null);
 
   useEffect(() => {
+    setConflict(null); // 판정은 파일 단위다 — 다른 파일로 옮기면 배너도 접는다
     if (!pkg || !effFile || !status) {
       if (!effFile) setBuf(null);
       return;
@@ -131,9 +140,14 @@ function Studio() {
     if (buf?.path === effFile) return;
     let on = true;
     void draftReadFile(pkg, effFile)
-      .then((r) => on && setBuf({ path: r.file, content: r.content, dirty: false }))
+      .then((r) => {
+        if (!on) return;
+        bufHash.current[r.file] = r.hash;
+        setBuf({ path: r.file, content: r.content, dirty: false });
+      })
       .catch((e) => {
         if (!on) return;
+        bufHash.current[effFile] = null; // 없는 파일로 알고 시작 — 그 사이 생기면 그것도 충돌
         setBuf({ path: effFile, content: "", dirty: false });
         say("err", `${effFile}: ${String(e instanceof Error ? e.message : e)}`);
       });
@@ -148,12 +162,21 @@ function Studio() {
       if (!pkg) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        void draftWrite(pkg, { [path]: content })
-          .then(async () => {
+        // base = 이 버퍼가 마지막으로 읽은 판의 지문. 그 사이 다른 손(빌더·CLI·다른 화면)이
+        // 고쳤으면 기판이 E_CONFLICT 로 거절한다 — 전문 쓰기가 남의 작업을 되덮는 사고 방지
+        void draftWrite(pkg, { [path]: content }, undefined, { [path]: bufHash.current[path] ?? null })
+          .then(async (r) => {
+            bufHash.current[path] = r.hashes?.[path] ?? null;
             setBuf((b) => (b && b.path === path && b.content === content ? { ...b, dirty: false } : b));
             await refresh();
           })
-          .catch((e) => say("err", `저장 실패 ${path}: ${String(e instanceof Error ? e.message : e)}`));
+          .catch((e) => {
+            const msg = String(e instanceof Error ? e.message : e);
+            if (msg.includes("E_CONFLICT")) {
+              setConflict(path);
+              say("err", `다른 손이 ${path} 을(를) 먼저 고쳤습니다 — 편집기 위 배너에서 처리를 고르세요`);
+            } else say("err", `저장 실패 ${path}: ${msg}`);
+          });
       }, 600);
     },
     [pkg, refresh, say],
@@ -167,19 +190,82 @@ function Studio() {
     [buf, scheduleSave],
   );
 
-  // 폼 편집(디스크리트 커밋)은 디바운스 없이 바로 쓴다
+  // 폼 편집(디스크리트 커밋)은 디바운스 없이 바로 쓴다. base = 폼이 편집한 Document 의
+  // 원천(status.manifest)을 읽던 시점 지문 — 충돌이면 낡은 폼 위의 조작이라 새로 읽고 다시 한다
   const writeManifest = useCallback(
     (text: string) => {
       if (!pkg) return;
-      void draftWrite(pkg, { "relay.yaml": text })
-        .then(async () => {
+      const base = status?.hashes?.["relay.yaml"] ?? null;
+      void draftWrite(pkg, { "relay.yaml": text }, undefined, { "relay.yaml": base })
+        .then(async (r) => {
+          bufHash.current["relay.yaml"] = r.hashes?.["relay.yaml"] ?? null;
           setBuf((b) => (b && b.path === "relay.yaml" ? { path: b.path, content: text, dirty: false } : b));
           await refresh();
         })
-        .catch((e) => say("err", `저장 실패 relay.yaml: ${String(e instanceof Error ? e.message : e)}`));
+        .catch(async (e) => {
+          const msg = String(e instanceof Error ? e.message : e);
+          if (msg.includes("E_CONFLICT")) {
+            setConsoleOpen(true);
+            say("err", "다른 손이 relay.yaml 을 먼저 고쳤습니다 — 새로 읽었으니 방금 조작을 다시 해주세요");
+            await refresh();
+          } else say("err", `저장 실패 relay.yaml: ${msg}`);
+        });
     },
-    [pkg, refresh, say],
+    [pkg, status, refresh, say],
   );
+
+  // relay:turn(view-bridge §6-a) — 같은 문서에서 시킨 턴이 끝나면 화면이 스스로 신선해진다.
+  // 힌트 소비 규율: payload 는 상태가 아니라 재조회의 트리거다(멱등 — 재생 중복 무해).
+  // 핸들러가 렌더 시점 값(열린 파일·dirty)을 봐야 하므로 ref 로 나른다 — deps 로 넣으면
+  // 타이핑마다 구독이 재생성된다
+  const liveView = useRef({ file: null as string | null, dirty: false });
+  liveView.current = { file: effFile, dirty: !!buf?.dirty };
+  useEffect(() => {
+    if (!pkg) return;
+    return onAgentTurn((s) => {
+      // 칩은 이 패키지의 빌더 대화만 — param 은 slug 목록일 수 있다(client-protocol §5.3-21)
+      const mine = s.agent === "agent-builder" && (!s.param || s.param.split(",").includes(pkg));
+      if (s.phase === "started") {
+        if (mine) setAgentBusy(true);
+        return;
+      }
+      if (mine) setAgentBusy(false);
+      // 재조회는 대화 불문 — system 에이전트가 직접 draft 를 고치는 경로도 있고, 재조회는 싸다
+      void refresh();
+      const { file, dirty } = liveView.current;
+      if (!file || dirty) return; // dirty 버퍼는 base 검사가 지킨다 — 힌트로 덮지 않는다
+      void draftReadFile(pkg, file)
+        .then((r) => {
+          bufHash.current[r.file] = r.hash;
+          setBuf((b) => (b && b.path === file && !b.dirty ? { path: file, content: r.content, dirty: false } : b));
+        })
+        .catch(() => { /* 그 사이 삭제됐을 수 있다 — refresh 가 트리를 갱신한다 */ });
+    });
+  }, [pkg, refresh]);
+
+  // 충돌 배너의 두 처분 — 판정은 기판이 했고(base 검사), 선택은 사람이 한다
+  const conflictReload = useCallback(() => {
+    if (!pkg || !conflict) return;
+    void draftReadFile(pkg, conflict)
+      .then((r) => {
+        bufHash.current[r.file] = r.hash;
+        setBuf({ path: r.file, content: r.content, dirty: false });
+        setConflict(null);
+        void refresh();
+      })
+      .catch((e) => say("err", `다시 읽기 실패 ${conflict}: ${String(e instanceof Error ? e.message : e)}`));
+  }, [pkg, conflict, refresh, say]);
+  const conflictOverwrite = useCallback(() => {
+    if (!pkg || !conflict || !buf || buf.path !== conflict) return;
+    void draftWrite(pkg, { [conflict]: buf.content }) // base 없이 — 명시적 덮어쓰기 선언
+      .then(async (r) => {
+        bufHash.current[conflict] = r.hashes?.[conflict] ?? null;
+        setBuf((b) => (b && b.path === conflict ? { ...b, dirty: false } : b));
+        setConflict(null);
+        await refresh();
+      })
+      .catch((e) => say("err", `덮어쓰기 실패 ${conflict}: ${String(e instanceof Error ? e.message : e)}`));
+  }, [pkg, conflict, buf, refresh, say]);
 
   const manifest: Manifest | null = useMemo(() => {
     if (!status) return null;
@@ -274,6 +360,9 @@ function Studio() {
   const secDef = SECTIONS.find((s) => s.key === sec);
 
   return (
+    // 페이지 정체성 선언(view-bridge §5) — "이 화면의 대화는 이 패키지의 빌더". 부유 위젯이
+    // 이 대화를 미리보기 탭으로 끌어오고, 대상 없는 openChat prefill/send 가 여기로 간다
+    <AgentScope agent="agent-builder" param={pkg ?? undefined}>
     <div className="st-shell">
       <div className="rc-card st-top">
         <Link href="/" className="st-back">
@@ -285,6 +374,11 @@ function Studio() {
           {status?.version.draft && status.version.draft !== status.version.live ? ` · draft v${status.version.draft}` : ""}
         </span>
         {changedCount ? <span className="rc-chip">수정 {changedCount}건</span> : <span className="rc-chip gray">변경 없음</span>}
+        {agentBusy ? (
+          <span className="rc-chip" title="이 패키지의 빌더 대화에서 턴이 돌고 있습니다 — 끝나면 화면이 새 내용을 반영합니다">
+            빌더 작업 중…
+          </span>
+        ) : null}
         {status?.lastCommit ? <span className="st-commit">기록: {status.lastCommit.message}</span> : null}
         <span className="st-sp" />
         {/* 버튼은 성질로 묶는다. 왼쪽에서 오른쪽이 곧 작업 순서다:
@@ -401,7 +495,20 @@ function Studio() {
               </div>
             ) : effFile ? (
               buf && buf.path === effFile ? (
-                <CodeEditor key={`${pkg}:${buf.path}`} path={buf.path} value={buf.content} onChange={onEdit} />
+                <>
+                  {conflict === effFile ? (
+                    <div className="banner" role="alert" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>다른 손(빌더·다른 화면)이 이 파일을 먼저 고쳤습니다 — 지금 버퍼는 그 위 판이 아닙니다.</span>
+                      <button className="rc-btn" onClick={conflictReload}>
+                        새 내용 읽기 (내 편집 버림)
+                      </button>
+                      <button className="rc-btn" onClick={conflictOverwrite}>
+                        내 내용으로 덮어쓰기
+                      </button>
+                    </div>
+                  ) : null}
+                  <CodeEditor key={`${pkg}:${buf.path}`} path={buf.path} value={buf.content} onChange={onEdit} />
+                </>
               ) : (
                 <div className="empty">
                   <span className="rc-ring" />
@@ -490,6 +597,7 @@ function Studio() {
         <DiscardDialog pkg={pkg} installed={!!status?.installed} onDone={() => router.push("/")} onClose={() => setDialog(null)} />
       ) : null}
     </div>
+    </AgentScope>
   );
 }
 

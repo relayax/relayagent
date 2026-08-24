@@ -12,6 +12,7 @@
  *  - AgentScope / useAgentBinding(§5) — 페이지 정체성 선언. 활성 판정은 max(id)(§5-15:
  *    중첩=안쪽 승, 형제=후승), 변화마다 relay:scope 를 발신한다(§5-16).
  *  - setScene(§6) — relay:scene 발신: latest-wins 화면 맥락. 위젯 발화의 scene 서문이 된다.
+ *  - onAgentTurn(§6-a) — relay:turn 수신: 위젯이 흘리는 턴 수명주기 힌트. 유일한 역방향.
  *
  * 슬롯 문자열("main" | "agent-<name>[:<param>]")의 조립은 이 파일의 slotFor 단일 지점이다
  * (§2-5) — 앱 코드에 노출 금지, openChat 의 conversation 에는 useAgentBinding().conversation
@@ -70,6 +71,41 @@ export function openChat(opts: OpenChatOptions = {}): void {
  *  밀어 둔다 — 발화 시점에 뷰를 기다리지 않는 push 모델이다. */
 export function setScene(scene: string | null): void {
   dispatch("relay:scene", { scene });
+}
+
+// ── 턴 신호 수신 — 브리지의 유일한 역방향 동사 (view-bridge §6-a) ────────────
+// 위젯이 같은 문서에서 시작·관찰한 턴의 수명주기를 relay:turn 으로 흘린다. 힌트다:
+// payload 를 상태로 쓰지 말고 재조회의 트리거로만 쓴다(SoT = 기판) — 마운트 전 유실·
+// 재생(attach) 중복 발화가 전부 무해해지는 유일한 소비 형태다. 다른 탭·채널·위임
+// 서브세션의 활동은 이 축에 오지 않는다(기판 push, client-protocol §5.8 소관).
+
+export interface AgentTurnSignal {
+  phase: "started" | "settled";
+  /** settled 의 성패 — started 에는 없다. */
+  ok?: boolean;
+  /** 대화 정체성 메타 — 매칭은 이걸로 한다(슬롯 문자열 파싱 금지, §5.3-21 관례). */
+  agent?: string;
+  param?: string;
+  /** 위젯 내부 대화 좌표(불투명) — 표시용. 파싱·비교의 근거로 쓰지 않는다. */
+  conversation?: string;
+}
+
+/** relay:turn 구독 — 해지 함수를 돌려준다. SSR 프리렌더(window 부재)는 no-op 해지를 준다. */
+export function onAgentTurn(fn: (signal: AgentTurnSignal) => void): () => void {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
+  const h = (e: Event) => {
+    const d = (e as CustomEvent).detail || {};
+    if (d.phase !== "started" && d.phase !== "settled") return; // 미지 phase 는 무시(additive 스큐)
+    fn({
+      phase: d.phase,
+      ...(typeof d.ok === "boolean" ? { ok: d.ok } : {}),
+      ...(typeof d.agent === "string" && d.agent ? { agent: d.agent } : {}),
+      ...(typeof d.param === "string" && d.param ? { param: d.param } : {}),
+      ...(typeof d.conversation === "string" && d.conversation ? { conversation: d.conversation } : {}),
+    });
+  };
+  window.addEventListener("relay:turn", h);
+  return () => window.removeEventListener("relay:turn", h);
 }
 
 // ── 바인딩 스택 — 활성 판정은 max(id) (view-bridge §5-15) ────────────────────

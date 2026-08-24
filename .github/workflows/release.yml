@@ -16,9 +16,12 @@
 #  - relay-ui-<tag>.tgz         : @relay/ui npm pack (뷰 원자 — file: 사본의 대체)
 #  - relay-runner-<tag>.tgz     : runner/ 전량 + relay.manifest.yaml (임베더의 runner 스냅샷
 #    — relayos embed 사이트가 소스 사본 대신 이걸 digest 로 소비하는 것이 종착)
+<<<<<<< HEAD
+=======
 #  - relay-contract-<tag>.tgz   : @relay/contract npm pack — 판정기(manifest)·권위 계약·MCP 문을
 #    .js+.d.ts(CJS) 로 구운 임베더 계약. 소스가 아니라 빌드 산출물인 이유: tsc 소비자(relayos
 #    control-ts)는 node_modules 의 .ts 를 타입검사만 하고 에밋하지 않아 런타임이 죽는다(실측)
+>>>>>>> origin/main
 # 자산 파일명은 태그로 정규화한다(npm pack 의 내부 버전과 무관) — 소비자 lock 의 결정론.
 name: release
 
@@ -81,9 +84,12 @@ jobs:
           mv out/relay-ui-*.tgz "out/relay-ui-${TAG}.tgz"
           # ③ runner 스냅샷 — 임베더(relayos embed 사이트)의 소스 사본을 대체할 원천.
           tar -czf "out/relay-runner-${TAG}.tgz" --exclude node_modules runner relay.manifest.yaml
+<<<<<<< HEAD
+=======
           # ④ 판정 계약 패키지 — 계약 3파일을 릴리스에서만 .js+.d.ts 로 굽는다(트리 무빌드 유지).
           npm run pack:contract
           mv out/relay-contract-*.tgz "out/relay-contract-${TAG}.tgz"
+>>>>>>> origin/main
           (cd out && sha256sum ./*.tgz > SHA256SUMS)
           cat out/SHA256SUMS
 
@@ -100,7 +106,10 @@ jobs:
             printf -- '- relay-relayjs-%s.tgz : @relay/relayjs npm pack — 뷰 저작 SDK(file: 사본의 대체)\n' "$TAG"
             printf -- '- relay-ui-%s.tgz : @relay/ui npm pack — 뷰 원자(file: 사본의 대체)\n' "$TAG"
             printf -- '- relay-runner-%s.tgz : runner 전량 + relay.manifest.yaml — 임베더의 runner 스냅샷\n' "$TAG"
+<<<<<<< HEAD
+=======
             printf -- '- relay-contract-%s.tgz : @relay/contract npm pack — 판정기·권위 계약·MCP 문(.js+.d.ts) 임베더 계약\n' "$TAG"
+>>>>>>> origin/main
             printf -- '- SHA256SUMS : 아티팩트 digest — 소비자 lock 의 기록 원천\n'
           } > out/NOTES.md
           gh release create "$TAG" --title "$TAG" --notes-file out/NOTES.md out/*.tgz out/SHA256SUMS

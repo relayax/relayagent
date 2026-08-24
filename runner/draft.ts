@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument } from "yaml";
@@ -92,6 +93,13 @@ function tree(dir: string, prefix = "", depth = 0): string[] {
     if (e.isDirectory()) out.push(...tree(path.join(dir, e.name), prefix + "  ", depth + 1));
   }
   return out;
+}
+
+// 파일 내용 지문 — write 의 base precondition(동시 편집 판정)이 이 값과 비교한다.
+// 클라이언트는 계산하지 않고 read 가 준 값을 그대로 되돌려준다(해시 알고리즘은 기판 내부 사정).
+// raw 바이트로 읽는다 — utf8 왕복은 바이너리 자산(아이콘 등)에서 지문을 뭉갠다
+function fileHash(abs: string): string {
+  return crypto.createHash("sha256").update(fs.readFileSync(abs)).digest("hex").slice(0, 16);
 }
 
 // 화면용 평탄 경로 목록 (파일만). 들여쓰기 트리를 되파싱하게 만들지 않는다
@@ -216,6 +224,9 @@ export interface DraftStatus {
   tree: string[];
   /** 루트 상대 파일 경로 (디렉토리 제외) */
   files: string[];
+  /** 파일별 내용 지문 — write 의 base 로 되돌려주면 그 사이 다른 손(에이전트·CLI·다른 화면)의
+   *  수정을 판정한다. files 와 같은 키 공간 */
+  hashes: Record<string, string>;
   changes: DraftChange[];
   lastCommit: { hash: string; message: string; time: number } | null;
   version: { draft: string | null; live: string | null };
@@ -223,24 +234,28 @@ export interface DraftStatus {
 }
 
 export function readDraft(ledger: Ledger, name: string): DraftStatus;
-export function readDraft(ledger: Ledger, name: string, file: string): { file: string; content: string };
-export function readDraft(ledger: Ledger, name: string, file?: string): DraftStatus | { file: string; content: string } {
+export function readDraft(ledger: Ledger, name: string, file: string): { file: string; content: string; hash: string };
+export function readDraft(ledger: Ledger, name: string, file?: string): DraftStatus | { file: string; content: string; hash: string } {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name} — draft-open 으로 먼저 여세요`);
   if (file) {
     const target = sealed(droot, file);
     if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) throw new Error(`없는 파일: ${file}`);
-    return { file, content: fs.readFileSync(target, "utf8") };
+    return { file, content: fs.readFileSync(target, "utf8"), hash: fileHash(target) };
   }
   const rec = ledger.packages[name];
   const manifestFile = path.join(droot, "relay.yaml");
+  const files = listFiles(droot);
+  const hashes: Record<string, string> = {};
+  for (const f of files) hashes[f] = fileHash(path.join(droot, f));
   return {
     name,
     path: droot,
     manifest: fs.existsSync(manifestFile) ? fs.readFileSync(manifestFile, "utf8") : "",
     tree: tree(droot),
-    files: listFiles(droot),
+    files,
+    hashes,
     changes: changes(droot),
     lastCommit: lastCommit(droot),
     version: { draft: manifestVersion(droot), live: rec ? manifestVersion(rec.path) : null },
@@ -252,16 +267,38 @@ export function writeDraft(
   name: string,
   files: Record<string, string>,
   deletes: string[] = [],
-): { written: string[]; deleted: string[] } {
+  base?: Record<string, string | null>,
+): { written: string[]; deleted: string[]; hashes: Record<string, string> } {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name} — draft-open 으로 먼저 여세요`);
+  // base precondition — 마지막으로 읽은 지문과 현재 디스크가 다르면 한 글자도 쓰지 않는다.
+  // draft 는 세 손(화면·에이전트·CLI)이 같은 트리를 만지므로, 이 판정 없이는 낡은 버퍼의
+  // 전문 쓰기(부분 패치 아님)가 다른 손의 작업을 통째로 되덮는다. base 는 opt-in 이다 —
+  // 실은 경로만 판정하고, 안 실은 호출(에이전트의 신선한 읽기-쓰기 등)은 종전 그대로다.
+  // null = "없는 파일로 알고 있다"(신규 생성 의도) — 그 사이 생겼다면 그것도 충돌이다.
+  if (base) {
+    const stale: string[] = [];
+    for (const [rel, known] of Object.entries(base)) {
+      const target = sealed(droot, rel);
+      const current = fs.existsSync(target) && !fs.statSync(target).isDirectory() ? fileHash(target) : null;
+      if (current !== known) stale.push(rel);
+    }
+    if (stale.length) {
+      throw new Error(
+        `E_CONFLICT: 마지막으로 읽은 뒤 다른 손이 고친 파일 — ${stale.join(", ")}. ` +
+        `draft-read 로 새 내용을 받아 그 위에 반영하거나, 덮어쓰려면 base 없이 다시 쓰세요.`,
+      );
+    }
+  }
   const written: string[] = [];
+  const hashes: Record<string, string> = {};
   for (const [rel, content] of Object.entries(files)) {
     const target = sealed(droot, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content);
     written.push(rel);
+    hashes[rel] = fileHash(target);
   }
   const deleted: string[] = [];
   for (const rel of deletes) {
@@ -271,7 +308,7 @@ export function writeDraft(
       deleted.push(rel);
     }
   }
-  return { written, deleted };
+  return { written, deleted, hashes };
 }
 
 export function diffDraft(name: string): { changes: DraftChange[]; diff: string } {
