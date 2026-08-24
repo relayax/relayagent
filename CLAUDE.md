@@ -118,6 +118,10 @@ fresh clones don't build views, and absence is not staleness.
 Release artifacts are cut by `.github/workflows/release.yml`: pushing a `v*` tag (matching
 the root package.json version — mismatch refuses the cut) runs the full judgment, builds the
 widget bundle, and attaches `relay-chat-widget-<tag>.tgz` + `SHA256SUMS` to a GitHub Release.
+The cut also packs `relay-contract-<tag>.tgz` (`@relay/contract` npm pack via
+`npm run pack:contract` — the manifest judge, authority contract, and MCP gate baked to
+CJS + d.ts **in the release workflow only**; tsc consumers typecheck but never emit raw `.ts`
+out of node_modules, so embedders consume this build instead of vendoring the sources).
 Consumers (relayos 등 임베더) pin these artifacts by digest instead of vendoring sources.
 Local rebuilds of the two artifacts above are still needed during development.
 
