@@ -121,7 +121,10 @@ widget bundle, and attaches `relay-chat-widget-<tag>.tgz` + `SHA256SUMS` to a Gi
 The cut also packs `relay-contract-<tag>.tgz` (`@relay/contract` npm pack via
 `npm run pack:contract` — the manifest judge, authority contract, and MCP gate baked to
 CJS + d.ts **in the release workflow only**; tsc consumers typecheck but never emit raw `.ts`
-out of node_modules, so embedders consume this build instead of vendoring the sources).
+out of node_modules, so embedders consume this build instead of vendoring the sources)
+and `relay-adapters-<tag>.tgz` (the harness variants and channel adapters under
+`packages/system` — an embedder's authoring tree fills the declared paths by unpacking this,
+not by keeping copies; the BOM only requires that a declared path exists).
 Consumers (relayos 등 임베더) pin these artifacts by digest instead of vendoring sources.
 Local rebuilds of the two artifacts above are still needed during development.
 
