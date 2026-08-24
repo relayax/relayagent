@@ -900,8 +900,11 @@ export async function uploadAttachment(
 // 뷰가 최신 화면 맥락을 밀어 두면(latest-wins) 위젯 발화가 turn.send 의 scene 서문
 // (client-protocol §5.1-12 — 합성은 기판 몫, 이력에는 원문만)으로 싣는다. 다음 갱신·해제
 // (null)까지 유지된다. scene 은 힌트라 부재·미배선 모두 무해 — 구독은 번들 로드 1회.
+// addEventListener 실재까지 본다 — 이 모듈은 "window 는 호출 시점에만 읽는다"는 전제로
+// Node 테스트 하니스가 빈 스텁({})으로 로드한다(relayos test/ctx.test.mjs). typeof 가드만으로는
+// 스텁에서 모듈 로드가 죽는다.
 let _scene: string | null = null;
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("relay:scene", (e) => {
     const s = ((e as CustomEvent).detail || {}).scene;
     _scene = typeof s === "string" && s ? s : null;

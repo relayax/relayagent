@@ -108,7 +108,9 @@ function broadcast(): void {
 // 선언을 받아 간다. dedupe 를 리셋하고 재방송한다: 내용이 같아도 요청자에게는 첫 수신이다.
 // 모듈 로드 1회 등록 — 바인딩 층이 없는 문서(브리지 미임포트)는 이 응답자 자체가 없어
 // 크롬이 기본 상태(선언 없음)로 남는다.
-if (typeof window !== "undefined") {
+// addEventListener 실재까지 본다 — Node 테스트 하니스가 빈 window 스텁({})으로 모듈을
+// 로드할 수 있다(runtime.ts 의 relay:scene 구독과 같은 판정).
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("relay:scope-request", () => {
     lastScopeKey = null;
     broadcast();
