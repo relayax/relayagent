@@ -32,6 +32,7 @@
   "scripts": {
     "relay": "node --experimental-strip-types runner/relay.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test runner/*.test.ts",
     "validate": "node --experimental-strip-types runner/validate-all.ts",
     "build:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run build:chat",
     "typecheck:widget": "npm --prefix lib/relayjs install --silent && npm --prefix lib/relayjs run typecheck",

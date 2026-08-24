@@ -81,6 +81,12 @@ When `mcpServers` is present and non-empty the adapter prefers it and ignores `m
 single `mcp` door applies unchanged. Embedders that emit `mcpServers` should keep emitting `mcp`
 too, so older adapters keep their single door.
 
+The substrate's own assembly obeys that rule from one place: `composeBundle` (`runner/session.ts`)
+always writes `mcp`, and adds `mcpServers` only when the session seam answers with doors
+(`SessionIO.mcpServers` — it is handed the substrate's own `relay` door, so an implementation
+chooses whether to carry it, rename it, or publish only its own). A single-user substrate answers
+with none and its `meta.json` is byte-for-byte what it was before the field existed.
+
 ## The session envelope
 
 `session <prompt>` and `serve` share one envelope. stdout is a JSONL event stream; stdin is a JSONL
