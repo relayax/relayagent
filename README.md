@@ -38,7 +38,6 @@ One package is one directory. A single manifest (`relay.yaml`) declares everythi
 | Scripts | Verbs. `scripts/<name>.ts` default-exports `async (input, ctx) => JSON`. |
 | Services | Exactly three shapes: `source` (its own body, container or process), `url` (a remote MCP endpoint; credentials attach only here), `dir` (a file resource). |
 | Connector | A body-less package whose verbs call an external REST API directly. Top-level `auth` declares the credential shape only; the value sits in the vault and verbs pull it at call time via `ctx.credential()`. Mutually exclusive with `url` services. |
-| Storage | `storage.buckets` — a file-bucket facade. Judged on a personal substrate, enforced by an org substrate. A different axis from a service's `disk`. |
 | Triggers | Cron or event. Fires an agent with a prompt, or runs a script headless. `delivery: <channel>:<key>` runs the turn in that conversation's slot and posts the reply out through the channel adapter. |
 | Missions | Q&A capabilities a package offers to other packages. |
 | Edges | Declared dependencies on another package's tools, mission, or components. Declaration is an application; activation is a grant — for components the grant is recorded when install resolves the edge, and the enforcement point is the import map the substrate injects into the consuming screen. |

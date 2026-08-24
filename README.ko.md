@@ -38,7 +38,6 @@ RelayAgent는 자기 화면을 싣고 다니는 에이전트 패키지의 개인
 | Scripts | 동사. `scripts/<이름>.ts`가 `async (input, ctx) => JSON`을 기본 수출. |
 | Services | 형태는 셋뿐. `source`(자기 몸, 컨테이너 또는 프로세스), `url`(원격 MCP 접점, 자격은 여기에만 앉음), `dir`(파일 자원). |
 | Connector | 몸 없는 커넥터 — 동사가 외부 REST API 를 직접 부르는 패키지. 최상위 `auth` 가 자격의 형태만 선언하고, 값은 vault 에 앉아 동사가 `ctx.credential()` 로 호출 시점에 꺼낸다. `url` 서비스와 동시 선언 불가. |
-| Storage | `storage.buckets` — 파일 버킷 파사드. 1인 기판은 판정만 하고, 집행은 org 기판 소유. 서비스의 `disk` 와는 다른 축. |
 | Triggers | cron 또는 이벤트. 에이전트를 프롬프트로 깨우거나 스크립트를 headless로 실행. `delivery: <채널>:<대화키>` 는 그 대화의 slot 에서 턴을 돌리고 reply 를 채널 어댑터로 발신한다. |
 | Missions | 패키지가 다른 패키지에 제공하는 질의응답 능력. |
 | Edges | 다른 패키지의 tools, mission, components에 대한 의존 선언. 선언은 신청이고 활성화는 결재 — components는 설치가 edge를 해석할 때 결재가 앉고, 집행점은 기판이 소비자 화면에 심는 import map이다. |

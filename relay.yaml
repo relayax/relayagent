@@ -123,11 +123,6 @@ edges:
   - provider: "@local/ui@^1"   # components 소비 — 기판이 화면에 import map 을 심는다
     components: true           # 화면 코드: import { mount } from "@local/ui"  (주소를 조립하지 않는다)
 
-storage:                     # 파일 버킷 파사드 — 1인 기판은 판정만, org 기판이 집행 (services[].disk 와 다른 축)
-  buckets:
-    - name: uploads
-      policy: owner-only
-
 org:
   per_user:
     accounts: [erp, drive, "@relay/notion"]

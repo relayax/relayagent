@@ -38,7 +38,6 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
 | Services | 只有三种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点,凭证只挂在这里)、`dir`(文件资源)。 |
 | Connector | 无躯体连接器——动词直接调用外部 REST API 的包。顶层 `auth` 只声明凭证的形态,值存放在 vault 中,动词在调用时通过 `ctx.credential()` 取用。与 `url` 服务互斥。 |
-| Storage | `storage.buckets`——文件桶门面。个人基板只做判定,执行归组织基板所有。与服务的 `disk` 是不同的轴。 |
 | Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。`delivery: <频道>:<会话键>` 让该回合在对应会话的 slot 中运行,并把回复经频道适配器发出。 |
 | Missions | 包向其他包提供的问答能力。 |
 | Edges | 对其他包的 tools、mission 或 components 的依赖声明。声明是申请,激活靠授权——components 在安装解析该 edge 时记录授权,执行点则是基座注入消费方界面的 import map。 |
