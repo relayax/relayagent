@@ -91,6 +91,13 @@ function boot() {
 // 소비자가 부유 위젯을 떠안지 않게), ② window.RELAY_CHAT_MANUAL = true 면 마운트하지 않는다.
 // 좌표는 파일 머리의 규약(§2-6)대로 주입만 받는다 — 구 판의 location.pathname(/pkg/…) 파싱은
 // 마운트 문법 조립이라 은퇴. 미주입이면 마운트를 포기하고 판정을 콘솔에 남긴다(fail-loud).
+//
+// autoFloat 는 OSS 의 **크롬**이다(view-bridge.md §1-1) — 뷰 발신 wire 의 착지를 소유한다:
+//   · relay:chat-open(§4-8) — 패널 열기 + 대상 해석 + prefill/send 를 postMessage 로 중계
+//     (재시도-until-ack, §4-10 — 수신부는 Chat.tsx 컴포저).
+//   · relay:scope(§5-17) — "페이지가 곧 대화": 선언 슬롯을 preview 탭으로 끌어온다.
+//     패널이 닫혀 있으면 이월해 열릴 때 착지한다.
+// relayos 쌍둥이 크롬은 agent.tsx ChatChrome — 같은 wire 를 같은 규칙으로 착지한다.
 const FLOAT_CSS = `
 .rc-float-dock{position:fixed;right:20px;bottom:20px;z-index:2147483000}
 .rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;font-size:22px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
@@ -141,20 +148,122 @@ function autoFloat() {
       document.body.style.transition = prevBodyTransition;
     }
   };
-  const setOpen = (v: boolean) => { opened = v; dock.classList.toggle("open", v); reserve(v); };
+  // getCtx 는 boot 시점 1회 — 주입 좌표(__RELAY_CONTEXT)는 번들 로드 전에 서 있다(§2-6).
+  const ctx = getCtx();
   let mounted = false;
-  fab.addEventListener("click", () => {
-    if (!mounted) {
-      mounted = true;
-      const ctx = getCtx();
-      mountTabs(panel, {
-        ...(ctx.instanceId ? { instanceId: ctx.instanceId } : {}),
-        onCollapse: () => setOpen(false),
-        onAllClosed: () => setOpen(false),
-      });
+  let handle: ReturnType<typeof mountTabs> | null = null;
+  /** 페이지가 선언한 슬롯(relay:scope) — 무대상 prefill/send 의 착지 판정(view-bridge §4-8).
+   *  null = 선언 없음. */
+  let declaredSlot: string | null = null;
+  /** 패널이 닫혀 있는 동안 도착한 마지막 선언 — 열릴 때 착지(view-bridge §5-17). */
+  let pendingScope: OpenReq | null = null;
+  /** 크롬 쪽 선언 dedupe — 같은 페이지에 머무는 동안 재발화하지 않아 사용자가 손으로 고른
+   *  탭을 빼앗지 않는다(발신 쪽 dedupe 와 이중 방어). */
+  let lastScopeKey = "";
+  const ensureMounted = () => {
+    if (mounted) return;
+    mounted = true;
+    handle = mountTabs(panel, {
+      ...(ctx.instanceId ? { instanceId: ctx.instanceId } : {}),
+      onCollapse: () => setOpen(false),
+      onAllClosed: () => setOpen(false),
+    });
+  };
+  const setOpen = (v: boolean) => {
+    opened = v;
+    dock.classList.toggle("open", v);
+    reserve(v);
+    if (v && pendingScope && handle) {
+      const req = pendingScope;
+      pendingScope = null;
+      handle.openTab(req);
     }
+  };
+  fab.addEventListener("click", () => {
+    ensureMounted();
     setOpen(!opened);
   });
+
+  // ── prefill/send 중계(view-bridge §4-9·10) — 크롬은 React 위젯의 마운트 타이밍을 모른다:
+  // 1회 발신은 마운트 전이면 유실, ack 없는 반복은 이중 주입. 각자의 ack 이 올 때까지 250ms
+  // 간격 재전송, 32회(≈8s) 후 포기. nonce 중복 수신은 위젯이 no-op 한다(Chat.tsx 수신부).
+  const relayTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const stopRelay = (kind: string) => {
+    const t = relayTimers.get(kind);
+    if (t) { clearInterval(t); relayTimers.delete(kind); }
+  };
+  const ACK_OF: Record<string, string> = {
+    "relay:chat-prefill-ack": "relay:chat-prefill",
+    "relay:chat-send-ack": "relay:chat-send",
+  };
+  window.addEventListener("message", (ev) => {
+    if (ev.origin !== window.location.origin) return;
+    const kind = ACK_OF[String((ev.data as any)?.type || "")];
+    if (kind) stopRelay(kind);
+  });
+  const relayToWidget = (kind: "relay:chat-prefill" | "relay:chat-send", text: string) => {
+    stopRelay(kind);
+    let tries = 0;
+    const nonce = String(Date.now()) + Math.random().toString(36).slice(2);
+    const fire = () => {
+      tries += 1;
+      if (tries > 32) { stopRelay(kind); return; }
+      try { window.postMessage({ type: kind, text, nonce }, window.location.origin); } catch { /* noop */ }
+    };
+    relayTimers.set(kind, setInterval(fire, 250));
+    fire();
+  };
+
+  // ── relay:chat-open 착지(view-bridge §4-8) — 패널 열기 + 대상 해석 + 주입 중계.
+  window.addEventListener("relay:chat-open", (ev) => {
+    const d = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+    ensureMounted();
+    setOpen(true);
+    const inst = typeof d.instance === "string" && d.instance ? d.instance : "";
+    const conv = typeof d.conversation === "string" && d.conversation ? d.conversation : "";
+    const prefill = typeof d.prefill === "string" ? d.prefill : "";
+    const send = typeof d.send === "string" ? d.send : "";
+    if (inst || conv) {
+      // 명시 대상 존중 — instance 생략은 크롬 자신의 좌표(주입 instanceId)로 해석(§4-8).
+      const instanceId = inst || ctx.instanceId;
+      if (instanceId) handle?.openTab({ instanceId, ...(conv ? { conversationId: conv } : {}) });
+    } else if ((prefill || send) && declaredSlot && ctx.instanceId) {
+      // 무대상 prefill/send 는 페이지 선언 슬롯으로 — 아니면 그 글이 지금 활성인, 대개 무관한
+      // 에이전트에게 간다. 선언이 없으면 전환하지 않는다(활성 탭 유지).
+      handle?.openTab({ instanceId: ctx.instanceId, conversationId: declaredSlot });
+    }
+    if (prefill) relayToWidget("relay:chat-prefill", prefill);
+    if (send) relayToWidget("relay:chat-send", send);
+  });
+
+  // ── relay:scope 착지(view-bridge §5-17) — "페이지가 곧 대화": 선언 변화(SPA 이동 포함)마다
+  // 그 슬롯을 preview 탭으로 끌어온다. 선언 부재(null)는 상위 좌표("main")로 같은 푸시 —
+  // 건너뛰면 대화가 직전에 보던 다른 에이전트 탭에서 계속된다. 좌표 없는 문서(instanceId
+  // 미주입)는 탭 좌표를 만들 수 없어 건너뛴다(선언 슬롯 기억은 유지 — prefill 라우팅용).
+  window.addEventListener("relay:scope", (ev) => {
+    const d = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+    const conversation = typeof d.conversation === "string" && d.conversation ? d.conversation : null;
+    const targets = Array.isArray(d.targets)
+      ? d.targets.filter((t): t is string => typeof t === "string" && !!t)
+      : [];
+    declaredSlot = conversation;
+    if (!ctx.instanceId) return;
+    const key = JSON.stringify([conversation, targets]);
+    if (key === lastScopeKey) return;
+    lastScopeKey = key;
+    const req: OpenReq = {
+      instanceId: ctx.instanceId,
+      conversationId: conversation ?? "main",
+      preview: true,
+      ...(targets.length ? { targets } : {}),
+    };
+    if (opened && handle) handle.openTab(req);
+    else pendingScope = req;
+  });
+  // 부팅 레이스 봉합(view-bridge §5-16-a) — 선언은 변화 때만 흐르고 이 번들은 async 로
+  // 늦게 뜰 수 있다: 리스너 등록 직후 현재 선언의 재방송을 요청한다. 바인딩 층이 없는
+  // 문서는 응답이 없다 — 기본 상태(선언 없음) 그대로.
+  try { window.dispatchEvent(new CustomEvent("relay:scope-request")); } catch { /* 무시 */ }
 }
 
 // ── mount API (컴포넌트화 1단계) — iframe/window.relay 브리지 없이 임의 div 도킹 ──

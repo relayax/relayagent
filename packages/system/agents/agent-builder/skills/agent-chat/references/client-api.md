@@ -30,6 +30,42 @@
 여러 (인스턴스 × 대화)를 탭으로 여는 셸. 옵션은 `mount` 와 같고 `onAllClosed` · `onCollapse`
 가 더 있다. `openTab({ instanceId, conversationId?, title? })` 로 탭을 연다.
 
+## 뷰-채팅 브리지 — openChat · AgentScope · setScene
+
+같은 문서의 도킹 위젯(자동 부유 크롬)과 말하는 인페이지 표면. `@relay/relayjs` **루트
+임포트**에서 온다 — 위젯 번들 자산이 아니라 의존성이다. 정본 계약은 기판 리포
+`docs/view-bridge.md`.
+
+- `openChat({ prefill?, send?, conversation?, instance? })` — 패널을 열고 대상 탭을
+  포커스한다. `prefill` = 컴포저 채움(사용자가 검토 후 전송), `send` = 자동 전송(컴포저
+  submit 과 같은 큐 의미론 — 턴 실행 중이면 큐잉). 대상 없는 prefill/send 는 페이지가
+  선언한 슬롯(AgentScope)으로 가고, 선언이 없으면 대상 전환 없이 활성 탭에 꽂힌다.
+  전달은 재시도-until-ack — 위젯 마운트 타이밍을 몰라도 유실되지 않는다.
+- `<AgentScope agent param? targets?>` — "이 화면의 대화는 이것" 선언(투명 래퍼).
+  중첩 = 안쪽 승, 형제 = 후승. 선언이 바뀔 때마다(SPA 이동 포함) 위젯이 그 대화를
+  미리보기 탭으로 끌어온다. `targets` = 이 에이전트가 다룰 수 있는 작업 대상 전체 —
+  채팅의 "대상 추가" 후보를 채운다(서버는 param 후보를 모른다 — 아는 쪽이 선언한다).
+- `useAgentBinding()` → `{ agent?, param?, conversation }` — 현재 활성 선언과 슬롯
+  문자열(읽기 전용). **슬롯 문자열을 손으로 조립하지 마라** — `openChat` 의
+  `conversation` 에는 이 값만 싣는다.
+- `setScene(text | null)` — 화면 맥락 스냅샷(latest-wins). 위젯의 이후 발화가
+  `turn.send` 의 scene 서문으로 싣는다(합성은 기판 몫, 이력에는 발화 원문만 남는다).
+  `null` = 해제. 화면 상태가 바뀔 때마다 밀어 둔다 — 발화가 뷰를 기다리지 않는다.
+
+```tsx
+import { AgentScope, openChat, setScene } from "@relay/relayjs";
+
+<AgentScope agent="builder" param={pkgName} targets={allPkgs}>
+  <Workbench />
+</AgentScope>
+
+// 오류 배너의 원클릭 "빌더에게":
+openChat({ prefill: `다음 로드가 실패했어요. 고쳐주세요:\n${detail}` });
+
+// 선택이 바뀔 때마다 화면 맥락 갱신:
+setScene(`사용자가 보고 있는 화면: ${pkgName} 워크벤치, 선택된 항목 ${sel}`);
+```
+
 ## createChat({ base, root?, instance?, agent?, session? }) → Chat
 
 좌표는 주입에서 온다 — `base` 는 대화 스코프의 뿌리(`window.__RELAY_CONTEXT.base`),

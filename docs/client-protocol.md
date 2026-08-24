@@ -37,7 +37,9 @@ OSS 데몬(`runner/api.ts`)과 relayos deployd(`runtime/deployd/`). 두 구현�
    기판의 문 뒤에서 해석된다(convergence.md:123-125).
 3. 계약의 소비자는 **브라우저 클라이언트**다: 코어 SDK 와 채팅 위젯(React 판 단일화 —
    번들은 OSS 릴리스 컷에 굽고 기판이 `/assets` 로 서빙한다, runner/api.ts:770-780).
-   패키지 view 의 동사 호출(`/api/scripts`·MCP)은 이 문서의 범위 밖이다.
+   패키지 view 의 동사 호출(`/api/scripts`·MCP)은 이 문서의 범위 밖이다. 같은 문서 안에서
+   view 화면과 위젯이 주고받는 인페이지 브리지도 범위 밖이다 — 정본은
+   [view-bridge.md](view-bridge.md).
 4. **권위 이음새와의 관계.** 이 계약은 문 앞의 전송만 규정한다. 문 뒤에서 "누구로서,
    무엇을, 어떤 자격으로"를 판정하는 권위 이음새는 별개 트랙이다
    (convergence.md:116-125 "OSS 선행 작업 3" 목록의 1번 — 권위 이음새 추출,
