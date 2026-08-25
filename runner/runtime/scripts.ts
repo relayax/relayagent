@@ -33,6 +33,11 @@ export interface HostBridge {
   draftPublish(name: string, opts?: { version?: string }): unknown;
   draftDiscard(name: string): unknown;
   draftList(): unknown;
+  /** 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다(도는 판은 그대로) */
+  draftBuild(name: string): unknown;
+  /** 작업 사본의 동사 한 번 — 발행 전에 돌려보는 자리. 맥락(작업폴더·자격·서비스)은
+   *  설치본의 것을 쓰고 **코드만** 작업 사본의 것을 쓴다: 미리보기는 새 살림이 아니다 */
+  draftRun(name: string, verb: string, input: unknown): Promise<unknown>;
   /** 봉투 굽기 — 설치본을 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다.
    *  deliverTo = 건네받을 패키지(부르는 쪽) — 그 파일 교환 무대에 사본을 놓아 대화에서
    *  그대로 내려받게 한다. 선반은 기판 장기라 세션이 닿지 못한다 */
@@ -356,9 +361,32 @@ export async function runScript(
 ): Promise<unknown> {
   const rec = ledger.packages[pkg];
   if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
-  const m = loadManifest(rec.path);
+  return runScriptFrom(ledger, pkg, rec.path, name, input, caller, hostBridge, authority, io, chain);
+}
+
+/**
+ * 동사 하나를 **지정한 트리에서** 부른다. 코드의 거처와 맥락의 거처를 가르는 유일한 자리다.
+ *
+ * runScript 는 장부가 가리키는 릴리스에서 코드를 읽는다 — 도는 판이 그것이므로 맞다. 미리보기는
+ * 그 축 하나만 다르다: **코드는 작업 사본, 맥락은 설치본**(작업 폴더·자격·서비스·결재). 맥락까지
+ * 갈라 놓으면 미리보기가 새 살림이 되어, 여기서 통과한 것이 발행 뒤에도 통과한다는 보장이 없다.
+ * 그래서 ledger·pkg 는 그대로 두고 파일 해석의 뿌리만 바꾼다.
+ */
+export async function runScriptFrom(
+  ledger: Ledger,
+  pkg: string,
+  root: string,
+  name: string,
+  input: unknown,
+  caller: CallerIdentity,
+  hostBridge: HostBridge | null,
+  authority: Authority = localAuthority(() => ledger),
+  io: ServiceIO = localServiceIO,
+  chain: string[] = [],
+): Promise<unknown> {
+  const m = loadManifest(root);
   if (!m.scripts) throw new Error(`scripts 미선언 패키지: ${pkg}`);
-  const file = path.join(rec.path, m.scripts.source, name + ".ts");
+  const file = path.join(root, m.scripts.source, name + ".ts");
   if (!fs.existsSync(file)) throw new Error(`script 없음: ${name}`);
   const mtime = fs.statSync(file).mtimeMs;
   const mod = await import(pathToFileURL(file).href + "?t=" + mtime);

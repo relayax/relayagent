@@ -10,16 +10,16 @@ import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, type ClientWireIO } from "./runtime/wire.ts";
-import { runScript, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
 import { handleMcp } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
-import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts } from "./supply/draft.ts";
+import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, buildDraft, draftPath } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
-import { serveView, serveComponents } from "./runtime/view.ts";
+import { serveView, serveComponents, serveDraftView, serveDraftComponents } from "./runtime/view.ts";
 import { shellNav, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
@@ -159,6 +159,15 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),
+    // 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다. 장부도 도는 판도 건드리지
+    // 않는다: 산출은 작업 사본 안의 out/ 이고 그것은 스냅샷에서 빠지는 임시물이다
+    draftBuild: (name) => buildDraft(name),
+    // 작업 사본의 동사 한 번 — 발행 전에 돌려보는 자리. 짓자마자 확인할 길이 없으면
+    // 저작자는 발행을 확인 수단으로 쓰게 된다(그 순간 발행이 결정이 아니게 된다)
+    draftRun: (name, verb, input) =>
+      // host 를 넘기지 않는다(null) — 시험 삼아 도는 코드에 ring-0 권능까지 주면
+      // 미리보기가 설치·발행을 할 수 있는 자리가 된다. 맥락은 주되 권능은 주지 않는다
+      runScriptFrom(getLedger(), name, draftPath(name), verb, input, { principal: authority.principal() }, null, authority),
     // 굽기 — 설치본을 봉투 하나로 만들어 선반에 앉힌다.
     // 파일을 사람 손에 쥐여 주지 않는 것이 요점이다: 봉인(sha256)과 요구 범위가 함께
     // 계산된 상태로 선반에 남고, 등재 화면이 그 선반을 읽는다. 손으로 옮기는 순간
@@ -581,6 +590,29 @@ export function createApi(
       if (comps && req.method === "GET") return void serveComponents(getLedger(), decodeURIComponent(comps[1]), (comps[2] ?? "/").slice(1), res);
       const view = p.match(/^\/pkg\/([^/]+)\/view(\/.*)?$/);
       if (view && req.method === "GET") return void serveView(getLedger(), decodeURIComponent(view[1]), (view[2] ?? "/").slice(1), res);
+
+      // ── 작업 사본의 문 — 발행 전에 눈으로 보는 판 ────────────────────────
+      // /pkg/ 와 같은 세 갈래(view · components · asset)를 작업 사본 뿌리에 대고 낸다.
+      // 장부를 지나지 않는 것이 요점이다: 여기서 무엇을 봐도 도는 판은 그대로다.
+      const dview = p.match(/^\/draft\/([^/]+)\/view(\/.*)?$/);
+      if (dview && req.method === "GET") {
+        const name = decodeURIComponent(dview[1]);
+        return void serveDraftView(getLedger(), name, draftPath(name), (dview[2] ?? "/").slice(1), res);
+      }
+      const dcomps = p.match(/^\/draft\/([^/]+)\/components(\/.*)?$/);
+      if (dcomps && req.method === "GET") {
+        const name = decodeURIComponent(dcomps[1]);
+        return void serveDraftComponents(name, draftPath(name), (dcomps[2] ?? "/").slice(1), res);
+      }
+      const dasset = p.match(/^\/draft\/([^/]+)\/asset\/(.+)$/);
+      if (dasset && req.method === "GET") {
+        if (!/\.(svg|png|jpe?g|webp|ico|gif|avif)$/i.test(dasset[2])) return void json(res, 404, { error: "이미지 자산만 서빙합니다" });
+        const root = path.normalize(draftPath(decodeURIComponent(dasset[1])));
+        const target = path.normalize(path.join(root, decodeURIComponent(dasset[2])));
+        if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
+        if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) return void json(res, 404, { error: "없는 자산" });
+        return void streamFile(target, res);
+      }
 
       json(res, 404, { error: `없는 경로: ${p}` });
     } catch (e) {

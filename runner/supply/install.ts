@@ -365,11 +365,16 @@ export function prepareArtifact(
 /**
  * 굽는 표면 전부 — components(수출) 먼저, view(화면) 다음. 하나라도 실패하면 그 실패가 결과다.
  * 순서가 계약이다: 자기 번들이 먼저 서야 자기 화면이 그것을 마운트할 수 있다.
+ *
+ * base = view 발행물이 달아야 할 접두사. 미지정이면 설치본 좌표(/pkg/<이름>/view)다.
+ * 작업 사본을 미리보기로 구울 때만 다른 값이 온다 — 같은 트리를 두 좌표로 구울 수는 없으므로
+ * 미리보기 굽기와 발행 굽기는 서로의 산출을 덮는다(작업 사본의 out 은 스냅샷에서 빠지는
+ * 임시물이라 무해하다: buildOutSkip · publish 가 다시 굽는다).
  */
-function buildSurfaces(pkg: string, dir: string, m: Manifest): BuildResult | undefined {
+export function buildSurfaces(pkg: string, dir: string, m: Manifest, base?: string): BuildResult | undefined {
   const comp = buildComponents(dir, m);
   if (comp && !comp.ok) return comp;
-  const view = buildView(pkg, dir, m);
+  const view = buildView(pkg, dir, m, base);
   if (view && !view.ok) return view;
   if (!comp && !view) return undefined;
   return { ok: true, out: [comp?.out, view?.out].filter(Boolean).join("\n") };
