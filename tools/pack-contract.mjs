@@ -18,7 +18,7 @@
 // 컷(release.yml)과 로컬 검증에서만 돌고, 산출물(out/)은 gitignore 아래라 커밋되지 않는다.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,24 +29,40 @@ if (!yamlRange) {
   process.exit(1);
 }
 
+// 발행 표면은 **평면**이다: 임베더는 '@relay/contract/manifest' 처럼 깊은 경로로 수입하고,
+// 그 이름은 계약이다. 계약 파일이 트리 안에서 어디로 옮겨가든(supply/·runtime/ 재편) 굽는
+// 결과의 자리는 바뀌면 안 된다 — 그래서 rootDir 을 트리에 걸지 않고, 세 파일을 평면 소스
+// 디렉토리에 모아 거기서 굽는다. (트리 자리를 rootDir 로 쓰면 산출이 supply/manifest.js 로
+// 눕어 소비자의 import 가 전부 깨진다 — 실측 2026-08-25.)
+const SOURCES = ["runner/supply/manifest.ts", "runner/authority-contract.ts", "runner/runtime/mcp.ts"];
+
 const stage = join(repo, "out", "contract-stage");
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-// 계약 3파일만 CJS + 선언으로 에밋한다. rootDir=runner 라 산출이 stage 바로 아래에 눕는다.
+// 평면 소스 사본. 계약 3파일은 상대 import 가 0 인 자기완결 파일이라 사본이 원본과 같게 컴파일된다.
+// 그 성질이 깨지면(누가 runner 내부로 상대 import 를 얻으면) 여기서 **해석 실패로 죽는다** —
+// 아래 내용물 판정보다 이른, 더 정직한 자리다.
+const src = join(repo, "out", "contract-src");
+rmSync(src, { recursive: true, force: true });
+mkdirSync(src, { recursive: true });
+for (const f of SOURCES) copyFileSync(join(repo, f), join(src, basename(f)));
+
+// 계약 3파일만 CJS + 선언으로 에밋한다. rootDir=평면 소스라 산출이 stage 바로 아래에 눕는다.
 // --ignoreConfig: 루트 tsconfig(noEmit·NodeNext)은 이 빌드와 무관하다 — TS7 은 CLI 파일
 // 지정과 tsconfig 동거를 조용히 넘기지 않고 이 플래그를 요구한다.
 execFileSync(
   join(repo, "node_modules", ".bin", "tsc"),
   [
-    "runner/supply/manifest.ts", "runner/authority-contract.ts", "runner/runtime/mcp.ts",
+    ...SOURCES.map((f) => join(src, basename(f))),
     "--ignoreConfig",
     "--module", "commonjs", "--target", "ES2022", "--esModuleInterop",
     "--declaration", "--strict", "--skipLibCheck", "--types", "node",
-    "--rootDir", "runner", "--outDir", stage,
+    "--rootDir", src, "--outDir", stage,
   ],
   { cwd: repo, stdio: "inherit" },
 );
+rmSync(src, { recursive: true, force: true });
 
 writeFileSync(
   join(stage, "package.json"),
