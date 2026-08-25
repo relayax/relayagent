@@ -1,3 +1,4 @@
+import type { Face } from "./faces";
 import type { EdgeView, Grant, Registry } from "./types";
 
 // 화면은 /pkg/<이름>/view/ 아래에 있지만 기판 API 는 루트에 있다. 같은 오리진이라 절대경로로 부른다
@@ -16,6 +17,53 @@ async function post(path: string, body: unknown): Promise<any> {
 export async function fetchRegistry(): Promise<Registry> {
   const res = await fetch("/registry", { cache: "no-store" });
   if (!res.ok) throw new Error(`registry ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 상주 한 방 — 지금 떠 있는 자식 프로세스 키(<패키지>/<이름>) 목록. 사이드바 상태점과 상주
+ * 화면이 같은 응답을 본다. 패키지마다 /pkg/<이름>/channels 를 물으면 항목 수만큼 왕복이 나고,
+ * 그 응답의 대부분(자격 형태·최근 오류 로그 꼬리)은 점 하나에 필요 없다.
+ */
+export async function fetchResidency(): Promise<string[]> {
+  const res = await fetch("/residency", { cache: "no-store" });
+  if (!res.ok) throw new Error(`residency ${res.status}`);
+  const data = (await res.json()) as { running?: string[] };
+  return data.running ?? [];
+}
+
+/** 키 목록 → 패키지 집합. 사이드바 점은 "이 패키지에 속한 키가 하나라도 있는가" 만 묻는다 */
+export function residentPkgs(running: string[]): Set<string> {
+  return new Set(running.map((k) => k.split("/")[0]));
+}
+
+/** 전역 셸이 그리는 것과 **같은 응답** — 얼굴 판정과 목적지는 기판이 소유한다(runtime/shell.ts).
+ *  콘솔이 이걸 함께 읽어야 사이드바와 이 화면의 얼굴이 갈라지지 않는다 */
+export interface ShellItem {
+  pkg: string;
+  label: string;
+  description: string;
+  version: string;
+  icon: string | null;
+  face: Face;
+  faces: Face[];
+  href: string;
+  view: string | null;
+  detail: string;
+  resident: boolean;
+  ring0: boolean;
+  error: string | null;
+}
+export interface ShellNav {
+  items: ShellItem[];
+  home: string;
+  create: string;
+  importer: string;
+}
+
+export async function fetchShellNav(): Promise<ShellNav> {
+  const res = await fetch("/shell/nav", { cache: "no-store" });
+  if (!res.ok) throw new Error(`shell/nav ${res.status}`);
   return res.json();
 }
 
