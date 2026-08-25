@@ -6,6 +6,8 @@ import readline from "node:readline";
 import { API_URL, RELAY_HOME, loadLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { spawnEntry, spawnEntrySync } from "../spawn.ts";
+// 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
+import { verbLabels } from "./scripts.ts";
 import { binaryEnv } from "../supply/binaries.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
@@ -561,6 +563,7 @@ function residentTurn(
   prompt: string,
   eventsFile: string,
   evFiles: { path: string; name: string }[],
+  toolLabels: Record<string, string>,
 ): Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }> {
   return new Promise((resolve, reject) => {
     const key = `${pkg}/${slot}`;
@@ -591,7 +594,8 @@ function residentTurn(
       }
       fn();
     };
-    r.sink = (ev) => {
+    r.sink = (raw) => {
+      const ev = labelTool(raw, toolLabels);
       appendEvent(eventsFile, ev);
       tap(pkg, slot, ev);
       if (ev.event === "reply") {
@@ -740,6 +744,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     });
   }
 
+  // 도구 이름의 뜻은 턴마다 한 번만 짓는다 — 이벤트마다 지으면 표시 하나가 모듈 적재를 부른다
+  const toolLabels = await verbLabels(input.ledger, input.pkg, agent);
   const atts = safeAttachments(input.attachments);
   // 서문 합성은 기판 몫이다 — 화면 맥락(scene)도 첨부도 프롬프트에만 붙고 이력에는 원문만 남는다
   const scene = String(input.scene ?? "").trim();
@@ -776,7 +782,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 받는다. 어댑터의 protocol 선언을 세션마다 조회하지 않아도 신구가 공존한다.
   // serve 선언 어댑터는 상주 경로다 — 프로세스를 갈지 않고 stdin 으로 턴을 주입한다
   const turn = resident
-    ? residentTurn(authority, io, input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles)
+    ? residentTurn(authority, io, input.pkg, slot, entry, env, workdir, fp, prompt, eventsFile, evFiles, toolLabels)
     : new Promise<{ reply: string; code: number; model: string | null; usage: unknown; context?: unknown }>((resolve, reject) => {
       const child = spawnEntry(entry, ["session", prompt], { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] });
       live.set(key, child);
@@ -807,8 +813,9 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
           raw += line + "\n";
           return;
         }
-        appendEvent(eventsFile, ev as { event: string; [k: string]: unknown });
         // 위 가드(typeof ev.event !== "string" 조기 반환)가 이미 증명한 형 — 인덱스 시그니처라 좁혀지지 않는다
+        ev = labelTool(ev as { event: string; [k: string]: unknown }, toolLabels);
+        appendEvent(eventsFile, ev as { event: string; [k: string]: unknown });
         tap(input.pkg, slot, ev as { event: string; [k: string]: unknown });
         if (ev.event === "reply") {
           reply = {
@@ -915,6 +922,20 @@ function latestTurnLedger(io: SessionIO, pkg: string, slot: string): string {
     }
   } catch { /* 턴 없음 */ }
   return best;
+}
+
+/**
+ * 기판이 아는 것을 봉투에 붙인다 — 도구 이벤트의 짧은 이름. 어댑터는 우리 문의 도구가 무엇을
+ * 하는지 모르므로 이름만 싣고 지나가고, 화면은 그 슬러그를 그대로 그렸다.
+ *
+ * 붙이는 자리가 **장부 기록과 실황 tap 앞** 한 곳인 것이 요점이다: 둘 중 하나에만 붙이면 방금
+ * 본 화면과 다시 연 화면이 다른 이름을 그린다(재생과 실황의 갈림 — 이 리포가 봉투를 한 벌로
+ * 두는 이유와 같다). 접두가 붙는 문(dir·edge·a2a·mcp)은 이름 자체가 분해되므로 지나친다.
+ */
+function labelTool(ev: { event: string; [k: string]: unknown }, labels: Record<string, string>): { event: string; [k: string]: unknown } {
+  if (ev.event !== "tool" || typeof ev.name !== "string") return ev;
+  const label = labels[ev.name];
+  return label ? { ...ev, label } : ev;
 }
 
 /** 장부 한 줄 — wire 의 appendTurnEvent 와 같은 형({t, ...봉투}). 두 writer 가 한 파일에

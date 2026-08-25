@@ -41,6 +41,9 @@ export type ToolPart = {
   isError?: boolean;
   /** 위임받은 서브에이전트의 도구 호출이면 부모 tool_use id (봉투 tool.parent). */
   parent?: string;
+  /** 기판이 붙인 짧은 이름(봉투 tool.label) — 우리 문의 동사는 이름만으로 뜻이 안 서므로
+   *  기판이 자기 tools/list 의 서술에서 지어 보낸다. 없으면 종전 짐작으로 떨어진다. */
+  label?: string;
 };
 export type Part = TextPart | ReasoningPart | ToolPart;
 
@@ -235,6 +238,8 @@ export class EnvelopeReducer {
       }
       const parent = str(ev.parent);
       if (parent) card.parent = parent;
+      const label = str(ev.label);
+      if (label) card.label = label;
       return;
     }
     if (status !== "end") return;
