@@ -74,6 +74,30 @@ function walk(root: string, rel: string, skipAbs: string[], out: string[]): void
   }
 }
 
+/**
+ * 구운 봉투를 파일 교환 무대에 놓는다 — 사람에게 건네려고 굽기 때문이다.
+ *
+ * 선반(~/.relay/artifacts)은 기판 장기라 모든 세션에 막혀 있다. 그래서 봉투를 구운 에이전트가
+ * 정작 그것을 건네지 못하고 "터미널에서 cp 하세요"로 떨어졌다 — 굽기의 결과가 사용자에게
+ * 닿는 길이 사람의 손을 거치게 되어 있었다. 무대에 놓으면 턴이 끝날 때 그 자리의 새 파일이
+ * 대화의 다운로드가 된다(harness stageDiffFiles). 서명 사이드카도 함께 옮긴다: 손으로 옮기는
+ * 봉투가 서명을 잃으면 받는 쪽이 대조할 것이 없다.
+ *
+ * 같은 버전을 다시 구우면 같은 이름을 덮는다 — 무대에 같은 봉투가 여럿 쌓이면 사용자는
+ * 어느 것이 방금 것인지 알 수 없다.
+ */
+export function deliverToStage(artifact: string, stage: string): string[] {
+  const out: string[] = [];
+  fs.mkdirSync(stage, { recursive: true });
+  for (const src of [artifact, artifact + ".sig"]) {
+    if (!fs.existsSync(src)) continue;
+    const name = path.basename(src);
+    fs.copyFileSync(src, path.join(stage, name));
+    out.push(name);
+  }
+  return out;
+}
+
 export interface PackResult {
   file: string;
   ref: string;
