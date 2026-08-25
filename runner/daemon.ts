@@ -28,7 +28,7 @@ import { Ticker } from "./runtime/triggers.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./runtime/login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
 import { serviceAuthHeader, startServiceOAuth, serviceOAuthStatus, verifyService } from "./runtime/oauth.ts";
-import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
+import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
@@ -202,7 +202,8 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       if (!(m.missions ?? []).some((x) => x.name === mission)) throw new Error(`미선언 미션: ${mission}`);
       // 첫 줄은 위임 마커다 — 수신 대화의 화면이 이 마커를 발신자 아이콘 카드로 렌더한다
       const prompt = `${a2aMissionMarker(mission, consumer)}\n${payload}`;
-      const slot = `mission-${mission}`;
+      // 열쇠는 (발신 패키지, 미션) — 문법 정본은 protocol.ts 다(도구 문의 진행 중 판정이 같은 벌을 쓴다)
+      const slot = a2aMissionSlot(mission, consumer);
       // 위임 대화도 세션 목록의 시민이다 — 이름이 없으면 마커 원문이 라벨 행세를 해서 흉하다
       const labelFile = path.join(sessionDir(provider, slot), "label");
       if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `⇄ ${consumer ?? "외부"} → ${mission}`);
