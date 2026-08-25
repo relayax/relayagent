@@ -542,6 +542,31 @@ function FileCard({ part }: { part: AnyPart }) {
   );
 }
 
+/** 무대 산출물 카드 — 에이전트가 이 턴에 파일 교환 무대에 놓은 파일(봉투 `file` 이벤트 §6-35,
+ *  기판이 턴 전후 무대 diff 로 발견해 알린다). 위의 FileCard 와 달리 **툴콜이 없다**: 파일을
+ *  건네는 데 도구가 필요하지 않은 기판(무대에 놓기만 하면 되는 기판)에서는 알림이 턴 메타로 온다.
+ *
+ *  이걸 안 그리던 동안 기판은 알리고 계약은 날랐는데 화면만 버렸다 — 그래서 에이전트가 만든
+ *  파일을 사용자가 받을 길이 없었고, "터미널에서 cp 해 주세요"가 유일한 안내였다(2026-08-25). */
+function StageFiles({ paths }: { paths: readonly string[] }) {
+  const ctx = useRelayCtx();
+  if (!paths.length) return null;
+  return (
+    <div className="rc-file">
+      {paths.map((p, i) => {
+        const name = p.split("/").pop() || p;
+        return (
+          <a key={i} className="rc-file-row" href={fileDownloadUrl(ctx, p)} download={name} title={`${name} 다운로드`}>
+            <span className="rc-file-ic" aria-hidden>📄</span>
+            <span className="rc-file-name">{name}</span>
+            <span className="rc-file-dl" aria-hidden>⬇</span>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 /** 히스토리 로딩 스켈레톤 — 죽은 3-dot 대신 콘텐츠 형태의 shimmer. */
 function HistorySkeleton() {
   return (
@@ -1302,6 +1327,8 @@ function AssistantMessage() {
   const content = useMessage((m) => m.content as readonly AnyPart[]);
   const running = useMessage((m) => m.status?.type === "running");
   const durationMs = useMessage((m) => (m.metadata?.custom as TurnMeta | undefined)?.durationMs);
+  // 이 턴에 무대에 앉은 산출물 — 실황은 봉투 file 이벤트, 재생은 이력의 files 가 채운다
+  const stageFiles = useMessage((m) => (m.metadata?.custom as TurnMeta | undefined)?.files);
   const groups = useMemo(() => groupParts(content), [content]);
   const lastTrace = groups.reduce((acc, g, i) => (g.kind === "trace" ? i : acc), -1);
   return (
@@ -1318,6 +1345,7 @@ function AssistantMessage() {
                          durationMs={i === lastTrace ? durationMs : undefined} />
         );
       })}
+      {stageFiles?.length ? <StageFiles paths={stageFiles} /> : null}
       <RunningStatus />
       <TurnStatusChip />
     </MessagePrimitive.Root>

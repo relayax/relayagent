@@ -402,7 +402,10 @@ function friendlyTurnError(text: string): string {
 // ---------------- 파트 모델 — 정본은 envelope-reducer ----------------
 // usage = 턴 전체 누적(토큰 푸터용). contextUsage = 마지막 본류 스텝의 프롬프트 크기(미터용).
 // ended = 턴의 터미널 사유. model/effort = 그 턴이 실제 실행된 파라미터(봉투 reply.model).
-export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string };
+/** files = 이 턴의 무대 산출물(stage 상대 경로). 봉투 축 확장이 아니라 여기 사는 이유:
+ *  실황은 봉투 file 이벤트가, 재생은 이력의 files 가 같은 자리를 채운다 — 두 길이 한 필드로
+ *  모여야 방금 본 화면과 다시 연 화면이 같은 것을 그린다. */
+export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[] };
 
 export type ReplayMessage =
   | { role: "user"; content: { type: "text"; text: string }[]; createdAt?: Date; turnId?: string }
@@ -454,6 +457,13 @@ export async function loadHistory(ctx: RelayCtx): Promise<ReplayMessage[]> {
     if (m.context) meta.contextUsage = m.context;
     if (typeof m.model === "string" && m.model) meta.model = m.model;
     if (m.role === "bot") meta.ended = "ok";
+    // 무대 산출물(§5.3-24 files) — 실황의 봉투 file 이벤트와 같은 자리에 놓아야 방금 본 화면과
+    // 다시 연 화면이 같은 것을 그린다
+    const mf = (m as { files?: { path?: unknown }[] }).files;
+    if (Array.isArray(mf)) {
+      const paths = mf.map((f) => String(f?.path ?? "")).filter(Boolean);
+      if (paths.length) meta.files = paths;
+    }
     out.push({ role: "assistant", content: [{ type: "text", text: m.text }], metadata: { custom: meta } });
   }
   if (r.busy && typeof r.turn === "string" && r.turn) {
