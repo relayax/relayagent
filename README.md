@@ -55,7 +55,7 @@ npm install
 alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # judge the manifest
-relay install packages/system --ring0 --workspace ~   # management shell as ring-0, home folder as its workspace
+relay install packages/system --ring0   # the management shell, as ring-0
 relay daemon                          # API, services, triggers, console
 ```
 
@@ -74,7 +74,7 @@ Asking the system agent to build something new hands off to its `agent-builder` 
 
 ```
 relay daemon                          start the substrate (API, services, triggers, console)
-relay install <dir> [--ring0] [--workspace dir]  install a package (workspace = the folder grant)
+relay install <dir> [--ring0] [--workspace <path>]  install a package (workspace = the folder grant)
 relay ls | rm <name>                  list | remove
 relay validate <dir>                  judge a manifest
 relay build <pkg>                     rebuild surfaces.view.out
@@ -123,11 +123,11 @@ At the root of these six principles sits one premise: **everything can be expres
 | --- | --- |
 | `~/.relay/ledger.json` | installed packages and grants |
 | `~/.relay/sessions/` | per-package session slots |
-| `~/.relay/drafts/<name>/` | edit layer: git-backed working copies (the Studio and agent-builder write here) |
 | `~/.relay/releases/<name>/<version>/` | published snapshots: the ledger path points at one of these (rollback = repoint) |
 | `~/.relay/logs/*.jsonl` | event log |
 | `~/.relay/vault.json` | credential fallback when Keychain is absent |
 | `~/Relay/` | visible ground: default workspaces (`~/Relay/<name>`) |
+| `~/Relay/packages/<name>/` | edit layer: git-backed working copies (the Studio and agent-builder write here). Authoring is the point of this product, so it happens where you can open it — the running edition stays in `releases/`, out of reach. |
 | `~/Relay/.stage/` | file exchange stage between chat and sessions |
 | `.env` (checkout root) | instance settings: `RELAY_HOME` (default `~/.relay`), `RELAY_PORT` (default 4747). Real shell env always wins. See [.env.example](.env.example) |
 | `127.0.0.1:4747` | daemon API and console (default port) |

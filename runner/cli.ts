@@ -446,7 +446,7 @@ async function main(): Promise<void> {
           "  relay install <dir|.relay|@scope/name> [--store url] [--key k] [--bind svc=path]  패키지 설치",
           "  relay ls | rm <이름>                   목록 | 제거",
           "  relay validate <dir>                  manifest 판정",
-          "  relay draft <이름>                     수정 레이어 열기 (설치본 사본, ~/.relay/drafts)",
+          "  relay draft <이름>                     수정 레이어 열기 (설치본 사본, ~/Relay/packages)",
           "  relay publish <이름> [--version v]     draft 판정 + 릴리스 스냅샷 + 장부 전환",
           "  relay releases <이름> | rollback <이름> <버전>  릴리스 목록 | 이전 버전 복귀",
           "  relay build <패키지>                   surfaces.{view,components}.out 재빌드",

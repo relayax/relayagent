@@ -55,7 +55,7 @@ npm install
 alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # 매니페스트 판정
-relay install packages/system --ring0 --workspace ~   # 관리 셸을 ring-0으로, 홈 폴더를 workspace로 결재
+relay install packages/system --ring0   # 관리 셸을 ring-0으로
 relay daemon                          # API, 서비스, 트리거, 콘솔
 ```
 
@@ -74,7 +74,7 @@ relay run system "설치된 패키지 알려줘"  # 1회 실행
 
 ```
 relay daemon                          기판 기동 (API, 서비스, 트리거, 콘솔)
-relay install <dir> [--ring0] [--workspace dir]  패키지 설치 (workspace = 폴더 결재)
+relay install <dir> [--ring0] [--workspace <경로>]  패키지 설치 (workspace = 폴더 결재)
 relay ls | rm <이름>                   목록 | 제거
 relay validate <dir>                  매니페스트 판정
 relay build <패키지>                   surfaces.view.out 재빌드
@@ -123,11 +123,11 @@ my-package/
 | --- | --- |
 | `~/.relay/ledger.json` | 설치된 패키지와 결재 장부 |
 | `~/.relay/sessions/` | 패키지별 세션 슬롯 |
-| `~/.relay/drafts/<이름>/` | 수정 레이어: git 이력을 가진 작업 사본 (스튜디오와 agent-builder가 여기 쓴다) |
 | `~/.relay/releases/<이름>/<버전>/` | 발행 스냅샷: 장부 path가 이 중 하나를 가리킨다 (롤백 = 재전환) |
 | `~/.relay/logs/*.jsonl` | 이벤트 로그 |
 | `~/.relay/vault.json` | Keychain 부재 시 자격 폴백 |
 | `~/Relay/` | 보이는 땅: 기본 workspace(`~/Relay/<이름>`) |
+| `~/Relay/packages/<이름>/` | 수정 레이어: git 이력을 가진 작업 사본 (스튜디오와 agent-builder가 여기 쓴다). 저작이 이 제품의 중심이므로 사람이 열 수 있는 자리에서 벌어진다 — 도는 판은 `releases/` 에 남아 손이 닿지 않는다. |
 | `~/Relay/.stage/` | 채팅과 세션 사이의 파일 교환 무대 |
 | `.env` (체크아웃 루트) | 인스턴스 설정: `RELAY_HOME`(기본 `~/.relay`), `RELAY_PORT`(기본 4747). 셸 환경변수가 항상 이긴다. [.env.example](.env.example) 참조 |
 | `127.0.0.1:4747` | 데몬 API와 콘솔 (기본 포트) |

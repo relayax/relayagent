@@ -55,7 +55,7 @@ npm install
 alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # 判定清单
-relay install packages/system --ring0 --workspace ~   # 以 ring-0 安装管理外壳,将主目录授权为其 workspace
+relay install packages/system --ring0   # 以 ring-0 安装管理外壳
 relay daemon                          # API、服务、触发器、控制台
 ```
 
@@ -74,7 +74,7 @@ relay run system "安装了哪些包?"        # 单次执行
 
 ```
 relay daemon                          启动基板(API、服务、触发器、控制台)
-relay install <dir> [--ring0] [--workspace dir]  安装包(workspace = 文件夹授权)
+relay install <dir> [--ring0] [--workspace <路径>]  安装包(workspace = 文件夹授权)
 relay ls | rm <名称>                   列表 | 移除
 relay validate <dir>                  判定清单
 relay build <包>                       重新构建 surfaces.view.out
@@ -123,11 +123,11 @@ my-package/
 | --- | --- |
 | `~/.relay/ledger.json` | 已安装的包与授权台账 |
 | `~/.relay/sessions/` | 按包划分的会话槽 |
-| `~/.relay/drafts/<名称>/` | 编辑层:带 git 历史的工作副本(工作室与 agent-builder 写在这里) |
 | `~/.relay/releases/<名称>/<版本>/` | 发布快照:台账 path 指向其中之一(回滚 = 重新指向) |
 | `~/.relay/logs/*.jsonl` | 事件日志 |
 | `~/.relay/vault.json` | 无 Keychain 时的凭证回落 |
 | `~/Relay/` | 可见的地面:默认 workspace(`~/Relay/<名称>`) |
+| `~/Relay/packages/<名称>/` | 编辑层:带 git 历史的工作副本(工作室与 agent-builder 写在这里)。创作是本产品的中心,因此它发生在人能打开的地方——正在运行的版本留在 `releases/`,手够不到。 |
 | `~/Relay/.stage/` | 聊天与会话之间的文件交换台 |
 | `.env`(检出根目录) | 实例设置:`RELAY_HOME`(默认 `~/.relay`)、`RELAY_PORT`(默认 4747)。shell 环境变量总是优先。参见 [.env.example](.env.example) |
 | `127.0.0.1:4747` | 守护进程 API 与控制台(默认端口) |
