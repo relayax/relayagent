@@ -103,6 +103,15 @@ as legacy plain output (protocol 1).
 | `delta` | `text` | Streamed fragment of the main-line answer. Subagent text must not be mixed in. Emit at whatever granularity the CLI gives you — the substrate is allowed to coalesce (below), so do not batch on the adapter's side. |
 | `tool` | `status: "start"`, `id`, `name`, `detail?` (≤200 chars), `args?` (JSON string, ≤2 KB) | A tool call began. `id` pairs start/end; parallel calls are legal. |
 | `tool` | `status: "end"`, `id`, `name`, `ok`, `result?` (≤8 KB) | The paired call finished. `result` is a display excerpt, not the full output. |
+**`label` on a `tool` event is the substrate's, not the adapter's.** An adapter knows a tool's name
+and nothing else about the ones the substrate serves — a verb slug like `orders-sync` says nothing,
+and the adapter cannot look it up because it is not one of its CLI's tools. So the substrate attaches
+a short name from its own `tools/list` before the event reaches the ledger and the clients. Adapters
+must not emit `label`; a tool the substrate does not serve simply has none, and the client falls back
+to what it did before. This is the only field the substrate adds to an event in flight, and it is
+declared here rather than in the client contract on purpose: the envelope is the harness axis, and a
+client-side field invented downstream is how two substrates end up meaning different things by it.
+
 | `usage` | `input`, `output` | Live token ticker, throttled (≈250 ms). Estimates allowed between exact checkpoints; the final `reply.usage` is authoritative. |
 | `task` | `id`, `status: "started"`, `note?` | A background task the model launched is now running. |
 | `task` | `id`, `status: "done"`, `ok` | That background task settled. |

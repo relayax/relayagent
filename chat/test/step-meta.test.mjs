@@ -33,3 +33,9 @@ test("네이티브 도구는 종전대로 짐작으로 뜬다 — 접두가 없�
   assert.equal(stepMeta("Bash", { command: "ls" }).label, "실행");
   assert.equal(stepMeta("Grep", { pattern: "x" }).label, "검색");
 });
+
+test("기판이 실어 보낸 이름이 짐작과 분해를 이긴다 — 뜻을 아는 쪽은 기판 하나다", () => {
+  assert.equal(stepMeta("orders-sync", {}, undefined, undefined, "주문 동기화").label, "주문 동기화");
+  // 이름이 없으면 종전 그대로 — 없음이 정상이다(기판이 서지 않는 도구에는 안 붙는다)
+  assert.equal(stepMeta("orders-sync", {}).label, "orders-sync");
+});

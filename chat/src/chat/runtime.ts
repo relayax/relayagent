@@ -1080,12 +1080,15 @@ function substrateTool(toolName: string): { icon: string; label: string } | null
   }
 }
 
-export function stepMeta(toolName: string, args: any, result?: unknown, isError?: boolean): StepMeta {
+export function stepMeta(toolName: string, args: any, result?: unknown, isError?: boolean, given?: string): StepMeta {
   const n = (toolName || "").toLowerCase();
   const a = args && typeof args === "object" ? args : {};
   let icon = "•", label = "작업";
   const sub = substrateTool(toolName || "");
-  if (sub) { icon = sub.icon; label = sub.label; }
+  // 기판이 실어 보낸 이름이 있으면 그것이 답이다 — 짐작도 분해도 그 앞에 서지 않는다.
+  // 우리 문의 동사(접두 없는 슬러그)에만 실린다: 뜻을 아는 쪽은 기판 하나다.
+  if (given) { icon = "⚙"; label = given; }
+  else if (sub) { icon = sub.icon; label = sub.label; }
   else if (n.includes("todo")) { icon = "☰"; label = "계획"; }
   else if (n.includes("bash") || n.includes("shell") || n.includes("exec")) { icon = "⌘"; label = "실행"; }
   else if (n.includes("write") || n.includes("edit") || n.includes("create") || n.includes("update") || n.includes("save")) { icon = "✎"; label = "작성"; }

@@ -5,7 +5,7 @@ import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, listScripts, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { loadManifest, listScripts, agentScriptScope, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
 import { resolveProvider } from "../supply/install.ts";
 // dir 문의 집행 정본 — 세션 도구(dir__*)와 여기가 같은 감금·같은 연산을 지난다
 import { dirCall, ensureDirRoot, resolveDirService } from "./dirs.ts";
@@ -363,6 +363,51 @@ export async function runScript(
   if (typeof mod.default !== "function") throw new Error(`script 계약 위반(기본 수출 함수 아님): ${name}`);
   const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, io, [...chain, pkg]);
   return await mod.default(input ?? {}, ctx);
+}
+
+/**
+ * 이 세션이 부를 수 있는 동사의 **짧은 이름** — 화면이 원문 슬러그 대신 이것을 그린다.
+ *
+ * 뜻을 아는 쪽이 기판이라서 여기 산다. 어댑터는 도구 이름만 알고 그것이 무엇을 하는 동사인지
+ * 모른다(제 CLI 의 도구가 아니라 우리 문의 도구다). 그래서 화면은 `orders-sync` 를 원문 그대로
+ * 그렸는데, 기판은 같은 시각에 tools/list 로 그 서술을 세션에 서고 있었다 — 아는 것을 안 보내고
+ * 있던 자리다. 접두가 붙는 문(dir·edge·a2a·mcp)은 이름 자체가 분해되므로 여기 담지 않는다.
+ *
+ * 턴마다 한 번 짓는다: 봉투 이벤트마다 모듈을 import 하면 표시 하나가 실행 비용을 낳는다.
+ */
+export async function verbLabels(ledger: Ledger, pkg: string, agent: string): Promise<Record<string, string>> {
+  const rec = ledger.packages[pkg];
+  if (!rec) return {};
+  let m: Manifest;
+  try {
+    m = loadManifest(rec.path);
+  } catch {
+    return {};
+  }
+  const inPlay = [agent, ...((m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [])];
+  const all = listScripts(rec.path, m);
+  const names = new Set<string>();
+  for (const a of inPlay) {
+    const scope = agentScriptScope(m, a);
+    if (!scope) continue;
+    for (const v of all) if (scope(v)) names.add(v);
+  }
+  const out: Record<string, string> = {};
+  for (const name of names) {
+    const meta = await scriptMeta(ledger, pkg, name);
+    const short = shortLabel(meta?.description);
+    if (short) out[name] = short;
+  }
+  return out;
+}
+
+/** 서술의 첫 마디 — 카드 한 줄에 서는 길이로 자른다. 문장 전체는 대상 자리를 밀어낸다 */
+function shortLabel(description?: string): string | null {
+  const d = (description ?? "").trim();
+  if (!d) return null;
+  const head = d.split(/\s+—\s+|\n|(?<=[.。])\s/)[0].trim();
+  const one = (head || d).replace(/\s+/g, " ");
+  return one.length > 24 ? one.slice(0, 23) + "…" : one;
 }
 
 /**

@@ -170,7 +170,7 @@ function MdBlock({ text, streaming }: { text: string; streaming: boolean }) {
 function StepRow({ part, running }: { part: AnyPart; running: boolean }) {
   const [open, setOpen] = useState(false);
   const done = part.result !== undefined || part.isError;
-  const meta = stepMeta(part.toolName, part.args, part.result, part.isError);
+  const meta = stepMeta(part.toolName, part.args, part.result, part.isError, part.label);
   const argDisplay = part.argsText && part.argsText.trim()
     ? part.argsText
     : part.args && Object.keys(part.args).length ? JSON.stringify(part.args, null, 2) : "";
@@ -578,7 +578,7 @@ function RunningStatus() {
   } else {
     const last = content[content.length - 1];
     if (last?.type === "tool-call" && last.result === undefined && !last.isError) {
-      const m = stepMeta(last.toolName, last.args);
+      const m = stepMeta(last.toolName, last.args, undefined, undefined, last.label);
       label = m.target ? `${m.label} · ${m.target}` : `${m.label} 중…`;
     } else if (last?.type === "reasoning") {
       label = "생각 중…";
