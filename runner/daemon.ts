@@ -647,11 +647,17 @@ export function startDaemon(): void {
   }
   console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
   console.log(`콘솔: ${API_URL}/pkg/system/view/`);
-  process.on("SIGINT", () => {
+  // 종료 신호는 둘이다 — 사람이 내리는 Ctrl-C(SIGINT)와 기계가 내리는 종료(SIGTERM: kill·
+  // pkill·시스템 종료·프로세스 관리자). 정리가 한쪽에만 걸려 있으면 다른 쪽으로 죽을 때
+  // 자식이 고아로 남는다: POSIX 는 부모가 죽어도 자식을 죽이지 않으므로 채널 어댑터와 서비스가
+  // 계속 살아 있고, 다음 기동이 같은 것을 또 띄운다(디스코드 봇 하나에 두 프로세스가 물려
+  // 답이 두 번 나가는 자리다).
+  const shutdown = (): void => {
     ticker?.stop();
     retireAllResidents();
     stopAll();
     fs.rmSync(pidFile, { force: true });
     process.exit(0);
-  });
+  };
+  for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, shutdown);
 }
