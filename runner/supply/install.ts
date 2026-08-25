@@ -24,14 +24,58 @@ export interface InstallOpts {
   bindings?: Record<string, string>;
 }
 
-/** dir 서비스 바인딩 검증 — 선언된 dir 서비스만, 경로는 ~ 또는 절대. 결재가 선언을 초과하지 않게 */
-function judgeBindings(m: Manifest, bindings: Record<string, string> | undefined): Record<string, string> | undefined {
-  if (!bindings || !Object.keys(bindings).length) return undefined;
+/**
+ * 기판 장기(RELAY_HOME) 안쪽인가. 심링크 하나로 경로 비교를 우회할 수 있으므로 실재하는 가장
+ * 깊은 조상까지 올라가 realpath 로 한 번 더 본다 — dirs.ts 의 감금과 같은 판정이다.
+ */
+function insideRelayHome(p: string): boolean {
+  const within = (child: string, parent: string): boolean => child === parent || child.startsWith(parent + path.sep);
+  const abs = path.resolve(expandHome(p));
+  const homeReal = (() => {
+    try {
+      return fs.realpathSync(RELAY_HOME);
+    } catch {
+      return path.resolve(RELAY_HOME);
+    }
+  })();
+  if (within(abs, path.resolve(RELAY_HOME)) || within(abs, homeReal)) return true;
+  let probe = abs;
+  while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  try {
+    return within(fs.realpathSync(probe), homeReal);
+  } catch {
+    return false;
+  }
+}
+
+const HOME_DIR_REFUSAL = (where: string, p: string): string =>
+  `${where}: 기판 장기(${RELAY_HOME}) 안쪽은 dir 로 열 수 없습니다: ${p} — 그 폴더에는 자격(vault)과 ` +
+  `장부의 시크릿이 삽니다. 세션은 그 폴더를 도구로 열 수 있으므로(dir__<이름>__*), 여기 구멍이 나면 ` +
+  `담장이 한 축에서만 서게 됩니다. 기판 상태는 판정을 지나는 동사로만 바뀝니다 — 필요한 것이 있으면 ` +
+  `ring-0 결재를 받아 host 브리지 동사로 받으세요`;
+
+/**
+ * dir 결재면 전체의 판정 — 선언(신청)과 결재(--bind) 둘 다 본다.
+ *
+ * ① 결재는 선언을 초과할 수 없다: 선언된 dir 서비스 이름만, 경로는 ~ 또는 절대(.. 금지).
+ * ② 기판 장기 안쪽은 열 수 없다. `~` 선언과 바인딩 값만 본다 — **상대경로 선언은 보지 않는다**:
+ *    그건 패키지 트리 안이고, 트리가 어디 앉는지는 기판의 일이다(발행본은 ~/.relay/releases/
+ *    <이름>/<버전> 에 산다. 여기까지 막으면 상대 dir 을 선언한 모든 발행본이 설치 불가가 된다).
+ *    이 판정이 매니페스트 judge 가 아니라 설치에 사는 이유도 같다 — RELAY_HOME 은 인스턴스
+ *    설정이라 문법 판정이 알아서는 안 되고, 설치는 이미 안다.
+ */
+export function judgeDirGrants(m: Manifest, bindings: Record<string, string> | undefined): Record<string, string> | undefined {
   const dirSvcs = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
+  for (const s of m.services ?? []) {
+    if (!("dir" in s) || s.dir == null || !s.dir.startsWith("~")) continue;
+    if (insideRelayHome(s.dir)) throw new ManifestError([HOME_DIR_REFUSAL(`services[${s.name}].dir`, s.dir)]);
+  }
+  if (!bindings || !Object.keys(bindings).length) return undefined;
   const out: Record<string, string> = {};
   for (const [name, p] of Object.entries(bindings)) {
     if (!dirSvcs.has(name)) throw new ManifestError([`--bind ${name}: 선언된 dir 서비스가 아닙니다 — 결재는 선언을 초과할 수 없습니다`]);
     if (!/^(~($|\/)|\/)/.test(p) || p.split("/").includes("..")) throw new ManifestError([`--bind ${name}: ~ 또는 절대경로만(.. 금지): ${p}`]);
+    if (insideRelayHome(p)) throw new ManifestError([HOME_DIR_REFUSAL(`--bind ${name}`, p)]);
     out[name] = p;
   }
   return out;
@@ -127,7 +171,7 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   // 재설치는 결재·설정(ring, workspace, model, effort, harness, dirBindings)을 보존한다.
   // 레코드를 통째로 갈면 ring-0 이 조용히 증발한다 — draft.ts 의 publishDraft 와 같은 계약
   const prev = ledger.packages[name];
-  const bindings = judgeBindings(m, opts.bindings);
+  const bindings = judgeDirGrants(m, opts.bindings);
   ledger.packages[name] = {
     ...(prev ?? {}),
     path: abs,
@@ -355,7 +399,7 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
     installedAt: new Date().toISOString(),
   };
   const existing = ledger.packages[p.name];
-  const bindings = judgeBindings(m, opts.bindings);
+  const bindings = judgeDirGrants(m, opts.bindings);
   if (existing) {
     existing.path = p.dir;
     existing.origin = origin;
