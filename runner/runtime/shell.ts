@@ -151,7 +151,10 @@ export const HOME_DOC = injectShell(`<!doctype html>
 // 자기 값을 들고, 폭만 --relay-side 로 밖에 공개한다(치수 계약).
 export const SHELL_JS = String.raw`(function(){
 if (window.__relayShell) return; window.__relayShell = 1;
-try { if (window.self !== window.top) return; } catch (e) { return; }
+// iframe 안에서는 스스로 물러난다 — 화면을 품는 쪽이 자기 크롬을 이미 갖고 있기 때문이다.
+// 예외 하나: 임베더가 iframe 의 name 을 "relay-shell" 로 걸면 "셸 크롬째 달라"는 명시적
+// 청이다 — 데스크톱 앱이 이 길로 사이드바를 받는다 (이름 없는 임베드는 종전대로 물러난다).
+try { if (window.self !== window.top && window.name !== "relay-shell") return; } catch (e) { return; }
 
 var W = 248, RAIL = 56, KEY = "relay-shell-collapsed";
 var collapsed = false;
