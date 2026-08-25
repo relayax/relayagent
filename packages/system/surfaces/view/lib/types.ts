@@ -9,6 +9,8 @@ export interface AgentDecl {
   commands?: string;
   dispatch?: string[];
   scripts?: string[];
+  /** 세션에서 여는 폴더 — services[] 의 dir 선언 이름. 하나가 도구 넷이 된다. 미선언 = 안 보인다 */
+  dirs?: string[];
 }
 
 export interface ServiceDecl {
@@ -34,6 +36,26 @@ export interface EdgeDecl {
   provider: string;
   tools?: string[];
   mission?: string;
+  /** 제공자의 자립 번들을 이 패키지 화면이 마운트한다 — true 만. tools·mission 과 배타 */
+  components?: true;
+}
+
+/** 채널이 요구하는 자격의 **형태** — 값이 아니다. 화면이 이 선언으로 입력 칸을 그린다 */
+export interface CredentialField {
+  key?: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  list?: boolean;
+  required?: boolean;
+}
+
+export interface ChannelDecl {
+  name: string;
+  source: string;
+  entry: string;
+  icon?: string;
+  credential?: { fields: CredentialField[]; help?: { url?: string; note?: string } };
 }
 
 export interface TriggerDecl {
@@ -56,7 +78,9 @@ export interface Manifest {
   };
   surfaces?: {
     view?: { source: string; out?: string };
-    channels?: { name: string; source: string; entry: string; icon?: string }[];
+    /** 다른 패키지의 화면이 마운트하는 자립 번들. 계약은 수출 하나 — mount(el, props) */
+    components?: { source: string; out?: string };
+    channels?: ChannelDecl[];
   };
   harness?: {
     variants?: { name: string; source: string; entry?: string; icon?: string; llm?: { provider?: string; icon?: string } }[];
@@ -68,6 +92,8 @@ export interface Manifest {
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
   edges?: EdgeDecl[];
+  /** 이 패키지의 동사가 부를 수 있는 host.* 의 캡. 미선언 = 전체(ring-0 결재가 유일한 경계) */
+  host_methods?: string[];
   org?: unknown;
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Document } from "yaml";
+import { creatable, push, slugOk, type Made } from "@/lib/create";
 import { SECTIONS, schemaHint, unclaimedFiles, type SectionDef, type SectionItem } from "@/lib/sections";
 import type { Manifest } from "@/lib/types";
 import type { DraftChange } from "@/lib/studio";
@@ -16,12 +17,35 @@ export interface SectionCtx {
   files: string[];
   changes: DraftChange[];
   schema: any;
-  apply(mutate: (doc: Document) => void): void;
-  createFile(path: string, content: string): void;
+  // 쓰기 셋은 약속을 돌려준다 — 만든 뒤 그리로 데려가려면 **쓰기가 끝난 시점**을 알아야 한다.
+  // 종전에는 셋 다 fire-and-forget 이라, 만들자마자 이동하면 아직 없는 항목으로 가서
+  // "없는 에이전트" 가 잠깐 떴다
+  apply(mutate: (doc: Document) => void): Promise<void>;
+  createFile(path: string, content: string): Promise<void>;
   openFile(path: string): void;
   openItem(item: string | null): void;
   /** system 패키지의 하네스 템플릿 복사 (선언과 실체를 같이 만든다) */
-  seedHarness(source: string, entry: string): void;
+  seedHarness(source: string, entry: string): Promise<void>;
+  /** 만든 뒤 — 그리로 데려가고 영수증을 남긴다. 팔레트와 섹션이 같은 뒷처리를 지난다 */
+  made(m: Made): void;
+}
+
+/**
+ * 섹션 안의 만들기. 팔레트와 **같은 정의**(lib/create.ts)를 부른다 — 같은 것을 두 자리에서
+ * 만들면 스캐폴드가 갈라질 자리가 생기고, 그 갈라짐은 "팔레트로 만든 부품과 섹션에서 만든
+ * 부품이 다르다" 같은 형태로 나타난다.
+ */
+function useMake(ctx: SectionCtx): [boolean, (id: string, input: string, second?: string) => void] {
+  const [busy, setBusy] = useState(false);
+  const run = (id: string, input: string, second?: string): void => {
+    if (busy) return;
+    setBusy(true);
+    void creatable(id)
+      .make(ctx, input.trim(), second?.trim())
+      .then((m) => ctx.made(m))
+      .finally(() => setBusy(false));
+  };
+  return [busy, run];
 }
 
 const HARNESS_TEMPLATES = ["claude-code", "codex", "pi", "kimi"];
@@ -142,30 +166,26 @@ function SurfacesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(m, ctx.files);
   const [adding, setAdding] = useState(false);
   const [chName, setChName] = useState("");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} onAdd={() => setAdding(true)} addLabel="채널 어댑터" />
       {adding ? (
         <div className="lv-in">
-          <input placeholder="채널 이름 (예: discord)" value={chName} onChange={(e) => setChName(e.target.value)} />
-          <button
-            className="rc-btn accent"
-            onClick={() => {
-              const n = chName.trim();
-              if (!n) return;
-              ctx.apply((d) => d.addIn(["surfaces", "channels"], { name: n, source: `channels/${n}`, entry: "index.ts" }));
-              ctx.createFile(`channels/${n}/index.ts`, `// ${n} 채널 어댑터 — 계약은 relay.manifest.yaml surfaces.channels 참조\n`);
-              setAdding(false);
-              setChName("");
-            }}
-          >
+          <input placeholder="채널 이름 (예: discord)" value={chName} onChange={(e) => setChName(e.target.value)} autoFocus />
+          <button className="rc-btn accent" disabled={busy || !slugOk(chName)} onClick={() => make("channel", chName)}>
             추가
           </button>
         </div>
       ) : null}
       {!m.surfaces?.view ? (
-        <button className="rc-btn add" onClick={() => ctx.apply((d) => set(d, ["surfaces", "view"], { source: "surfaces/view" }))}>
-          + view 표면 선언
+        <button className="rc-btn add" disabled={busy} onClick={() => make("view", "")}>
+          + 이 앱의 화면
+        </button>
+      ) : null}
+      {!m.surfaces?.components ? (
+        <button className="rc-btn add" disabled={busy} onClick={() => make("components", "")}>
+          + 다른 앱 화면에 끼울 부품
         </button>
       ) : null}
     </>
@@ -188,6 +208,30 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       </div>
     );
   }
+  if (id === "components") {
+    const c = m.surfaces?.components;
+    if (!c) return <div className="empty">없는 선언</div>;
+    const item = { files: ctx.files.filter((f) => f.startsWith(c.source + "/")) };
+    const entry = c.out ? `${c.source}/${c.out}/index.js` : `${c.source}/index.js`;
+    return (
+      <div className="st-form">
+        <Field label="source (번들 소스 디렉토리)" value={c.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "source"], x))} />
+        <Field label="out (빌드 산출, 비우면 source 를 그대로 서빙)" value={c.out ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "out"], x))} />
+        <div className="st-hint">
+          {"계약은 수출 하나다 — export function mount(el, props): { unmount() }\n"}
+          {`진입점은 ${entry} 이고 그 파일 하나가 전부다(스타일 동봉). 번들은 자기 런타임을 안고 나온다 — 소비자에게 프레임워크를 요구하지 마라.`}
+        </div>
+        <FileCards
+          item={item}
+          ctx={ctx}
+          missing={!ctx.files.some((f) => f.startsWith(c.source + "/")) ? [{ path: `${c.source}/index.js`, make: () => ctx.createFile(`${c.source}/index.js`, `export function mount(el, props = {}) {\n  el.textContent = props.title ?? "안녕하세요";\n  return { unmount() { el.textContent = ""; } };\n}\n`) }] : []}
+        />
+        <button className="rc-btn" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "components"]))}>
+          components 선언 삭제
+        </button>
+      </div>
+    );
+  }
   const name = id.replace(/^channel:/, "");
   const idx = (m.surfaces?.channels ?? []).findIndex((c) => c.name === name);
   const ch = (m.surfaces?.channels ?? [])[idx];
@@ -198,6 +242,7 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       <Field label="source" value={ch.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "source"], x))} />
       <Field label="entry" value={ch.entry} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "entry"], x))} />
       <Field label="icon (배지 이미지, 선택)" value={ch.icon ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "icon"], x))} />
+      <CredentialFields idx={idx} ch={ch} ctx={ctx} />
       <FileCards
         item={item}
         ctx={ctx}
@@ -219,30 +264,29 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function HarnessLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const items = def.items!(m, ctx.files);
-  const [tpl, setTpl] = useState(HARNESS_TEMPLATES[0]);
   const have = new Set((m.harness?.variants ?? []).map((v) => v.name));
+  const left = HARNESS_TEMPLATES.filter((t) => !have.has(t));
+  const [tpl, setTpl] = useState(left[0] ?? "");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
-      <div className="lv-in">
-        <select value={tpl} onChange={(e) => setTpl(e.target.value)}>
-          {HARNESS_TEMPLATES.filter((t) => !have.has(t)).map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-        <button
-          className="rc-btn accent"
-          onClick={() => {
-            if (have.has(tpl)) return;
-            ctx.apply((d) => d.addIn(["harness", "variants"], { name: tpl, source: `harness/${tpl}`, entry: "run" }));
-            ctx.seedHarness(`harness/${tpl}`, "run");
-          }}
-        >
-          + 하네스 후보
-        </button>
-      </div>
+      {left.length ? (
+        <div className="lv-in">
+          <select value={left.includes(tpl) ? tpl : left[0]} onChange={(e) => setTpl(e.target.value)}>
+            {left.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <button className="rc-btn accent" disabled={busy} onClick={() => make("harness", left.includes(tpl) ? tpl : left[0])}>
+            + 이 앱을 돌릴 다른 도구
+          </button>
+        </div>
+      ) : (
+        <div className="st-hint">네 가지 후보를 다 붙였습니다.</div>
+      )}
       <div className="st-form" style={{ marginTop: 4 }}>
         <Field label="workdir (세션 cwd 의 workspace 하위 상대경로)" value={m.harness?.workdir ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "workdir"], x))} />
       </div>
@@ -278,21 +322,13 @@ function HarnessItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function AgentsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [name, setName] = useState("");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
         <input placeholder="에이전트 이름 (착지 = 패키지 짧은 이름)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button
-          className="rc-btn accent"
-          onClick={() => {
-            const n = name.trim();
-            if (!n || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(n)) return;
-            ctx.apply((d) => d.addIn(["agents"], { name: n, persona: `agents/${n}/AGENT.md` }));
-            ctx.createFile(`agents/${n}/AGENT.md`, `당신은 ${n}입니다.\n\n# 역할\n\n# 소통\n\n# 경계\n`);
-            setName("");
-          }}
-        >
+        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("agent", name); setName(""); }}>
           추가
         </button>
       </div>
@@ -349,31 +385,17 @@ function ScriptsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(m, ctx.files);
   const [name, setName] = useState("");
   const src = m.scripts?.source;
+  const [busy, make] = useMake(ctx);
   return (
     <>
-      {!src ? (
-        <button className="rc-btn add" onClick={() => ctx.apply((d) => d.setIn(["scripts"], { source: "scripts" }))}>
-          + scripts.source 선언 (scripts/)
+      {src ? <ItemList def={def} items={items} ctx={ctx} /> : null}
+      <div className="lv-in">
+        <input placeholder="동사 이름 (예: report-weekly)" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("script", name); setName(""); }}>
+          추가
         </button>
-      ) : (
-        <>
-          <ItemList def={def} items={items} ctx={ctx} />
-          <div className="lv-in">
-            <input placeholder="동사 이름 (예: report-weekly)" value={name} onChange={(e) => setName(e.target.value)} />
-            <button
-              className="rc-btn accent"
-              onClick={() => {
-                const n = name.trim();
-                if (!n || !/^[a-z0-9][a-z0-9-]*$/.test(n)) return;
-                ctx.createFile(`${src}/${n}.ts`, `export default async function (input: any, ctx: any) {\n  return { ok: true, input };\n}\n`);
-                setName("");
-              }}
-            >
-              추가
-            </button>
-          </div>
-        </>
-      )}
+      </div>
+      {!src ? <div className="st-hint">첫 동사를 만들면 scripts.source 선언(scripts/)도 같이 생깁니다.</div> : null}
     </>
   );
 }
@@ -392,6 +414,7 @@ function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [name, setName] = useState("");
   const [form, setForm] = useState<"process" | "container" | "url" | "dir">("process");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
@@ -405,17 +428,9 @@ function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
         </select>
         <button
           className="rc-btn accent"
+          disabled={busy || !slugOk(name)}
           onClick={() => {
-            const n = name.trim();
-            if (!n || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(n)) return;
-            if (form === "url") ctx.apply((d) => d.addIn(["services"], { name: n, url: "https://example.com/mcp", auth: { kind: "none" } }));
-            else if (form === "dir") ctx.apply((d) => d.addIn(["services"], { name: n, dir: `~/Documents/${n}` }));
-            else {
-              ctx.apply((d) =>
-                d.addIn(["services"], form === "container" ? { name: n, source: `services/${n}`, dockerfile: "Dockerfile" } : { name: n, source: `services/${n}`, entry: "index.ts" }),
-              );
-              ctx.createFile(`services/${n}/${form === "container" ? "Dockerfile" : "index.ts"}`, form === "container" ? `FROM alpine\nCMD ["sleep", "infinity"]\n` : `console.log("${n} 서비스 기동");\nsetInterval(() => {}, 60000);\n`);
-            }
+            make(`service-${form}`, name);
             setName("");
           }}
         >
@@ -478,21 +493,18 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function TriggersLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [id, setId] = useState("");
+  const [kind, setKind] = useState<"cron" | "event">("cron");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
         <input placeholder="트리거 id (예: daily-digest)" value={id} onChange={(e) => setId(e.target.value)} />
-        <button
-          className="rc-btn accent"
-          onClick={() => {
-            const n = id.trim();
-            if (!n || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(n)) return;
-            const landing = (ctx.manifest.agents ?? [])[0]?.name ?? "agent";
-            ctx.apply((d) => d.addIn(["triggers"], { id: n, when: { cron: "0 9 * * *", tz: "Asia/Seoul" }, then: { agent: landing, prompt: "정기 점검을 수행해 주세요." } }));
-            setId("");
-          }}
-        >
+        <select value={kind} onChange={(e) => setKind(e.target.value as never)}>
+          <option value="cron">정해진 시각에</option>
+          <option value="event">사건이 나면</option>
+        </select>
+        <button className="rc-btn accent" disabled={busy || !slugOk(id)} onClick={() => { make(`trigger-${kind}`, id); setId(""); }}>
           추가
         </button>
       </div>
@@ -583,20 +595,13 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function MissionsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [name, setName] = useState("");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
         <input placeholder="미션 이름" value={name} onChange={(e) => setName(e.target.value)} />
-        <button
-          className="rc-btn accent"
-          onClick={() => {
-            const n = name.trim();
-            if (!n) return;
-            ctx.apply((d) => d.addIn(["missions"], { name: n, description: "" }));
-            setName("");
-          }}
-        >
+        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("mission", name); setName(""); }}>
           추가
         </button>
       </div>
@@ -629,19 +634,26 @@ function MissionItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function EdgesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [provider, setProvider] = useState("");
+  const [kind, setKind] = useState<"tools" | "mission" | "components">("tools");
+  const [mission, setMission] = useState("");
+  const [busy, make] = useMake(ctx);
   return (
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
         <input placeholder="@scope/name (provider 혈통)" value={provider} onChange={(e) => setProvider(e.target.value)} />
+        <select value={kind} onChange={(e) => setKind(e.target.value as never)}>
+          <option value="tools">동사 쓰기</option>
+          <option value="mission">일 맡기기</option>
+          <option value="components">부품 끼우기</option>
+        </select>
+        {kind === "mission" ? (
+          <input placeholder="미션 이름" style={{ maxWidth: 150 }} value={mission} onChange={(e) => setMission(e.target.value)} />
+        ) : null}
         <button
           className="rc-btn accent"
-          onClick={() => {
-            const n = provider.trim();
-            if (!n) return;
-            ctx.apply((d) => d.addIn(["edges"], { provider: n }));
-            setProvider("");
-          }}
+          disabled={busy || !provider.trim() || (kind === "mission" && !slugOk(mission))}
+          onClick={() => { make(`edge-${kind}`, provider, mission); setProvider(""); setMission(""); }}
         >
           추가
         </button>
@@ -656,11 +668,38 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const idx = Number(id);
   const e = (m.edges ?? [])[idx];
   if (!e) return <div className="empty">없는 edge</div>;
+  // 소비물은 셋 중 정확히 하나다(스키마의 not.anyOf). 세 칸을 나란히 두면 문법이 금지한 조합을
+  // 화면이 먼저 권하는 꼴이라, 배타를 라디오로 그린다 — 고르면 나머지 둘은 문서에서 지운다
+  const kind: "tools" | "mission" | "components" = e.components ? "components" : e.mission != null ? "mission" : "tools";
+  const pick = (k: "tools" | "mission" | "components") =>
+    ctx.apply((d) => {
+      d.deleteIn(["edges", idx, "tools"]);
+      d.deleteIn(["edges", idx, "mission"]);
+      d.deleteIn(["edges", idx, "components"]);
+      if (k === "components") d.setIn(["edges", idx, "components"], true);
+      else if (k === "mission") d.setIn(["edges", idx, "mission"], "");
+      else d.setIn(["edges", idx, "tools"], []);
+    });
   return (
     <div className="st-form">
       <Field label="provider" value={e.provider} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "provider"], x))} />
-      <Field label="tools (mcp 소비, 쉼표 — mission 과 배타)" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
-      <Field label="mission (a2a 위임 — tools 와 배타)" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
+      <label className="st-field">
+        <span>소비물 (셋 중 하나)</span>
+        <select value={kind} onChange={(ev) => pick(ev.target.value as never)}>
+          <option value="tools">tools — 남의 동사를 부른다 (런타임 결재)</option>
+          <option value="mission">mission — a2a 위임을 보낸다 (런타임 결재)</option>
+          <option value="components">components — 남의 번들을 내 화면이 마운트한다 (설치 시점 결재)</option>
+        </select>
+      </label>
+      {kind === "tools" ? (
+        <Field label="tools (쉼표)" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+      ) : kind === "mission" ? (
+        <Field label="mission" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
+      ) : (
+        <div className="st-hint">
+          {`결재되면 기판이 소비자 문서에 import map 을 심는다 — 화면은 import { mount } from "${e.provider}" 만 쓰고 주소를 조립하지 않는다.`}
+        </div>
+      )}
       <button
         className="rc-btn"
         onClick={() => {
@@ -670,6 +709,139 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       >
         edge 삭제
       </button>
+    </div>
+  );
+}
+
+/**
+ * credential — 자격의 **형태** 선언. 값이 아니다(값은 vault 에 산다).
+ *
+ * 이 선언이 곧 연결 화면의 입력 칸이라, 저작자가 여기서 고치는 것은 남이 보게 될 폼이다.
+ * 그래서 오른쪽 결과면이 같은 선언으로 그 폼을 그대로 그린다 — 선언과 결과가 한 화면에 있다.
+ */
+function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { fields?: { key?: string; label: string; secret?: boolean; list?: boolean; required?: boolean }[] } }; ctx: SectionCtx }) {
+  const fields = ch.credential?.fields ?? [];
+  const at = (i: number, k: string) => ["surfaces", "channels", idx, "credential", "fields", i, k];
+  return (
+    <div className="st-form">
+      <div className="rc-label">credential.fields — 연결 화면이 이 선언으로 칸을 그린다</div>
+      {fields.map((f, i) => (
+        <div key={i} className="item">
+          <div className="bar">
+            <input
+              value={f.key ?? ""}
+              placeholder="key (비우면 자격이 문자열 하나)"
+              style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }}
+              onChange={(e) => ctx.apply((d) => set(d, at(i, "key"), e.target.value))}
+            />
+            <input value={f.label} placeholder="사람이 읽는 이름" onChange={(e) => ctx.apply((d) => d.setIn(at(i, "label"), e.target.value))} />
+            <button className="x" title="이 칸 빼기" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "channels", idx, "credential", "fields", i]))}>
+              ×
+            </button>
+          </div>
+          <div className="bar" style={{ fontSize: 12, color: "var(--rc-soft)" }}>
+            {(["secret", "list", "required"] as const).map((k) => (
+              <label key={k} style={{ display: "flex", alignItems: "center", gap: 5, flex: "none" }}>
+                <input type="checkbox" style={{ width: "auto" }} checked={!!f[k]} onChange={(e) => ctx.apply((d) => (e.target.checked ? d.setIn(at(i, k), true) : d.deleteIn(at(i, k))))} />
+                {k}
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+      <button
+        className="rc-btn add"
+        onClick={() => void ctx.apply((d) => push(d, ["surfaces", "channels", idx, "credential", "fields"], { key: "token", label: "토큰", secret: true, required: true }))}
+      >
+        + 자격 칸
+      </button>
+      {fields.length ? (
+        <div className="st-hint">
+          {fields.every((f) => f.key)
+            ? "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
+            : fields.length === 1
+              ? "key 없는 칸 하나 — 그 값이 곧 자격 문자열이다."
+              : "key 있는 칸과 없는 칸을 섞으면 판정 실패다 — 전부 채우거나, 한 칸만 비우세요."}
+        </div>
+      ) : (
+        <div className="st-hint">선언이 없으면 연결 화면은 원시 붙여넣기 칸으로 물러난다 — 제3자 어댑터가 선언 없이도 연결될 수 있어야 하기 때문이다.</div>
+      )}
+    </div>
+  );
+}
+
+/** requires — 설치 관문. 여기까지는 폼이 없어 원문 에디터로 밀려나 있었다 */
+function RequiresView({ ctx }: { ctx: SectionCtx }) {
+  const req = ctx.manifest.requires;
+  const bins = req?.binaries ?? [];
+  const [name, setName] = useState("");
+  const [busy, make] = useMake(ctx);
+  return (
+    <div className="st-form">
+      <Field
+        label="os (쉼표 — darwin, linux, win32)"
+        value={(req?.os ?? []).join(", ")}
+        mono
+        onCommit={(x) => ctx.apply((d) => set(d, ["requires", "os"], listField(x)))}
+      />
+      <div className="rc-label">binaries — 설치가 끝나면 목록 전부가 실재한다 (AND)</div>
+      {bins.map((b, i) => (
+        <div key={b.name} className="st-file" style={{ cursor: "default" }}>
+          <span className="st-file-path">{b.name}</span>
+          <button
+            className="rc-btn"
+            style={{ marginLeft: "auto" }}
+            onClick={() => ctx.apply((d) => d.deleteIn(["requires", "binaries", i]))}
+          >
+            빼기
+          </button>
+        </div>
+      ))}
+      <div className="lv-in">
+        <input placeholder="바이너리 이름 (예: git)" value={name} onChange={(e) => setName(e.target.value)} />
+        <button
+          className="rc-btn accent"
+          disabled={busy || !slugOk(name) || bins.some((b) => b.name === name.trim())}
+          onClick={() => { make("requires-binary", name); setName(""); }}
+        >
+          추가
+        </button>
+      </div>
+      <div className="st-hint">
+        manager + package 를 함께 적으면 기판이 직접 깐다(레시피). 이름만 적으면 없을 때 설치가 거부되고 install 안내가 뜬다 — 원문 에디터에서 붙이세요.
+      </div>
+    </div>
+  );
+}
+
+/** host_methods — 고지서에 실리는 캡인데 저작 표면이 없었다 */
+function HostMethodsView({ ctx }: { ctx: SectionCtx }) {
+  const list = ctx.manifest.host_methods ?? [];
+  const [v, setV] = useState("");
+  const [busy, make] = useMake(ctx);
+  return (
+    <div className="st-form">
+      {list.map((x, i) => (
+        <div key={x} className="st-file" style={{ cursor: "default" }}>
+          <span className="st-file-path">{x}</span>
+          <button className="rc-btn" style={{ marginLeft: "auto" }} onClick={() => ctx.apply((d) => d.deleteIn(["host_methods", i]))}>
+            빼기
+          </button>
+        </div>
+      ))}
+      <div className="lv-in">
+        <input placeholder="host.draft_publish" value={v} onChange={(e) => setV(e.target.value)} style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }} />
+        <button
+          className="rc-btn accent"
+          disabled={busy || !/^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$/.test(v.trim()) || list.includes(v.trim())}
+          onClick={() => { make("host-method", v); setV(""); }}
+        >
+          추가
+        </button>
+      </div>
+      <div className="st-hint">
+        선언이 없으면 전체가 열린다(ring-0 결재가 유일한 경계). 하나라도 선언하면 목록 밖 메서드는 거부된다 — 좁히는 선언이지 여는 선언이 아니다.
+      </div>
     </div>
   );
 }
@@ -730,6 +902,10 @@ export default function SectionView({ sec, item, ctx }: { sec: string; item: str
     switch (def.key) {
       case "identity":
         return <IdentityView ctx={ctx} />;
+      case "requires":
+        return <RequiresView ctx={ctx} />;
+      case "host_methods":
+        return <HostMethodsView ctx={ctx} />;
       case "surfaces":
         return <SurfacesLanding def={def} ctx={ctx} />;
       case "harness":
