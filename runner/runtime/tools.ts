@@ -109,7 +109,7 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
     if (g.mission) {
       tools.push({
         name: a2aToolName(g.provider, g.mission),
-        description: `a2a 위임: ${g.provider} 의 ${g.mission} 미션. arguments: { payload: string }`,
+        description: `a2a 위임: ${g.provider} 의 ${g.mission} 미션. 별도 세션에서 돌고, 오래 걸리면 도구가 먼저 돌아오며 완료는 이 대화로 📬 배달된다. arguments: { payload: string }`,
       });
     }
     for (const t of g.tools ?? []) {
