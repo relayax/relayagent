@@ -33,8 +33,10 @@ export interface HostBridge {
   draftPublish(name: string, opts?: { version?: string }): unknown;
   draftDiscard(name: string): unknown;
   draftList(): unknown;
-  /** 봉투 굽기 — 설치본을 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다 */
-  pack(name: string): unknown;
+  /** 봉투 굽기 — 설치본을 선반에 앉힌다. 스토어 등재의 재료가 여기서 나온다.
+   *  deliverTo = 건네받을 패키지(부르는 쪽) — 그 파일 교환 무대에 사본을 놓아 대화에서
+   *  그대로 내려받게 한다. 선반은 기판 장기라 세션이 닿지 못한다 */
+  pack(name: string, deliverTo?: string): unknown;
   releaseList(name: string): unknown;
   releaseRollback(name: string, version: string): unknown;
 }

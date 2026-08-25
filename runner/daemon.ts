@@ -13,7 +13,7 @@ import { handleClientWire, tapSessionEvent, type ClientWireIO } from "./runtime/
 import { runScript, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
 import { handleMcp } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
-import { packDir, updateMarketIndex } from "./supply/pack.ts";
+import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts } from "./supply/draft.ts";
@@ -163,11 +163,14 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     // 파일을 사람 손에 쥐여 주지 않는 것이 요점이다: 봉인(sha256)과 요구 범위가 함께
     // 계산된 상태로 선반에 남고, 등재 화면이 그 선반을 읽는다. 손으로 옮기는 순간
     // "빌더가 준 것"과 "스토어가 받은 것"이 어긋날 자리가 생긴다.
-    pack: (name) => {
+    pack: (name, deliverTo) => {
       const rec = getLedger().packages[name];
       if (!rec) throw new Error(`설치되지 않은 패키지입니다: ${name}`);
       const r = packDir(rec.path);
       const shelf = updateMarketIndex(rec.path, r);
+      // 구운 봉투를 부른 쪽의 무대에 놓는다 — 굽기는 사람에게 건네려고 하는 일이고, 선반은
+      // 세션이 닿지 못하는 자리다. 이 사본이 턴 끝의 무대 diff 에 걸려 대화의 다운로드가 된다
+      const delivered = deliverTo ? deliverToStage(r.file, stageDir(deliverTo)) : [];
       return {
         ref: r.ref,
         version: r.version,
@@ -178,6 +181,8 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         // 선언 밖이라 빠진 파일 — 빌더가 "왜 안 들어갔지"를 묻기 전에 먼저 보여준다
         excluded: r.excluded,
         shelf,
+        /** 무대에 놓인 사본 — 대화가 이 이름으로 파일을 건넨다 */
+        delivered,
       };
     },
     releaseList: (name) => listReleases(getLedger(), name),
