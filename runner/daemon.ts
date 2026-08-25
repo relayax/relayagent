@@ -20,8 +20,9 @@ import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents } from "./runtime/view.ts";
+import { shellNav, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
-import { startServices, startChannels, startOneChannel, stopChannel, channelPid, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
+import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
 import { Ticker } from "./runtime/triggers.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./runtime/login.ts";
@@ -247,11 +248,28 @@ export function createApi(
           return void json(res, 403, { error: `허용되지 않은 Origin: ${req.headers.origin}` });
         }
       }
+      // 셸 홈 — 설치된 앱을 늘어놓는 런처. 앱 하나의 화면이 아니므로 패키지에 두지 않고
+      // 기판이 낸다(runtime/shell.ts HOME_DOC). 종전에는 여기서 콘솔 패키지로 302 했다
       if (p === "/" || p === "") {
-        res.writeHead(302, { location: "/pkg/system/view/" });
-        return void res.end();
+        res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
+        return void res.end(HOME_DOC);
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
+
+      // 상주 한 방 — 셸 사이드바 상태점의 원천. 패키지마다 /pkg/<이름>/channels 를 물으면
+      // 항목 수만큼 왕복이 나고, 그 응답의 대부분(자격 형태·최근 오류 로그 꼬리)은 점 하나에
+      // 필요 없다. 자식 프로세스 맵의 키(<패키지>/<이름>)를 그대로 낸다 — 판정 없는 사실이라
+      // 화면이 "이 패키지에 속한 키가 하나라도 있는가" 로 점을 켠다
+      if (p === "/residency" && req.method === "GET") return void json(res, 200, { running: runningServices() });
+
+      // 전역 셸 크롬(runtime/shell.ts) — 모든 view 문서에 주입되는 사이드바의 본체와 그 데이터.
+      // 스크립트는 기판과 원자적으로 움직여야 한다(위젯 번들과 같은 사유): 캐시된 옛 크롬이
+      // 새 nav 계약을 읽으면 조용히 갈라진다
+      if (p === "/shell.js" && req.method === "GET") {
+        res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
+        return void res.end(SHELL_JS);
+      }
+      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices()));
 
       // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.
       // 마운트 문법(/pkg/<pkg>·/)은 여기서만 해석되고 클라이언트는 base 주입으로 받는다(§2-6).

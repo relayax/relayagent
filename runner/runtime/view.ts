@@ -6,6 +6,7 @@ import { logLine, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
 
 import { MIME, json, streamFile } from "../http.ts";
+import { injectShell } from "./shell.ts";
 
 export interface BuildResult {
   ok: boolean;
@@ -275,7 +276,7 @@ export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.S
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
       const fav = pkgIconHref(pkg, m);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return void res.end(`<!doctype html>
+      return void res.end(injectShell(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="${esc(fav)}">
 <title>${esc(m.display_name ?? pkg)}</title>
@@ -284,7 +285,7 @@ export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.S
 </head><body><div id="chat"></div>
 <script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + encodeURIComponent(pkg))},root:"",instanceId:${JSON.stringify(pkg)}};window.RELAY_CHAT_MANUAL=1;</script>
 <script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
-</body></html>`);
+</body></html>`));
     }
     return void json(res, 404, { error: `view 표면 없는 패키지: ${pkg}` });
   }
@@ -390,7 +391,7 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
     logLine("view", { pkg, ok: false, base, at_root: atRoot.slice(0, 5) });
     const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     res.writeHead(500, { "content-type": MIME[".html"], "cache-control": "no-store" });
-    return void res.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+    return void res.end(injectShell(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>view 판정 실패: ${esc(pkg)}</title>
 <style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
 </head><body>
@@ -400,7 +401,7 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
 <p><code>RELAY_BASE_PATH</code> 없이 <code>npx next build</code> 를 돌린 흔적입니다. 정본 경로로 다시 구우세요:</p>
 <p><code>npm run relay -- build ${esc(pkg)}</code></p>
 <p>깨진 화면을 200 으로 내보내는 대신 여기서 멈춥니다 — 그 편이 <code>/_next</code> 404 벽보다 짧습니다.</p>
-</body></html>`);
+</body></html>`));
   }
   const html = fs.readFileSync(file, "utf8");
   // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽고, import map 은
@@ -413,7 +414,10 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
     ? ""
     : `<link rel="icon" href="${fav.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">`;
   res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
-  res.end(html.slice(0, at) + viewContextTag(pkg) + componentImportMapTag(imports) + iconTag + html.slice(at));
+  // 셸 크롬은 문서 말미다 — 좌표·import map 과 달리 렌더를 앞지를 이유가 없고, 패키지 문서의
+  // 첫 페인트를 막지 않는다(defer). 주입 지점이 여기 하나뿐이라 "어떤 화면에는 사이드바가
+  // 없다" 가 구조적으로 불가능하다
+  res.end(injectShell(html.slice(0, at) + viewContextTag(pkg) + componentImportMapTag(imports) + iconTag + html.slice(at)));
 }
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
