@@ -11,12 +11,12 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { loadLedger, logLine, sessionDir, type Ledger } from "../supply/ledger.ts";
-import { loadManifest, listScripts, agentScriptScope, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
-import { runScript, scriptMeta, mcpCall, type HostBridge } from "./scripts.ts";
+import { loadManifest, listScripts, agentScriptScope, type Manifest } from "../supply/manifest.ts";
+// edge 소비 집행(callEdgeTool)의 정본은 실행 옆이다 — 세션 문과 동사 문(ctx.edge)이
+// 같은 판정을 지나야 하므로 한 벌만 둔다
+import { runScript, scriptMeta, callEdgeTool, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, McpGateError, type McpIO, type McpToolInfo } from "./mcp.ts";
 import { runSession, isSessionBusy, retireResident } from "./harness.ts";
-import { serviceAuthHeader } from "./oauth.ts";
-import { resolveProvider } from "../supply/install.ts";
 import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
@@ -96,27 +96,6 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
   return tools;
 }
 
-async function callEdgeTool(ledger: Ledger, authority: Authority, consumer: string, provider: string, tool: string, args: unknown, host: HostBridge, agent?: string): Promise<unknown> {
-  // 인가 판정은 권위 이음새를 지난다 — "누구로서(consumer), 무엇을(provider/tool), 어떤 자격으로"
-  const grant = await authority.grantForTool(consumer, provider, tool);
-  if (!grant) throw new Error(`E_NO_GRANT: ${consumer} -> ${provider}/${tool}`);
-  const rec = ledger.packages[provider];
-  const m = loadManifest(rec.path);
-  const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
-  // 소비의 두 축은 여기서 갈라진다 — 자격은 provider, 신원은 원 호출자.
-  // 자격: provider 의 것으로 나간다(몸과의 연결은 provider 가 소유한다 — ctx.service 와 같은
-  //   해석: token·oauth 회전). 무자격 호출이던 구멍의 답.
-  // 신원: 소비를 발화한 쪽의 것으로 나간다(principal = 그 사람, agent = 그 세션의 얼굴).
-  //   신원까지 provider 로 바꾸면 principal 로 RLS 를 거는 몸이 소비자 사용자를 못 보고
-  //   provider 하나로 뭉뚱그린다 — 인가가 consumer→provider 로 기록되는 것과 같은 결이다.
-  //   agent 이름은 consumer 패키지의 어휘다: provider 는 이것을 자기 에이전트로 읽으면 안 된다.
-  //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
-  const identity = { principal: authority.principal(), agent };
-  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority);
-  throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
-}
-
 // 1인 기판의 문 이음새 구현(mcp.ts McpIO) — 프로토콜 합성은 mcpDispatch 한 벌이고, 여기는
 // "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
 // handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
@@ -134,7 +113,7 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a.provider}/${mission}`);
         return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
       }
-      if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent);
+      if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent, [pkg]);
       if (name === "agent_dispatch") {
         const m = loadManifest(ledger.packages[pkg].path);
         const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];
