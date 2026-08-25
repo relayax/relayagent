@@ -51,8 +51,8 @@ export type Part = TextPart | ReasoningPart | ToolPart;
 export type EnvelopeTurnMeta = TurnMeta & {
   /** reply.context.window — 컨텍스트 미터의 분모를 카탈로그 추정 대신 서버 실측으로. */
   contextWindow?: number | null;
-  /** file 이벤트가 알린 무대 산출물(stage 상대 경로). */
-  files?: string[];
+  // files(무대 산출물)는 이 확장이 아니라 TurnMeta 본체에 산다 — 재생(이력의 files)도 같은
+  // 자리를 채우므로 봉투 전용 축이 아니다.
   /** reply.session — 하네스 대화 포인터(표시용). */
   harnessSession?: string | null;
   /** reply.origin === "task" — 백그라운드 완료가 만든 자발 턴. */
