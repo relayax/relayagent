@@ -189,7 +189,6 @@ var css = [
 '#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fff;border-right:1px solid #e6e9ec;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
 '#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap}',
-'#rlys .hd .bd{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
 '#rlys .hd .fold:hover{background:#eef0f2;color:#5c6570}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
@@ -218,15 +217,16 @@ var css = [
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
 '#rlys.cl .nm,#rlys.cl .lb,#rlys.cl .fc,#rlys.cl .hd span,#rlys.cl .em,#rlys.cl .er{display:none}',
 '#rlys.cl a.it,#rlys.cl button.it{justify-content:center;padding:7px 0;position:relative}',
-'#rlys.cl .hd{padding:8px 0 12px;justify-content:center}',
+'#rlys.cl .hd{padding:10px 0 12px;justify-content:center}',
 '#rlys.cl .hd .fold{margin:0}',
 '#rlys.cl .it .dt{position:absolute;right:6px;bottom:6px}',
 // ── 홈(런처) ─────────────────────────────────────────────────────────────
 '#relay-home{min-height:100vh;background:#f5f6f7;color:#16181b;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif}',
 '#relay-home *{box-sizing:border-box}',
-'#relay-home .hh{display:flex;align-items:baseline;gap:10px;padding:14px 20px;background:#fff;border-bottom:1px solid #e6e9ec}',
-'#relay-home .hh h1{margin:0;font-size:15px}',
-'#relay-home .hh .mt{font-size:11.5px;color:#98a1aa}',
+'#relay-home .hh{display:flex;align-items:center;gap:10px;padding:16px 20px;background:#fff;border-bottom:1px solid #e6e9ec}',
+'#relay-home .hh .tl{display:flex;flex-direction:column;gap:3px}',
+'#relay-home .hh h1{margin:0;font-size:19px;letter-spacing:-0.02em;line-height:1.2}',
+'#relay-home .hh .mt{font-size:12px;color:#98a1aa}',
 '#relay-home .hh .rt{margin-left:auto;display:flex;gap:8px}',
 '#relay-home .bt{border:1px solid #e6e9ec;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
 '#relay-home .bt:hover{background:#eef0f2}',
@@ -304,7 +304,7 @@ function renderSide(nav, err){
 
   var hd = document.createElement("div");
   hd.className = "hd";
-  hd.innerHTML = '<span class="bd"></span><span>Relay</span>';
+  hd.innerHTML = '<span>Relay</span>';
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";
@@ -390,12 +390,16 @@ function renderHome(nav, err){
   home.textContent = "";
   var hh = document.createElement("div");
   hh.className = "hh";
-  hh.innerHTML = '<h1>홈</h1><span class="mt">' + (nav ? "설치된 에이전트 패키지 " + nav.items.length + "개" : "불러오는 중…") + '</span>';
+  hh.innerHTML = '<div class="tl"><h1>홈</h1><span class="mt">' +
+    (nav ? "설치된 에이전트 " + nav.items.length + "개" : "불러오는 중…") + '</span></div>';
   if (nav) {
+    // 주연은 "얻는 문"이다: 스토어가 연결된 기판이면 스토어가 강조 버튼, 만들기·불러오기는
+    // 저작자 동선이라 보조로 선다. 스토어 없는 순정 OSS 에서는 만들기가 강조를 되찾는다.
     var rt = document.createElement("div");
     rt.className = "rt";
     rt.innerHTML = '<a class="bt" href="' + esc(nav.importer) + '">불러오기</a>' +
-      '<a class="bt ac" href="' + esc(nav.create) + '">패키지 만들기</a>';
+      '<a class="bt' + (nav.store ? "" : " ac") + '" href="' + esc(nav.create) + '">패키지 만들기</a>' +
+      (nav.store ? '<a class="bt ac" href="' + esc(nav.store) + '">스토어에서 담기</a>' : "");
     hh.appendChild(rt);
   }
   home.appendChild(hh);
@@ -412,9 +416,13 @@ function renderHome(nav, err){
   if (!nav.items.length) {
     var ep = document.createElement("div");
     ep.className = "ep";
-    ep.innerHTML = '<h2>아직 설치된 패키지가 없습니다</h2>' +
-      '<p>직접 만들거나, 누군가에게 받은 봉투를 열어 시작합니다.</p>' +
-      '<a class="bt ac" href="' + esc(nav.create) + '">패키지 만들기</a> ' +
+    ep.innerHTML = '<h2>아직 설치된 에이전트가 없습니다</h2>' +
+      (nav.store
+        ? '<p>스토어에서 담거나, 직접 만들거나, 받은 봉투를 열어 시작합니다.</p>' +
+          '<a class="bt ac" href="' + esc(nav.store) + '">스토어에서 담기</a> ' +
+          '<a class="bt" href="' + esc(nav.create) + '">패키지 만들기</a> '
+        : '<p>직접 만들거나, 누군가에게 받은 봉투를 열어 시작합니다.</p>' +
+          '<a class="bt ac" href="' + esc(nav.create) + '">패키지 만들기</a> ') +
       '<a class="bt" href="' + esc(nav.importer) + '">불러오기</a>';
     home.appendChild(ep);
     return;
