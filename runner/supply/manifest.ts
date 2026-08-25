@@ -60,7 +60,7 @@ export interface Manifest {
     variants?: HarnessVariant[];
     workdir?: string;
   };
-  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
+  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; dirs?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
@@ -369,6 +369,8 @@ export function judge(m: Manifest, pkgPath?: string): void {
 
   const agents = m.agents ?? [];
   const agentNames = new Set<string>();
+  // 세션이 볼 수 있는 폴더의 후보 — 에이전트의 dirs 캡은 이 집합을 넘을 수 없다
+  const dirNames = new Set((m.services ?? []).filter((x) => "dir" in x && x.dir != null).map((x) => x.name));
   const scriptNames = pkgPath && m.scripts?.source ? listScripts(pkgPath, m) : null;
   const defaults = agents.filter((a) => a.default === true);
   if (defaults.length > 1) issues.push(`agents[].default 는 최대 1: ${defaults.map((a) => a.name).join(", ")}`);
@@ -401,6 +403,16 @@ export function judge(m: Manifest, pkgPath?: string): void {
       if (!scriptNames) continue;
       const hit = s.endsWith("*") ? scriptNames.some((n) => n.startsWith(s.slice(0, -1))) : scriptNames.includes(s);
       if (!hit) issues.push(`agents[${a.name}].scripts 실체 없음: ${s}`);
+    }
+    // dir 캡 — 선언된 폴더만 가리킬 수 있다. 없는 이름은 설치 후 도구가 조용히 비는 자리라
+    // scripts 스코프와 같은 규율로 여기서 막는다(선언이 실체를 적는다)
+    for (const d of a.dirs ?? []) {
+      if (!dirNames.has(d)) {
+        issues.push(
+          `agents[${a.name}].dirs 미선언 폴더: ${d} — services[] 에 { name: ${d}, dir: <경로> } 를 선언하세요` +
+          `${dirNames.size ? ` (선언된 폴더: ${[...dirNames].join(", ")})` : ""}`,
+        );
+      }
     }
   }
   // 착지 없는 에이전트 패키지는 대화의 문이 없다 — 관례(짧은 이름)로도 명시(default: true)로도
@@ -559,6 +571,16 @@ export function agentScriptScope(m: Manifest, agent: string): ((s: string) => bo
   return (key) => exact.has(key) || prefixes.some((p) => key.startsWith(p));
 }
 
+/**
+ * 이 에이전트가 세션 문에서 볼 수 있는 폴더. 미선언 = 없음이다 — dir 은 지금까지 세션 도구가
+ * 아니었으므로 이 기본값은 회귀가 아니라 추가다. 선언된 dir 서비스 밖 이름은 여기서 걸러진다:
+ * 캡이 선언을 넘으면 판정이 광고가 된다.
+ */
+export function agentDirScope(m: Manifest, agent: string): string[] {
+  const declared = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
+  return ((m.agents ?? []).find((a) => a.name === agent)?.dirs ?? []).filter((d) => declared.has(d));
+}
+
 export function listScripts(pkgPath: string, m: Manifest): string[] {
   if (!m.scripts) return [];
   const dir = path.join(pkgPath, m.scripts.source);
@@ -597,7 +619,9 @@ export function declaredPaths(m: Manifest): DeclaredPath[] {
 }
 
 export interface Disclosure {
-  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더 */
+  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더. 세션은 경로가 아니라
+   *  기판이 세운 도구(dir__<이름>__*)로 닿는다 — 딛는 땅(workspace)과 성격이 다르므로
+   *  고지서도 두 줄을 갈라 적는다 */
   folders: { name: string; path: string }[];
   /** services[].url(MCP 문) · services[].api(REST 베이스) — 밖으로 나가는 접점과 자격의 형태.
    *  name 은 자격 좌표이기도 하다(vault <pkg>/<name>) — 화면이 "무엇으로 연결하는가"를 그린다 */

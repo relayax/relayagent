@@ -5,19 +5,22 @@
 //   agents[].scripts  → 스코프 안의 동사
 //   agents[].dispatch → agent_dispatch 하나
 //   edges[] (결재분)  → a2a__* · edge__*
+//   agents[].dirs     → dir__<폴더>__{list,read,write,remove}
 // 선언은 캡이고 결재가 승인이다 — 목록(tools/list)과 집행(tools/call)이 같은 문을 본다.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { loadLedger, logLine, sessionDir, type Ledger } from "../supply/ledger.ts";
-import { loadManifest, listScripts, agentScriptScope, type Manifest } from "../supply/manifest.ts";
+import { loadManifest, listScripts, agentScriptScope, agentDirScope, type Manifest } from "../supply/manifest.ts";
 // edge 소비 집행(callEdgeTool)의 정본은 실행 옆이다 — 세션 문과 동사 문(ctx.edge)이
 // 같은 판정을 지나야 하므로 한 벌만 둔다
 import { runScript, scriptMeta, callEdgeTool, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, McpGateError, type McpIO, type McpToolInfo } from "./mcp.ts";
+// 폴더 문 — 감금·연산의 정본은 dirs.ts 한 곳이고, 동사 문(ctx.service)이 같은 벌을 쓴다
+import { dirCall, dirToolInfos, localDirIO, type DirIO } from "./dirs.ts";
 import { runSession, isSessionBusy, retireResident } from "./harness.ts";
-import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
+import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, parseDirToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
 
@@ -35,6 +38,21 @@ function sessionScriptSet(ledger: Ledger, pkg: string, agent: string): Set<strin
     for (const s of allScripts) if (scope(s)) inScope.add(s);
   }
   return inScope;
+}
+
+/**
+ * 이 세션이 볼 수 있는 폴더 — agents[].dirs 선언이 캡이다. 동사 스코프와 같은 규칙으로
+ * 위임 대상(dispatch)의 선언까지 합친다: 한 대화에서 부모가 위임하고 결과를 이어 다루는데
+ * 도구 집합이 갈리면, 같은 대화가 도구마다 다른 세계를 보게 된다.
+ *
+ * 세션에 절대경로는 나가지 않는다. 이름이 곧 좌표이고, 실제 자리는 DirIO 가 답한다.
+ */
+function sessionDirSet(ledger: Ledger, pkg: string, agent: string): Set<string> {
+  const m = loadManifest(ledger.packages[pkg].path);
+  const agentsInPlay = [agent, ...((m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [])];
+  const out = new Set<string>();
+  for (const a of agentsInPlay) for (const d of agentDirScope(m, a)) out.add(d);
+  return out;
 }
 
 // 서술·입력 형의 정본은 동사 자신이다 — 기판이 이름으로 문장을 지어내면 tools/list 가 세션에게
@@ -81,6 +99,11 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
     }
   }
 
+  // 선언된 폴더 — 세션이 자기 땅 밖 파일에 닿는 유일한 길이다. 경로가 아니라 도구로 준다:
+  // 번들에 절대경로를 실으면 세션이 이 문을 우회해 파일시스템을 직접 만지기 시작하고,
+  // 그 경로는 조직 기판에서 아무 데도 아니다
+  for (const d of sessionDirSet(ledger, pkg, agent)) tools.push(...dirToolInfos(d));
+
   // 인가 장부 조회도 권위 이음새를 지난다 — 목록(tools/list)과 집행(grantForTool)이 같은 문을 본다
   for (const g of (await authority.grants()).filter((g) => g.consumer === pkg)) {
     if (g.mission) {
@@ -100,7 +123,7 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
 // "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
 // handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
 // (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
-function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, callerSlot?: string | null): McpIO {
+function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, callerSlot?: string | null, dirIO: DirIO = localDirIO(ledger)): McpIO {
   return {
     tools: () => sessionTools(ledger, authority, pkg, agent),
     call: async (name, args) => {
@@ -114,6 +137,16 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
       }
       if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent, [pkg]);
+      const dir = parseDirToolName(name);
+      if (dir) {
+        // 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 폴더를 여는 구멍의 답
+        if (!sessionDirSet(ledger, pkg, agent).has(dir.service)) {
+          throw new McpGateError(`E_SCOPE: ${agent} 세션 스코프 밖 폴더: ${dir.service}`);
+        }
+        const root = dirIO.root(pkg, dir.service);
+        if (!root) throw new Error(`폴더 좌표 없음: ${dir.service} — 선언(services[].dir)과 설치 결재를 확인하세요`);
+        return await dirCall(root, dir.op, args);
+      }
       if (name === "agent_dispatch") {
         const m = loadManifest(ledger.packages[pkg].path);
         const subs = (m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [];

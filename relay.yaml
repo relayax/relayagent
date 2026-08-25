@@ -49,6 +49,8 @@ agents:
   - name: worker
     persona: agents/worker/AGENT.md
     scripts: [orders-*, report-weekly]
+    dirs: [inbox]            # 세션이 여는 폴더 — dir__inbox__{list,read,write,remove} 로 선다.
+                             # 자기 땅(workspace)은 cwd 라 선언하지 않는다. 밖의 폴더만 여기 적는다
 
 scripts:
   source: scripts
@@ -68,6 +70,9 @@ services:
     source: services/erp-events
     entry: index.ts
     port: 8090
+  # dir = 기판이 세우는 파일 문. 이름이 정본이고 경로는 로컬 기본 바인딩이다(설치 결재가 갈아
+  # 끼운다). 동사는 ctx.service("inbox").call("read", { path }), 세션은 agents[].dirs 로 캡을
+  # 선언한 dir__inbox__* 도구로 닿는다 — 세션에 절대경로는 나가지 않는다
   - name: inbox
     dir: ~/Documents/orders-inbox
   - name: erp

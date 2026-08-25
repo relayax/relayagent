@@ -21,8 +21,8 @@ fails loudly when called. Everything else a verb exports is optional.
 |---|---|
 | `pkg` | The verb's own package (install name). |
 | `caller` | `{principal, agent?}` — who this run is for. The substrate fills it; a verb never mints it. |
-| `dir(name)` | Absolute path of a declared `dir` service, with the install-time binding applied. Undeclared names throw. |
-| `service(name)` | `{url, call(tool, args), fetch(path, init?)}` for a declared service. `call` speaks MCP over HTTP (`url`, `source`); `fetch` speaks REST inside the declared base (`api`). See below. |
+| `dir(name)` | Absolute path of a declared `dir` service, with the install-time binding applied. Undeclared names throw. A verb runs inside the substrate, so it may hold a path; a session never does. |
+| `service(name)` | `{url, call(tool, args), fetch(path, init?)}` for a declared service. `call` speaks MCP over HTTP (`url`, `source`) or the substrate's own file door (`dir`); `fetch` speaks REST inside the declared base (`api`). See below. |
 | `dispatch(provider, mission, payload)` | a2a delegation. Requires an approved grant; returns the provider session's reply. |
 | `host` | ring-0 only. The substrate bridge, capped by `host_methods`. `undefined` everywhere else. |
 
@@ -32,12 +32,21 @@ A verb stands on one folder: `ctx.workspace`, the package's workspace (`~/Relay/
 re-pointable per package in the ledger). It is the session's cwd and where work output belongs, and
 it is created on first access.
 
-`ctx.dir(name)` is for the folders **outside** that ground, and the manifest gives the declaration
-two meanings by path shape: a relative path is inside the package tree and owned by it, while a `~`
-path is a **request** — the install consent binds it, and the binding is recorded in the ledger and
-merged, never dropped, across reinstalls. So `dir` is a coordinate and a grant, not a storage
-allocation; the only size axis in the grammar is `services[].disk`, the persistent volume a
-container body mounts at `/data`.
+A `dir` service is for the folders **outside** that ground, and the split is between *standing* and
+*calling*: the workspace is where the agent stands (it is the cwd, and the harness's native file
+tools simply reach it), while a `dir` is something it calls. A session never learns a `dir`'s path —
+it sees tools, `dir__<name>__{list,read,write,remove}`, for the folders its agent declared in
+`agents[].dirs`. Handing the path to a session instead would invite it to bypass the door and walk
+the filesystem, and that path is nowhere at all on a substrate whose sessions live in pods.
+
+The manifest gives the declaration two meanings by path shape: a relative path is inside the package
+tree and owned by it, while a `~` path is a **request** — the install consent binds it, and the
+binding is recorded in the ledger and merged, never dropped, across reinstalls. **The canon is the
+name, not the path**: what is written in the manifest is the local default binding, `--bind` replaces
+it, and an org substrate resolves the same name to its own volume coordinate (whether that folder is
+one per instance or one per person is that substrate's policy, which is why this grammar has no word
+for it). So `dir` is a coordinate and a grant, not a storage allocation; the only size axis in the
+grammar is `services[].disk`, the persistent volume a container body mounts at `/data`.
 
 Declaring your own workspace as a `~` dir is the shape to avoid. It reads as a request for a foreign
 folder — grammatically identical to asking for someone else's ground — so the map and the permission
@@ -46,16 +55,16 @@ a granted verb for anyone else's.
 
 ## Reaching a service
 
-`relay.yaml` declares services in four forms, and `ctx.service(name)` is the single accessor for the
-three that are doors. The handle carries both doors — `call` for MCP, `fetch` for REST — and calling
-the one a form does not have throws with a message naming the other:
+`relay.yaml` declares services in four forms, and `ctx.service(name)` is the single accessor for all
+four. The handle carries both doors — `call` for MCP, `fetch` for REST — and calling the one a form
+does not have throws with a message naming the other:
 
 | Declared form | `ctx.service(name)` |
 |---|---|
 | `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). `fetch` throws. |
 | `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block (same per-call resolution, same rotation). The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
 | `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. `fetch` throws. |
-| `dir` | Throws, with a message pointing at `ctx.dir(name)`. A folder is not a door. |
+| `dir` | A file door the substrate stands up itself: `call("list"\|"read"\|"write"\|"remove", args)`, dispatched in-process (no network hop). Paths in the arguments are relative to the folder and nothing else — an absolute path, a `..` climb, and a symlink pointing outward are all refused by one judgment. `fetch` throws. Until 2026-08-25 this row read *a folder is not a door* and returned the caller to `ctx.dir(name)`; once folders stood up as session tools, that exception had no ground left, and removing it is what makes the sentence above — one accessor for every form — true without an asterisk. The credential and identity axes are absent here on purpose: nothing goes out. |
 
 One accessor for every form is deliberate. Credential and identity are attached where the call is
 made; a second accessor for `source` bodies would be a second place to forget them, and the body most

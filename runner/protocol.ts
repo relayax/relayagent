@@ -30,6 +30,7 @@ export const UPLOADS_PREFIX: string = UPLOADS_DIR + "/";
 export const TOOL_SEP = "__";
 export const A2A_TOOL_PREFIX: string = "a2a" + TOOL_SEP;
 export const EDGE_TOOL_PREFIX: string = "edge" + TOOL_SEP;
+export const DIR_TOOL_PREFIX: string = "dir" + TOOL_SEP;
 export const MCP_TOOL_PREFIX: string = "mcp" + TOOL_SEP;
 
 /** 툴 이름 세그먼트로 설 수 없는 문자를 `_` 로 접는다 — 미션 이름의 세그먼트화와
@@ -48,10 +49,18 @@ export function edgeToolName(provider: string, tool: string): string {
   return EDGE_TOOL_PREFIX + provider + TOOL_SEP + tool;
 }
 
+/** dir 문 도구 이름: `dir__<서비스>__<연산>` — 폴더 하나가 연산 수만큼 도구로 선다.
+ *  연산 어휘의 정본은 runtime/dirs.ts(DIR_OPS)이고 여기는 이름 조립만 안다. */
+export function dirToolName(service: string, op: string): string {
+  return DIR_TOOL_PREFIX + service + TOOL_SEP + op;
+}
+
 // 집행 쪽 파서 — provider 는 패키지 이름 문법([a-z0-9-])만 허용, rest 는 세그먼트화된
 // 미션/동사 이름. 생산 함수와 같은 문법의 역방향이어야 한다.
 const A2A_TOOL_RE = /^a2a__([a-z0-9-]+)__(.+)$/;
 const EDGE_TOOL_RE = /^edge__([a-z0-9-]+)__(.+)$/;
+// 서비스 이름은 slug 문법, 연산은 소문자 낱말 하나 — 생산(dirToolName)의 역방향이다
+const DIR_TOOL_RE = /^dir__([a-z0-9][a-z0-9-]*)__([a-z]+)$/;
 
 /** `a2a__<provider>__<rest>` 분해 — 아니면 null. */
 export function parseA2aToolName(name: string): { provider: string; rest: string } | null {
@@ -63,6 +72,12 @@ export function parseA2aToolName(name: string): { provider: string; rest: string
 export function parseEdgeToolName(name: string): { provider: string; tool: string } | null {
   const m = name.match(EDGE_TOOL_RE);
   return m ? { provider: m[1], tool: m[2] } : null;
+}
+
+/** `dir__<서비스>__<연산>` 분해 — 아니면 null. */
+export function parseDirToolName(name: string): { service: string; op: string } | null {
+  const m = name.match(DIR_TOOL_RE);
+  return m ? { service: m[1], op: m[2] } : null;
 }
 
 // ── 세션 slot 문법 (client-protocol.md §5.3-22) ──────────────────────────────
