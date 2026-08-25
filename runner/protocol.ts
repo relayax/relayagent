@@ -13,6 +13,15 @@ export function a2aMissionMarker(mission: string, consumer?: string | null): str
   return `[미션 수신: ${mission}${consumer ? ` ← ${consumer}` : ""}]`;
 }
 
+/** 위임 대화의 슬롯 — 미션과 **발신 패키지**가 함께 열쇠다. 미션만 열쇠면 모든 소비자가 한
+ *  대화에 앉아 앞선 위임의 payload 를 서로 읽고, 같은 미션의 동시 위임이 슬롯 직렬화(한 슬롯에
+ *  턴 하나)에 걸려 서로를 튕긴다. consumer 미상 위임(발신 패키지가 없는 자리)은 `ext` 한 자리를
+ *  함께 쓴다 — 마커의 무-consumer 분기와 같은 결이다. 생산이 두 곳(도구 문의 진행 중 판정,
+ *  브리지의 세션 개설)이라 문법은 여기 한 벌이어야 한다. 세션 id 문법(SLOT_RE)을 넘지 않게 접는다. */
+export function a2aMissionSlot(mission: string, consumer?: string | null): string {
+  return `mission-${consumer ? sanitizeToolSegment(consumer) : "ext"}-${sanitizeToolSegment(mission)}`.slice(0, 64);
+}
+
 // ── 업로드 착지 접두 (client-protocol.md §8-40) ──────────────────────────────
 // stage 아래 사용자 인바운드 무대의 디렉토리명이자, 업로드 응답 path 의 접두.
 // 클라이언트에게 path 는 불투명 참조다(§5.4-25) — 이 접두는 기판 내부 어휘로,
