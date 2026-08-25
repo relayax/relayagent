@@ -20,7 +20,7 @@ import { mcpDispatch, McpGateError, type McpIO, type McpToolInfo } from "./mcp.t
 // 폴더 문 — 감금·연산의 정본은 dirs.ts 한 곳이고, 동사 문(ctx.service)이 같은 벌을 쓴다
 import { dirCall, dirToolInfos, localDirIO, type DirIO } from "./dirs.ts";
 import { runSession, isSessionBusy, retireResident } from "./harness.ts";
-import { a2aMissionMarker, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, parseDirToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
+import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, parseDirToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
 
@@ -119,6 +119,57 @@ async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, a
   return tools;
 }
 
+// ── 위임의 시한과 배달 ───────────────────────────────────────────────────────
+// 위임(서브에이전트·a2a)은 세션 하나가 끝날 때까지 붙드는 장기 툴콜이라, 시한은 도구 자신이
+// 가져야 한다. MCP 층(claude-code 어댑터 MCP_TOOL_TIMEOUT 240s)이 먼저 자르면 "timed out"
+// 원문만 남고 완주한 위임의 답은 수신 세션 이력에만 앉아 발신 대화에 영영 닿지 않는다
+// (실사고 2026-08-20: 240s 초과 위임). 골격은 org 와 같다: 도구는 180s 에 정직하게 물러나고,
+// 위임은 계속 돌며, 완료는 발신 대화에 📬 프리픽스 턴으로 배달된다
+// (위젯 SYSTEM_PROMPT_PREFIXES · watchServerTurns 계약).
+
+function dispatchDeadlineS(): number {
+  const s = Number(process.env.RELAY_DISPATCH_TIMEOUT_S);
+  return s > 0 ? s : 180;
+}
+
+/** 시한 경주 — 이기면 봉투({reply}), 시한이 이기면 null. 빈 답도 답이므로 봉투로 감싼다
+ *  (문자열을 그대로 겨루면 "" 가 시한 승리와 구별되지 않는다). */
+async function raceDeadline(run: Promise<string>, s: number): Promise<{ reply: string } | null> {
+  return await Promise.race([
+    run.then((reply) => ({ reply })),
+    new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), s * 1000);
+      (t as { unref?: () => void }).unref?.();
+    }),
+  ]);
+}
+
+/** 시한을 넘긴 위임의 종결 배달 — 발신 대화에 턴 하나로 넣는다. 성공도 실패도 배달한다:
+ *  물러난 도구가 마지막 말이면 발신 세션은 위임이 끝났는지조차 모른다.
+ *  부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴 하나) — 10초 간격, 최대 1시간. */
+function deliverOnSettle(
+  run: Promise<string>,
+  label: string,
+  to: { authority: Authority; pkg: string; agent: string; slot: string | null },
+  log: Record<string, unknown>,
+): void {
+  const deliver = async (head: string, bodyText: string): Promise<void> => {
+    if (!to.slot) return; // 발신 슬롯 미상(구 번들) — 배달할 곳이 없다. 세션 목록이 답
+    const msg = `📬 위임 완료 — ${label}(${head})\n\n${String(bodyText).slice(0, 4000)}`;
+    for (let i = 0; i < 360; i++) {
+      try {
+        await runSession({ ledger: loadLedger(), pkg: to.pkg, agent: to.agent, authority: to.authority, prompt: msg, slot: to.slot });
+        return;
+      } catch (e) {
+        if (!String(e).includes("이전 요청을 처리")) break;
+        await new Promise((r) => setTimeout(r, 10_000));
+      }
+    }
+    logLine("dispatch", { ...log, delivered: false });
+  };
+  void run.then((reply) => deliver("완료", reply), (e) => deliver("실패", e instanceof Error ? e.message : String(e)));
+}
+
 // 1인 기판의 문 이음새 구현(mcp.ts McpIO) — 프로토콜 합성은 mcpDispatch 한 벌이고, 여기는
 // "무엇이 도구이고 누가 실행하는가"(세션 스코프 게이트·a2a 위임·edge 소비·runScript)만 답한다.
 // handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
@@ -134,7 +185,19 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         const mission = (m.missions ?? []).find((x) => sanitizeToolSegment(x.name) === a2a.rest)?.name ?? a2a.rest;
         const grant = await authority.grantForMission(pkg, a2a.provider, mission);
         if (!grant) throw new Error(`E_NO_GRANT: ${pkg} -> ${a2a.provider}/${mission}`);
-        return await host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
+        // 진행 중인 같은 위임 위에 얹지 않는다 — runSession 의 슬롯 직렬화가 사람에게 하는
+        // 말("끝나면 이어서 말씀해 주세요")로 튕기면 모델은 그것을 재시도 신호로 읽는다.
+        // 열쇠는 브리지가 세션을 여는 열쇠와 같은 벌이어야 한다(정본: protocol.ts)
+        const slot = a2aMissionSlot(mission, pkg);
+        if (isSessionBusy(a2a.provider, slot)) {
+          throw new Error(`이미 진행 중인 위임: ⇄ ${a2a.provider} · ${mission} — 완료가 이 대화로 📬 배달된다. 기다렸다가 필요하면 그때 재위임하라.`);
+        }
+        const run = host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
+        const missionDeadlineS = dispatchDeadlineS();
+        const done = await raceDeadline(run, missionDeadlineS);
+        if (done) return done.reply;
+        deliverOnSettle(run, `${a2a.provider} · ${mission}`, { authority, pkg, agent, slot: callerSlot ?? null }, { pkg, provider: a2a.provider, mission, slot });
+        return `위임이 ${missionDeadlineS}초 안에 끝나지 않았습니다 — ${a2a.provider} 의 "${mission}" 미션이 세션 "⇄ ${pkg} → ${mission}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent, [pkg]);
       const dir = parseDirToolName(name);
@@ -204,33 +267,12 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;
-        const run = runSession({ ledger, pkg, agent: sub, authority, prompt, slot });
-        // 시한은 도구 자신이 갖는다 — MCP 층(MCP_TOOL_TIMEOUT 240s)이 먼저 자르면 "timed out"
-        // 원문만 남고 완료가 영영 배달되지 않는다(실사고 2026-08-20: 240s 초과 위임). org 와
-        // 같은 골격: 도구는 180s 에 정직하게 물러나고, 위임은 계속 돌며, 완료는 발신 대화에
-        // 📬 프리픽스 턴으로 배달된다(위젯 SYSTEM_PROMPT_PREFIXES · watchServerTurns 계약).
-        const timeoutS = Number(process.env.RELAY_DISPATCH_TIMEOUT_S) > 0 ? Number(process.env.RELAY_DISPATCH_TIMEOUT_S) : 180;
-        const winner = await Promise.race([
-          run.then((r) => ({ reply: r.reply })),
-          new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), timeoutS * 1000); (t as { unref?: () => void }).unref?.(); }),
-        ]);
+        // 시한과 배달은 위임 두 형의 공통 사다리다(위 dispatchDeadlineS·raceDeadline·deliverOnSettle)
+        const run = runSession({ ledger, pkg, agent: sub, authority, prompt, slot }).then((r) => r.reply);
+        const timeoutS = dispatchDeadlineS();
+        const winner = await raceDeadline(run, timeoutS);
         if (winner) return winner.reply;
-        const deliver = async (head: string, bodyText: string) => {
-          if (!callerSlot) return; // 발신 슬롯 미상(구 번들) — 배달할 곳이 없다. 세션 목록이 답
-          const msg = `📬 위임 완료 — ${sub}(${head})\n\n${String(bodyText).slice(0, 4000)}`;
-          // 부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴은 하나) — 10초 간격, 최대 1시간
-          for (let i = 0; i < 360; i++) {
-            try {
-              await runSession({ ledger: loadLedger(), pkg, agent, authority, prompt: msg, slot: callerSlot });
-              return;
-            } catch (e) {
-              if (!String(e).includes("이전 요청을 처리")) break;
-              await new Promise((r2) => setTimeout(r2, 10_000));
-            }
-          }
-          logLine("dispatch", { pkg, sub, slot, delivered: false });
-        };
-        void run.then((r) => deliver("완료", r.reply), (e) => deliver("실패", e instanceof Error ? e.message : String(e)));
+        deliverOnSettle(run, sub, { authority, pkg, agent, slot: callerSlot ?? null }, { pkg, sub, slot });
         return `위임이 ${timeoutS}초 안에 끝나지 않았습니다 — 서브에이전트는 세션 "↳ ${sub}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
