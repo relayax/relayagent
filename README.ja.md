@@ -55,7 +55,7 @@ npm install
 alias relay="node --experimental-strip-types runner/cli.ts"
 
 relay validate packages/system        # マニフェストを判定
-relay install packages/system --ring0 --workspace ~   # 管理シェルを ring-0 で、ホームフォルダを workspace として承認
+relay install packages/system --ring0   # 管理シェルを ring-0 で
 relay daemon                          # API、サービス、トリガー、コンソール
 ```
 
@@ -74,7 +74,7 @@ relay run system "何がインストールされてる?"  # ワンショット�
 
 ```
 relay daemon                          基板を起動(API、サービス、トリガー、コンソール)
-relay install <dir> [--ring0] [--workspace dir]  パッケージをインストール(workspace = フォルダ承認)
+relay install <dir> [--ring0] [--workspace <パス>]  パッケージをインストール(workspace = フォルダ承認)
 relay ls | rm <名前>                   一覧 | 削除
 relay validate <dir>                  マニフェストを判定
 relay build <パッケージ>                surfaces.view.out を再ビルド
@@ -123,11 +123,11 @@ my-package/
 | --- | --- |
 | `~/.relay/ledger.json` | インストール済みパッケージと承認の台帳 |
 | `~/.relay/sessions/` | パッケージごとのセッションスロット |
-| `~/.relay/drafts/<名前>/` | 編集レイヤー: git 履歴を持つ作業コピー(スタジオと agent-builder がここに書く) |
 | `~/.relay/releases/<名前>/<バージョン>/` | 発行スナップショット: 台帳の path がこのいずれかを指す(ロールバック = 付け替え) |
 | `~/.relay/logs/*.jsonl` | イベントログ |
 | `~/.relay/vault.json` | Keychain がない場合の資格情報フォールバック |
 | `~/Relay/` | 見える地面:デフォルト workspace(`~/Relay/<名前>`) |
+| `~/Relay/packages/<名前>/` | 編集レイヤー: git 履歴を持つ作業コピー(スタジオと agent-builder がここに書く)。オーサリングはこの製品の中心なので、人が開ける場所で行われる——動いている版は `releases/` に残り、手が届かない。 |
 | `~/Relay/.stage/` | チャットとセッションの間のファイル交換ステージ |
 | `.env`(チェックアウト直下) | インスタンス設定:`RELAY_HOME`(デフォルト `~/.relay`)、`RELAY_PORT`(デフォルト 4747)。シェルの環境変数が常に優先。[.env.example](.env.example) 参照 |
 | `127.0.0.1:4747` | デーモン API とコンソール(デフォルトポート) |

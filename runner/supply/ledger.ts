@@ -11,6 +11,7 @@ if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 // 기판 데이터 정본은 전부 RELAY_HOME(기본 ~/.relay) 한 곳이다. 백업 = 이 디렉토리, 제거 = rm -rf 이 디렉토리.
 // version / ledger.json / sessions/<pkg>/<slot>/{bundle,history.jsonl,label} / logs / vault.json / run
+// releases/<pkg>/<버전> (도는 판 — 장부 path 가 가리킨다. 사람이 만지면 실행본이 흔들린다)
 // 이 디렉토리는 기판 장기다: 모든 세션에 deny 로 주입되어 에이전트 도구 호출이 닿지 않는다.
 // 에이전트가 딛는 땅은 둘뿐 — workspace(설치 때 결재된 폴더)와 stage(파일 교환 무대)
 // RELAY_HOME + RELAY_PORT 를 함께 바꾸면 기판 인스턴스가 통째로 분리된다 (개발용 = 별도 홈 + 별도 포트)
@@ -25,14 +26,55 @@ export const API_URL = `http://127.0.0.1:${API_PORT}`;
 // 폴더 결재의 기본 홈. workspace 미기록 패키지의 cwd 와 stage 가 이 아래 앉는다.
 // 인스턴스별 분리 대상이 아니다: workspace 는 패키지별 결재로 이미 재지정 가능
 const WORKSPACE_HOME = path.join(os.homedir(), "Relay");
-const LAYOUT_VERSION = "1";
+const LAYOUT_VERSION = "2";
+
+// 저작 트리 — 사람이 열어 보고 고치는 자리라 기판 장기가 아니라 **보이는 땅**에 산다.
+// 여기 있는 것은 작업 사본(draft)뿐이고, 릴리스 스냅샷은 따라오지 않는다: 그건 도는 판이라
+// 손대면 실행본이 흔들린다(draft.ts 머리 주석의 두 층 그대로).
+// system 패키지가 `dir: ~/Relay/packages` 로 이 폴더에 문을 낸다 — 선언은 좌표에 이름을 붙일
+// 뿐이고 폴더의 주인은 기판이다(같은 사실을 두 곳에 적지 않는다).
+const PACKAGES_HOME = path.join(WORKSPACE_HOME, "packages");
+
+/** 저작 트리의 좌표 — **만들지 않는다**(sessionPath 와 같은 결: 열거·조회는 실재를 전제하지 않는다) */
+export function packagesPath(): string {
+  return PACKAGES_HOME;
+}
 
 function ensureLayout(): void {
   for (const d of [RELAY_HOME, path.join(RELAY_HOME, "logs"), path.join(RELAY_HOME, "run")]) {
     fs.mkdirSync(d, { recursive: true });
   }
   const v = path.join(RELAY_HOME, "version");
-  if (!fs.existsSync(v)) fs.writeFileSync(v, LAYOUT_VERSION + "\n");
+  const cur = fs.existsSync(v) ? fs.readFileSync(v, "utf8").trim() : null;
+  if (cur === "1") migrateDrafts();
+  if (cur !== LAYOUT_VERSION) fs.writeFileSync(v, LAYOUT_VERSION + "\n");
+}
+
+/**
+ * layout 1 → 2 — 저작 트리가 ~/.relay/drafts 에서 ~/Relay/packages 로 나왔다.
+ * 사용자의 작업 사본이라 조용히 버리지 않는다: 옮길 수 있는 것은 옮기고, 이름이 겹치는 것은
+ * 그 자리에 남긴 뒤 로그에 적는다(덮어쓰면 둘 중 하나의 작업이 사라진다 — 어느 쪽이 최신인지
+ * 기판은 모른다). RELAY_HOME 을 다른 볼륨에 둔 인스턴스가 있으므로 rename 실패는 복사로 받는다.
+ */
+function migrateDrafts(): void {
+  const old = path.join(RELAY_HOME, "drafts");
+  if (!fs.existsSync(old)) return;
+  fs.mkdirSync(PACKAGES_HOME, { recursive: true });
+  for (const name of fs.readdirSync(old)) {
+    const from = path.join(old, name);
+    const to = path.join(PACKAGES_HOME, name);
+    if (fs.existsSync(to)) {
+      logLine("layout", { migrate: "drafts", name, skipped: "같은 이름이 이미 있습니다", from });
+      continue;
+    }
+    try {
+      fs.renameSync(from, to);
+    } catch {
+      fs.cpSync(from, to, { recursive: true });
+      fs.rmSync(from, { recursive: true, force: true });
+    }
+  }
+  if (!fs.readdirSync(old).length) fs.rmdirSync(old);
 }
 
 /**

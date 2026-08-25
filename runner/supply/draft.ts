@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument } from "yaml";
-import { RELAY_HOME, saveLedger, type Ledger } from "./ledger.ts";
+import { packagesPath, saveLedger, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, ManifestError, type Manifest } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
@@ -16,8 +16,13 @@ import { buildView, type BuildResult } from "../runtime/view.ts";
 // loadManifest(rec.path) 를 읽으므로 반쯤 저장된 매니페스트가 그대로 노출된다. 편집은 전부
 // draft(작업 사본)에 쌓이고, publish 가 판정을 통과한 스냅샷을 releases 에 뜬 뒤 장부 path 를
 // 갈아 끼운다. 참조 전환이라 원자적이고, 실패하면 실행본은 마지막 릴리스 그대로 돈다.
-//   ~/.relay/drafts/<이름>/            작업 사본 (git 저장소 — 이력·diff·되돌리기)
+//   ~/Relay/packages/<이름>/           작업 사본 (git 저장소 — 이력·diff·되돌리기)
 //   ~/.relay/releases/<이름>/<버전>/   불변 스냅샷 (장부 path 가 이 중 하나를 가리킨다)
+//
+// 두 층이 다른 땅에 사는 것이 계약이다. 작업 사본은 **사람이 열어 보고 고치는 것**이라 보이는
+// 땅에 있고(파인더로 열리고, system 패키지가 dir 서비스로 문을 내 세션도 도구로 닿는다),
+// 릴리스는 도는 판이라 기판 장기에 남아 모든 세션에 막힌다. 종전에는 작업 사본도 ~/.relay 에
+// 있어서, 저작이라는 이 제품의 중심 행위만 사용자에게 보이지 않는 자리에서 벌어졌다.
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -26,7 +31,7 @@ const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const COPY_SKIP = new Set([".git", "node_modules", ".next"]);
 
 export function draftPath(name: string): string {
-  return path.join(RELAY_HOME, "drafts", name);
+  return path.join(packagesPath(), name);
 }
 
 
@@ -348,7 +353,7 @@ export function discardDraft(name: string): { removed: string } {
 }
 
 export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean }[] {
-  const root = path.join(RELAY_HOME, "drafts");
+  const root = packagesPath();
   if (!fs.existsSync(root)) return [];
   return fs
     .readdirSync(root, { withFileTypes: true })
