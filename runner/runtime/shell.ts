@@ -16,7 +16,7 @@
 // 판정(무슨 얼굴인가·어디로 가는가)은 **여기 서버 쪽**에 있다. 스크립트는 /shell/nav 가 준
 // 항목을 그리기만 한다 — 마운트 문법(/pkg/…)도 얼굴 규칙도 클라가 조립하지 않는다
 // (client-protocol §2-6 과 같은 규율). 콘솔 화면도 같은 응답을 읽어 판정이 갈라지지 않는다.
-import type { Ledger } from "../supply/ledger.ts";
+import { STORE_INDEX_URL, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
 
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
@@ -58,6 +58,9 @@ export interface ShellNav {
   home: string;
   create: string;
   importer: string;
+  /** 스토어 웹 주소 — 이 기판에 스토어 연결이 켜져 있을 때만. OSS 기본(연결 없음)은 null 이라
+   *  항목 자체가 그려지지 않는다 — "마켓의 문은 여는 쪽이 연다"는 중립 설계가 사이드바에도 그대로 선다 */
+  store: string | null;
 }
 
 /**
@@ -125,7 +128,9 @@ export function shellNav(ledger: Ledger, running: string[]): ShellNav {
     });
   }
   items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
-  return { items, home: "/", create: consoleHref("studio/?new=1"), importer: "/store/import" };
+  // 인덱스 주소에서 웹 주소를 얻는 규칙은 데스크톱 앱(daemon.rs store_web)과 같다
+  const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
+  return { items, home: "/", create: consoleHref("studio/?new=1"), importer: "/store/import", store };
 }
 
 /** 문서 말미에 스크립트 한 줄. </body> 부재(손저작 단일 HTML)면 append — injectPortalBar 와 같은 관례 */
@@ -167,6 +172,7 @@ var GLYPH = {
 var FACE_KO = { view: "화면", chat: "대화", live: "상주", parts: "부품" };
 var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+  store: '<path d="M3 5.5h10l-.7 7a1 1 0 0 1-1 .9H4.7a1 1 0 0 1-1-.9zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
   fold: '<path d="M6 3.5 2.5 8 6 12.5M13 8H3"/>',
@@ -311,6 +317,10 @@ function renderSide(nav, err){
   var top = document.createElement("div");
   top.className = "gp";
   top.appendChild(item(nav ? nav.home : "/", svg(ICONS.home), "홈", { on: onHome(), title: "홈 — 설치된 앱" }));
+  // 스토어 — 이 기판에 스토어 연결이 켜져 있을 때만 서버가 주소를 싣는다 (OSS 기본은 없음)
+  if (nav && nav.store) {
+    top.appendChild(item(nav.store, svg(ICONS.store), "스토어", { title: "스토어 — 에이전트 마켓플레이스" }));
+  }
   el.appendChild(top);
 
   if (err) {
