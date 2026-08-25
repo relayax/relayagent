@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { loadLedger, logLine, sessionDir, type Ledger } from "../supply/ledger.ts";
+import { RELAY_HOME, loadLedger, logLine, sessionDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, listScripts, agentScriptScope, agentDirScope, type Manifest } from "../supply/manifest.ts";
 // edge 소비 집행(callEdgeTool)의 정본은 실행 옆이다 — 세션 문과 동사 문(ctx.edge)이
 // 같은 판정을 지나야 하므로 한 벌만 둔다
@@ -19,7 +19,7 @@ import { runScript, scriptMeta, callEdgeTool, type HostBridge } from "./scripts.
 import { mcpDispatch, McpGateError, type McpIO, type McpToolInfo } from "./mcp.ts";
 // 폴더 문 — 감금·연산의 정본은 dirs.ts 한 곳이고, 동사 문(ctx.service)이 같은 벌을 쓴다
 import { dirCall, dirToolInfos, localDirIO, type DirIO } from "./dirs.ts";
-import { runSession, isSessionBusy, retireResident } from "./harness.ts";
+import { runSession, isSessionBusy, retireResident, localSessionIO, INTERRUPTED_MARK, type SessionIO } from "./harness.ts";
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, parseDirToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
@@ -144,30 +144,141 @@ async function raceDeadline(run: Promise<string>, s: number): Promise<{ reply: s
   ]);
 }
 
+/** 배달 주소 — 위임을 보낸 대화. slot 이 없으면(구 번들) 배달할 곳이 없다 */
+interface DeliverTo {
+  authority: Authority;
+  pkg: string;
+  agent: string;
+  slot: string;
+}
+
+/** 결과가 앉는 자리 — 위임이 도는 대화. sweep 이 여기 이력을 읽어 결과를 찾는다 */
+interface DeliverFrom {
+  pkg: string;
+  slot: string;
+}
+
+/** 📬 한 줄을 발신 대화에 턴으로 넣는다. 부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴
+ *  하나) — 10초 간격, 최대 1시간. 배달했으면 true */
+async function deliverNotice(to: DeliverTo, label: string, head: string, body: string): Promise<boolean> {
+  const msg = `📬 위임 완료 — ${label}(${head})\n\n${String(body).slice(0, 4000)}`;
+  for (let i = 0; i < 360; i++) {
+    try {
+      await runSession({ ledger: loadLedger(), pkg: to.pkg, agent: to.agent, authority: to.authority, prompt: msg, slot: to.slot });
+      return true;
+    } catch (e) {
+      if (!String(e).includes("이전 요청을 처리")) return false;
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+  }
+  return false;
+}
+
+// ── 미결 배달 장부 ───────────────────────────────────────────────────────────
+// 배달 약속이 프로세스 메모리에만 살면(promise 의 .then) 기판이 죽는 순간 통째로 사라진다:
+// 위임은 완주했는데 발신 대화는 영영 모르고, 실패 로그조차 그 코드에 닿지 못해 안 남는다
+// (실사고 2026-08-25 — 재시작이 진행 중 위임의 배달을 지웠고, 발신 대화의 마지막 말은
+// "180초 안에 안 끝났습니다"로 남았다). 그래서 약속을 디스크에 적고 다음 기동이 주워 배달한다.
+// 조직 기판의 notify_parent 컬럼 + 재배달 sweep 과 같은 골격의 1인용이다.
+//
+// 적어도 한 번(at-least-once)이다: 배달 성공과 장부 삭제 사이에 죽으면 다음 기동이 한 번 더
+// 배달한다. 조용히 잃는 것보다 두 번 오는 편이 낫다 — 잃으면 사용자가 알 길이 없다.
+
+const PENDING_DIR = path.join(RELAY_HOME, "dispatch-pending");
+/** 배달 자체가 계속 실패하는 약속을 영원히 들고 있지 않는다 */
+const PENDING_MAX_ATTEMPTS = 3;
+/** 이보다 오래된 결과는 배달해도 그 대화의 맥락이 아니다 */
+const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface PendingDelivery {
+  id: string;
+  to: { pkg: string; slot: string; agent: string };
+  from: DeliverFrom;
+  label: string;
+  /** 이 시각 뒤에 앉은 bot 줄만 이 위임의 답이다 — 앞선 답을 결과로 착각하지 않는 근거 */
+  since: number;
+  attempts: number;
+}
+
+function writePending(rec: PendingDelivery): void {
+  try {
+    fs.mkdirSync(PENDING_DIR, { recursive: true });
+    fs.writeFileSync(path.join(PENDING_DIR, rec.id + ".json"), JSON.stringify(rec));
+  } catch { /* 장부를 못 적으면 메모리 사다리만 남는다 — 위임 자체를 막지는 않는다 */ }
+}
+
+function clearPending(id: string): void {
+  try {
+    fs.rmSync(path.join(PENDING_DIR, id + ".json"), { force: true });
+  } catch { /* 이미 없음 */ }
+}
+
+function readPending(): PendingDelivery[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(PENDING_DIR).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: PendingDelivery[] = [];
+  for (const n of names) {
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, n), "utf8")) as PendingDelivery;
+      if (rec?.id && rec.to?.pkg && rec.to?.slot && rec.from?.pkg && rec.from?.slot) out.push(rec);
+      else fs.rmSync(path.join(PENDING_DIR, n), { force: true }); // 형이 아닌 파일은 장부가 아니다
+    } catch { /* 깨진 줄 하나가 나머지 배달을 막지 않는다 */ }
+  }
+  return out;
+}
+
 /** 시한을 넘긴 위임의 종결 배달 — 발신 대화에 턴 하나로 넣는다. 성공도 실패도 배달한다:
  *  물러난 도구가 마지막 말이면 발신 세션은 위임이 끝났는지조차 모른다.
- *  부모가 다른 턴을 처리 중이면 기다린다(한 슬롯에 턴 하나) — 10초 간격, 최대 1시간. */
-function deliverOnSettle(
-  run: Promise<string>,
-  label: string,
-  to: { authority: Authority; pkg: string; agent: string; slot: string | null },
-  log: Record<string, unknown>,
-): void {
+ *  약속을 먼저 장부에 적는다 — 이 프로세스가 죽어도 다음 기동이 이어받는다. */
+function deliverOnSettle(run: Promise<string>, label: string, to: DeliverTo, from: DeliverFrom): void {
+  const id = crypto.randomUUID();
+  writePending({ id, to: { pkg: to.pkg, slot: to.slot, agent: to.agent }, from, label, since: Date.now(), attempts: 0 });
   const deliver = async (head: string, bodyText: string): Promise<void> => {
-    if (!to.slot) return; // 발신 슬롯 미상(구 번들) — 배달할 곳이 없다. 세션 목록이 답
-    const msg = `📬 위임 완료 — ${label}(${head})\n\n${String(bodyText).slice(0, 4000)}`;
-    for (let i = 0; i < 360; i++) {
-      try {
-        await runSession({ ledger: loadLedger(), pkg: to.pkg, agent: to.agent, authority: to.authority, prompt: msg, slot: to.slot });
-        return;
-      } catch (e) {
-        if (!String(e).includes("이전 요청을 처리")) break;
-        await new Promise((r) => setTimeout(r, 10_000));
-      }
-    }
-    logLine("dispatch", { ...log, delivered: false });
+    if (await deliverNotice(to, label, head, bodyText)) clearPending(id);
+    else logLine("dispatch", { ...from, label, delivered: false }); // 장부는 남는다 — 다음 기동이 다시 든다
   };
   void run.then((reply) => deliver("완료", reply), (e) => deliver("실패", e instanceof Error ? e.message : String(e)));
+}
+
+/**
+ * 미결 배달 sweep — 기동 때 한 번. 지난 기동이 배달하지 못한 약속을 주워 발신 대화에 앉힌다.
+ *
+ * **끊긴 턴 복구(recoverDanglingTurns) 뒤에** 돌아야 한다: 중단된 위임의 마지막 줄은 그 복구가
+ * 앉히고, 이 sweep 은 그 줄을 결과로 읽는다. 순서가 뒤집히면 아직 답이 없는 것으로 보여
+ * 배달이 한 기동씩 밀린다.
+ */
+export async function sweepPendingDeliveries(
+  authority: Authority,
+  io: SessionIO = localSessionIO(loadLedger),
+): Promise<number> {
+  let sent = 0;
+  for (const rec of readPending()) {
+    if (Date.now() - rec.since > PENDING_TTL_MS || rec.attempts >= PENDING_MAX_ATTEMPTS) {
+      clearPending(rec.id);
+      logLine("dispatch", { ...rec.from, label: rec.label, delivered: false, dropped: true });
+      continue;
+    }
+    let last;
+    try {
+      const msgs = io.readMessages(rec.from.pkg, rec.from.slot);
+      last = msgs[msgs.length - 1];
+    } catch { /* 위임 대화가 지워졌다 — 아래 판정이 건너뛴다 */ }
+    // 마지막이 물음이면 아직 종결 전이고, 약속보다 앞선 답이면 이 위임의 것이 아니다.
+    // 둘 다 장부를 그대로 둔다 — 다음 기동이 다시 본다
+    if (!last || last.role !== "bot" || !(Date.parse(last.t) > rec.since)) continue;
+    const head = last.text.includes(INTERRUPTED_MARK) ? "중단" : "완료";
+    if (await deliverNotice({ ...rec.to, authority }, rec.label, head, last.text)) {
+      clearPending(rec.id);
+      sent++;
+    } else {
+      writePending({ ...rec, attempts: rec.attempts + 1 });
+    }
+  }
+  return sent;
 }
 
 // 1인 기판의 문 이음새 구현(mcp.ts McpIO) — 프로토콜 합성은 mcpDispatch 한 벌이고, 여기는
@@ -196,7 +307,7 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         const missionDeadlineS = dispatchDeadlineS();
         const done = await raceDeadline(run, missionDeadlineS);
         if (done) return done.reply;
-        deliverOnSettle(run, `${a2a.provider} · ${mission}`, { authority, pkg, agent, slot: callerSlot ?? null }, { pkg, provider: a2a.provider, mission, slot });
+        if (callerSlot) deliverOnSettle(run, `${a2a.provider} · ${mission}`, { authority, pkg, agent, slot: callerSlot }, { pkg: a2a.provider, slot });
         return `위임이 ${missionDeadlineS}초 안에 끝나지 않았습니다 — ${a2a.provider} 의 "${mission}" 미션이 세션 "⇄ ${pkg} → ${mission}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       if (edge) return await callEdgeTool(ledger, authority, pkg, edge.provider, edge.tool, args, host, agent, [pkg]);
@@ -272,7 +383,7 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         const timeoutS = dispatchDeadlineS();
         const winner = await raceDeadline(run, timeoutS);
         if (winner) return winner.reply;
-        deliverOnSettle(run, sub, { authority, pkg, agent, slot: callerSlot ?? null }, { pkg, sub, slot });
+        if (callerSlot) deliverOnSettle(run, sub, { authority, pkg, agent, slot: callerSlot }, { pkg, slot });
         return `위임이 ${timeoutS}초 안에 끝나지 않았습니다 — 서브에이전트는 세션 "↳ ${sub}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
