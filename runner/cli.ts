@@ -58,8 +58,10 @@ function parseBindings(): Record<string, string> | undefined {
 /** 권한 고지서를 터미널 문장으로. 안 하는 것도 문장으로 적는다 — 없는 항목과 안 보여준 항목은 다르다 */
 function printDisclosure(d: import("./supply/manifest.ts").Disclosure, name: string): string {
   const lines: string[] = ["", "  설치하면 이렇게 됩니다"];
-  for (const f of d.folders) lines.push(`    폴더    ${f.path} 를 만들고 읽고 씁니다 (${f.name})`);
-  lines.push(`    폴더    workspace ~/Relay/${name} 이 세션의 땅이 됩니다 (설치 시 변경 가능)`);
+  // 두 폴더는 성격이 다르므로 라벨도 갈린다 — 종전에는 둘 다 "폴더" 여서 자기 땅과 빌린 폴더가
+  // 고지서에서 구별되지 않았다. 딛는 곳은 하나이고, 나머지는 도구로 부르는 곳이다
+  lines.push(`    작업폴더 ~/Relay/${name} — 이 에이전트가 딛고 일하는 땅입니다 (설치 시 변경 가능)`);
+  for (const f of d.folders) lines.push(`    바깥폴더 ${f.path} 를 만들고 읽고 씁니다 — 도구로만 닿습니다 (${f.name})`);
   for (const l of d.llm) lines.push(`    LLM     ${l.provider} 계정으로 돕니다 (${l.auth})`);
   // 연결 방법은 자격 형태가 정한다 — token 은 relay connect, oauth 는 relay oauth.
   // 서비스 이름이 곧 vault 좌표라 옛 커넥터 줄이 하던 안내가 모든 외부 접점으로 넓어졌다

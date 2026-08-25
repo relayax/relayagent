@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { expandHome, workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
+import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
 import { loadManifest, listScripts, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
 import { resolveProvider } from "../supply/install.ts";
+// dir 문의 집행 정본 — 세션 도구(dir__*)와 여기가 같은 감금·같은 연산을 지난다
+import { dirCall, ensureDirRoot, resolveDirService } from "./dirs.ts";
 
 export interface HostBridge {
   registry(): unknown;
@@ -62,11 +64,15 @@ export interface ScriptMeta {
 /**
  * 서비스 손잡이 — 형이 넷이어도 접근자는 하나라서 두 문을 다 싣는다. 자기 형이 아닌 문은
  * 사유를 실어 되돌린다(fail-loud): 형마다 다른 손잡이를 주면 저작자가 "몸이 무엇이냐"를 먼저
- * 외워야 하고, 그 순간 자격·신원이 한 문으로 모이지 않는다 (dir 분기와 같은 결).
+ * 외워야 하고, 그 순간 자격·신원이 한 문으로 모이지 않는다.
+ *
+ * dir 형도 이 손잡이를 지난다(2026-08-25). 종전에는 "폴더는 문이 아니다"라며 되돌렸는데,
+ * 폴더를 세션에 도구로 세우고 나니 문이 맞다 — 전송만 다르다(기판이 프로세스 안에서 직접
+ * 선다). 예외가 하나 사라져 네 형이 한 접근자로 모인다.
  */
 export interface ServiceHandle {
   url: string;
-  /** url·source 형 — MCP over HTTP */
+  /** url·source 형 — MCP over HTTP. dir 형 — 기판이 세우는 파일 문(list·read·write·remove) */
   call(tool: string, args: unknown): Promise<unknown>;
   /** api 형 — 선언된 base 접두 안쪽으로만 나가는 REST 요청. Authorization 은 기판이 붙인다 */
   fetch(path: string, init?: RequestInit): Promise<Response>;
@@ -93,7 +99,11 @@ export interface ScriptCtx {
    * 않았다 — 구멍을 메우는 자리다.
    */
   workspace: string;
-  /** 선언한 dir 서비스의 경로. `~` 형은 설치 결재로 바인딩된 신청이다(자기 바닥은 workspace) */
+  /**
+   * 선언한 dir 서비스의 **절대경로**. `~` 형은 설치 결재로 바인딩된 신청이다(자기 바닥은 workspace).
+   * 동사는 기판 안에서 도므로 경로를 직접 받는다 — 감금이 필요하면 ctx.service(이름) 쪽 파일
+   * 문을 쓴다(세션이 보는 dir__* 도구와 같은 판정 한 벌). 세션에는 이 경로를 넘기지 않는다.
+   */
   dir(name: string): string;
   service(name: string): ServiceHandle;
   /**
@@ -141,14 +151,6 @@ export interface ServiceIO {
 export const localServiceIO: ServiceIO = {
   body: (_pkg, _service, port) => (port ? { url: `http://127.0.0.1:${port}` } : null),
 };
-
-export function resolveDirService(ledger: Ledger, pkg: string, m: Manifest, name: string): string {
-  const svc = (m.services ?? []).find((s) => s.name === name);
-  if (!svc || !("dir" in svc) || svc.dir == null) throw new Error(`dir 서비스 아님: ${name}`);
-  const bound = ledger.packages[pkg]?.dirBindings?.[name] ?? svc.dir;
-  const expanded = expandHome(bound);
-  return expanded.startsWith("/") ? expanded : path.join(ledger.packages[pkg].path, expanded);
-}
 
 export async function mcpCall(url: string, tool: string, args: unknown, authHeader?: string, identity?: CallerIdentity): Promise<unknown> {
   const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json, text/event-stream" };
@@ -226,9 +228,18 @@ export function makeCtx(
     service: (name) => {
       const svc = (m.services ?? []).find((s) => s.name === name);
       if (!svc) throw new Error(`미선언 서비스: ${name}`);
-      // dir 형은 파일 경로지 부를 문이 아니다 — 사유를 실어 되돌린다(조용한 해석 금지)
+      // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산은
+      // 세션 도구(dir__*)와 같은 한 벌(dirs.ts)을 지난다 — 두 입구가 다른 답을 내면 캡이 아니라
+      // 우연이다(edge 소비와 같은 규율). 자격·신원 축은 없다: 나가는 요청이 아니다.
       if ("dir" in svc && svc.dir != null) {
-        throw new Error(`dir 서비스는 ctx.service 대상이 아닙니다: ${name} — 경로는 ctx.dir("${name}"), 호출은 url·api·source 형`);
+        const root = ensureDirRoot(resolveDirService(ledger, pkg, m, name));
+        return {
+          url: `dir://${name}`,
+          call: (op, args) => dirCall(root, op, (args ?? {}) as Record<string, unknown>),
+          fetch: async () => {
+            throw new Error(`폴더 문에는 fetch 가 없습니다: ${name} — 파일 연산은 ctx.service("${name}").call("read"|"list"|"write"|"remove", 인자)`);
+          },
+        };
       }
       // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
       // 풀어 헤더로 붙이고(oauth 번들은 만료 60초 전 자동 회전, oauth.ts) 목적지는 apiTarget 이

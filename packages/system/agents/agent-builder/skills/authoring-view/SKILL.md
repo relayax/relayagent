@@ -136,8 +136,9 @@ window.addEventListener("relay:turn", (e) => {
 ## 데이터의 거처
 
 화면이 만드는 것은 사람이 열 수 있는 파일이어야 한다. `services[].dir` 로 폴더를 선언하고,
-동사가 그 안에 쓴다. `localStorage` 는 거처가 아니다 — 에이전트가 못 읽고, 사용자가 못 열고,
-백업도 안 된다.
+동사가 그 안에 쓴다 — `ctx.service("<이름>").call("write", { path, content })`. 같은 폴더를
+에이전트도 다뤄야 하면 `agents[].dirs` 에 그 이름을 적는다(세션에 `dir__<이름>__*` 도구가 선다).
+`localStorage` 는 거처가 아니다 — 에이전트가 못 읽고, 사용자가 못 열고, 백업도 안 된다.
 
 ## 흔한 실수
 

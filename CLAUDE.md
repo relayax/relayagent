@@ -63,7 +63,8 @@ assets/                 project logo
    Translation into a native CLI format belongs to the adapter in `packages/*/harness/<name>/`,
    never to the runner. Do not hardcode a model name, a vendor alias, or a CLI flag in `runner/`.
 6. **Minimal ground.** A session stands on one granted workspace folder. Extra folders are `dir`
-   services. `~/.relay` is denied to every session, always.
+   services — the session *calls* them (`dir__<name>__*` tools, capped by `agents[].dirs`) instead of
+   standing on them, and never learns their paths. `~/.relay` is denied to every session, always.
 
 ## Working on the runner
 

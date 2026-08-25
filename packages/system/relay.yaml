@@ -126,10 +126,13 @@ agents:
     persona: agents/agent-builder/AGENT.md
     skills: agents/agent-builder/skills
     scripts: [pkg-*, grant-*, draft-*, release-*]
+    dirs: [packages]
 
 scripts:
   source: scripts
 
 services:
+  # 사용자가 저작한 패키지가 앉는 폴더. 저작 세션이 dir__packages__* 로 열어 보고 고친다 —
+  # 이 셸의 workspace 밖이라 파일 도구로는 닿지 않는 자리다
   - name: packages
     dir: "~/Relay/packages"
