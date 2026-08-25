@@ -5,11 +5,14 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { AgentScope, onAgentTurn } from "@relay/chat";
 import { parse as parseYaml, parseDocument } from "yaml";
-import CodeEditor from "@/components/CodeEditor";
+import CodeEditor, { type Mark } from "@/components/CodeEditor";
 import DeclTree from "@/components/DeclTree";
+import Palette from "@/components/Palette";
+import Preview, { materialOf, type PreviewCtx } from "@/components/Preview";
 import SectionView, { type SectionCtx } from "@/components/SectionView";
 import { CommitDialog, DiscardDialog, PublishDialog, ReleasesDialog } from "@/components/StudioDialogs";
 import { fetchRegistry } from "@/lib/api";
+import type { Made } from "@/lib/create";
 import { SECTIONS } from "@/lib/sections";
 import {
   draftList,
@@ -22,8 +25,9 @@ import {
   packPkg,
   type DraftStatus,
   type PublishOutcome,
+  type Verdict,
 } from "@/lib/studio";
-import type { Manifest } from "@/lib/types";
+import type { Manifest, Registry } from "@/lib/types";
 
 // 스튜디오 = 패키지 하나의 수정 레이어를 여는 IDE. URL 쿼리가 depth 의 정본이다:
 //   /studio/?pkg=x              depth 1  개요 (relay.yaml 에디터)
@@ -31,6 +35,10 @@ import type { Manifest } from "@/lib/types";
 //   /studio/?pkg=x&...&file=f   depth 3  파일 (에디터 전면)
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리를 쓴다.
 // 모든 편집은 draft 로 간다 — 설치본(live)을 만지는 화면 경로는 없다.
+//
+// 화면은 세 면이다: 선언 트리 · 고치는 자리 · **결과면**. 셋째 면이 없던 동안 결과로 가는 문은
+// [적용] 뿐이었고, 그건 미리보기가 아니라 발행이었다 — 저작의 되먹임이 "고친다 → 도는 판을
+// 갈아치운다 → 본다" 였다는 뜻이다. 결과면의 모양은 재료가 정한다(lib/sections.ts Material).
 
 type LogLine = { kind: "ok" | "err" | "info"; text: string; href?: string };
 type Dialog = null | "commit" | "publish" | "releases" | "discard";
@@ -64,6 +72,15 @@ function Studio() {
   const [conflict, setConflict] = useState<string | null>(null);
   // 이 패키지의 빌더 대화에서 턴이 도는 중 (relay:turn started↔settled)
   const [agentBusy, setAgentBusy] = useState(false);
+  const [reg, setReg] = useState<Registry | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [verdicts, setVerdicts] = useState<Verdict[]>([]);
+  // 폼 조작의 되돌리기. 눈금은 relay.yaml 전문이다 — 폼 한 번이 문서 한 판을 만들기 때문이고,
+  // 그 판을 통째로 되돌리는 것이 "방금 그 조작"의 정확한 역이다. draft 의 git 이 그물을 치지만
+  // 그 그물의 눈금은 커밋이라, 눌러 본 것 하나를 물릴 단위가 없었다 — 그러면 사람은 과감해지지
+  // 않는다. 텍스트 편집은 CodeMirror 의 이력이 따로 맡는다(에디터 안에서 ⌘Z)
+  const [undo, setUndo] = useState<string[]>([]);
+  const [redo, setRedo] = useState<string[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 경로별 마지막 읽기 지문 — draft-write 의 base. 디바운스 발화 시점에 읽어야 하므로
   // (in-flight 저장이 지문을 갱신하는 사이 잡힌 클로저가 낡은 값을 들 수 있다) ref 다
@@ -92,6 +109,12 @@ function Studio() {
     void fetchSchema().then(setSchema).catch(() => setSchema(null));
   }, []);
 
+  // 배선 재료의 결과면이 콘솔의 지도를 그대로 쓴다 — 이웃(제공자·소비자)이 장부에 있다
+  const loadReg = useCallback(() => {
+    void fetchRegistry().then(setReg).catch(() => setReg(null));
+  }, []);
+  useEffect(() => { loadReg(); }, [loadReg]);
+
   const refresh = useCallback(async () => {
     if (!pkg) return;
     try {
@@ -109,9 +132,9 @@ function Studio() {
     setFatal(null);
     void (async () => {
       try {
-        const [reg, dl] = await Promise.all([fetchRegistry(), draftList()]);
+        const [known0, dl] = await Promise.all([fetchRegistry(), draftList()]);
         if (!on) return;
-        const known = reg.packages.some((p) => p.name === pkg) || dl.drafts.some((d) => d.name === pkg);
+        const known = known0.packages.some((p) => p.name === pkg) || dl.drafts.some((d) => d.name === pkg);
         if (!known) {
           setFatal(`없는 패키지: ${pkg} — 콘솔에서 진입하거나 새 패키지로 만드세요`);
           return;
@@ -193,10 +216,17 @@ function Studio() {
   // 폼 편집(디스크리트 커밋)은 디바운스 없이 바로 쓴다. base = 폼이 편집한 Document 의
   // 원천(status.manifest)을 읽던 시점 지문 — 충돌이면 낡은 폼 위의 조작이라 새로 읽고 다시 한다
   const writeManifest = useCallback(
-    (text: string) => {
-      if (!pkg) return;
+    (text: string, history: "push" | "none" = "push"): Promise<void> => {
+      if (!pkg) return Promise.resolve();
+      // 되돌릴 판은 **쓰기 직전의 문서**다. 성공 뒤에 담으면 그 사이 다른 손이 끼어든 판을
+      // 담게 되고, 되돌리기가 남의 조작까지 물린다
+      if (history === "push" && status?.manifest != null && status.manifest !== text) {
+        const prev = status.manifest;
+        setUndo((u) => [...u.slice(-49), prev]);
+        setRedo([]);
+      }
       const base = status?.hashes?.["relay.yaml"] ?? null;
-      void draftWrite(pkg, { "relay.yaml": text }, undefined, { "relay.yaml": base })
+      return draftWrite(pkg, { "relay.yaml": text }, undefined, { "relay.yaml": base })
         .then(async (r) => {
           bufHash.current["relay.yaml"] = r.hashes?.["relay.yaml"] ?? null;
           setBuf((b) => (b && b.path === "relay.yaml" ? { path: b.path, content: text, dirty: false } : b));
@@ -213,6 +243,42 @@ function Studio() {
     },
     [pkg, status, refresh, say],
   );
+
+  /**
+   * 폼 조작 되돌리기. 되돌리기 자체가 새 눈금을 만들면 무한히 오가게 되므로 history:"none" 으로
+   * 쓰고, 현재 판을 반대편 더미에 넣는다. base 검사는 그대로 지난다 — 되돌리기도 쓰기다.
+   */
+  const stepHistory = useCallback(
+    (dir: "undo" | "redo") => {
+      const from = dir === "undo" ? undo : redo;
+      if (!from.length || !status) return;
+      const text = from[from.length - 1];
+      const cur = status.manifest;
+      if (dir === "undo") {
+        setUndo((u) => u.slice(0, -1));
+        setRedo((r) => [...r, cur]);
+      } else {
+        setRedo((r) => r.slice(0, -1));
+        setUndo((u) => [...u, cur]);
+      }
+      writeManifest(text, "none");
+      say("info", dir === "undo" ? "폼 조작을 되돌렸습니다" : "다시 적용했습니다");
+    },
+    [undo, redo, status, writeManifest, say],
+  );
+
+  // ⌘Z 는 에디터 안에서는 CodeMirror 의 것이다 — 입력 요소 밖에서만 폼 이력을 집는다
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".cm-editor, input, textarea, select")) return;
+      e.preventDefault();
+      stepHistory(e.shiftKey ? "redo" : "undo");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stepHistory]);
 
   // relay:turn(view-bridge §6-a) — 같은 문서에서 시킨 턴이 끝나면 화면이 스스로 신선해진다.
   // 힌트 소비 규율: payload 는 상태가 아니라 재조회의 트리거다(멱등 — 재생 중복 무해).
@@ -276,6 +342,19 @@ function Studio() {
     }
   }, [status]);
 
+  /**
+   * 만든 뒤. 지우면 화면이 반응하고 만들면 반응하지 않던 자리를 뒤집는다 — 종전에는 생성 경로
+   * 11개 중 **어느 것도** 만든 것으로 데려가지 않았다(openItem 은 클릭과 삭제 뒤에만 불렸다).
+   * 데려가면 결과면이 그 재료의 모양으로 바뀌므로, 만든 것이 곧바로 눈에 보인다.
+   */
+  const onMade = useCallback(
+    (made: Made) => {
+      nav({ sec: made.sec, item: made.item ?? null, file: made.file ?? null });
+      say("ok", `${made.receipt} · ⌘Z 로 되돌릴 수 있습니다`);
+    },
+    [nav, say],
+  );
+
   const ctx: SectionCtx | null = useMemo(() => {
     if (!pkg || !status || !manifest) return null;
     return {
@@ -287,20 +366,25 @@ function Studio() {
       apply: (mutate) => {
         const doc = parseDocument(status.manifest);
         mutate(doc);
-        writeManifest(doc.toString());
+        return writeManifest(doc.toString());
       },
-      createFile: (path, content) => {
-        void draftWrite(pkg, { [path]: content })
+      createFile: (path, content) =>
+        draftWrite(pkg, { [path]: content })
           .then(refresh)
-          .catch((e) => say("err", `생성 실패 ${path}: ${String(e instanceof Error ? e.message : e)}`));
-      },
+          .catch((e) => {
+            say("err", `생성 실패 ${path}: ${String(e instanceof Error ? e.message : e)}`);
+            throw e;
+          }),
       openFile: (f) => nav({ file: f }),
       openItem: (it) => nav({ item: it, file: null }),
-      seedHarness: (source, entry) => {
-        void draftOpen(pkg, { seedHarness: [{ source, entry }] })
+      made: onMade,
+      seedHarness: (source, entry) =>
+        draftOpen(pkg, { seedHarness: [{ source, entry }] })
           .then(refresh)
-          .catch((e) => say("err", `템플릿 복사 실패: ${String(e instanceof Error ? e.message : e)}`));
-      },
+          .catch((e) => {
+            say("err", `템플릿 복사 실패: ${String(e instanceof Error ? e.message : e)}`);
+            throw e;
+          }),
     };
   }, [pkg, status, manifest, schema, writeManifest, refresh, nav, say]);
 
@@ -309,8 +393,17 @@ function Studio() {
     try {
       const r = await draftValidate(pkg);
       setIssues(r.ok ? [] : r.issues);
+      // 좌표를 실은 같은 판정 — 에디터 거터와 트리 배지가 이것을 읽는다. 못 짚은 판정도
+      // 문장으로는 그대로 콘솔에 남는다(둘의 길이는 항상 같다)
+      setVerdicts(r.verdicts ?? []);
+      const located = (r.verdicts ?? []).filter((v) => v.line != null).length;
       setConsoleOpen(!r.ok);
-      say(r.ok ? "ok" : "err", r.ok ? "검사 통과" : `검사에 걸린 곳 ${r.issues.length}건`);
+      if (r.ok) say("ok", "검사 통과");
+      else {
+        say("err", `검사에 걸린 곳 ${r.issues.length}건${located ? ` — ${located}건은 relay.yaml 에서 자리를 짚었습니다` : ""}`);
+        // 짚은 자리가 있으면 그 파일로 데려간다. 판정을 고치는 자리는 콘솔이 아니라 문서다
+        if (located && effFile !== "relay.yaml") nav({ sec: null, item: null, file: "relay.yaml" });
+      }
     } catch (e) {
       say("err", String(e instanceof Error ? e.message : e));
     }
@@ -358,6 +451,16 @@ function Studio() {
 
   const changedCount = status?.changes.length ?? 0;
   const secDef = SECTIONS.find((s) => s.key === sec);
+  // 결과면은 relay.yaml 판정만 자리로 짚는다 — 다른 파일의 판정은 좌표계가 다르다
+  const marks: Mark[] = effFile === "relay.yaml"
+    ? verdicts.filter((v): v is Verdict & { line: number } => v.line != null).map((v) => ({ line: v.line, col: v.col, message: v.message }))
+    : [];
+  const material = materialOf(secDef?.material, sec, item);
+  // draft 의 내용 지문 — 무엇이든 바뀌면 결과면이 스스로 새로 읽는다(즉시성의 실체)
+  const rev = status ? Object.entries(status.hashes ?? {}).map(([k, v]) => k + ":" + v).join("|") : "";
+  const previewCtx: PreviewCtx | null = pkg && status && manifest
+    ? { pkg, manifest, status, sec, item, reg, rev, say, refresh }
+    : null;
 
   return (
     // 페이지 정체성 선언(view-bridge §5) — "이 화면의 대화는 이 패키지의 빌더". 부유 위젯이
@@ -381,6 +484,15 @@ function Studio() {
         ) : null}
         {status?.lastCommit ? <span className="st-commit">기록: {status.lastCommit.message}</span> : null}
         <span className="st-sp" />
+        {/* 되돌리기·다시하기 — 폼 조작의 눈금. 파괴적인 [초기화]와 멀리 둔다(오른쪽 끝) */}
+        <span className="st-undo">
+          <button className="rc-btn" title={`폼 조작 되돌리기 (⌘Z) — 쌓인 판 ${undo.length}`} disabled={!undo.length} onClick={() => stepHistory("undo")}>
+            ↶
+          </button>
+          <button className="rc-btn" title="다시 적용 (⌘⇧Z)" disabled={!redo.length} onClick={() => stepHistory("redo")}>
+            ↷
+          </button>
+        </span>
         {/* 버튼은 성질로 묶는다. 왼쪽에서 오른쪽이 곧 작업 순서다:
               고치는 동안 반복하는 것 → 결과를 내고 확인하는 것 → 되돌리는 것.
             되돌리기·초기화를 맨 끝에 두는 것은 파괴적이기 때문이다 — 자주 누르는
@@ -418,8 +530,13 @@ function Studio() {
         </button>
       </div>
 
-      <div className="st-body">
+      <div className={`st-body${previewCtx ? " st-3" : ""}`}>
         <div className="rc-card st-left">
+          {status && ctx ? (
+            <button className="rc-btn accent st-make" onClick={() => setPalette(true)} title="이 앱에 무엇을 붙일 수 있는지 봅니다">
+              ＋ 만들기
+            </button>
+          ) : null}
           {fatal ? (
             <div className="banner">{fatal}</div>
           ) : status ? (
@@ -507,7 +624,7 @@ function Studio() {
                       </button>
                     </div>
                   ) : null}
-                  <CodeEditor key={`${pkg}:${buf.path}`} path={buf.path} value={buf.content} onChange={onEdit} />
+                  <CodeEditor key={`${pkg}:${buf.path}`} path={buf.path} value={buf.content} onChange={onEdit} marks={marks} />
                 </>
               ) : (
                 <div className="empty">
@@ -568,6 +685,28 @@ function Studio() {
             ) : null}
           </div>
         </div>
+
+        {palette && ctx && manifest && status ? (
+          <Palette
+            manifest={manifest}
+            files={status.files}
+            ctx={ctx}
+            onMade={onMade}
+            onClose={() => setPalette(false)}
+          />
+        ) : null}
+
+        {previewCtx ? (
+          <div className="rc-card st-right">
+            <div className="st-crumb">
+              <span className="cur">결과</span>
+              <span className="rc-chip gray">{material} 재료</span>
+              <span className="st-sp" />
+              <span className="st-ver">발행 전 · 작업 사본</span>
+            </div>
+            <Preview ctx={previewCtx} material={material} />
+          </div>
+        ) : null}
       </div>
 
       {dialog === "commit" && pkg ? (

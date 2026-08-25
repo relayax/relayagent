@@ -82,8 +82,31 @@ export function draftCommit(name: string, message: string): Promise<{ committed:
   return callScript("draft-commit", { name, message });
 }
 
-export function draftValidate(name: string): Promise<{ ok: boolean; issues: string[] }> {
+/** 좌표를 실은 판정 한 줄. line/col 은 1-기반이고, 못 짚었으면 null 이다(지어내지 않는다) */
+export interface Verdict {
+  message: string;
+  line: number | null;
+  col: number | null;
+  /** 선언 경로 — 트리가 그 노드로 뛰는 좌표 (예: "agents.diary") */
+  path: string | null;
+}
+
+export function draftValidate(name: string): Promise<{ ok: boolean; issues: string[]; verdicts: Verdict[] }> {
   return callScript("draft-validate", { name });
+}
+
+/**
+ * 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다. 도는 판은 그대로다.
+ * out 을 선언한 표면(next 뷰·번들)은 굽지 않으면 미리볼 것이 없고, 그렇다고 발행을 요구하면
+ * 그건 미리보기가 아니다.
+ */
+export function draftBuild(name: string): Promise<{ name: string; built: boolean; out: string }> {
+  return callScript("draft-build", { name });
+}
+
+/** 작업 사본의 동사 한 번. 코드는 작업 사본, 맥락(작업 폴더·자격·서비스)은 설치본이다 */
+export function draftRun(name: string, verb: string, input: unknown): Promise<{ ok: boolean; ms: number; result?: unknown; error?: string }> {
+  return callScript("draft-run", { name, verb, input });
 }
 
 export function draftPublish(name: string, version?: string): Promise<PublishOutcome> {

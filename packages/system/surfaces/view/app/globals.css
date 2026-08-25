@@ -158,8 +158,16 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-ver { font-family: var(--rc-mono); font-size: 11.5px; color: var(--rc-faint); }
 .st-commit { font-size: 11.5px; color: var(--rc-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .st-sp { flex: 1; }
-.st-body { display: grid; grid-template-columns: 230px 1fr; gap: 12px; flex: 1; min-height: 0; }
+.st-body { position: relative; display: grid; grid-template-columns: 230px 1fr; gap: 12px; flex: 1; min-height: 0; }
+/* 세 면 — 선언 트리 · 고치는 자리 · 결과면. 결과면은 고치는 자리보다 조금 넓다:
+   프레임·그래프·격자가 앉는 자리라 좁으면 그리는 것이 아니라 접히는 것이 된다 */
+.st-body.st-3 { grid-template-columns: 218px minmax(320px, 1fr) minmax(400px, 1.08fr); }
+@media (max-width: 1180px) { .st-body.st-3 { grid-template-columns: 200px 1fr; } .st-body.st-3 .st-right { display: none; } }
+.st-right { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.st-undo { display: inline-flex; gap: 3px; }
+.st-undo .rc-btn { width: 27px; padding: 5px 0; text-align: center; }
 .st-left { overflow: auto; padding: 8px; }
+.st-make { width: 100%; margin-bottom: 8px; padding: 8px 0; font-size: 13px; }
 .st-canvas { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .st-canvas-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .st-scroll { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
@@ -397,3 +405,101 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 /* 스튜디오 툴바의 묶음 구분 — 성질이 다른 버튼 사이에만 선다.
    되돌리기·초기화가 자주 누르는 버튼과 붙어 있으면 언젠가 잘못 눌린다 */
 .st-div { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--rc-line); flex: none; }
+
+
+/* ── 결과면 (Preview) ─────────────────────────────────────────────────────
+   모양은 재료가 정한다. 여섯 갈래가 한 골격을 공유한다: 머리(무엇을 보고 있는가) ·
+   몸 · 발(이 면이 지금 무엇을 보장하는가). 발이 있는 이유는 미리보기가 거짓말을 하기
+   제일 쉬운 자리이기 때문이다 — 굽지 않은 산출을 새 판인 양 내는 것이 그 형태다 */
+.pv { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.pv-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--rc-line); flex: 0 0 auto; }
+.pv-url { flex: 1; color: var(--rc-faint); background: var(--rc-ground); border-radius: 6px; padding: 3px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-body { flex: 1; min-height: 0; overflow: auto; padding: 13px; display: flex; flex-direction: column; gap: 12px; }
+.pv-body.flush { padding: 0; overflow: hidden; }
+.pv-foot { flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid var(--rc-line); font-size: 11.5px; color: var(--rc-faint); }
+.pv-row { display: flex; flex-direction: column; gap: 6px; }
+.pv-warn { color: var(--rc-err); background: var(--rc-err-bg); border-color: transparent; }
+
+/* 그림 — 작업 사본의 화면. 프레임은 흰 종이 위에 얹는다(패키지 문서의 배경이 무엇이든) */
+.pv-frame { flex: 1; min-height: 0; background: var(--rc-ground); display: flex; justify-content: center; padding: 12px; overflow: auto; }
+.pv-frame iframe { width: 100%; height: 100%; min-height: 380px; border: 1px solid var(--rc-line); border-radius: 10px; background: #fff; }
+.pv-frame.narrow iframe { width: 380px; flex: none; }
+.pv-mount { border: 1.5px dashed var(--rc-accent); border-radius: 11px; background: var(--rc-bg); padding: 3px; position: relative; }
+.pv-mount::after { content: "mount(el, props)"; position: absolute; top: -9px; left: 12px; background: var(--rc-bg); padding: 0 6px; font: 600 10px var(--rc-mono); color: var(--rc-accent); }
+.pv-mount iframe { width: 100%; min-height: 220px; border: none; border-radius: 9px; background: #fff; display: block; }
+
+/* 계약 — 이 문장이 되는 화면들 */
+.pv-card { border: 1px solid var(--rc-line); border-radius: 10px; background: var(--rc-bg); padding: 11px 12px; display: flex; gap: 10px; align-items: flex-start; }
+.pv-card.col { flex-direction: column; gap: 8px; }
+.pv-card-row { display: flex; gap: 10px; align-items: center; }
+.pv-ic { width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center; font: 700 13px var(--rc-sans); color: #fff; }
+.pv-nm { display: block; font-size: 13px; font-weight: 600; }
+.pv-ds { display: block; font-size: 11.5px; color: var(--rc-soft); line-height: 1.5; }
+.pv-lg { display: block; font-size: 10.5px; color: var(--rc-faint); margin-top: 3px; }
+
+/* 배선 — 콘솔의 지도를 좁힌 것. 캔버스는 자기 높이를 요구한다 */
+.pv-graph { flex: 1; min-height: 300px; position: relative; }
+.pv-graph .graph-wrap { position: absolute; inset: 0; }
+
+/* 시간 — 주간 격자와 다음 발화 */
+.pv-week { display: grid; grid-template-columns: 26px repeat(7, 1fr); gap: 2px; }
+.pv-week .hd { font: 600 10px var(--rc-sans); color: var(--rc-faint); text-align: center; padding-bottom: 2px; }
+.pv-week .hd.on { color: var(--rc-accent-strong); }
+.pv-week .hr { font: 500 9px var(--rc-mono); color: var(--rc-faint); text-align: right; padding-right: 4px; line-height: 9px; }
+.pv-week .cell { height: 9px; border-radius: 2px; background: var(--rc-line-soft); }
+.pv-week .cell.dayon { background: var(--rc-accent-soft); }
+.pv-week .cell.on { background: var(--rc-accent); }
+.pv-next { display: flex; flex-direction: column; gap: 3px; }
+.pv-next div { display: flex; gap: 9px; align-items: baseline; font: 500 11.5px var(--rc-mono); color: var(--rc-soft); padding: 4px 9px; border-radius: 6px; background: var(--rc-bg); }
+.pv-next div .rel { margin-left: auto; color: var(--rc-faint); font-size: 10.5px; }
+
+/* 말 — 첫 줄, 도출된 도구, 페르소나 */
+.pv-chat { background: var(--rc-bg); border: 1px solid var(--rc-line-soft); border-radius: 10px; padding: 11px; }
+.pv-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pv-persona { background: var(--rc-bg); border: 1px solid var(--rc-line-soft); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.7; color: var(--rc-ink); max-height: 260px; overflow: auto; }
+.pv-persona h4 { margin: 12px 0 4px; font-size: 13px; }
+.pv-persona h5 { margin: 10px 0 3px; font-size: 12px; color: var(--rc-soft); }
+.pv-persona h4:first-child, .pv-persona h5:first-child { margin-top: 0; }
+.pv-persona p { margin: 0 0 7px; }
+.pv-li { padding-left: 13px; position: relative; }
+.pv-li::before { content: "·"; position: absolute; left: 3px; color: var(--rc-faint); }
+
+/* 동사 — 입력·실행·영수증 */
+.pv-out { margin: 0; padding: 11px 12px; background: var(--rc-bg); border: 1px solid var(--rc-line-soft); border-radius: 8px; font: 12px/1.62 var(--rc-mono); white-space: pre-wrap; word-break: break-word; min-height: 76px; max-height: 240px; overflow: auto; }
+.pv-out.err { color: var(--rc-err); background: var(--rc-err-bg); border-color: transparent; }
+.pv-receipt { font-size: 11.5px; color: var(--rc-faint); display: inline-flex; align-items: center; gap: 6px; }
+
+
+/* ── 팔레트 — 만들 수 있는 것의 표면 ──────────────────────────────────────
+   왼쪽 패널 안에 두면 overflow:auto 에 잘리므로 st-body 기준으로 띄운다.
+   폭은 트리보다 넉넉히: 여기서 읽는 것은 이름이 아니라 **얻는 것**의 설명이다 */
+.pl {
+  position: absolute; top: 0; left: 0; z-index: 30; width: 440px; max-width: calc(100% - 24px);
+  max-height: 100%; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: var(--rc-radius);
+  box-shadow: 0 2px 6px rgba(22, 24, 27, .06), 0 22px 48px -18px rgba(22, 24, 27, .3);
+  animation: rc-rise .14s ease;
+}
+.pl-top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--rc-line); flex: none; }
+.pl-q { flex: 1; }
+.pl-list { overflow: auto; padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 12px; }
+.pl-group { display: flex; flex-direction: column; gap: 3px; }
+.pl-group .rc-label { padding: 2px 4px 3px; }
+.pl-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+  border: 1px solid transparent; background: none; border-radius: 9px; padding: 8px 10px;
+  cursor: pointer; font: inherit; color: inherit;
+}
+.pl-row:hover { background: var(--rc-bg); border-color: var(--rc-line); }
+.pl-row.off { opacity: .5; cursor: default; }
+.pl-row.off:hover { background: none; border-color: transparent; }
+.pl-tx { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.pl-lb { font-size: 13px; font-weight: 600; }
+.pl-dt { font-size: 11.5px; color: var(--rc-soft); line-height: 1.5; }
+.pl-rt { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex: none; }
+.pl-yaml { color: var(--rc-faint); font-size: 10.5px; white-space: nowrap; }
+.pl-ask { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.pl-ask-hd { display: flex; align-items: baseline; gap: 8px; }
+.pl-ask-hd b { font-size: 14px; }
+.pl-detail { font-size: 12px; color: var(--rc-soft); line-height: 1.6; background: var(--rc-ground); border-radius: 8px; padding: 9px 11px; }
+.pl-ask-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }

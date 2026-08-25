@@ -12,9 +12,25 @@ export interface SectionItem {
   files: string[];
 }
 
+/**
+ * 재료 — 이 선언이 무엇으로 만들어졌는가. 오른쪽 결과면의 **모양을 정하는 축**이다.
+ *
+ * 노션은 문서를, Figma 는 그림을, n8n 은 배선을 다룬다. 그 도구들의 손맛이 좋은 이유의 절반은
+ * 한 가지 재료만 다루기 때문이고, relay.yaml 의 어휘에는 그 재료가 전부 섞여 있다. 하나의 UX 로
+ * 통일하려 하면 전부 어중간해지므로, 재료를 선언에 붙여 결과면을 갈라 준다.
+ *   그림 = 결과물이 곧 화면 (view · components)      → 프레임·마운트 미리보기
+ *   배선 = 관계가 실체 (services · edges · missions)  → 노드 그래프
+ *   시간 = 사건이 실체 (triggers)                     → 격자·다음 발화·지금 한 번
+ *   말   = 사람이 읽는 글 (agents)                    → 시연 대화
+ *   동사 = 코드 (scripts)                             → 입력·실행·영수증
+ *   계약 = 설정 (identity · requires · harness · …)   → 이 문장이 되는 화면들
+ */
+export type Material = "그림" | "배선" | "시간" | "말" | "동사" | "계약";
+
 export interface SectionDef {
   key: string;
   label: string;
+  material: Material;
   /** relay.manifest.yaml 의 최상위 키. 스키마 description 조회와 YAML 조각 표시에 쓴다 */
   yamlKey?: string;
   hint: string;
@@ -34,6 +50,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "identity",
     label: "신분",
+    material: "계약",
     hint: "이름, 버전, 표시 이름, 설명, 아이콘. 카드와 지도, 설치 화면이 이 문장을 그대로 쓴다.",
     declared: () => true,
     files: (m, files) => exist(files, "relay.yaml", m.icon),
@@ -41,6 +58,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "requires",
     label: "requires",
+    material: "계약",
     yamlKey: "requires",
     hint: "호스트 환경 요구 = 설치 관문. OS, PATH 바이너리, 데스크톱 앱. 설치가 실체를 판정해 미충족이면 fail-loud.",
     declared: (m) => !!m.requires,
@@ -48,6 +66,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "surfaces",
     label: "surfaces",
+    material: "그림",
     yamlKey: "surfaces",
     hint: "패키지가 세상에 내미는 창구. view 화면, components 번들 수출, channels 외부 대화 어댑터. 직접 대화는 선언이 아니라 agents[] 에서 도출된다.",
     declared: (m) => !!m.surfaces,
@@ -61,6 +80,17 @@ export const SECTIONS: SectionDef[] = [
           files: under(files, m.surfaces.view.source),
         });
       }
+      // components 는 스키마·런타임·import map 이 전부 서 있는데도 이 목록에 없었다. 트리에
+      // 노드가 없으면 파일이 "기타 파일" 로 떨어져, 선언한 것이 미아처럼 보인다
+      if (m.surfaces?.components) {
+        const c = m.surfaces.components;
+        out.push({
+          id: "components",
+          title: "components",
+          sub: c.out ? `${c.source} (빌드: ${c.out})` : `${c.source} (손저작 ESM)`,
+          files: under(files, c.source),
+        });
+      }
       for (const c of m.surfaces?.channels ?? []) {
         out.push({ id: `channel:${c.name}`, title: c.name, sub: "채널 어댑터", files: under(files, c.source) });
       }
@@ -70,6 +100,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "harness",
     label: "harness",
+    material: "계약",
     yamlKey: "harness",
     hint: "동봉한 실행 어댑터 후보들. 선언 = 후보 목록(BOM), 활성 선택 = 장부. 에이전트 패키지는 최소 1개.",
     declared: (m) => !!m.harness,
@@ -84,6 +115,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "agents",
     label: "agents",
+    material: "말",
     yamlKey: "agents",
     hint: "착지점 = 패키지 짧은 이름과 같은 에이전트. 페르소나, 스킬, 커맨드, 서브에이전트 위임, 동사 scope.",
     declared: (m) => !!m.agents?.length,
@@ -100,6 +132,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "scripts",
     label: "scripts",
+    material: "동사",
     yamlKey: "scripts",
     hint: "동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON. 에이전트 scope 가 여기를 가리킨다.",
     declared: (m) => !!m.scripts,
@@ -116,6 +149,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "services",
     label: "services",
+    material: "배선",
     yamlKey: "services",
     hint: "패키지의 자원. source 자기 몸(프로세스·컨테이너), url 원격 MCP 문, api 원격 REST 베이스, dir 폴더. 자격(auth)은 밖으로 나가는 두 형에 앉고 좌표는 vault 의 <패키지>/<서비스> 다.",
     declared: (m) => !!m.services?.length,
@@ -130,6 +164,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "triggers",
     label: "triggers",
+    material: "시간",
     yamlKey: "triggers",
     hint: "시간(cron)과 사건(event)이 세션이나 동사를 깨운다. delivery 를 선언하면 결과가 채널 대화로 배달된다.",
     declared: (m) => !!m.triggers?.length,
@@ -144,6 +179,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "missions",
     label: "missions",
+    material: "배선",
     yamlKey: "missions",
     hint: "a2a 수신 선언. 다른 패키지가 이 미션으로 위임을 보낼 수 있다.",
     declared: (m) => !!m.missions?.length,
@@ -152,6 +188,7 @@ export const SECTIONS: SectionDef[] = [
   {
     key: "edges",
     label: "edges",
+    material: "배선",
     yamlKey: "edges",
     hint: "남의 것 소비 선언. 선언은 신청, 활성화는 결재 — 결재는 콘솔 그래프에서 한다.",
     declared: (m) => !!m.edges?.length,
@@ -159,13 +196,23 @@ export const SECTIONS: SectionDef[] = [
       (m.edges ?? []).map((e, i) => ({
         id: String(i),
         title: e.provider,
-        sub: e.mission ? `mission ${e.mission}` : e.tools?.length ? `tools ${e.tools.join(",")}` : undefined,
+        sub: e.mission ? `mission ${e.mission}` : e.components ? "components 마운트" : e.tools?.length ? `tools ${e.tools.join(",")}` : undefined,
         files: [],
       })),
   },
   {
+    key: "host_methods",
+    label: "host_methods",
+    material: "계약",
+    yamlKey: "host_methods",
+    hint: "이 패키지의 동사가 부를 수 있는 host.* 의 캡. 미선언 = 전체이고, 선언하면 목록 밖은 거부된다. 고지서에 실린다.",
+    declared: (m) => !!m.host_methods?.length,
+    items: (m) => (m.host_methods ?? []).map((x) => ({ id: x, title: x, sub: "허용", files: [] })),
+  },
+  {
     key: "org",
     label: "org",
+    material: "계약",
     yamlKey: "org",
     hint: "org 기판이 호스팅할 때만 읽는 확장. 1인 기판에서는 무시된다.",
     declared: (m) => !!m.org,
