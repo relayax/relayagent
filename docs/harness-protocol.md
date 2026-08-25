@@ -34,7 +34,7 @@ Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_
 format is the adapter's job, and every translation artifact lands inside the bundle — never in
 the user's config directory or the cwd.
 
-**Workspace memory has one canon: `AGENTS.md` in the workspace.** Memory is agent data, so it
+**Session memory has one canon: `AGENTS.md` in the session's cwd** (`meta.cwd`). Memory is agent data, so it
 lives in the granted folder (not in the tool's home, which nothing else can reach, and not in the
 bundle, which rotation empties). Tools whose native convention already reads `AGENTS.md` from cwd
 (codex, kimi) get it for free. A tool with a different convention shuttles via its own rail — the
@@ -69,7 +69,10 @@ cannot resume a claude session — so on a harness switch the substrate rotates 
 hands the new adapter a preamble synthesized from the substrate's own history ledger, which is
 the conversation of record.
 
-`meta.json`: `{pkg, agent, slot?, workspace, stage, hooks: {deny[]}, agents[], mcp, mcpServers?}`.
+`meta.json`: `{pkg, agent, slot?, cwd, stage, hooks: {deny[]}, agents[], mcp, mcpServers?}`.
+`cwd` is the folder the session stands on — the granted workspace plus `harness.workdir` when the
+package declares one. It is deliberately not called `workspace`: with a `workdir` declared the two
+are different folders, and one word for two values is how an adapter writes to the wrong place.
 The MCP doors:
 
 | Field | Shape | Contract |

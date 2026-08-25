@@ -409,9 +409,11 @@ properties:
                 RELAY_BUNDLE, RELAY_MODEL(선택), RELAY_EFFORT(선택 — 모르는 값은 무시).
                 같은 RELAY_SESSION 재호출 = 대화 이어가기.
                 RELAY_BUNDLE = 중립 번들(persona.md, agents/<sub>.md 본문, skills/, commands/,
-                meta.json{pkg, agent, slot, workspace, stage, hooks.deny[], agents[], mcp{url,authorization}}).
+                meta.json{pkg, agent, slot, cwd, stage, hooks.deny[], agents[], mcp{url,authorization}}).
                 네이티브 형식(설정 파일, 플래그, MCP 배선)으로의 번역은 전부 어댑터 소유이며 산출물은
-                번들 안에 쓴다. 불변식 셋: ① 오염 금지 — 사용자의 설정 디렉토리와 cwd(workspace)에
+                번들 안에 쓴다. cwd = 결재된 workspace + harness.workdir(선언 시) — 둘이 갈리는
+                패키지가 있으므로 번들 키 이름도 workspace 가 아니라 cwd 다.
+                불변식 셋: ① 오염 금지 — 사용자의 설정 디렉토리와 cwd 에
                 쓰지 않는다. ② 혼입 금지 — 사용자 개인 설정(스킬·메모리·MCP)이 세션에 새어들지 않게
                 한다. ③ 자격 보존 — 도구 자신의 자격 경로(Keychain 등)를 끊지 않는다. 설정 디렉토리
                 격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
