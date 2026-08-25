@@ -144,7 +144,7 @@ const meta = JSON.parse(fs.readFileSync(B + "/meta.json", "utf8"));
 
 let doc = fs.readFileSync(B + "/persona.md", "utf8");
 doc += "\n\n# 기판 (Relay)\n"
-  + "- 작업 무대(cwd): " + (meta.workspace ?? process.cwd()) + "\n"
+  + "- 작업 무대(cwd): " + (meta.cwd ?? process.cwd()) + "\n"
   + "- 파일 교환 무대: " + meta.stage + " — 사용자에게 채팅으로 전달할 파일은 여기 놓는다. 첨부도 여기서 온다\n"
   + "- 접근 금지: " + (meta.hooks?.deny ?? []).join(", ") + " — 읽지도 쓰지도 마라\n";
 

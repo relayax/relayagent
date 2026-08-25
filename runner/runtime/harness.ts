@@ -230,7 +230,7 @@ function harnessHandoff(io: SessionIO, pkg: string, slot: string, variantName: s
   return `[대화 인수인계 — 이 대화는 지금까지 다른 하네스(${last})로 진행됐고 방금 ${variantName} 로 전환됐다. 이전 도구의 네이티브 세션 맥락은 이어지지 않는다. 아래 최근 대화 기록을 맥락으로 삼아 자연스럽게 이어서 답하라. 이 안내와 기록 자체는 사용자에게 언급하지 마라]\n${rows.join("\n")}`;
 }
 
-function composeBundle(io: SessionIO, pkgPath: string, m: Manifest, agent: string, slot: string, pkg: string, token: string, ground: { workspace: string; stage: string }): string {
+function composeBundle(io: SessionIO, pkgPath: string, m: Manifest, agent: string, slot: string, pkg: string, token: string, ground: { cwd: string; stage: string }): string {
   const bundle = path.join(io.sessionDir(pkg, slot), "bundle");
   fs.mkdirSync(path.join(bundle, "agents"), { recursive: true });
 
@@ -281,7 +281,11 @@ function composeBundle(io: SessionIO, pkgPath: string, m: Manifest, agent: strin
     agent,
     slot,
     greeting: decl?.greeting,
-    workspace: ground.workspace,
+    // cwd 다. workspace 가 아니다 — harness.workdir 을 선언한 패키지에서 이 값은 결재된 뿌리가
+    // 아니라 그 하위 폴더이고, 세션은 여기에 선다(메모리 정본 AGENTS.md·샌드박스 쓰기 뿌리도
+    // 여기다). 2026-08-25 까지 이 키의 이름은 workspace 였는데, 같은 단어가 ctx.workspace·
+    // relay ls·화면에서는 뿌리를 가리켜 한 단어가 두 값이었다. 이름을 값에 맞춘다
+    cwd: ground.cwd,
     stage: ground.stage,
     // 담장은 기판 장기의 좌표뿐이다. 패키지가 자기 담장을 선언하던 문법(hooks)은 은퇴했다 —
     // 방어 대상이 곧 선언 주체라 적대적 패키지는 선언을 비우면 그만이었고, 결재할 사람도 없었다.
@@ -684,8 +688,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const slot = input.slot ?? `agent-${agent}`;
   const token = authority.packageToken(input.pkg);
 
-  // cwd = workspace = 설치 때 결재된 폴더 (기본 ~/Relay/<이름>, system 은 ~ 로 결재).
-  // harness.workdir 선언은 workspace 하위 상대경로로 해석한다
+  // cwd = 결재된 workspace(기본 ~/Relay/<이름>) + harness.workdir 선언(있으면).
+  // 번들에 실리는 이름도 cwd 다 — 이 값은 workdir 을 선언한 패키지에서 workspace 와 갈린다
   const workdir = path.join(io.workspaceDir(input.pkg), m.harness?.workdir ?? "");
   fs.mkdirSync(workdir, { recursive: true });
   const stage = io.stageDir(input.pkg);
@@ -694,7 +698,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 인수인계 판정은 번들 조립보다 앞이어야 한다 — 회전(번들 삭제)이 조립 뒤에 오면
   // 이 턴이 방금 조립된 번들을 지우고, 앞에 오면 조립이 빈 자리를 새로 채운다
   const handoff = harnessHandoff(io, input.pkg, slot, variant.name);
-  const bundle = composeBundle(io, rec.path, m, agent, slot, input.pkg, token, { workspace: workdir, stage });
+  const bundle = composeBundle(io, rec.path, m, agent, slot, input.pkg, token, { cwd: workdir, stage });
   const entry = path.join(rec.path, variant.source, variant.entry);
 
   const env: Record<string, string> = {

@@ -130,7 +130,7 @@ test("주입한 이음새의 좌표로 턴이 선다 — 경로·문 주소·담
   const meta = JSON.parse(fs.readFileSync(path.join(seen.bundle, "meta.json"), "utf8"));
   // 인사말은 그 에이전트 선언에서 온다 — 패키지 전역 표면이 아니라 말하는 쪽 소속
   assert.equal(meta.greeting, "픽스처 인사말");
-  assert.equal(meta.workspace, path.join(EMBED, "ws", PKG));
+  assert.equal(meta.cwd, path.join(EMBED, "ws", PKG));
   assert.equal(meta.stage, path.join(EMBED, "stage", PKG));
   assert.deepEqual(meta.hooks.deny, ["/opt/embedder/home"]);
   assert.ok(String(meta.mcp.url).startsWith("http://127.0.0.1:18080/embedder/mcp/"));
