@@ -229,7 +229,16 @@ export function judge(m: Manifest, pkgPath?: string): void {
   if (m.released_at != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(m.released_at))) issues.push(`released_at 형식 위반(YYYY-MM-DD): ${m.released_at}`);
   if (m.surfaces != null && (typeof m.surfaces !== "object" || Array.isArray(m.surfaces))) issues.push("surfaces: 객체만");
   for (const k of Object.keys(m.surfaces ?? {})) {
-    if (!["view", "components", "channels"].includes(k)) issues.push(`미지 surfaces 키: ${k}`);
+    if (!["view", "components", "channels"].includes(k)) {
+      // 은퇴한 키는 처방과 함께 거부한다 — "미지" 한 마디는 구 문법으로 포장된 봉투를
+      // 만난 사람에게 아무것도 알려주지 못한다 (2026-08-26 실사고: 8/22 문법 봉투가
+      // 시장에 남은 채 판정기만 세대를 넘어, 설치가 사유 없이 죽는 것처럼 보였다)
+      issues.push(
+        k === "chat"
+          ? "surfaces.chat 은 은퇴했습니다(2026-08-24) — 항목을 지우고 다시 포장하세요. 화면 없는 에이전트는 선언 없이 전면 대화가 열리고, 인사말은 agents[].greeting 으로 갑니다"
+          : `미지 surfaces 키: ${k}`,
+      );
+    }
   }
 
   if (m.icon) mustExist(m.icon, "icon");
