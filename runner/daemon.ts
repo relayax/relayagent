@@ -8,10 +8,10 @@ import { spawn } from "node:child_process";
 import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./supply/ledger.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
-import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
-import { handleClientWire, tapSessionEvent, type ClientWireIO } from "./runtime/wire.ts";
+import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
+import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
 import { runScript, runScriptFrom, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
-import { handleMcp } from "./runtime/tools.ts";
+import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
@@ -233,6 +233,9 @@ export function createApi(
   // 신 wire 의 턴 장부는 세션이 흘리는 봉투를 방청해 쌓인다 — 이 배선이 없으면 stream/attach 가
   // reply 만 보고 delta·tool 이 통째로 사라진다(왕복은 성공하는데 스트리밍만 죽는 형태)
   setEnvelopeTap(tapSessionEvent);
+  // wire 밖에서 열린 턴(도구 위임·트리거·CLI)도 관찰 창에 든다 — 이 배선이 없으면 그 턴들은
+  // 붙을 id 가 없어 화면이 물음만 그린 채 멈춘다(위임 대화가 "안 도는 것처럼" 보이던 자리)
+  setTurnTap({ open: adoptSessionTurn, close: releaseSessionTurn });
   const wire = { getLedger, authority, io: opts.wire };
   const runnerIO = (l: Ledger): RunnerIO => (opts.runner ?? localIO)(l);
   const extraHosts = new Set((opts.door?.hosts ?? []).map((h) => h.toLowerCase()));
@@ -668,6 +671,11 @@ export function startDaemon(): void {
       }
     }
   }
+  // 지난 기동이 배달하지 못한 위임 결과 — 복구 **뒤에** 줍는다(중단된 위임의 마지막 줄은 위
+  // 복구가 앉힌다). 문을 막지 않는다: 배달은 세션을 여는 일이라 오래 걸릴 수 있다
+  void sweepPendingDeliveries(daemonAuthority)
+    .then((n) => { if (n) console.log(`미결 위임 배달: ${n}건`); })
+    .catch((e) => console.error(`미결 위임 배달 실패 - ${e}`));
   for (const [name, rec] of Object.entries(l.packages)) {
     try {
       const m = loadManifest(rec.path);

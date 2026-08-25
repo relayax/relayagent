@@ -24,6 +24,7 @@ import {
   retireResidents,
   localSessionIO,
   type SessionIO,
+  type SessionResult,
 } from "./harness.ts";
 import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
@@ -340,8 +341,8 @@ function appendTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
  * runSession 이벤트 스트림에 얹는 기록 훅 — session.ts 의 봉투 기록 지점이 부른다
  * (배선은 api.ts createApi 의 setEnvelopeTap(tapSessionEvent) — session→client-wire 직접
  * import 는 순환이라 조립점이 주입한다).
- * wire 가 모르는 턴(a2a dispatch·자동 제목 등 runSession 직접 호출)의 이벤트는 여기 와도
- * 활성 턴이 없어 버려진다 — 그 턴들의 관찰 창은 신 wire 밖이다.
+ * wire 밖에서 열린 턴(도구 위임·트리거·CLI)의 이벤트도 여기 온다 — 그 턴은 세션이 개설을
+ * 알릴 때 입양되므로(adoptSessionTurn) 활성 턴이 서 있고, 중계는 wire 가 연 턴과 같다.
  */
 export function tapSessionEvent(pkg: string, slot: string, ev: EnvelopeEvent): void {
   const t = activeTurn(pkg, slot);
@@ -349,6 +350,65 @@ export function tapSessionEvent(pkg: string, slot: string, ev: EnvelopeEvent): v
   // 기록은 세션이 이미 했다(SessionInput.turnLedger) — 여기서는 라이브 중계와 상태만.
   // 한 봉투를 두 자리에서 쓰던 이중 기록의 해소점이다
   relayTurnEvent(t, ev);
+}
+
+/**
+ * wire 밖에서 열린 턴을 관찰 창에 들인다 — 도구 위임(서브에이전트·a2a)·트리거·CLI 처럼
+ * runSession 을 직접 부른 턴이다. 세션이 자기 턴 좌표를 알리면(harness TurnTap) 여기서 그
+ * 턴의 기록을 세운다.
+ *
+ * 왜 필요한가: 관찰(재부착·attach·SSE)은 전부 **턴 id** 로 붙는다. 입양이 없으면 /history 는
+ * busy 만 답하고 실을 id 가 없어(§5.3-24), 화면은 물음 하나만 그린 채 멈춘다 — 위임 대화가
+ * "아무 일도 안 일어나는 것처럼" 보이던 자리다(2026-08-25 실사용 보고). 도는 턴은 하나인데
+ * 그 턴을 볼 창이 없었을 뿐이다.
+ *
+ * 기록은 세션 몫이다(자기 turns/<id>.jsonl 에 쓴다) — 여기는 개설 표식과 중계·종결만 얹는다.
+ */
+export function adoptSessionTurn(pkg: string, slot: string, turn: { id: string; file: string }): void {
+  if (turns.has(turn.id)) return;
+  // wire 가 연 턴이 서 있으면 그쪽이 정본이다 — 한 슬롯에 관찰 대상 턴은 하나다
+  if (activeTurn(pkg, slot)) return;
+  const t: TurnRecord = {
+    id: turn.id,
+    pkg,
+    session: slot,
+    status: "running",
+    ok: null,
+    file: turn.file,
+    sinks: new Set(),
+    settledEnvelope: false,
+    announcedFiles: new Set(),
+  };
+  turns.set(t.id, t);
+  const key = sessionKey(pkg, slot);
+  const q = sessionQueues.get(key) ?? [];
+  q.push(t);
+  sessionQueues.set(key, q);
+  appendTurnEvent(t, { event: "turn", status: "started", turn: t.id, session: slot });
+}
+
+/** 입양한 턴의 종결 — runTurn 의 종결 절과 같은 골격이다: 봉투 reply 가 지나가지 않았으면
+ *  세션 결과로 합성하고(빈 답·구형 어댑터), 무대 산출물을 고지한 뒤 settled 로 닫는다 */
+export function releaseSessionTurn(
+  pkg: string,
+  slot: string,
+  turnId: string,
+  outcome: { ok: true; result: SessionResult } | { ok: false; message: string },
+): void {
+  const t = turns.get(turnId);
+  if (!t || t.pkg !== pkg || t.session !== slot) return;
+  if (outcome.ok) {
+    for (const f of outcome.result.files ?? []) {
+      if (!t.announcedFiles.has(f.path)) appendTurnEvent(t, { event: "file", path: f.path });
+    }
+    if (!t.settledEnvelope) {
+      const r = outcome.result;
+      appendTurnEvent(t, { event: "reply", text: r.reply, model: r.model ?? null, usage: r.usage ?? null, context: r.context ?? null });
+    }
+  } else if (!t.settledEnvelope) {
+    appendTurnEvent(t, { event: "error", message: outcome.message });
+  }
+  settleTurn(t, outcome.ok);
 }
 
 function settleTurn(t: TurnRecord, ok: boolean): void {
@@ -804,8 +864,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       requirePkg(deps.getLedger(), pkg);
       const session = String(url.searchParams.get("session") ?? "");
       if (!SLOT_RE.test(session)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${session}`);
-      // wire 가 개설한 턴만 attach 대상이다 — runSession 직접 호출(a2a 등)의 busy 는
-      // 신 wire 의 관찰 창 밖이므로 E_NO_TURN 이 맞다(§5.1-14)
+      // 관찰 창에 선 턴이면 붙는다 — wire 가 개설한 턴과 입양한 턴(도구 위임·트리거)이
+      // 같은 자리에 선다. 그 창 밖(개설 알림 없는 턴)은 E_NO_TURN 이 맞다(§5.1-14)
       const t = activeTurn(pkg, session);
       if (!t) throw new WireError(404, "E_NO_TURN", `진행 중 턴 없음: ${session}`);
       openLiveStream(t, req, res);
@@ -908,7 +968,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       const slot = m[1];
       if (!SLOT_RE.test(slot)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${slot}`);
       // busy+turn(§5.3-24) — 새로고침 복구가 폴링 없이 한 왕복으로 끝나는 근거.
-      // turn 은 wire 가 개설한 턴만 안다(attach 가능한 턴만 싣는 것이 정직하다)
+      // turn 은 관찰 창에 선 턴이다 — wire 가 개설한 것과 입양한 것(도구 위임·트리거) 둘 다.
+      // 창 밖 busy 는 turn 없이 나간다(붙을 수 없는 id 를 싣지 않는 것이 정직하다)
       const t = activeTurn(pkg, slot);
       const busy = t != null || isSessionBusy(pkg, slot);
       json(res, 200, { messages: historyMessages(io, pkg, slot, 200), busy, ...(t ? { turn: t.id } : {}) });

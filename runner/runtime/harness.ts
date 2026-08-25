@@ -31,6 +31,27 @@ function tap(pkg: string, slot: string, ev: { event: string; [k: string]: unknow
   } catch { /* 방청자 사정 — 턴에 전가하지 않는다 */ }
 }
 
+/** 턴 수명주기 방청 — **wire 밖에서 열린 턴**(도구 위임·트리거·CLI)의 개설과 종결.
+ *
+ *  봉투 방청(EnvelopeTap)만으로는 부족하다: 관찰 창(재부착·SSE)은 턴 id 로 붙는데, 그 턴에는
+ *  개설한 자가 없어 id 를 아는 곳이 없었다. 그래서 위임 대화는 물음만 그려진 채 멈춰 보였고,
+ *  실황(delta·도구)은 통째로 버려졌다. 세션이 자기 턴 좌표를 알리면 방청자가 그 창을 연다.
+ *  wire 가 개설한 턴(SessionInput.turnLedger)은 그쪽이 이미 수명주기를 가지므로 알리지 않는다. */
+export interface TurnTap {
+  open(pkg: string, slot: string, turn: { id: string; file: string }): void;
+  close(
+    pkg: string,
+    slot: string,
+    turnId: string,
+    outcome: { ok: true; result: SessionResult } | { ok: false; message: string },
+  ): void;
+}
+
+let turnTap: TurnTap | null = null;
+export function setTurnTap(t: TurnTap | null): void {
+  turnTap = t;
+}
+
 // ── 세션 이음새 ────────────────────────────────────────────────────────────
 // 한 턴이 딛는 좌표를 모듈 좌표(./state.ts)가 아니라 인자로 받는 주입점. 실행 이음새
 // (run.ts RunnerIO — 스폰의 env 를 나르는 손)·문 이음새(mcp.ts McpIO — 세션이 보는 도구
@@ -772,6 +793,16 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 장부 자리: wire 가 개설한 턴이면 그 파일, 아니면(CLI·트리거·a2a) 세션이 하나 뜬다
   const eventsFile = input.turnLedger ?? turnLedgerPath(io, input.pkg, slot, crypto.randomUUID());
   fs.mkdirSync(path.dirname(eventsFile), { recursive: true });
+  // wire 가 개설한 턴은 그쪽이 수명주기를 갖는다. 아닌 턴(도구 위임·트리거·CLI)의 관찰 창은
+  // 여기서 연다 — 열지 않으면 화면이 붙을 턴 id 가 없어 실황이 그대로 버려진다
+  const observed = input.turnLedger ? null : { id: path.basename(eventsFile, ".jsonl"), file: eventsFile };
+  if (observed) {
+    try { turnTap?.open(input.pkg, slot, observed); } catch { /* 방청자 사정 */ }
+  }
+  const closeObserved = (outcome: { ok: true; result: SessionResult } | { ok: false; message: string }): void => {
+    if (!observed) return;
+    try { turnTap?.close(input.pkg, slot, observed.id, outcome); } catch { /* 방청자 사정 */ }
+  };
   // 질문은 턴이 끝나기를 기다리지 않는다. 답변까지 모아서 마지막에 한 번 쓰면
   // 도중에 기판이 죽었을 때 질문까지 통째로 사라진다 — 물음은 지금, 답은 끝나고
   appendUser(io, input.pkg, slot, input.prompt ?? "", atts);
@@ -853,6 +884,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     r = await turn;
   } catch (e) {
     appendBot(io, input.pkg, slot, `오류: ${e instanceof Error ? e.message : String(e)}`);
+    closeObserved({ ok: false, message: e instanceof Error ? e.message : String(e) });
     throw e;
   }
   // 어댑터가 종결 본문을 못 준 턴 — 화면에 "(빈 응답)" 을 띄우기 전에 이 턴에 흘렀던
@@ -868,6 +900,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 이 슬롯의 마지막 턴을 돈 변형 — 다음 턴의 인수인계 판정 기준. 성공한 턴만 기록한다:
   // 실패 턴 뒤 재시도에도 서문이 다시 실려야 새 하네스가 맥락 없이 시작하지 않는다
   fs.writeFileSync(path.join(io.sessionDir(input.pkg, slot), "harness"), variant.name);
+  // 이력이 앉은 **뒤에** 닫는다 — 종결을 본 화면이 곧바로 이력을 다시 읽어도 같은 답을 본다
+  closeObserved({ ok: true, result: { ...r, files } });
   return { ...r, files };
 }
 
@@ -1018,6 +1052,10 @@ export function listSessionSlots(pkg: string): string[] {
  * 중간 텍스트로 답을 복구한다. 흐른 말이 없으면 끊겼다는 사실이라도 남긴다.
  * 데몬이 뜰 때 한 번만 돈다 — 도는 중인 턴을 죽은 것으로 오인하지 않기 위해서다.
  */
+/** 복구가 이력에 남기는 표식의 머리 — 미결 배달 sweep 이 "완료"와 "중단"을 가르는 근거다.
+ *  두 자리가 같은 상수를 봐야 한 쪽만 고쳐져 판정이 조용히 갈리지 않는다 */
+export const INTERRUPTED_MARK = "(작업 도중 기판이 멈춰";
+
 export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = localSessionIO(loadLedger)): boolean {
   const msgs = io.readMessages(pkg, slot);
   if (!msgs.length) return false;
@@ -1029,8 +1067,8 @@ export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = 
     pkg,
     slot,
     text
-      ? `${text}\n\n(작업 도중 기판이 멈춰 답변이 끝까지 저장되지 못했습니다. 여기까지 오간 내용입니다.)`
-      : "(작업 도중 기판이 멈춰 답변이 저장되지 못했습니다. 남은 내용이 없습니다.)",
+      ? `${text}\n\n${INTERRUPTED_MARK} 답변이 끝까지 저장되지 못했습니다. 여기까지 오간 내용입니다.)`
+      : `${INTERRUPTED_MARK} 답변이 저장되지 못했습니다. 남은 내용이 없습니다.)`,
   );
   return true;
 }
