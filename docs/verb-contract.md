@@ -26,6 +26,24 @@ fails loudly when called. Everything else a verb exports is optional.
 | `dispatch(provider, mission, payload)` | a2a delegation. Requires an approved grant; returns the provider session's reply. |
 | `host` | ring-0 only. The substrate bridge, capped by `host_methods`. `undefined` everywhere else. |
 
+## Ground and folders
+
+A verb stands on one folder: `ctx.workspace`, the package's workspace (`~/Relay/<pkg>` by default,
+re-pointable per package in the ledger). It is the session's cwd and where work output belongs, and
+it is created on first access.
+
+`ctx.dir(name)` is for the folders **outside** that ground, and the manifest gives the declaration
+two meanings by path shape: a relative path is inside the package tree and owned by it, while a `~`
+path is a **request** — the install consent binds it, and the binding is recorded in the ledger and
+merged, never dropped, across reinstalls. So `dir` is a coordinate and a grant, not a storage
+allocation; the only size axis in the grammar is `services[].disk`, the persistent volume a
+container body mounts at `/data`.
+
+Declaring your own workspace as a `~` dir is the shape to avoid. It reads as a request for a foreign
+folder — grammatically identical to asking for someone else's ground — so the map and the permission
+screen cannot tell a package's own data from data it borrowed. Use `ctx.workspace` for your own, and
+a granted verb for anyone else's.
+
 ## Reaching a service
 
 `relay.yaml` declares services in four forms, and `ctx.service(name)` is the single accessor for the
@@ -56,6 +74,33 @@ by the infrastructure that issues them. When the seam returns none, the call car
 body was already handed its credential at spawn time, in `RELAY_CRED_<NAME>`, from the same vault
 coordinate (`<pkg>/<service>`).
 
+## Reaching another package
+
+`ctx.service(name)` reaches what this package declared for itself. Another package's data is reached
+through one door only — a verb it granted you:
+
+```ts
+const answers = await ctx.edge("@scope/offer-workbook").call("answers-read", { offer });
+```
+
+`edges[]` is the cap and the ledger's grant is the approval. `ctx.edge(provider)` resolves the
+provider by install name, by manifest name, or by the versioned reference written in
+`edges[].provider`, so an author never has to know the install name; `call` refuses anything outside
+the grant with `E_NO_GRANT`. A grant whose provider is no longer installed fails `E_NO_PROVIDER`
+instead of dying on a missing record, and consumption that loops back into a package already on the
+call stack fails `E_EDGE_CYCLE` with the chain printed — a mutual pair would otherwise burn the
+stack and leave no cause behind.
+
+The session tool (`edge__<provider>__<tool>`) and `ctx.edge` are two entrances to **one**
+enforcement. Two entrances with two judgments is not a cap, it is a coincidence.
+
+**Do not point `dir` at another package's folder.** That shortcut is what this door exists to
+remove, and it costs three things at once. The cap becomes the whole folder instead of a verb. The
+provider's storage format gets copied into the consumer's source, where nothing judges it when the
+provider changes it. And the coupling appears in no declaration — so the map, the permission screen,
+and validation all report the two packages as unrelated while one of them silently depends on the
+other. A folder is where a package keeps its **own** data; a verb is how anyone else reads it.
+
 ## Identity on outbound calls
 
 Every MCP call the substrate makes on a package's behalf carries two axes, not one. The credential
@@ -75,8 +120,8 @@ Two paths reach a remote body, and they answer this question the same way:
 
 - **`ctx.service(name).call(…)`** — the package calls its own declared service. Credential and
   identity both belong to that package's run.
-- **Edge consumption (`edge__<provider>__<tool>`)** — one package consumes a tool the ledger
-  granted it from another. Here the axes split on purpose: **the credential is the provider's**,
+- **Edge consumption** — one package consumes a tool the ledger granted it from another, whether
+  through the session tool (`edge__<provider>__<tool>`) or a verb's `ctx.edge(provider).call(…)`. Here the axes split on purpose: **the credential is the provider's**,
   because the connection to the body is the provider's to own, while **the identity is the original
   caller's** — the principal that made the consumption and the consuming session's agent. Swapping in
   a provider identity would flatten every consumer's user into one, and the body's RLS would stop

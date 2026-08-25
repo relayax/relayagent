@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { expandHome, type Grant, type Ledger } from "../supply/ledger.ts";
+import { expandHome, workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { loadManifest, listScripts, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { resolveProvider } from "../supply/install.ts";
 
 export interface HostBridge {
   registry(): unknown;
@@ -71,11 +72,37 @@ export interface ServiceHandle {
   fetch(path: string, init?: RequestInit): Promise<Response>;
 }
 
+/** 결재된 provider 하나로 열린 문 — edges[] 선언 × grants 결재를 지난 것만 부를 수 있다 */
+export interface EdgeHandle {
+  /** 설치 이름으로 해석된 provider */
+  provider: string;
+  /** provider 의 동사 하나. 결재 밖이면 E_NO_GRANT 로 막힌다(선언 = 캡, 결재 = 승인) */
+  call(verb: string, args?: unknown): Promise<unknown>;
+}
+
 export interface ScriptCtx {
   pkg: string;
   caller: CallerIdentity;
+  /**
+   * 이 패키지의 바닥 — 세션이 딛는 그 폴더(규율 6: "세션은 결재된 workspace 폴더 하나를 딛고,
+   * 그 밖의 폴더가 dir 서비스다"). 작업 산출물의 거처이고, 없으면 여는 시점에 생긴다.
+   *
+   * 이 접근자가 없던 동안 저작자에게 남은 길은 자기 바닥을 `dir: ~/Relay/<자기이름>` 으로
+   * **다시 선언**하는 것뿐이었다(세션은 cwd 로 딛지만 동사는 기판 안에서 돈다). 그 재선언은
+   * 문법상 "남의 폴더 신청"과 같은 모양이라, 지도에서 자기 데이터와 남의 데이터가 구별되지
+   * 않았다 — 구멍을 메우는 자리다.
+   */
+  workspace: string;
+  /** 선언한 dir 서비스의 경로. `~` 형은 설치 결재로 바인딩된 신청이다(자기 바닥은 workspace) */
   dir(name: string): string;
   service(name: string): ServiceHandle;
+  /**
+   * 남의 패키지의 동사 — edges[] 로 선언하고 결재된 것만. 자기 데이터는 dir·service 로 갖고
+   * **남의 데이터는 이 문으로만** 닿는다: 남의 폴더를 dir 로 가리키면 캡이 폴더 전체가 되고,
+   * 저쪽의 저장 형식이 이쪽 소스로 복제되어 선언에 없는 결합이 생긴다(지도·권한 화면·판정
+   * 어디에도 안 걸리는 결합이다). relayos 의 ctx.binding(…).callTool(…) 과 같은 축이다.
+   */
+  edge(provider: string): EdgeHandle;
   dispatch(provider: string, mission: string, payload: string): Promise<string>;
   host?: HostBridge;
 }
@@ -182,12 +209,16 @@ export function makeCtx(
   hostBridge: HostBridge | null,
   authority: Authority,
   io: ServiceIO = localServiceIO,
+  chain: string[] = [],
 ): ScriptCtx {
   const rec = ledger.packages[pkg];
   const m = loadManifest(rec.path);
   return {
     pkg,
     caller,
+    get workspace() {
+      return workspaceDir(ledger, pkg);
+    },
     dir: (name) => resolveDirService(ledger, pkg, m, name),
     // 서비스 선언 네 형이 한 접근자를 지난다 — 저작자가 "몸이 url 이냐 api 냐 source 냐"를
     // 외우지 않아야 자격·신원이 한 문으로 모인다. 형마다 다른 접근자를 두면 그 문을 안 지나는
@@ -235,12 +266,67 @@ export function makeCtx(
       if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
       return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch };
     },
+    // 남의 동사 — 선언(edges[])이 캡이고 결재(grants)가 승인이다. 판정은 세션 문과 같은
+    // 한 벌(callEdgeTool)을 지난다. provider 는 edges[].provider 에 적은 참조 그대로 쓰면 된다
+    // (설치 이름·매니페스트 이름·버전 꼬리표 셋 다 해석한다 — 저작자가 설치 이름을 외울 필요가 없다)
+    edge: (ref) => {
+      const provider = resolveProvider(ledger, ref);
+      if (!provider) throw new Error(`E_NO_PROVIDER: edge provider 미설치 — ${ref} (edges[] 선언의 provider 가 장부에 없습니다)`);
+      return {
+        provider,
+        call: (verb, args) => callEdgeTool(ledger, authority, pkg, provider, verb, args ?? {}, hostBridge, caller.agent, chain),
+      };
+    },
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
       return hostBridge.dispatch(provider, mission, payload, pkg);
     },
     host: rec.ring === 0 && hostBridge ? capHost(hostBridge, m.host_methods) : undefined,
   };
+}
+
+/**
+ * edge 소비의 집행 — **한 벌뿐이다**. 세션 문(tools.ts edge__* 도구)과 동사 문(ctx.edge)이
+ * 같은 판정·같은 신원 규칙을 지나야 한다: 두 입구가 다른 답을 내면 "에이전트로는 되는데
+ * 스크립트로는 안 된다"(또는 그 반대)가 되고, 그건 캡이 아니라 우연이다.
+ *
+ * chain 은 호출 스택(자기 포함) — A→B→A 순환을 여기서 끊는다. 없으면 서로를 부르는 두
+ * 패키지가 스택을 태우고 죽는데, 그 실패에는 원인이 남지 않는다.
+ */
+export async function callEdgeTool(
+  ledger: Ledger,
+  authority: Authority,
+  consumer: string,
+  provider: string,
+  tool: string,
+  args: unknown,
+  host: HostBridge | null,
+  agent?: string,
+  chain: string[] = [],
+): Promise<unknown> {
+  if (chain.includes(provider)) {
+    throw new Error(`E_EDGE_CYCLE: 순환 소비 — ${[...chain, provider].join(" -> ")}`);
+  }
+  // 인가 판정은 권위 이음새를 지난다 — "누구로서(consumer), 무엇을(provider/tool), 어떤 자격으로"
+  const grant = await authority.grantForTool(consumer, provider, tool);
+  if (!grant) throw new Error(`E_NO_GRANT: ${consumer} -> ${provider}/${tool}`);
+  const rec = ledger.packages[provider];
+  // 결재는 남았는데 설치가 사라진 자리 — 조용히 TypeError 로 죽으면 원인이 결재인지 설치인지 모른다
+  if (!rec) throw new Error(`E_NO_PROVIDER: 미설치 provider — ${provider} (결재는 남아 있습니다)`);
+  const m = loadManifest(rec.path);
+  const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
+  // 소비의 두 축은 여기서 갈라진다 — 자격은 provider, 신원은 원 호출자.
+  // 자격: provider 의 것으로 나간다(몸과의 연결은 provider 가 소유한다 — ctx.service 와 같은
+  //   해석: token·oauth 회전). 무자격 호출이던 구멍의 답.
+  // 신원: 소비를 발화한 쪽의 것으로 나간다(principal = 그 사람, agent = 그 세션의 얼굴).
+  //   신원까지 provider 로 바꾸면 principal 로 RLS 를 거는 몸이 소비자 사용자를 못 보고
+  //   provider 하나로 뭉뚱그린다 — 인가가 consumer→provider 로 기록되는 것과 같은 결이다.
+  //   agent 이름은 consumer 패키지의 어휘다: provider 는 이것을 자기 에이전트로 읽으면 안 된다.
+  //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
+  const identity = { principal: authority.principal(), agent };
+  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, localServiceIO, chain);
+  throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 
 export async function runScript(
@@ -252,6 +338,8 @@ export async function runScript(
   hostBridge: HostBridge | null,
   authority: Authority = localAuthority(() => ledger),
   io: ServiceIO = localServiceIO,
+  /** 호출 스택 — edge 소비가 겹칠 때 순환을 끊는 축(callEdgeTool 이 검사한다) */
+  chain: string[] = [],
 ): Promise<unknown> {
   const rec = ledger.packages[pkg];
   if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
@@ -262,7 +350,7 @@ export async function runScript(
   const mtime = fs.statSync(file).mtimeMs;
   const mod = await import(pathToFileURL(file).href + "?t=" + mtime);
   if (typeof mod.default !== "function") throw new Error(`script 계약 위반(기본 수출 함수 아님): ${name}`);
-  const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, io);
+  const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, io, [...chain, pkg]);
   return await mod.default(input ?? {}, ctx);
 }
 
