@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, parseDocument, LineCounter } from "yaml";
 
 export type RequiredOS = "darwin" | "linux" | "win32";
 
@@ -687,4 +687,90 @@ export function disclosure(m: Manifest): Disclosure {
         : "low";
 
   return { folders, network, wakeups, llm, host, borrows, spawns, channels, hostMethods, risk };
+}
+
+
+// ── 좌표 있는 판정 ──────────────────────────────────────────────────────────
+// judge 가 내는 판정은 사람이 읽는 문장이지만, 그 첫 토막은 언제나 **선언 경로**다
+// ("surfaces.view.source: 상대경로 필수", "agents[diary].persona: 실체 없음"). 그 규칙성이
+// 이미 계약처럼 지켜지고 있었는데 아무도 그것을 좌표로 쓰지 않았다 — 판정이 콘솔에만 쌓이고
+// 고치는 자리(에디터·트리)에는 닿지 않은 이유다.
+//
+// 문법을 고치지 않고 여기서 되읽는 것이 요점이다. judge 의 문장을 좌표를 싣는 구조로 바꾸면
+// 판정 한 줄 한 줄이 형을 갖게 되고(200줄 가까운 자리), 그 형은 임베더의 판정과도 갈라진다.
+// 되읽기는 실패해도 안전하다: 못 짚으면 null 이고, 화면은 종전처럼 문장만 보여준다.
+// **지어낸 좌표를 내지 않는 것**이 이 함수의 유일한 불변식이다.
+
+export interface Verdict {
+  message: string;
+  /** 1-기반. 짚지 못했으면 null */
+  line: number | null;
+  col: number | null;
+  /** 짚은 선언 경로 — 트리가 그 노드로 뛰는 좌표 (예: "agents.diary") */
+  path: string | null;
+}
+
+/** "agents[diary].persona" → ["agents", "diary", "persona"] (실패하면 null) */
+function headPath(issue: string): string[] | null {
+  // 첫 토막 = 콜론이나 공백 앞. 한글 서술은 그 뒤에 온다
+  const head = issue.split(/[:\s]/)[0];
+  if (!head || !/^[A-Za-z_]/.test(head)) return null;
+  const out: string[] = [];
+  for (const seg of head.split(".")) {
+    const m = seg.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\[([^\]]*)\])?$/);
+    if (!m) return null;
+    out.push(m[1]);
+    if (m[2] != null && m[2] !== "") out.push(m[2]);
+  }
+  return out;
+}
+
+/** 배열 안에서 이름으로 항목을 찾는다 — judge 가 쓰는 키는 name(대부분)과 id(triggers) 둘이다 */
+function indexOfNamed(seq: unknown, key: string): number | null {
+  const items = (seq as { items?: unknown[] })?.items;
+  if (!Array.isArray(items)) return null;
+  for (let i = 0; i < items.length; i++) {
+    const node = items[i] as { get?: (k: string) => unknown };
+    if (typeof node?.get !== "function") continue;
+    for (const k of ["name", "id", "provider"]) {
+      if (String(node.get(k) ?? "") === key) return i;
+    }
+  }
+  return null;
+}
+
+/**
+ * 판정 목록에 relay.yaml 안의 자리를 붙인다.
+ *
+ * 없는 키를 짚는 판정("…: 필수")은 그 키가 문서에 없으므로 부모에 앉힌다 — 그것이 사람이
+ * 눈으로 찾는 자리이기도 하다(무엇이 빠졌는지는 부모를 봐야 안다).
+ */
+export function locateIssues(text: string, issues: string[]): Verdict[] {
+  let doc: ReturnType<typeof parseDocument>;
+  const lc = new LineCounter();
+  try {
+    doc = parseDocument(text, { lineCounter: lc });
+  } catch {
+    return issues.map((message) => ({ message, line: null, col: null, path: null }));
+  }
+  return issues.map((message) => {
+    const raw = headPath(message);
+    if (!raw) return { message, line: null, col: null, path: null };
+    // 이름 첨자를 인덱스로 바꾼다 — 문서 노드는 이름을 모른다
+    const resolved: (string | number)[] = [];
+    for (const seg of raw) {
+      const parent = resolved.length ? doc.getIn(resolved, true) : doc.contents;
+      const asIndex = indexOfNamed(parent, seg);
+      resolved.push(asIndex != null ? asIndex : /^\d+$/.test(seg) ? Number(seg) : seg);
+    }
+    // 짚은 자리부터 부모로 거슬러 올라가며 실재하는 첫 노드를 쓴다
+    for (let n = resolved.length; n > 0; n--) {
+      const node = doc.getIn(resolved.slice(0, n), true) as { range?: [number, number, number] } | undefined;
+      const start = node?.range?.[0];
+      if (typeof start !== "number") continue;
+      const pos = lc.linePos(start);
+      return { message, line: pos.line, col: pos.col, path: raw.join(".") };
+    }
+    return { message, line: null, col: null, path: raw.join(".") };
+  });
 }

@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument } from "yaml";
 import { packagesPath, saveLedger, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
-import { loadManifest, judge, ManifestError, type Manifest } from "./manifest.ts";
+import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
 import { spawnEntrySync } from "../spawn.ts";
-import { judgeRequires, validateDir } from "./install.ts";
-import { buildView, type BuildResult } from "../runtime/view.ts";
+import { buildSurfaces, judgeRequires, validateDir } from "./install.ts";
+import { draftViewBase, type BuildResult } from "../runtime/view.ts";
 
 // 수정 레이어. 설치본(장부 path)은 실행 중인 바이너리라 직접 만지지 않는다 — 런타임이 매 요청
 // loadManifest(rec.path) 를 읽으므로 반쯤 저장된 매니페스트가 그대로 노출된다. 편집은 전부
@@ -337,11 +337,21 @@ export function commitDraft(name: string, message: string): { committed: boolean
   return { committed: true, hash: lastCommit(droot)?.hash };
 }
 
-export function validateDraft(name: string): { ok: boolean; issues: string[] } {
+/**
+ * 작업 사본 판정. issues(문장 배열)는 종전 그대로 두고 verdicts 를 **덧붙인다** — 좌표를 실은
+ * 같은 판정이다. 화면은 verdicts 로 에디터 마커와 트리 배지를 그리고, 좌표를 못 짚은 판정도
+ * 문장으로는 그대로 보인다(둘의 길이는 항상 같다).
+ */
+export function validateDraft(name: string): { ok: boolean; issues: string[]; verdicts: Verdict[] } {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
-  return validateDir(droot);
+  const r = validateDir(droot);
+  let text = "";
+  try {
+    text = fs.readFileSync(path.join(droot, "relay.yaml"), "utf8");
+  } catch { /* 매니페스트 자체가 없는 경우 — 좌표 없는 판정으로 나간다 */ }
+  return { ...r, verdicts: text ? locateIssues(text, r.issues) : r.issues.map((message) => ({ message, line: null, col: null, path: null })) };
 }
 
 export function discardDraft(name: string): { removed: string } {
@@ -460,8 +470,29 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
   }
   saveLedger(ledger);
 
-  const build = buildView(name, snapshot, m) ?? null;
+  // 굽는 것은 표면 **전부**다. 종전에는 view 만 구웠는데, components 를 선언한 패키지를
+  // 스튜디오에서 발행하면 번들이 없는 스냅샷이 떠서 소비자 문서의 import 가 503 을 받았다 —
+  // 설치·재빌드(buildSurfaces)와 발행이 서로 다른 것을 구운 자리다.
+  const build = buildSurfaces(name, snapshot, m) ?? null;
   return { published: true, name, version, path: snapshot, manifest: m, fresh, setup, build };
+}
+
+/**
+ * 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다.
+ *
+ * 발행 굽기와 다른 것은 좌표 하나다(basePath). 산출은 작업 사본 안의 out/ 에 앉는데 그것은
+ * 스냅샷에서 빠지는 임시물이라(buildOutSkip · publish 가 다시 굽는다) 도는 판을 오염시키지
+ * 않는다. 장부도 건드리지 않는다 — 여기서는 아무것도 커밋되지 않는다.
+ */
+export function buildDraft(name: string): { name: string; built: boolean; out: string } {
+  assertSlug(name);
+  const root = draftPath(name);
+  if (!fs.existsSync(root)) throw new Error(`없는 작업 사본: ${name}`);
+  const m = loadManifest(root);
+  const r = buildSurfaces(name, root, m, draftViewBase(name));
+  if (!r) return { name, built: false, out: "surfaces.{view,components}.out 미선언 — 굽지 않고 source 를 그대로 냅니다" };
+  if (!r.ok) throw new Error(r.out);
+  return { name, built: true, out: r.out };
 }
 
 

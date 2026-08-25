@@ -46,6 +46,40 @@ export function assetsAtDaemonRootInDoc(html: string, outDir: string): string[] 
   return [...bad].sort();
 }
 
+/**
+ * assetsAtOtherMount — 문서가 **다른 마운트**의 자산을 가리키는가.
+ *
+ * 같은 트리가 두 좌표로 설 수 있게 되면서 생긴 판정이다(/pkg/ 와 /draft/). out 산출은 구울 때
+ * 접두사가 문서에 박히므로, /pkg 좌표로 구운 발행물을 /draft 좌표에서 내면 문서는 200 으로
+ * 나가는데 그 청크는 **도는 판의 것**을 끌어온다 — 미리보기가 자기 것이 아닌 코드를 그리고,
+ * 화면은 멀쩡해 보인다. 실측에서 바로 걸린 형태다(cardnews-studio, 2026-08-25).
+ *
+ * assetsAtDaemonRoot 는 이것을 못 잡는다: 그 술어는 "루트절대 참조가 out/ 안의 실제 파일로
+ * 해석되는가" 를 묻는데, /pkg/x/view/_next/... 는 out/ 안에서 그 경로로 존재하지 않아 통과한다.
+ * 여기는 반대편에서 본다 — 마운트 접두사를 달고 있는데 **내 접두사가 아닌** 참조.
+ *
+ * 기판 소유 자산(/assets/…, /shell.js)은 대상이 아니다: 그것들은 데몬 루트가 정본이라
+ * 어느 마운트에서 보든 같은 자리다.
+ *
+ * 보는 것은 **문서가 스스로 적재하는 것** 둘뿐이다 — <script src> 와 <link href>. 여기서
+ * href 를 무차별로 보면 남의 앱으로 가는 링크(<a href="/pkg/detail-page/view/">)까지 걸린다:
+ * 그건 자산이 아니라 이동이고, 앱끼리 서로 여는 것은 이 기판의 정상 동작이다(실측에서 정적
+ * 화면 하나가 이 오판으로 통째 503 이 됐다). 이미지·iframe 도 뺀다 — 같은 이유로 남의 것을
+ * 가리키는 게 정상이고, "같은 빌드가 다른 좌표에 박혔다" 는 위험의 형태가 아니다.
+ */
+export function assetsAtOtherMount(html: string, base: string): string[] {
+  const bad = new Set<string>();
+  const check = (raw: string): void => {
+    const ref = raw.split(/[?#]/)[0];
+    if (!/^\/(?:pkg|draft)\//.test(ref)) return;
+    if (ref === base || ref.startsWith(base + "/")) return;
+    bad.add(ref);
+  };
+  for (const m of html.matchAll(/<script\b[^>]*?\ssrc="([^"]*)"/gi)) check(m[1]);
+  for (const m of html.matchAll(/<link\b[^>]*?\shref="([^"]*)"/gi)) check(m[1]);
+  return [...bad].sort();
+}
+
 /** 발행물 전체를 같은 술어로 훑는다. */
 export function assetsAtDaemonRoot(outDir: string): string[] {
   const bad = new Set<string>();
@@ -148,14 +182,14 @@ export function buildComponents(pkgPath: string, m: Manifest): BuildResult | und
  * 기판은 view 를 /pkg/<설치이름>/view/ 아래로 서빙하는데 설치 이름은 설치 시점에 정해지므로
  * 빌드도 설치 시점에 돌고, 접두사를 RELAY_BASE_PATH 로 넘긴다.
  */
-export function buildView(pkg: string, pkgPath: string, m: Manifest): BuildResult | undefined {
+export function buildView(pkg: string, pkgPath: string, m: Manifest, base?: string): BuildResult | undefined {
   const view = m.surfaces?.view;
   if (!view?.out) return undefined;
 
   const src = path.join(pkgPath, view.source);
   const env = {
     ...(process.env as Record<string, string>),
-    RELAY_BASE_PATH: `/pkg/${pkg}/view`,
+    RELAY_BASE_PATH: base ?? viewBase(pkg),
     NEXT_TELEMETRY_DISABLED: "1",
   };
 
@@ -228,6 +262,77 @@ export function componentBundleUrl(installName: string): string {
   return `/pkg/${encodeURIComponent(installName)}/components/index.js`;
 }
 
+// ── 두 좌표 ─────────────────────────────────────────────────────────────────
+// 한 패키지의 화면은 두 자리에 설 수 있다. 설치본은 /pkg/<이름>/ 에서 도는 판이고, 작업 사본은
+// /draft/<이름>/ 에서 **발행 전에 눈으로 보는 판**이다. 두 땅이 갈려 있는 것은 계약이라
+// (draft.ts 머리말: 작업 사본은 보이는 땅, 릴리스는 기판 장기) 그대로 두고 문만 하나 더 낸다.
+//
+// 접두사가 발행물에 구워지므로(next basePath) 좌표는 **굽는 자리와 내는 자리가 같은 함수**를
+// 봐야 한다. 그래서 여기 한 벌만 둔다 — 갈라두면 미리보기가 자기 청크를 404 받는다.
+export const viewBase = (pkg: string): string => `/pkg/${encodeURIComponent(pkg)}/view`;
+export const draftViewBase = (pkg: string): string => `/draft/${encodeURIComponent(pkg)}/view`;
+export const draftComponentBundleUrl = (pkg: string): string => `/draft/${encodeURIComponent(pkg)}/components/index.js`;
+
+/**
+ * 한 문서를 내는 데 필요한 것 전부. serveView 가 장부에서, serveDraftView 가 작업 사본에서
+ * 같은 모양으로 만들어 같은 서빙 함수에 넘긴다 — 두 좌표가 갈라지지 않는 유일한 방법이다.
+ */
+interface ViewMount {
+  pkg: string;
+  /** 서빙 뿌리 — out 선언이면 산출 디렉토리, 아니면 source */
+  root: string;
+  /** 문서가 자기 자산에 달아야 할 접두사 */
+  base: string;
+  /** __RELAY_CONTEXT.base — 대화 위젯이 지나는 API 접두사. null 이면 주입하지 않는다 */
+  api: string | null;
+  imports: Record<string, string>;
+  fav: string;
+  /** 접두사 판정이 실패했을 때 화면이 내미는 처방 */
+  rebuild: string;
+  /** 실패를 무엇으로 낼 것인가. 문의 손님이 정한다 — 미리보기 문은 언제나 브라우저가 열고,
+   *  그 자리에 생 JSON 이 뜨면 사람은 무엇을 해야 하는지 알 수 없다(프레임 안에서는 특히) */
+  faults: "json" | "html";
+}
+
+/**
+ * 미리보기 문의 실패 화면. 처방이 판정의 본체라는 규율(규칙 2)을 사람이 읽는 자리로 옮긴 것뿐이다 —
+ * 같은 사실을 JSON 으로도 내지만, 프레임 안에서는 그것이 아무것도 알려주지 않는다.
+ */
+function faultDoc(title: string, body: string, hint?: string): string {
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
+<style>
+ :root{color-scheme:light dark}
+ body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;
+      font:14px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;
+      background:#f5f6f7;color:#16181b;padding:28px;box-sizing:border-box}
+ main{max-width:460px;text-align:center}
+ h1{margin:0 0 10px;font-size:15px;font-weight:600}
+ p{margin:0 0 8px;font-size:13px;color:#5c6570}
+ code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#eef0f2;border-radius:5px;padding:2px 6px}
+ @media (prefers-color-scheme:dark){body{background:#14181b;color:#e8ecef}p{color:#9aa5ad}code{background:#232c31}}
+</style></head><body><main>
+<h1>${esc(title)}</h1><p>${esc(body)}</p>${hint ? `<p><code>${esc(hint)}</code></p>` : ""}
+</main></body></html>`;
+}
+
+/** 문의 손님에 맞춰 실패를 낸다 — 같은 사실, 다른 표현 */
+function fault(
+  mount: Pick<ViewMount, "faults" | "rebuild">,
+  res: http.ServerResponse,
+  status: number,
+  title: string,
+  body: string,
+  hint?: string,
+  /** json 문의 문구 — 종전 응답을 그대로 두기 위한 자리다(도는 판의 계약은 이 변경의 대상이 아니다) */
+  jsonError?: string,
+): void {
+  if (mount.faults === "json") return void json(res, status, { error: jsonError ?? `${title} — ${body}` });
+  res.writeHead(status, { "content-type": MIME[".html"], "cache-control": "no-store" });
+  res.end(faultDoc(title, body, hint));
+}
+
 /** 제공자 번들의 트리 위 자리. out 미선언이면 source 가 곧 산출 디렉토리다(손저작 ESM) */
 export function componentOutDir(pkgPath: string, m: Manifest): string | null {
   const comp = m.surfaces?.components;
@@ -297,19 +402,80 @@ export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.S
       error: `view 미빌드: ${pkg} — 선언된 ${view.source}/${view.out} 이 없습니다: npm run relay -- build ${pkg}`,
     });
   }
-  const fav = pkgIconHref(pkg, m);
+  serveMounted({
+    pkg,
+    root,
+    base: viewBase(pkg),
+    api: `/pkg/${encodeURIComponent(pkg)}`,
+    imports: componentImportsFor(ledger, pkg),
+    fav: pkgIconHref(pkg, m),
+    rebuild: `npm run relay -- build ${pkg}`,
+    faults: "json",
+  }, rest, res);
+}
+
+/**
+ * 작업 사본의 화면 — 발행 전에 눈으로 보는 판. 설치본을 만지지 않고, 장부도 건드리지 않는다.
+ *
+ * 이 문이 없던 동안 스튜디오의 미리보기는 구조적으로 불가능했다: 서빙은 장부 rec.path(릴리스
+ * 스냅샷)만 읽고 빌드는 발행 시점에만 돌았으므로, 고친 것을 보려면 **적용을 눌러 실제로 도는
+ * 판을 갈아치우는 수밖에** 없었다. 미리보기가 발행을 요구하면 그건 미리보기가 아니다.
+ *
+ * 발행=커밋 교리와 부딪히지 않는다 — 여기서는 아무것도 커밋되지 않는다. 장부는 그대로고,
+ * 도는 판도 그대로다. 바뀌는 것은 이 응답 하나뿐이다.
+ */
+export function serveDraftView(ledger: Ledger, pkg: string, pkgRoot: string, rest: string, res: http.ServerResponse): void {
+  const F = { faults: "html" as const, rebuild: "스튜디오의 [미리보기 굽기]" };
+  if (!fs.existsSync(pkgRoot)) {
+    return void fault(F, res, 404, "작업 사본이 없습니다", `${pkg} 의 작업 사본을 찾지 못했습니다. 스튜디오에서 이 패키지를 한 번 열면 만들어집니다.`);
+  }
+  let m: Manifest;
+  try {
+    m = loadManifest(pkgRoot);
+  } catch (e) {
+    // 미리보기 중에는 매니페스트가 반쯤 고쳐진 상태일 수 있다 — 판정 실패를 그대로 알린다
+    return void fault(F, res, 503, "relay.yaml 이 판정을 통과하지 못했습니다", String(e instanceof Error ? e.message : e).split("\n")[0], "왼쪽 [검사] 를 눌러 걸린 자리를 보세요");
+  }
+  const view = m.surfaces?.view;
+  if (!view) {
+    return void fault(F, res, 404, "화면이 선언되지 않았습니다", "surfaces.view 를 선언하면 이 자리에 작업 사본의 화면이 뜹니다. 화면 없는 패키지의 미리보기는 대화가 맡습니다.");
+  }
+  const root = path.normalize(path.join(pkgRoot, view.source, view.out ?? ""));
+  if (view.out && !fs.existsSync(root)) {
+    return void fault(F, res, 503, "아직 굽지 않았습니다", `out 을 선언한 표면이라 굽기 전에는 낼 것이 없습니다 (${view.source}/${view.out} 없음).`, "미리보기 굽기");
+  }
+  // 자기 번들은 작업 사본 것을 본다 — 화면을 고치면서 그 화면이 마운트하는 부품도 같이 고치는
+  // 것이 저작의 실제 모습이라, 여기서 설치본 번들을 물리면 한쪽만 새 판이 된다.
   const imports = componentImportsFor(ledger, pkg);
+  if (m.surfaces?.components && m.name) imports[m.name] = draftComponentBundleUrl(pkg);
+  serveMounted({
+    pkg,
+    root,
+    base: draftViewBase(pkg),
+    // 도는 판이 있으면 그 API 를 쓴다(대화·업로드가 갈 곳은 거기뿐이다). 없으면 주입하지
+    // 않는다 — 없는 문을 가리키는 좌표를 심으면 위젯이 조용히 죽는다
+    api: ledger.packages[pkg] ? `/pkg/${encodeURIComponent(pkg)}` : null,
+    imports,
+    fav: draftIconHref(pkg, m),
+    rebuild: `스튜디오의 [미리보기 굽기]`,
+    faults: "html",
+  }, rest, res);
+}
+
+/** 두 좌표가 공유하는 파일 해석 — 정적 발행물의 라우트 관례는 좌표와 무관하다 */
+function serveMounted(mount: ViewMount, rest: string, res: http.ServerResponse): void {
+  const root = mount.root;
   const target = path.normalize(path.join(root, rest === "" || rest === "/" ? "index.html" : rest));
-  if (target !== root && !target.startsWith(root + path.sep)) return void json(res, 403, { error: "경로 탈출" });
+  if (target !== root && !target.startsWith(root + path.sep)) return void fault(mount, res, 403, "경로 탈출", "발행물 뿌리 밖은 내지 않습니다.", undefined, "경로 탈출");
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     // 정적 발행물의 라우트 관례: <경로>/index.html (trailingSlash) 또는 <경로>.html
     const idx = path.join(target, "index.html");
-    if (fs.existsSync(idx)) return void serveViewFile(idx, pkg, root, res, fav, imports);
+    if (fs.existsSync(idx)) return void serveViewFile(idx, mount, res);
     const html = target + ".html";
-    if (fs.existsSync(html)) return void serveViewFile(html, pkg, root, res, fav, imports);
-    return void json(res, 404, { error: `없음: ${rest}` });
+    if (fs.existsSync(html)) return void serveViewFile(html, mount, res);
+    return void fault(mount, res, 404, "그 자리에 문서가 없습니다", `발행물 안에 ${rest || "index.html"} 이 없습니다.`, undefined, `없음: ${rest}`);
   }
-  serveViewFile(target, pkg, root, res, fav, imports);
+  serveViewFile(target, mount, res);
 }
 
 /**
@@ -320,14 +486,29 @@ export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.S
 export function serveComponents(ledger: Ledger, pkg: string, rest: string, res: http.ServerResponse): void {
   const rec = ledger.packages[pkg];
   if (!rec) return void json(res, 404, { error: `미설치 패키지: ${pkg}` });
-  const m = loadManifest(rec.path);
+  serveComponentsFrom(pkg, rec.path, rest, res, `npm run relay -- build ${pkg}`);
+}
+
+/** 작업 사본의 번들 — serveDraftView 와 같은 근거다. 장부를 지나지 않고 트리를 바로 읽는다 */
+export function serveDraftComponents(pkg: string, pkgRoot: string, rest: string, res: http.ServerResponse): void {
+  if (!fs.existsSync(pkgRoot)) return void json(res, 404, { error: `없는 작업 사본: ${pkg}` });
+  serveComponentsFrom(pkg, pkgRoot, rest, res, `스튜디오의 [미리보기 굽기]`);
+}
+
+function serveComponentsFrom(pkg: string, pkgPath: string, rest: string, res: http.ServerResponse, rebuild: string): void {
+  let m: Manifest;
+  try {
+    m = loadManifest(pkgPath);
+  } catch (e) {
+    return void json(res, 503, { error: `relay.yaml 판정 실패: ${String(e)}` });
+  }
   const comp = m.surfaces?.components;
   if (!comp) return void json(res, 404, { error: `components 표면 없는 패키지: ${pkg}` });
   // out 선언은 서빙 뿌리 선언이다 — 미빌드를 소스로 강등하지 않는다(serveView 와 같은 규율)
-  const root = path.normalize(componentOutDir(rec.path, m)!);
+  const root = path.normalize(componentOutDir(pkgPath, m)!);
   if (comp.out && !fs.existsSync(root)) {
     return void json(res, 503, {
-      error: `components 미빌드: ${pkg} — 선언된 ${comp.source}/${comp.out} 이 없습니다: npm run relay -- build ${pkg}`,
+      error: `components 미빌드: ${pkg} — 선언된 ${comp.source}/${comp.out} 이 없습니다: ${rebuild}`,
     });
   }
   const target = path.normalize(path.join(root, rest === "" || rest === "/" ? "index.js" : rest));
@@ -351,14 +532,19 @@ function componentImportMapTag(imports: Record<string, string>): string {
   return `<script type="importmap">${body}</script>`;
 }
 
-function viewContextTag(pkg: string): string {
-  const base = JSON.stringify("/pkg/" + encodeURIComponent(pkg));
-  return `<script>window.__RELAY_CONTEXT={base:${base},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
+function viewContextTag(pkg: string, api: string): string {
+  return `<script>window.__RELAY_CONTEXT={base:${JSON.stringify(api)},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
 }
 
 // 패키지 대표 아이콘의 서빙 주소 — 카드 아바타와 탭 favicon 이 같은 그림(manifest icon)을 본다
 function pkgIconHref(pkg: string, m: Manifest): string {
   return m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
+}
+
+// 작업 사본의 아이콘은 설치본 자산 문(/pkg/<이름>/asset/)에 없을 수 있다 — 아직 발행되지 않은
+// 그림이면 그 문은 옛 판을 내거나 404 다. 미리보기는 자기 트리의 것을 봐야 한다.
+function draftIconHref(pkg: string, m: Manifest): string {
+  return m.icon ? `/draft/${encodeURIComponent(pkg)}/asset/${m.icon}` : "/pkg/system/view/icon.svg";
 }
 
 /**
@@ -383,11 +569,12 @@ function assetsAtRootCached(root: string): string[] {
   return bad;
 }
 
-function serveViewFile(file: string, pkg: string, root: string, res: http.ServerResponse, fav: string, imports: Record<string, string>): void {
+function serveViewFile(file: string, mount: ViewMount, res: http.ServerResponse): void {
+  const { pkg, root, fav, imports } = mount;
   if (path.extname(file) !== ".html") return void streamFile(file, res);
   const atRoot = assetsAtRootCached(root);
   if (atRoot.length) {
-    const base = "/pkg/" + pkg + "/view";
+    const base = mount.base;
     logLine("view", { pkg, ok: false, base, at_root: atRoot.slice(0, 5) });
     const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     res.writeHead(500, { "content-type": MIME[".html"], "cache-control": "no-store" });
@@ -399,11 +586,29 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
 <p>발행물이 <code>${esc(base)}</code> 접두사 없이 구워져, 아래 자산이 서빙되지 않습니다:</p>
 <ul>${atRoot.slice(0, 8).map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ul>
 <p><code>RELAY_BASE_PATH</code> 없이 <code>npx next build</code> 를 돌린 흔적입니다. 정본 경로로 다시 구우세요:</p>
-<p><code>npm run relay -- build ${esc(pkg)}</code></p>
+<p><code>${esc(mount.rebuild)}</code></p>
 <p>깨진 화면을 200 으로 내보내는 대신 여기서 멈춥니다 — 그 편이 <code>/_next</code> 404 벽보다 짧습니다.</p>
 </body></html>`));
   }
   const html = fs.readFileSync(file, "utf8");
+  // 두 좌표가 생긴 뒤의 두 번째 판정 — 이 문서가 **다른 마운트**의 청크를 부르는가.
+  // 조용히 내보내면 미리보기가 도는 판의 코드를 그리고, 그 갈라짐은 화면상 아무 흔적이 없다
+  const elsewhere = assetsAtOtherMount(html, mount.base);
+  if (elsewhere.length) {
+    logLine("view", { pkg, ok: false, base: mount.base, other_mount: elsewhere.slice(0, 5) });
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    res.writeHead(503, { "content-type": MIME[".html"], "cache-control": "no-store" });
+    return void res.end(injectShell(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>다른 좌표로 구워진 발행물: ${esc(pkg)}</title>
+<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
+</head><body>
+<h1>이 발행물은 다른 자리에서 구워졌습니다</h1>
+<p>지금 보고 있는 자리는 <code>${esc(mount.base)}</code> 인데, 문서가 부르는 자산은 다른 마운트를 가리킵니다:</p>
+<ul>${elsewhere.slice(0, 8).map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ul>
+<p>그대로 내보내면 이 화면이 <b>다른 판의 코드</b>로 그려지고, 겉보기로는 구별되지 않습니다. 이 좌표로 다시 구우세요:</p>
+<p><code>${esc(mount.rebuild)}</code></p>
+</body></html>`));
+  }
   // <head> 열림 직후 — 번들 로드보다 앞서야 한다(위젯이 로드 시점에 좌표를 읽고, import map 은
   // 그것을 쓰는 첫 모듈보다 앞서야 한다). <head> 가 없는 문서(손저작 단일 HTML 의 자연형)는
   // doctype 직후다: 0 에 심으면 doctype 앞에 내용이 생겨 문서가 quirks mode 로 떨어진다.
@@ -416,8 +621,11 @@ function serveViewFile(file: string, pkg: string, root: string, res: http.Server
   res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
   // 셸 크롬은 문서 말미다 — 좌표·import map 과 달리 렌더를 앞지를 이유가 없고, 패키지 문서의
   // 첫 페인트를 막지 않는다(defer). 주입 지점이 여기 하나뿐이라 "어떤 화면에는 사이드바가
-  // 없다" 가 구조적으로 불가능하다
-  res.end(injectShell(html.slice(0, at) + viewContextTag(pkg) + componentImportMapTag(imports) + iconTag + html.slice(at)));
+  // 없다" 가 구조적으로 불가능하다. 미리보기 프레임에도 그대로 심는다 — 셸 스크립트가 top
+  // 문서가 아니면 스스로 물러나므로(shell.ts 자가억제) iframe 안에서는 아무 일도 하지 않고,
+  // 미리보기를 새 창으로 띄운 경우에는 크롬이 있는 편이 맞다
+  const ctxTag = mount.api ? viewContextTag(pkg, mount.api) : "";
+  res.end(injectShell(html.slice(0, at) + ctxTag + componentImportMapTag(imports) + iconTag + html.slice(at)));
 }
 
 // ── 세션 장부 조회 ─────────────────────────────────────────────────────────
