@@ -1058,11 +1058,35 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
+// 기판이 세우는 도구는 접두로 갈린다 — 이름을 훑어 **짐작하기 전에 분해가 먼저**다(§8-41).
+// 순서가 뒤집혀 있던 동안 두 가지가 깨져 있었다.
+//   ① 분해 분기에 영영 닿지 않는다 — mcp__notion__search 는 "search" 부분일치에 먼저 걸려
+//      아래 사슬의 mcp__ 분기는 사실상 죽은 코드였다.
+//   ② 서비스·provider 이름이 라벨을 납치한다 — dir__spreadsheets__remove 는 "spreadsheets"
+//      안의 read 때문에 "읽기"로 떴다. 삭제가 읽기로 보이는 것은 미관 문제가 아니다.
+// 접두 넷과 `__` 는 계약 상수이고, 클라이언트에 허용된 것은 이 분해까지다(이름 조립·권한 추론 금지).
+const DIR_OP_LABEL: Record<string, string> = { list: "폴더 목록", read: "폴더 읽기", write: "폴더 쓰기", remove: "폴더 삭제" };
+
+function substrateTool(toolName: string): { icon: string; label: string } | null {
+  const seg = toolName.split("__");
+  if (seg.length < 2 || !seg[1]) return null;
+  const rest = seg.slice(1);
+  switch (seg[0]) {
+    case "dir": return { icon: "▤", label: `${DIR_OP_LABEL[rest[1] ?? ""] ?? "폴더"} · ${rest[0]}` };
+    case "edge": return { icon: "⇄", label: `빌린 동사 · ${rest.join(" · ")}` };
+    case "a2a": return { icon: "❖", label: `위임 · ${rest.join(" · ")}` };
+    case "mcp": return { icon: "⚙", label: rest.join(" · ") };
+    default: return null;
+  }
+}
+
 export function stepMeta(toolName: string, args: any, result?: unknown, isError?: boolean): StepMeta {
   const n = (toolName || "").toLowerCase();
   const a = args && typeof args === "object" ? args : {};
   let icon = "•", label = "작업";
-  if (n.includes("todo")) { icon = "☰"; label = "계획"; }
+  const sub = substrateTool(toolName || "");
+  if (sub) { icon = sub.icon; label = sub.label; }
+  else if (n.includes("todo")) { icon = "☰"; label = "계획"; }
   else if (n.includes("bash") || n.includes("shell") || n.includes("exec")) { icon = "⌘"; label = "실행"; }
   else if (n.includes("write") || n.includes("edit") || n.includes("create") || n.includes("update") || n.includes("save")) { icon = "✎"; label = "작성"; }
   else if (n.includes("read")) { icon = "▢"; label = "읽기"; }
@@ -1070,7 +1094,6 @@ export function stepMeta(toolName: string, args: any, result?: unknown, isError?
   else if (n.includes("fetch") || n.includes("web") || n.includes("http")) { icon = "⊕"; label = "웹"; }
   else if (n.includes("task") || n.includes("agent")) { icon = "❖"; label = "에이전트"; }
   else if (n.includes("skill")) { icon = "▷"; label = "스킬"; }
-  else if (n.startsWith("mcp__")) { icon = "⚙"; label = toolName.split("__").slice(1).join(" · ") || toolName; }
   else if (toolName) { icon = "⚙"; label = toolName; }
 
   // 대상 — 인자에서 사람이 알아볼 축 하나만 (파일명 > 패턴 > 명령 > 호스트 > 질의).
