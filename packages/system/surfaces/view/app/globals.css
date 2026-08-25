@@ -37,25 +37,66 @@ input, select, textarea { font: 13px var(--rc-sans); color: var(--rc-ink); borde
 input:focus, select:focus, textarea:focus { border-color: var(--rc-accent); }
 textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
 
-/* 콘솔 */
-/* 상세 열은 선택된 패키지가 있을 때만 자리를 차지한다 — 빈 열이 예약되면 죽은 공간이 된다 */
-.shell { display: grid; grid-template-columns: 240px 1fr; gap: 12px; height: 100vh; padding: 12px; transition: grid-template-columns 0.26s ease; }
-.shell.has-detail { grid-template-columns: 240px 1fr 400px; }
-/* 닫는 중 — 열 폭 400→0 을 애니메이션하는 동안만 세 번째 트랙이 살아 있다 */
-.shell.detail-closing { grid-template-columns: 240px 1fr 0px; }
+/* ── 콘솔 패키지의 화면 ────────────────────────────────────────────────────
+   좌측 사이드바는 여기 없다 — 기판이 모든 view 문서에 주입하는 전역 크롬이고, 이 문서는
+   그 폭 계약(--relay-side, body margin-left)만 받는다. 그래서 여기는 면 하나가 전부다.
+   스크롤은 면의 몸이 소유한다 — 문서가 통째로 밀려 올라가지 않는다. */
+.console { display: flex; flex-direction: column; height: 100vh; min-width: 0; background: var(--rc-ground); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--rc-faint); }
+.dot.ok { background: var(--rc-ok); }
+.dot.warn { background: #b45309; }
+.ic.ltr, .p-ic.ltr { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--rc-line-soft); font: 700 12px var(--rc-sans); color: var(--rc-soft); }
+
+/* ── 면(pane) — 머리 + 몸. 몸만 스크롤한다 ─────────────────────────────── */
+.pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.pane-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--rc-line); background: var(--rc-bg); flex: none; }
+.pane-head h2 { margin: 0; font-size: 15px; }
+.pane-head .meta { font-size: 11.5px; color: var(--rc-faint); }
+.pane-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.pane-head .p-ic { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; display: inline-flex; align-items: center; justify-content: center; }
+.pane-body { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.pane-body.center { align-items: center; justify-content: center; }
+.seg { display: inline-flex; border: 1px solid var(--rc-line); border-radius: 8px; overflow: hidden; }
+.seg button { border: none; background: var(--rc-bg); padding: 5px 11px; font: 600 12px var(--rc-sans); color: var(--rc-soft); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rc-line); }
+.seg button[aria-pressed="true"] { background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
+
+.rc-card.pad { padding: 14px 16px; }
+.rc-card.pad h3 { margin: 0 0 2px; font-size: 13.5px; }
+.hint { margin: 0 0 8px; font-size: 12px; color: var(--rc-faint); }
+.lede { margin: 0; font-size: 13.5px; color: var(--rc-soft); }
+.soft { color: var(--rc-faint); }
+.mono { font-family: var(--rc-mono); font-size: 11.5px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42ch; }
+.err-text { color: var(--rc-err); white-space: pre-wrap; word-break: break-word; }
+.warn-text { font-size: 12px; color: var(--rc-err); }
+.rc-chip.err { color: var(--rc-err); background: var(--rc-err-bg); }
+.rc-btn.danger { color: var(--rc-err); border-color: var(--rc-err-bg); }
+.rc-btn.danger:hover { background: var(--rc-err-bg); }
+
+/* 상세 = 권한 화면 */
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.detail-grid .span2 { grid-column: 1 / -1; }
+.cap-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--rc-line-soft); font-size: 12.5px; }
+.cap-row:last-child { border-bottom: none; }
+.cap-row .why { margin-left: auto; color: var(--rc-faint); font-size: 11.5px; text-align: right; }
+.detail-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.detail-foot .grow { flex: 1; }
+.pane-body .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--rc-line-soft); font-size: 13px; }
+.pane-body .row:last-child { border-bottom: none; }
+.pane-body .row .grow { flex: 1; }
+.pane-body .row.none { color: var(--rc-faint); }
+
+/* ── 설정 — 다스리는 자리(종전 콘솔). 상세 열은 선택된 패키지가 있을 때만 자리를 차지한다 ── */
+.settings-body { flex: 1; display: grid; grid-template-columns: 1fr; gap: 12px; padding: 12px; min-height: 0; transition: grid-template-columns 0.26s ease; }
+.settings-body.has-detail { grid-template-columns: 1fr 400px; }
+/* 닫는 중 — 열 폭 400→0 을 애니메이션하는 동안만 두 번째 트랙이 살아 있다 */
+.settings-body.detail-closing { grid-template-columns: 1fr 0px; }
 .detail-col > .detail { width: 400px; animation: dt-in 0.22s ease; transition: transform 0.26s ease, opacity 0.26s ease; }
-.shell.detail-closing .detail-col { overflow: hidden; min-width: 0; margin-left: -12px; pointer-events: none; }
-.shell.detail-closing .detail-col > .detail { transform: translateX(60px); opacity: 0; }
+.settings-body.detail-closing .detail-col { overflow: hidden; min-width: 0; margin-left: -12px; pointer-events: none; }
+.settings-body.detail-closing .detail-col > .detail { transform: translateX(60px); opacity: 0; }
 @keyframes dt-in { from { transform: translateX(48px); opacity: 0; } to { transform: none; opacity: 1; } }
 .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; font-weight: 700; }
-.head small { font-weight: 500; color: var(--rc-faint); }
-.pkg-list { flex: 1; overflow: auto; padding: 6px; }
-.pkg-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; animation: rc-rise 0.2s ease; }
-.pkg-item:hover { background: var(--rc-hover); }
-.pkg-item.sel { background: var(--rc-accent-soft); }
-.pkg-item b { font-size: 13px; }
-.pkg-item span { font-size: 11px; color: var(--rc-faint); margin-left: auto; }
 .graph-wrap { flex: 1; position: relative; overflow: hidden; }
 .graph-wrap svg { width: 100%; height: 100%; display: block; }
 .legend { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 14px; font-size: 11px; color: var(--rc-soft); }
@@ -79,7 +120,6 @@ textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
 .msg.sys { align-self: center; color: var(--rc-faint); font-size: 12px; }
 .chat-input { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--rc-line); }
 .chat-input input { flex: 1; }
-.empty { color: var(--rc-faint); text-align: center; padding: 40px 20px; font-size: 13px; }
 .node { cursor: pointer; }
 .node rect { fill: var(--rc-bg); stroke: var(--rc-line); rx: 10; }
 .node.sel rect { stroke: var(--rc-accent); stroke-width: 2; }

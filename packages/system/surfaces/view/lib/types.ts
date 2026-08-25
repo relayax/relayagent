@@ -1,5 +1,7 @@
 export interface AgentDecl {
   name: string;
+  /** main 슬롯 착지점 — 최대 1. "짧은 이름과 같은 에이전트" 관례의 상위 호환 */
+  default?: boolean;
   persona?: string;
   /** 빈 대화의 첫 줄 — 창구가 아니라 말하는 쪽 소속이다 */
   greeting?: string;
