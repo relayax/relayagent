@@ -64,7 +64,9 @@ assets/                 project logo
    never to the runner. Do not hardcode a model name, a vendor alias, or a CLI flag in `runner/`.
 6. **Minimal ground.** A session stands on one granted workspace folder. Extra folders are `dir`
    services — the session *calls* them (`dir__<name>__*` tools, capped by `agents[].dirs`) instead of
-   standing on them, and never learns their paths. `~/.relay` is denied to every session, always.
+   standing on them, and never learns their paths. `~/.relay` is denied to every session, always, and
+   install refuses a `dir` grant that resolves inside it (the judgment lives in `supply/install.ts`,
+   not the manifest judge: `RELAY_HOME` is instance settings and the grammar must not know it).
 
 ## Working on the runner
 

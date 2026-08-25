@@ -113,7 +113,7 @@ The grammar is [relay.manifest.yaml](relay.manifest.yaml), a JSON Schema with co
 3. **Declarations are caps, grants are approvals.** `edges` and `dir` services in the manifest are applications. Activation happens at install or via `relay grant`, lands in the ledger, and can never exceed what was declared.
 4. **Credentials never live in the tree.** Manifests declare only the shape of auth (`none`, `token`, `oauth`). Values sit in the vault: macOS Keychain, with a `0600` file fallback.
 5. **Harness-neutral agents.** Agents ship as a neutral bundle (persona, skills, commands, meta). Translating it into any native format is entirely the adapter's job, so packages are not married to one CLI.
-6. **Minimal ground.** A session stands on one granted folder: its workspace, confirmed at install. One more folder means a `dir` service — which a session *calls* (`dir__<name>__*` tools) rather than *stands on*; it never learns that folder's path. The substrate home (`~/.relay`) is denied to every session, always.
+6. **Minimal ground.** A session stands on one granted folder: its workspace, confirmed at install. One more folder means a `dir` service — which a session *calls* (`dir__<name>__*` tools) rather than *stands on*; it never learns that folder's path. The substrate home (`~/.relay`) is denied to every session, always, and cannot be opened as a `dir` either: install refuses a folder grant pointing inside it.
 
 At the root of these six principles sits one premise: **everything can be expressed as an agent package.**
 
