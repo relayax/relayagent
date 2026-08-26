@@ -478,15 +478,15 @@ function renderSide(nav, err){
   var ft = document.createElement("div");
   ft.className = "gp ft";
   if (nav) {
-    // 새로 만들기 = 빌더와의 대화다. 폼이 아니라 채팅을 연다 — 홈이면 그 자리에서, 다른
-    // 화면이면 홈으로 가서 연다(그 화면의 위젯은 그 패키지의 대화라 만들기 상대가 아니다)
+    // 새로 만들기 = 홈의 입력 상자로. 빈 채팅창을 띄우면 "뭘 쓰라는 건지"가 없다 — 상자는
+    // 질문("무엇을 만들까요?")·예시·무슨 일이 일어나는지를 같이 말한다. 대화는 거기서 이어진다
     var mk = document.createElement("button");
     mk.type = "button";
     mk.className = "it";
     mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
     mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
     mk.onclick = function(){
-      if (home) openChat();
+      if (home) focusAsk();
       else location.href = "/#new";
     };
     ft.appendChild(mk);
@@ -498,10 +498,8 @@ function renderSide(nav, err){
 // ── 홈(런처) — 사이드바와 같은 nav 를 그린다 ───────────────────────────────
 function renderHome(nav, err){
   if (!home) return;
-  if (location.hash === "#new") {
-    try { history.replaceState(null, "", location.pathname); } catch (e) {}
-    openChat();
-  }
+  var wantAsk = location.hash === "#new";
+  if (wantAsk) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
   // 다시 그릴 때(재조회) 입력 중이던 문장을 지키지 않으면 새로고침이 사용자의 글을 지운다
   var typed = "";
   try { var prev = home.querySelector(".af textarea"); if (prev) typed = prev.value; } catch (e) {}
@@ -536,6 +534,7 @@ function renderHome(nav, err){
     // Enter 는 보내기, Shift+Enter 는 줄바꿈
     ai.onkeydown = function(ev){ if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); af.requestSubmit(); } };
     home.appendChild(ask);
+    if (wantAsk) focusAsk();
   }
 
   if (err) {
@@ -630,8 +629,13 @@ function renderHome(nav, err){
 // 홈의 문장을 위젯 대화로 보낸다. 위젯 번들은 async 라 늦게 뜰 수 있다 — 전역 표면
 // (window.RelayChat, 번들 로드 시 선다)이 설 때까지 250ms 간격으로 기다린다(최대 8초)
 function sendToChat(text){ chatOpen({ send: text }); }
-/** 패널만 연다 — 사이드바의 [새로 만들기]. 홈의 대화 상대가 곧 빌더다 */
-function openChat(){ chatOpen({}); }
+/** 홈의 입력 상자로 — 사이드바의 [새로 만들기] */
+function focusAsk(){
+  var ta = home && home.querySelector(".af textarea");
+  if (!ta) return;
+  try { ta.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+  ta.focus();
+}
 function chatOpen(detail){
   var tries = 0;
   (function fire(){
