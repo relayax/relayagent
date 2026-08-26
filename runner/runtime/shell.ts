@@ -249,6 +249,7 @@ var ICONS = {
   plus: '<path d="M8 3v10M3 8h10"/>',
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
   draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
+  edit: '<path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M10 4l2 2"/>',
   fold: '<path d="M6 3.5 2.5 8 6 12.5M13 8H3"/>',
   unfold: '<path d="M10 3.5 13.5 8 10 12.5M3 8h10"/>'
 };
@@ -283,6 +284,12 @@ var css = [
 '#rlys .it .ic.ltr{background:#eef0f2;font:700 11px inherit;color:#5c6570}',
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
+'#rlys .rw{position:relative;display:flex;align-items:center}',
+'#rlys .rw .mo{position:absolute;right:6px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;color:#98a1aa;background:#eef0f2}',
+'#rlys .rw:hover .mo{display:inline-flex}',
+'#rlys .rw .mo:hover{background:#dfe3e7;color:#16181b}',
+'#rlys .rw .mo svg{width:13px;height:13px}',
+'#rlys .rw:hover .it .dt{display:none}',
 '#rlys .er{font-size:11.5px;color:#c0392b;padding:8px 10px;white-space:normal}',
 '#rlys .em{font-size:12px;color:#98a1aa;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
@@ -468,14 +475,26 @@ function renderSide(nav, err){
     for (var i = 0; i < nav.items.length; i++) {
       var it = nav.items[i];
       var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-      // 권한 화면 진입은 홈 카드의 "상세" 링크가 맡는다 — 사이드바에는 보조 진입을 두지 않는다
-      pk.appendChild(item(it.href, ic, it.label, {
+      // 행은 패키지 화면으로, 오른쪽 끝 연필은 손보기(상세 화면)로 — 호버할 때만 나타난다.
+      // 장식 아이콘은 두지 않는다: 그 자리에 뭔가 보이면 사람은 누른다
+      var rw = document.createElement("div");
+      rw.className = "rw";
+      rw.appendChild(item(it.href, ic, it.label, {
         on: it.pkg === here,
-        face: it.face,
         dot: it.resident,
         letter: !it.icon,
         title: it.pkg + (it.ring0 ? " · ring-0" : "") + " — " + FACE_KO[it.face]
       }));
+      if (!collapsed && it.href !== it.detail) {
+        var mo = document.createElement("a");
+        mo.className = "mo";
+        mo.href = it.detail;
+        mo.title = it.label + " 손보기";
+        mo.setAttribute("aria-label", it.label + " 손보기");
+        mo.innerHTML = svg(ICONS.edit);
+        rw.appendChild(mo);
+      }
+      pk.appendChild(rw);
     }
     el.appendChild(pk);
   }
