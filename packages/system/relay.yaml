@@ -1,6 +1,6 @@
 schema: relay/v1
 name: "@relay/system"
-version: 0.2.0
+version: 0.2.1
 display_name: "Relay"
 description: "기판 관리 셸. 패키지 목록, mcp/a2a 그래프, 연결 결재, surface 호스팅, 저작 스튜디오."
 
@@ -89,7 +89,9 @@ harness:
       llm:
         provider: anthropic
         icon: assets/llm/anthropic.svg
-        auth: { kind: oauth }
+        # env = 무인 기판이 자격을 댈 이름(선언이 먼저). 1인 기판은 이음새가 null 이라
+        # 도구 자신의 로그인이 그대로 답이다. API 키 기판은 ANTHROPIC_API_KEY 를 배치 env 로.
+        auth: { kind: oauth, env: CLAUDE_CODE_OAUTH_TOKEN }
     - name: codex
       source: harness/codex
       entry: run
@@ -98,7 +100,7 @@ harness:
       llm:
         provider: openai
         icon: assets/llm/openai.svg
-        auth: { kind: oauth }
+        auth: { kind: oauth, env: OPENAI_API_KEY }
     - name: pi
       source: harness/pi
       entry: run

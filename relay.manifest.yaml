@@ -431,7 +431,7 @@ properties:
               description: 어댑터 도구 아이콘 (패키지 상대경로 이미지) — 카드 하네스 필과 설정 목록에 뜬다
               $ref: '#/$defs/relpath'
             llm:
-              description: 이 하네스가 소비하는 LLM provider. 자격은 vault 에 provider 소속(llm/<provider>)으로 앉아 패키지 간 공유. kind token 은 그 값을 auth.env 이름 그대로 주입, kind oauth 는 도구 자신의 로그인(setup 동사가 점검). 미선언 = 어댑터가 자기 도구의 기존 로그인을 쓴다
+              description: 이 하네스가 소비하는 LLM provider. 자격은 vault 에 provider 소속(llm/<provider>)으로 앉아 패키지 간 공유. auth.env 를 선언하면 kind 무관하게 기판이 그 이름으로 자격을 스폰 시점에 댄다(무인 기판에는 로그인할 사람이 없다 — 이음새가 비면 항등). kind oauth 에서 env 미선언 = 도구 자신의 로그인(setup 동사가 점검). llm 자체 미선언 = 어댑터가 자기 도구의 기존 로그인을 쓴다
               type: object
               additionalProperties: false
               required: [provider]
@@ -766,6 +766,10 @@ $defs:
         properties:
           kind:
             const: oauth
+          env:
+            description: 기판이 자격을 댈 env 이름 (kind 무관 — 무인 기판이 스폰 시점에 싣는다. 1인 기판은 이음새가 비어 도구 자신의 로그인이 답)
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
           client:
             enum: [dcr, registered]
           service:

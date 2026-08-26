@@ -29,7 +29,8 @@ harness:
       entry: run
       llm:
         provider: anthropic
-        auth: { kind: oauth }
+        # env = 무인(org) 기판이 자격을 댈 이름 — 1인 기판은 이음새가 비어 도구 자신의 로그인이 답
+        auth: { kind: oauth, env: CLAUDE_CODE_OAUTH_TOKEN }
     - name: codex
       source: harness/codex
       entry: run

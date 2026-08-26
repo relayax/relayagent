@@ -168,8 +168,9 @@ function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[]): vo
     issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
     return;
   }
-  if (a.env != null && (a.kind !== "token" || !/^[A-Z][A-Z0-9_]*$/.test(a.env))) {
-    issues.push(`${label}.env: token 형의 대문자 env 이름만: ${a.env}`);
+  if (a.env != null && !/^[A-Z][A-Z0-9_]*$/.test(a.env)) {
+    // kind 를 가리지 않는다 — oauth 변형도 무인 기판이 자격을 댈 env 이름을 선언할 수 있다
+    issues.push(`${label}.env 형식 위반(대문자 env 이름): ${a.env}`);
   }
   if (a.client != null && (a.kind !== "oauth" || !["dcr", "registered"].includes(a.client))) {
     issues.push(`${label}.client: oauth 형의 dcr|registered 만: ${a.client}`);

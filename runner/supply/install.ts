@@ -444,12 +444,12 @@ export function buildPkg(ledger: Ledger, name: string): BuildResult {
   return build ?? { ok: true, out: "surfaces.{view,components}.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
 }
 
-// token 자격형은 자격이 기판 손(vault)에 있다 — 동사 실행에도 세션과 같은 주입을 해줘야
-// setup 이 "연결 후에도 미준비" 로 거짓말하지 않는다
+// env 를 선언한 자격형은 자격이 기판 손(vault)에 있다 — 동사 실행에도 세션과 같은 주입을
+// 해줘야 setup 이 "연결 후에도 미준비" 로 거짓말하지 않는다 (kind 무관 — 스폰과 같은 규율)
 function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
   // 기판이 대는 도구가 있으면 그것이 먼저다 — 호스트의 같은 이름 전역 설치보다 앞
   const env: NodeJS.ProcessEnv = pkg ? { ...binaryEnv(pkg) } : { ...process.env };
-  if (v.llm?.auth?.kind === "token" && v.llm.auth.env) {
+  if (v.llm?.auth?.env) {
     // §8-2 잔여: llmEnv 는 동기 하네스 동사 체인(harnessVerb·probeHarness·electHarness) 깊숙이
     // 있어 비동기 authority.credential 로의 이사가 시그니처 연쇄를 일으킨다 — vault 직독으로 남는다
     const cred = vaultGet(`llm/${v.llm.provider}`);
