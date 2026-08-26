@@ -273,7 +273,9 @@ var css = [
 '#rlys .gp{display:flex;flex-direction:column;gap:1px}',
 '#rlys .pk{overflow-y:auto;overflow-x:hidden;min-height:0;flex:0 1 auto}',
 '#rlys .sp{flex:1 1 auto;min-height:8px}',
-'#rlys .ft{border-top:1px solid #eef0f2;padding-top:6px}',
+'#rlys .it.mk{background:#0d9488;color:#fff;font-weight:600;margin:4px 0 6px}',
+'#rlys .it.mk:hover{background:#0f766e}',
+'#rlys .it.mk .ic{color:#fff}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
 '#rlys .it:hover{background:#eef0f2}',
 '#rlys .it.on{background:rgba(13,148,136,.1);color:#115e59;font-weight:600}',
@@ -325,6 +327,8 @@ var css = [
 '#relay-home .cd .cp.er{color:#c0392b;background:#fdf2f1}',
 '#relay-home .cd .cp.ed{color:#b45309;background:#fef3c7}',
 // 말로 만들기 — 홈의 첫 입력. 위젯 대화로 보내진다
+'#relay-home .gh{max-width:1240px;margin:8px auto 0;padding:0 20px;font-size:12px;font-weight:700;color:#98a1aa;letter-spacing:.02em}',
+'#relay-home .gn{max-width:620px;margin:20px auto;padding:0 20px;text-align:center;font-size:13px;color:#98a1aa}',
 '#relay-home .ask{max-width:620px;margin:0 auto;padding:56px 20px 28px}',
 '#relay-home .ask h2{margin:0 0 16px;text-align:center;font-size:22px;font-weight:700;letter-spacing:-0.02em}',
 '#relay-home .af{display:flex;flex-direction:column;gap:10px;background:#fff;border:1px solid #e6e9ec;border-radius:14px;padding:14px 14px 10px;box-shadow:0 1px 2px rgba(22,24,27,.04)}',
@@ -428,7 +432,20 @@ function renderSide(nav, err){
 
   var top = document.createElement("div");
   top.className = "gp";
-  top.appendChild(item(nav ? nav.home : "/", svg(ICONS.home), "홈", { on: onHome(), title: "홈 — 설치된 앱" }));
+  top.appendChild(item(nav ? nav.home : "/", svg(ICONS.home), "홈", { on: onHome(), title: "홈 — 만들고 손보는 곳" }));
+  // 새로 만들기 = 홈의 입력 상자로. 빈 채팅창을 띄우면 "뭘 쓰라는 건지"가 없다 — 상자는
+  // 질문("무엇을 만들까요?")·예시·무슨 일이 일어나는지를 같이 말한다. 대화는 거기서 이어진다.
+  // 이 화면에서 제일 중요한 행동이라 목록 위, 채워진 버튼이다
+  var mk = document.createElement("button");
+  mk.type = "button";
+  mk.className = "it mk";
+  mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
+  mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
+  mk.onclick = function(){
+    if (home) focusAsk();
+    else location.href = "/#new";
+  };
+  top.appendChild(mk);
   // 스토어 — 이 기판에 스토어 연결이 켜져 있을 때만 서버가 주소를 싣는다 (OSS 기본은 없음)
   if (nav && nav.store) {
     top.appendChild(item(nav.store, svg(ICONS.store), "스토어", { title: "스토어 — 에이전트 마켓플레이스" }));
@@ -475,24 +492,6 @@ function renderSide(nav, err){
   sp.className = "sp";
   el.appendChild(sp);
 
-  var ft = document.createElement("div");
-  ft.className = "gp ft";
-  if (nav) {
-    // 새로 만들기 = 홈의 입력 상자로. 빈 채팅창을 띄우면 "뭘 쓰라는 건지"가 없다 — 상자는
-    // 질문("무엇을 만들까요?")·예시·무슨 일이 일어나는지를 같이 말한다. 대화는 거기서 이어진다
-    var mk = document.createElement("button");
-    mk.type = "button";
-    mk.className = "it";
-    mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
-    mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
-    mk.onclick = function(){
-      if (home) focusAsk();
-      else location.href = "/#new";
-    };
-    ft.appendChild(mk);
-    ft.appendChild(item(nav.importer, svg(ICONS.down), "불러오기", { title: "누군가에게 받은 에이전트 파일을 엽니다" }));
-  }
-  el.appendChild(ft);
 }
 
 // ── 홈(런처) — 사이드바와 같은 nav 를 그린다 ───────────────────────────────
@@ -567,10 +566,28 @@ function renderHome(nav, err){
     home.appendChild(ub);
   }
 
+  // 홈 카드는 전부가 아니라 **지금 신경 쓸 것**만이다 — 초안·수정 중·새 판·오류. 멀쩡히 도는
+  // 앱은 사이드바가 이미 목록으로 보여 주므로 여기 또 세우면 같은 목록이 두 번 선다.
+  // 손볼 게 없으면 홈은 상자 하나 — "만들 것 없으면 왼쪽에서 골라 쓰세요"가 저절로 읽힌다
+  var todo = [];
+  for (var t = 0; t < nav.items.length; t++) {
+    if (nav.items[t].editing || nav.items[t].update || nav.items[t].error) todo.push(nav.items[t]);
+  }
+  if (todo.length || drafts.length) {
+    var th = document.createElement("h3");
+    th.className = "gh";
+    th.textContent = "손볼 것";
+    home.appendChild(th);
+  } else {
+    var no = document.createElement("p");
+    no.className = "gn";
+    no.textContent = "손볼 것이 없습니다 — 설치된 앱은 왼쪽 목록에서 골라 쓰세요.";
+    home.appendChild(no);
+  }
   var gr = document.createElement("div");
   gr.className = "gr";
-  for (var i = 0; i < nav.items.length; i++) {
-    var it = nav.items[i];
+  for (var i = 0; i < todo.length; i++) {
+    var it = todo[i];
     var av = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
     var cd = document.createElement("div");
     cd.className = "cd";
@@ -654,7 +671,7 @@ function chatOpen(detail){
 var GUIDE_KEY = "relay-guide-v2";
 var GUIDE = [
   { t: "Relay에 오신 것을 환영합니다",
-    b: "Relay는 AI 에이전트를 <b>앱처럼 설치해서 쓰는</b> 내 컴퓨터 속 작업 공간입니다. 설치된 앱은 <b>이 홈에 카드로</b> 놓이고, 왼쪽 사이드바에서 언제든 오갈 수 있습니다." },
+    b: "Relay는 AI 에이전트를 <b>앱처럼 설치해서 쓰는</b> 내 컴퓨터 속 작업 공간입니다. 설치된 앱은 <b>왼쪽 사이드바</b>에서 골라 쓰고, 이 홈에서는 <b>새로 만들거나 손볼 것</b>을 봅니다." },
   { t: "만들기는 말로 시작합니다",
     b: "홈 위의 입력창에 원하는 것을 적어 보세요. 예를 들어 <b>\"근태관리 도우미 만들어줘\"</b>. 빌더가 <b>설계부터 적용까지</b> 진행하고, 그 대화가 오른쪽에 열려 과정과 질문을 볼 수 있습니다." },
   { t: "손으로 고치려면 스튜디오",
