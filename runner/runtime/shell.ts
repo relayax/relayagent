@@ -238,10 +238,6 @@ var css = [
 '#rlys .sp{flex:1 1 auto;min-height:8px}',
 '#rlys .ft{border-top:1px solid #eef0f2;padding-top:6px}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
-'#rlys .rw{position:relative;display:flex;align-items:center}',
-'#rlys .rw .mo{position:absolute;right:4px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;color:#98a1aa;text-decoration:none;font:600 13px/1 inherit;background:#fff}',
-'#rlys .rw:hover .mo{display:inline-flex}',
-'#rlys .rw .mo:hover{background:#eef0f2;color:#16181b}',
 '#rlys .it:hover{background:#eef0f2}',
 '#rlys .it.on{background:rgba(13,148,136,.1);color:#115e59;font-weight:600}',
 '#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#5c6570;border-radius:5px;overflow:hidden}',
@@ -395,26 +391,14 @@ function renderSide(nav, err){
     for (var i = 0; i < nav.items.length; i++) {
       var it = nav.items[i];
       var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-      var rw = document.createElement("div");
-      rw.className = "rw";
-      rw.appendChild(item(it.href, ic, it.label, {
+      // 권한 화면 진입은 홈 카드의 "상세" 링크가 맡는다 — 사이드바에는 보조 진입을 두지 않는다
+      pk.appendChild(item(it.href, ic, it.label, {
         on: it.pkg === here,
         face: it.face,
         dot: it.resident,
         letter: !it.icon,
         title: it.pkg + (it.ring0 ? " · ring-0" : "") + " — " + FACE_KO[it.face]
       }));
-      // 보조 진입 — 지배 얼굴이 화면이어도 권한 화면으로는 갈 수 있어야 한다
-      if (!collapsed) {
-        var mo = document.createElement("a");
-        mo.className = "mo";
-        mo.href = it.detail;
-        mo.title = it.label + " 상세(권한 화면)";
-        mo.setAttribute("aria-label", it.label + " 상세");
-        mo.textContent = "⋯";
-        rw.appendChild(mo);
-      }
-      pk.appendChild(rw);
     }
     el.appendChild(pk);
   }
