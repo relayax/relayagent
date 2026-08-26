@@ -1,6 +1,6 @@
 schema: relay/v1
 name: "@relay/system"
-version: 0.2.1
+version: 0.2.2
 display_name: "Relay"
 description: "기판 관리 셸. 패키지 목록, mcp/a2a 그래프, 연결 결재, surface 호스팅, 저작 스튜디오."
 
