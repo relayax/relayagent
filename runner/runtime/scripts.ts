@@ -292,7 +292,7 @@ export function makeCtx(
       if (!provider) throw new Error(`E_NO_PROVIDER: edge provider 미설치 — ${ref} (edges[] 선언의 provider 가 장부에 없습니다)`);
       return {
         provider,
-        call: (verb, args) => callEdgeTool(ledger, authority, pkg, provider, verb, args ?? {}, hostBridge, caller.agent, chain),
+        call: (verb, args) => callEdgeTool(ledger, authority, pkg, provider, verb, args ?? {}, hostBridge, caller.agent, chain, io),
       };
     },
     dispatch: (provider, mission, payload) => {
@@ -321,6 +321,7 @@ export async function callEdgeTool(
   host: HostBridge | null,
   agent?: string,
   chain: string[] = [],
+  io: ServiceIO = localServiceIO,
 ): Promise<unknown> {
   if (chain.includes(provider)) {
     throw new Error(`E_EDGE_CYCLE: 순환 소비 — ${[...chain, provider].join(" -> ")}`);
@@ -343,7 +344,7 @@ export async function callEdgeTool(
   //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
   const identity = { principal: authority.principal(), agent };
   if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, localServiceIO, chain);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, io, chain);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 

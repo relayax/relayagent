@@ -11,7 +11,7 @@ import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
-import { runScript, runScriptFrom, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
@@ -112,11 +112,15 @@ export interface ApiOptions {
   /** 스폰의 env 반쪽 — 미지정이면 localIO(장부 HMAC·vault·홈 로그).
    *  임베더 장부에 secret 이 없으면 그 기본값의 토큰이 조용히 틀린다 */
   runner?: (ledger: Ledger) => RunnerIO;
+  /** 동사가 보는 몸 주소(ctx.service) — 미지정이면 localServiceIO(이 호스트의 docker/프로세스 몸).
+   *  임베더는 몸이 다른 pod(사람마다 다른 몸)에 있으므로 여기서 갈아 끼운다. 이것이 없던 동안
+   *  HTTP 동사 문·트리거·draft-run 은 임베더 몸을 모른 채 localhost 를 두드렸다(실측 2026-08-26) */
+  service?: ServiceIO;
   door?: ApiDoor;
 }
 
 // 브리지를 그대로 두고 권위 구현만 갈아 끼운다 (조립 지점: relay.ts daemon · createApi)
-export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority): HostBridge {
+export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority, service: ServiceIO = localServiceIO): HostBridge {
   return {
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
@@ -182,7 +186,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     draftRun: (name, verb, input) =>
       // host 를 넘기지 않는다(null) — 시험 삼아 도는 코드에 ring-0 권능까지 주면
       // 미리보기가 설치·발행을 할 수 있는 자리가 된다. 맥락은 주되 권능은 주지 않는다
-      runScriptFrom(getLedger(), name, draftPath(name), verb, input, { principal: authority.principal() }, null, authority),
+      runScriptFrom(getLedger(), name, draftPath(name), verb, input, { principal: authority.principal() }, null, authority, service),
     // 굽기 — 설치본을 봉투 하나로 만들어 선반에 앉힌다.
     // 파일을 사람 손에 쥐여 주지 않는 것이 요점이다: 봉인(sha256)과 요구 범위가 함께
     // 계산된 상태로 선반에 남고, 등재 화면이 그 선반을 읽는다. 손으로 옮기는 순간
@@ -600,7 +604,7 @@ export function createApi(
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);
       if (script && req.method === "POST") {
         const b = await readBody(req);
-        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority);
+        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority, opts.service ?? localServiceIO);
         return void json(res, 200, { result });
       }
 
