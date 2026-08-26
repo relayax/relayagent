@@ -153,8 +153,8 @@ function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; 
   );
   return (
     <div className="ap-addwrap">
-      <button type="button" className="ap-add" ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`}>
-        ＋ 추가
+      <button type="button" className={label ? "ap-add chip" : "ap-add"} ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`}>
+        ＋ {label ?? "추가"}
       </button>
       {open && typeof document !== "undefined" ? createPortal(list, document.body) : null}
     </div>
