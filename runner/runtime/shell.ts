@@ -16,14 +16,14 @@
 // 판정(무슨 얼굴인가·어디로 가는가)은 **여기 서버 쪽**에 있다. 스크립트는 /shell/nav 가 준
 // 항목을 그리기만 한다 — 마운트 문법(/pkg/…)도 얼굴 규칙도 클라가 조립하지 않는다
 // (client-protocol §2-6 과 같은 규율). 콘솔 화면도 같은 응답을 읽어 판정이 갈라지지 않는다.
-import { STORE_INDEX_URL, type Ledger } from "../supply/ledger.ts";
+import { STORE_INDEX_URL, consoleInstall, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
 import { fetchStoreIndex } from "../supply/registry.ts";
 
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
- *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. */
-const CONSOLE = "system";
-const consoleHref = (rest = ""): string => `/pkg/${CONSOLE}/view/${rest}`;
+ *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. 설치 이름은 장부가 답한다
+ *  (ledger.ts consoleInstall — 1인 기판 `system`, 임베더는 다를 수 있다) */
+const consoleHref = (ledger: Ledger, rest = ""): string => `/pkg/${encodeURIComponent(consoleInstall(ledger))}/view/${rest}`;
 
 export type Face = "view" | "chat" | "live" | "parts";
 
@@ -103,11 +103,11 @@ export function facesOf(m: Manifest): Face[] {
   return all.length ? all : ["parts"];
 }
 
-function hrefFor(pkg: string, face: Face): string {
+function hrefFor(ledger: Ledger, pkg: string, face: Face): string {
   // 화면·대화는 기판이 직접 서빙하는 문서다. 상주·부품은 서빙할 문서가 없으므로 콘솔 패키지의
   // 페이지로 간다 — 기판이 UI 를 굽지 않는다는 규율(굽는 것은 대화 폴백과 이 셸 두 장뿐)
   if (face === "view" || face === "chat") return `/pkg/${encodeURIComponent(pkg)}/view/`;
-  return consoleHref(`?p=${encodeURIComponent(pkg)}&face=${face === "live" ? "live" : "detail"}`);
+  return consoleHref(ledger, `?p=${encodeURIComponent(pkg)}&face=${face === "live" ? "live" : "detail"}`);
 }
 
 /** semver 앞섬 판정 — a 가 b 보다 새 판인가. 프리릴리스 꼬리는 무시한다(등재 실측이 x.y.z) */
@@ -144,8 +144,8 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   for (const [pkg, rec] of Object.entries(ledger.packages)) {
     const base = {
       pkg,
-      href: hrefFor(pkg, "parts"),
-      detail: hrefFor(pkg, "parts"),
+      href: hrefFor(ledger, pkg, "parts"),
+      detail: hrefFor(ledger, pkg, "parts"),
       resident: live.has(pkg),
       ring0: rec.ring === 0,
     };
@@ -173,7 +173,7 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
       icon: m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : null,
       face,
       faces,
-      href: hrefFor(pkg, face),
+      href: hrefFor(ledger, pkg, face),
       view: face === "view" || face === "chat" ? `/pkg/${encodeURIComponent(pkg)}/view/` : null,
       error: null,
       update,
@@ -182,7 +182,7 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
   // 인덱스 주소에서 웹 주소를 얻는 규칙은 데스크톱 앱(daemon.rs store_web)과 같다
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
-  return { items, home: "/", create: consoleHref("studio/?new=1"), importer: "/store/import", store, library: store ? store + "library" : null };
+  return { items, home: "/", create: consoleHref(ledger, "studio/?new=1"), importer: "/store/import", store, library: store ? store + "library" : null };
 }
 
 /** 문서 말미에 스크립트 한 줄. </body> 부재(손저작 단일 HTML)면 append — injectPortalBar 와 같은 관례 */
@@ -200,7 +200,7 @@ export function injectShell(html: string): string {
  */
 export const HOME_DOC = injectShell(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Relay</title><link rel="icon" href="/pkg/${CONSOLE}/view/icon.svg">
+<title>Relay</title><link rel="icon" href="/pkg/system/view/icon.svg">
 </head><body><div id="relay-home"></div></body></html>`);
 
 // ── 사이드바·런처 본체(외부 자산 0) ────────────────────────────────────────

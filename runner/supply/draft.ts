@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument } from "yaml";
-import { packagesPath, saveLedger, type Ledger } from "./ledger.ts";
+import { packagesPath, saveLedger, consoleInstall, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
@@ -216,7 +216,9 @@ export function openDraft(
 }
 
 function systemRoot(ledger: Ledger): string {
-  const rec = ledger.packages["system"];
+  // 콘솔의 설치 이름은 기판마다 다르다(ledger.ts consoleInstall) — 상수 "system" 을 박으면 임베더에서
+  // 하네스 템플릿이 "없음"으로 떨어진다
+  const rec = ledger.packages[consoleInstall(ledger)];
   if (rec && fs.existsSync(rec.path)) return rec.path;
   return path.join(RUNNER_DIR, "..", "..", "packages", "system");
 }
