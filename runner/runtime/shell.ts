@@ -68,6 +68,18 @@ export interface ShellNav {
   /** 스토어 내 서재 주소 — 새 판 배지의 업데이트 버튼이 여기로 간다. 설치 티켓은 서재가
    *  발급하므로(로그인 세션) 기판이 관문을 새로 만들지 않는다. store 와 같은 조건으로 null */
   library: string | null;
+  /** 크롬의 얼굴 — 이름·마크·강조색 셋만(additive, 2026-08-26). 미선언 = "Relay" 와 기본 색.
+   *  임베더(조직 기판)가 자기 브랜딩을 싣는 자리다. 팔레트 전체는 열지 않는다 — 크롬은 남의
+   *  토큰에 얹지 않는다는 규율(③)과 양립하는 최소 셋이다 */
+  brand?: ShellBrand;
+}
+
+export interface ShellBrand {
+  name: string;
+  /** 마크 이미지 주소 — null 이면 이름만 */
+  logo: string | null;
+  /** 강조색(CSS 색) — null 이면 기본 */
+  accent: string | null;
 }
 
 /**
@@ -224,11 +236,13 @@ function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace
 var home = document.getElementById("relay-home");
 
 var css = [
-':root{--relay-side:' + (collapsed ? RAIL : W) + 'px}',
+':root{--relay-side:' + (collapsed ? RAIL : W) + 'px;--relay-accent:#0f766e;--relay-accent-deep:#115e59;--relay-accent-soft:rgba(13,148,136,.1)}',
 'body{margin-left:var(--relay-side);transition:margin-left .16s ease}',
 '#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fff;border-right:1px solid #e6e9ec;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
-'#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap}',
+'#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
+'#rlys .hd img{height:22px;width:auto;max-width:150px;object-fit:contain;display:block;flex:none}',
+'#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
 '#rlys .hd .fold:hover{background:#eef0f2;color:#5c6570}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
@@ -239,9 +253,9 @@ var css = [
 '#rlys .ft{border-top:1px solid #eef0f2;padding-top:6px}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
 '#rlys .it:hover{background:#eef0f2}',
-'#rlys .it.on{background:rgba(13,148,136,.1);color:#115e59;font-weight:600}',
+'#rlys .it.on{background:var(--relay-accent-soft);color:var(--relay-accent-deep);font-weight:600}',
 '#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#5c6570;border-radius:5px;overflow:hidden}',
-'#rlys .it.on .ic{color:#0f766e}',
+'#rlys .it.on .ic{color:var(--relay-accent)}',
 '#rlys .it .ic svg{width:15px;height:15px}',
 '#rlys .it .ic img{width:18px;height:18px;border-radius:4px;object-fit:cover;display:block}',
 '#rlys .it .ic.ltr{background:#eef0f2;font:700 11px inherit;color:#5c6570}',
@@ -266,11 +280,11 @@ var css = [
 '#relay-home .hh .rt{margin-left:auto;display:flex;gap:8px}',
 '#relay-home .bt{border:1px solid #e6e9ec;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
 '#relay-home .bt:hover{background:#eef0f2}',
-'#relay-home .bt.ac{background:#0f766e;border-color:#0f766e;color:#fff}',
-'#relay-home .bt.ac:hover{background:#115e59}',
+'#relay-home .bt.ac{background:var(--relay-accent);border-color:var(--relay-accent);color:#fff}',
+'#relay-home .bt.ac:hover{background:var(--relay-accent-deep)}',
 '#relay-home .gr{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px;padding:18px 20px}',
 '#relay-home .cd{background:#fff;border:1px solid #e6e9ec;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}',
-'#relay-home .cd:hover{border-color:#0f766e}',
+'#relay-home .cd:hover{border-color:var(--relay-accent)}',
 '#relay-home .cd .go{display:flex;flex-direction:column;gap:8px;text-decoration:none;color:inherit}',
 '#relay-home .cd .tp{display:flex;align-items:center;gap:10px}',
 '#relay-home .cd .av{width:30px;height:30px;border-radius:8px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#eef0f2;font:700 13px inherit;color:#5c6570;overflow:hidden}',
@@ -279,10 +293,10 @@ var css = [
 '#relay-home .cd b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '#relay-home .cd .ver{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#98a1aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 // 새 판 배지 — 버전 라인의 화살표 칩(.nv) · 푸터의 업데이트 버튼(.upb) · 상단 요약 배너(.ub)
-'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#115e59;background:rgba(13,148,136,.1)}',
-'#relay-home .cd .upb{background:#0f766e;color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
-'#relay-home .cd .upb:hover{background:#115e59}',
-'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:rgba(13,148,136,.08);border:1px solid rgba(13,148,136,.25);border-radius:10px;font-size:12.5px;color:#115e59}',
+'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--relay-accent-deep);background:var(--relay-accent-soft)}',
+'#relay-home .cd .upb{background:var(--relay-accent);color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
+'#relay-home .cd .upb:hover{background:var(--relay-accent-deep)}',
+'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:var(--relay-accent-soft);border:1px solid var(--relay-accent);border-radius:10px;font-size:12.5px;color:var(--relay-accent-deep)}',
 '#relay-home .ub b{font-weight:800}',
 '#relay-home .ub .gap{flex:1}',
 '#relay-home .ub a{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}',
@@ -342,13 +356,27 @@ function item(href, iconHtml, label, opts){
   return a;
 }
 
+function applyBrand(nav){
+  var b = nav && nav.brand;
+  if (!b || !b.accent) return;
+  var r = document.documentElement.style;
+  r.setProperty("--relay-accent", b.accent);
+  r.setProperty("--relay-accent-deep", "color-mix(in srgb, " + b.accent + " 82%, black)");
+  r.setProperty("--relay-accent-soft", "color-mix(in srgb, " + b.accent + " 12%, white)");
+  if (b.name) document.title = document.title === "Relay" ? b.name : document.title;
+}
+
 function renderSide(nav, err){
   var here = current();
+  applyBrand(nav);
   el.textContent = "";
 
   var hd = document.createElement("div");
   hd.className = "hd";
-  hd.innerHTML = '<span>Relay</span>';
+  // 얼굴 — 기판이 nav.brand 로 준 이름·마크(임베더 브랜딩). 없으면 "Relay"
+  var brand = nav && nav.brand;
+  hd.innerHTML = (brand && brand.logo ? '<img src="' + esc(brand.logo) + '" alt="">' : '') +
+    '<span>' + esc(brand && brand.name ? brand.name : "Relay") + '</span>';
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";

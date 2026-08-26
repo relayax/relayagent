@@ -439,6 +439,15 @@ function Studio() {
       say("info", `적용하지 않았습니다: ${r.note}`);
       return;
     }
+    if (r.landed === "org") {
+      // 임베더(조직 기판)가 발행물을 자기 유통망에 올렸다 — 이 데몬의 장부에는 앉지 않았고,
+      // 설치는 그쪽의 별 걸음이다(저작자와 설치 결정자가 다른 것이 조직이다)
+      say("ok", `발행됨: ${r.name}@${r.version} — 조직 카탈로그${r.note ? ` (${r.note})` : ""}`);
+      if (r.href) say("info", `설치는 ${r.href} 에서`);
+      setIssues([]);
+      void refresh();
+      return;
+    }
     say("ok", `적용됨: ${r.name}@${r.version}${r.fresh ? " (첫 설치)" : ""}`);
     if (r.build) say(r.build.ok ? "info" : "err", `view 빌드: ${r.build.out}`);
     for (const s of r.services ?? []) say("info", s);

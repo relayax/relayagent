@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
@@ -16,7 +17,7 @@ import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
-import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, buildDraft, draftPath } from "./supply/draft.ts";
+import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents } from "./runtime/view.ts";
@@ -144,8 +145,22 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     draftDiff: (name) => diffDraft(name),
     draftCommit: (name, message) => commitDraft(name, message),
     draftValidate: (name) => validateDraft(name),
-    draftPublish: (name, opts) => {
+    draftPublish: async (name, opts) => {
       const l = getLedger();
+      // 임베더가 착지를 맡는 기판(Authority.publish) — 발행물은 여기 장부에 앉지 않는다. 스냅샷을
+      // 봉투로 굽고 넘기며, 설치는 그쪽의 별 걸음이다. 거부는 그대로 throw(스튜디오가 사유를 낸다)
+      if (authority.publish) {
+        const st = stageRelease(name, opts);
+        if ("published" in st) return { ...st, landed: "org" };
+        const env = packDir(st.path, path.join(os.tmpdir(), `relay-publish-${name}-${st.version}-${process.pid}.tgz`));
+        try {
+          const landing = await authority.publish({ name: st.name, version: st.version, digest: env.digest, file: env.file, manifest: st.manifest });
+          return { published: true, name: st.name, version: st.version, landed: "org", note: landing?.note, href: landing?.href };
+        } finally {
+          fs.rmSync(env.file, { force: true });
+          fs.rmSync(env.file + ".sig", { force: true });
+        }
+      }
       const r = publishDraft(l, name, opts);
       if (r.published && r.path && r.manifest) {
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
@@ -153,9 +168,9 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         stopServices(name);
         const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
-        return { ...r, manifest: undefined, services: notes };
+        return { ...r, manifest: undefined, services: notes, landed: "local" };
       }
-      return { ...r, manifest: undefined };
+      return { ...r, manifest: undefined, landed: "local" };
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),

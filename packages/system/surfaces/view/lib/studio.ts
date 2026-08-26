@@ -46,6 +46,10 @@ export interface PublishOutcome {
   build?: { ok: boolean; out: string } | null;
   services?: string[];
   note?: string;
+  /** 어디에 앉았는가 — local(이 기판의 장부) | org(임베더의 유통망, Authority.publish) */
+  landed?: "local" | "org";
+  /** org 착지의 다음 걸음(설치 화면 등) */
+  href?: string;
 }
 
 export function draftOpen(

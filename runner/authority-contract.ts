@@ -26,6 +26,25 @@ export interface InstallApproval {
   disclosure: unknown;
 }
 
+/** 발행물 하나 — 스튜디오의 publish 가 판정·커밋·태그·스냅샷까지 마친 릴리스. 봉투(file)는
+ *  pack 규율 그대로(선언된 경로만, sha256 봉인). 계약은 manifest 를 해석하지 않는다(unknown) */
+export interface PublishedRelease {
+  name: string;
+  version: string;
+  /** "sha256:<hex>" — 봉투 바이트의 봉인값 */
+  digest: string;
+  /** 봉투 tarball(gzip) 의 절대 경로 — 임베더가 읽어 자기 유통망에 올린다 */
+  file: string;
+  manifest: unknown;
+}
+
+/** 임베더가 발행물을 어디에 앉혔는가 — 스튜디오가 "발행됨 — 조직 카탈로그" 를 그리는 재료 */
+export interface PublishLanding {
+  note?: string;
+  /** 다음 걸음(설치 화면 등)의 주소 — 화면이 링크로 낸다 */
+  href?: string;
+}
+
 // 비동기 계약 — 원격 권위(조직 control 어댑터)는 판정·자격이 네트워크 왕복이다. 로컬 권위가
 // 동기라는 이유로 이음새를 동기로 굳히면 원격 구현이 불가능해져 이음새가 장식이 된다.
 // principal/packageToken 만 동기다: 실행 문맥에 이미 앉아 있는 값(env·장부)이라 왕복이 없다.
@@ -60,4 +79,9 @@ export interface Authority {
   /** prepare 를 통과한 설치의 활성 결재 — 거부는 throw(fail-loud). "동의 전에는 한 줄도
    *  실행되지 않는다"의 순서(prepare 정적 → 결재 → activate 실행)가 계약이다 */
   approveInstall(req: InstallApproval): Promise<void>;
+  /** 발행물의 착지 — 선택 구현(additive, 2026-08-26). 1인 기판은 미구현이라 publish 가 지금처럼
+   *  같은 데몬의 장부에 설치한다(저작자 = 사용자). 조직 기판은 여기서 발행물을 자기 유통망
+   *  (카탈로그·서명 feed·불변 (이름,버전))에 올리고, 설치는 별 걸음이다 — 저작자와 설치 결정자가
+   *  다른 것이 조직이다. 거부는 throw(fail-loud) — 불변 충돌 같은 사유가 스튜디오에 그대로 뜬다 */
+  publish?(release: PublishedRelease): Promise<PublishLanding>;
 }
