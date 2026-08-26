@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 export default function Playground() {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/studio/?new=1");
+    router.replace("/?new=1");
   }, [router]);
   return null;
 }

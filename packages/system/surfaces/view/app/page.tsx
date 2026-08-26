@@ -3,17 +3,22 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ChatNudge from "@/components/ChatNudge"; // 말풍선
+import NewPackage from "@/components/NewPackage";
 import PkgPane from "@/components/PkgPane";
 import SettingsPane from "@/components/SettingsPane";
 import { edgesData, fetchRegistry, fetchResidency, fetchShellNav, type ShellNav } from "@/lib/api";
-import type { Registry } from "@/lib/types";
+import { draftList, type DraftEntry } from "@/lib/studio";
+import type { Pkg, Registry } from "@/lib/types";
 
 // 콘솔 패키지의 화면 = 관리 앱. 사이드바도 홈(앱 런처)도 **여기 없다** — 둘 다 전역 셸의
 // 것이고 기판이 낸다(runner/runtime/shell.ts). 이 패키지는 그 셸 안에 앉는 여러 앱 중 하나이며,
 // 맡는 것은 다스리는 화면과 셸이 서빙할 문서가 없는 얼굴들이다:
 //   /                    설정 — 지도·설치와 버전·권한 대장·자격·하네스
-//   /?p=<설치이름>        상주 상태와 권한 화면(기판이 낼 문서가 없는 얼굴)
+//   /?p=<설치이름>        상주 상태와 패키지 화면(기판이 낼 문서가 없는 얼굴)
 //     &face=live|detail
+//     &sec=&item=&file=   상세의 깊이 — 설명서 줄의 펼침(2층)과 열린 파일(3층). 스튜디오 규약 그대로
+//   /?new=1              새 패키지
+// 설치 안 된 초안(만드는 중)도 /?p= 로 연다 — 장부에 없으면 draft 목록에서 찾아 합성한다.
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리가 정본이다(스튜디오와 같은 규약).
 const EMPTY: Registry = { packages: [], grants: [] };
 
@@ -30,11 +35,14 @@ function Console() {
   const sp = useSearchParams();
   const sel = sp.get("p");
   const face = sp.get("face");
+  const isNew = sp.get("new") === "1";
+  const view = useMemo(() => ({ sec: sp.get("sec"), item: sp.get("item"), file: sp.get("file") }), [sp]);
   const pane: "pkg" | "settings" = sel ? "pkg" : "settings";
 
   const [reg, setReg] = useState<Registry>(EMPTY);
   const [nav, setNav] = useState<ShellNav | null>(null);
   const [running, setRunning] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<DraftEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +69,11 @@ function Console() {
     } catch {
       setRunning([]);
     }
+    try {
+      setDrafts((await draftList()).drafts);
+    } catch {
+      setDrafts([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -70,10 +83,39 @@ function Console() {
   }, [load]);
 
   const edges = useMemo(() => edgesData(reg), [reg]);
-  const selected = reg.packages.find((p) => p.name === sel) ?? null;
+  const installed = reg.packages.find((p) => p.name === sel) ?? null;
+  // 설치 안 된 초안 — 장부에 없지만 draft 는 있다. 빈 workspace 가 "초안" 의 표식이다
+  const selected: Pkg | null =
+    installed ??
+    (sel && drafts.some((d) => d.name === sel)
+      ? { name: sel, path: "", workspace: "", ring: null, model: null, harness: null, manifest: null, error: null }
+      : null);
   const item = nav?.items.find((i) => i.pkg === sel) ?? null;
 
   const goFace = useCallback((f: string) => router.push(`/?p=${encodeURIComponent(sel ?? "")}&face=${f}`), [router, sel]);
+  // 상세의 깊이 이동 — p·face 는 지키고 sec·item·file 만 바꾼다 (스튜디오의 nav 와 같은 규칙)
+  const goView = useCallback(
+    (q: { sec?: string | null; item?: string | null; file?: string | null }) => {
+      const p = new URLSearchParams({ p: sel ?? "", face: "detail" });
+      const s = q.sec === undefined ? view.sec : q.sec;
+      const it = q.item === undefined ? view.item : q.item;
+      const f = q.file === undefined ? view.file : q.file;
+      if (s) p.set("sec", s);
+      if (s && it) p.set("item", it);
+      if (f) p.set("file", f);
+      router.push(`/?${p.toString()}`);
+    },
+    [router, sel, view],
+  );
+
+  if (isNew) {
+    return (
+      <div className="console">
+        <NewPackage onOpen={(name) => router.replace(`/?p=${encodeURIComponent(name)}&face=detail`)} />
+        <ChatNudge />
+      </div>
+    );
+  }
 
   return (
     <div className="console">
@@ -88,6 +130,8 @@ function Console() {
             running={running}
             item={item}
             face={face}
+            view={view}
+            nav={goView}
             onFace={goFace}
             onChanged={() => void load()}
             onGone={() => { void load(); router.push("/"); }}

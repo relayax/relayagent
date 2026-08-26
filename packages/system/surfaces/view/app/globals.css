@@ -82,6 +82,42 @@ textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
 .cap-row .why { margin-left: auto; color: var(--rc-faint); font-size: 11.5px; text-align: right; }
 .detail-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .detail-foot .grow { flex: 1; }
+
+/* ── 설명서 (패키지 화면 1층) — 질문-답 목록. 매니페스트 어휘가 아니라 사람 말.
+   줄은 버튼이다: 누르면 그 아래로 2층(그 섹션의 폼 · 결과면)이 펼쳐진다 ── */
+.ds { display: flex; flex-direction: column; }
+.ds-row { display: flex; gap: 14px; padding: 10px 6px; border: none; border-bottom: 1px solid var(--rc-line-soft); background: none; width: 100%; text-align: left; color: inherit; font: inherit; border-radius: 8px; cursor: pointer; }
+.ds-row:hover { background: var(--rc-hover); }
+.ds-sec:last-child > .ds-row { border-bottom: none; }
+.ds-sec.open > .ds-row { background: var(--rc-accent-soft); border-bottom-color: transparent; }
+.ds-q { flex: 0 0 120px; font-size: 12.5px; color: var(--rc-faint); padding-top: 2px; }
+.ds-a { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 13.5px; }
+.ds-item { display: inline-flex; align-items: baseline; gap: 6px; }
+.ds-sub { font: 11.5px var(--rc-mono); color: var(--rc-faint); }
+.ds-empty { color: var(--rc-faint); }
+.ds-caret { color: var(--rc-faint); font-size: 11px; padding-top: 3px; }
+.ds-adv .ds-q { color: var(--rc-faint); }
+.ds-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 2층 — 왼쪽 폼, 오른쪽 결과면. 좁으면 한 열 */
+.ds-x { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr); gap: 12px; padding: 12px 6px 16px; border-bottom: 1px solid var(--rc-line-soft); }
+.ds-x > .rc-card { min-height: 0; max-height: 64vh; display: flex; flex-direction: column; overflow: hidden; }
+.ds-x .st-scroll { padding: 14px; }
+.ds-crumb { display: flex; align-items: center; gap: 7px; padding: 8px 14px; border-bottom: 1px solid var(--rc-line); font-size: 12.5px; flex: none; }
+.ds-crumb i { color: var(--rc-faint); font-style: normal; }
+.ds-crumb .lnk { color: var(--rc-faint); cursor: pointer; }
+.ds-crumb .lnk:hover { color: var(--rc-ink); }
+.ds-crumb .cur { font-weight: 600; }
+@media (max-width: 1100px) { .ds-x { grid-template-columns: 1fr; } }
+/* 3층 — 몸 전체가 에디터 */
+.pane-body.editor { padding: 0; gap: 0; overflow: hidden; }
+.ed { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ed-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rc-line); flex: none; }
+.ed-path { font-size: 12px; }
+.ed .st-editor { flex: 1; min-height: 0; }
+/* 머리의 액션 자리 — draft 가 열리면 버튼 묶음이 여기 선다 */
+.pane-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+.pane-actions .st-undo { display: inline-flex; gap: 3px; }
+.pane-actions + .right { margin-left: 0; }
 .pane-body .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--rc-line-soft); font-size: 13px; }
 .pane-body .row:last-child { border-bottom: none; }
 .pane-body .row .grow { flex: 1; }
@@ -150,52 +186,24 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .result.err { color: var(--rc-err); background: var(--rc-err-bg); }
 
 /* ── 스튜디오 (수정 레이어 IDE) ──────────────────────────────────────────── */
-.st-shell { display: flex; flex-direction: column; gap: 12px; height: 100vh; padding: 12px; }
-.st-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px; flex: 0 0 auto; }
-.st-top b { font-size: 14px; }
 .st-back { color: var(--rc-faint); text-decoration: none; font-size: 12.5px; font-weight: 600; }
 .st-back:hover { color: var(--rc-ink); }
 .st-ver { font-family: var(--rc-mono); font-size: 11.5px; color: var(--rc-faint); }
-.st-commit { font-size: 11.5px; color: var(--rc-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .st-sp { flex: 1; }
-.st-body { position: relative; display: grid; grid-template-columns: 230px 1fr; gap: 12px; flex: 1; min-height: 0; }
 /* 세 면 — 선언 트리 · 고치는 자리 · 결과면. 결과면은 고치는 자리보다 조금 넓다:
    프레임·그래프·격자가 앉는 자리라 좁으면 그리는 것이 아니라 접히는 것이 된다 */
-.st-body.st-3 { grid-template-columns: 218px minmax(320px, 1fr) minmax(400px, 1.08fr); }
 @media (max-width: 1180px) { .st-body.st-3 { grid-template-columns: 200px 1fr; } .st-body.st-3 .st-right { display: none; } }
 .st-right { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .st-undo { display: inline-flex; gap: 3px; }
 .st-undo .rc-btn { width: 27px; padding: 5px 0; text-align: center; }
-.st-left { overflow: auto; padding: 8px; }
-.st-make { width: 100%; margin-bottom: 8px; padding: 8px 0; font-size: 13px; }
-.st-canvas { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.st-canvas-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .st-scroll { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .st-editor { flex: 1; min-height: 0; overflow: hidden; }
 .st-editor .cm-editor { height: 100%; }
 
 /* 선언 트리 — 레이어 패널. 노드 = relay.yaml 선언 */
-.st-tree { display: flex; flex-direction: column; gap: 1px; }
-.st-node { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }
-.st-node:hover { background: var(--rc-hover); }
-.st-node.sel { background: var(--rc-accent-soft); }
-.st-node.root { font-size: 13px; margin-bottom: 4px; }
-.st-node.dim { color: var(--rc-faint); }
-.st-node.sub { padding-left: 22px; font-size: 12px; }
-.st-node .st-it { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.st-count { margin-left: auto; font-size: 10.5px; color: var(--rc-faint); font-family: var(--rc-mono); }
-.st-add { margin-left: auto; color: var(--rc-faint); font-weight: 700; }
-.st-badge { margin-left: auto; font-size: 10px; font-weight: 700; color: var(--rc-accent-strong); background: var(--rc-accent-soft); border-radius: 5px; padding: 0 5px; }
-.st-node .st-count + .st-badge, .st-node .st-badge + .st-count { margin-left: 4px; }
 .st-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-accent); flex: 0 0 auto; }
 
 /* 캔버스 breadcrumb */
-.st-crumb { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border-bottom: 1px solid var(--rc-line); font-size: 12.5px; flex: 0 0 auto; }
-.st-crumb i { color: var(--rc-faint); font-style: normal; }
-.st-crumb .lnk { color: var(--rc-faint); cursor: pointer; }
-.st-crumb .lnk:hover { color: var(--rc-ink); }
-.st-crumb .cur { font-weight: 600; }
-.st-crumb .mono { font-family: var(--rc-mono); font-size: 11.5px; }
 .st-x { margin-left: auto; border: none; background: none; color: var(--rc-faint); cursor: pointer; font-size: 11.5px; font-weight: 600; }
 .st-x:hover { color: var(--rc-err); }
 
@@ -232,7 +240,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-state.A, .st-state.\? { color: var(--rc-ok); }
 .st-state.D { color: var(--rc-err); }
 .st-diff { max-height: 260px; overflow: auto; background: var(--rc-ground); border: 1px solid var(--rc-line-soft); border-radius: 8px; padding: 10px 12px; font: 11.5px/1.55 var(--rc-mono); white-space: pre; }
-.st-wizard { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 48px 20px; overflow: auto; }
 
 /* ── 배포 그래프 캔버스 (monitor 이식) ─────────────────────────────────── */
 .gx-shell { display: flex; flex-direction: column; overflow: hidden; }
@@ -509,8 +516,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .ob-open { margin-left: auto; border: 1px solid var(--rc-line); background: var(--rc-bg); color: var(--rc-soft); border-radius: 999px; padding: 2px 10px; font: 600 11.5px var(--rc-sans); cursor: pointer; text-decoration: none; }
 .ob-open:hover { background: var(--rc-hover); }
 /* 트리 — 사람 말 라벨 + 문법 키 병기, 고급 접기 */
-.st-key { margin-left: 6px; font: 10.5px var(--rc-mono); color: var(--rc-faint); }
-.st-node.st-adv { margin-top: 6px; }
 /* ⋯ 메뉴 — 이전 판으로 · 작업 사본 버리기 (자주 누르는 버튼과 떨어뜨린다) */
 .st-more { position: relative; }
 .st-menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 240px; background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.12); padding: 6px; z-index: 50; display: flex; flex-direction: column; gap: 2px; }
@@ -522,11 +527,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-issue { display: flex; align-items: center; gap: 8px; }
 .st-issue .rc-btn { padding: 2px 8px; font-size: 11px; flex: none; }
 /* 스튜디오 시작 화면 — 만드는 중인 초안 */
-.st-landing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px 20px; overflow: auto; }
-.st-drafts { display: flex; flex-direction: column; gap: 6px; width: min(560px, 100%); }
-.st-draft { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rc-line-soft); border-radius: 10px; padding: 10px 14px; text-decoration: none; color: inherit; background: var(--rc-bg); }
-.st-draft:hover { border-color: var(--rc-accent); }
-.st-draft b { font-size: 13px; }
 .st-draft .st-ver { margin-left: auto; }
 /* 기록 이력 */
 .st-hist { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }

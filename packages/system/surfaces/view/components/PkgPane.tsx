@@ -1,18 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import {
-  approveGrant,
-  channelStatus,
-  removePkg,
-  serviceStatus,
-  type ChannelStatusView,
-  type ServiceStatusView,
-  type ShellItem,
-} from "@/lib/api";
-import { landingAgent, residentDecls } from "@/lib/faces";
+import { useEffect, useState } from "react";
+import DetailFace from "@/components/DetailFace";
+import { channelStatus, serviceStatus, type ChannelStatusView, type ServiceStatusView, type ShellItem } from "@/lib/api";
+import { residentDecls } from "@/lib/faces";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
+import type { Nav, View } from "@/lib/useDraft";
 
 // 기판이 서빙할 문서가 없는 얼굴의 자리. 화면·대화는 기판이 직접 문서를 내므로 사이드바가
 // 그리로 곧장 가고, 여기 오지 않는다. 남는 것은 둘이다:
@@ -27,6 +20,8 @@ export default function PkgPane({
   running,
   item,
   face,
+  view,
+  nav,
   onFace,
   onChanged,
   onGone,
@@ -38,6 +33,9 @@ export default function PkgPane({
   /** 기판이 준 이 패키지의 얼굴들 — 판정은 여기서 다시 하지 않는다 */
   item: ShellItem | null;
   face: string | null;
+  /** 상세의 깊이(sec · item · file) — URL 이 정본 */
+  view: View;
+  nav: Nav;
   onFace: (face: Tab) => void;
   onChanged: () => void;
   onGone: () => void;
@@ -47,16 +45,23 @@ export default function PkgPane({
   const tabs: Tab[] = [...(hasLive ? (["live"] as Tab[]) : []), "detail"];
   // 주소에 없는 얼굴로는 앉지 않는다 — 패키지를 갈아타도 직전 패키지에만 있던 탭이 남지 않는다
   const tab: Tab = tabs.includes(face as Tab) ? (face as Tab) : tabs[0];
+  // 설치 안 된 초안은 장부에 이름이 없다 — 상세가 draft 를 열어 알려 준다
+  const [title, setTitle] = useState<{ display: string | null; live: string | null; draft: string | null } | null>(null);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const ghost = pkg.workspace === "";
 
   return (
     <section className="pane">
       <header className="pane-head">
         {item?.icon ? <img className="p-ic" src={item.icon} alt="" /> : <span className="p-ic ltr">{(pkg.name[0] ?? "?").toUpperCase()}</span>}
-        <h2>{m?.display_name ?? pkg.name}</h2>
+        <h2>{m?.display_name ?? title?.display ?? pkg.name}</h2>
         <span className="meta mono">
-          {m?.name ?? pkg.name}@{m?.version ?? "?"}
+          {ghost
+            ? `미발행${title?.draft ? ` · 초안 v${title.draft}` : ""}`
+            : `${m?.name ?? pkg.name}@${m?.version ?? "?"}${title?.draft && title.draft !== title.live ? ` · 초안 v${title.draft}` : ""}`}
           {pkg.ring === 0 ? " · ring-0" : ""}
         </span>
+        <span ref={setSlot} className="pane-actions" />
         <div className="right">
           {tabs.length > 1 ? (
             <div className="seg" role="group" aria-label="얼굴 전환">
@@ -75,7 +80,9 @@ export default function PkgPane({
       {pkg.error ? <div className="banner">검사 실패: {pkg.error}</div> : null}
 
       {tab === "live" ? <LiveFace pkg={pkg} running={running} /> : null}
-      {tab === "detail" ? <DetailFace pkg={pkg} reg={reg} edges={edges} onChanged={onChanged} onGone={onGone} /> : null}
+      {tab === "detail" ? (
+        <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} />
+      ) : null}
     </section>
   );
 }
@@ -173,162 +180,3 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
 // ── 상세 = 권한 화면 ────────────────────────────────────────────────────────
 // 전화기 앱 권한 화면의 문법: "이 앱이 내놓는 것" / "이 앱을 쓰는 앱" 두 목록. 제거 버튼 옆에
 // 역의존이 보이므로 "지우면 뭐가 멈추나"가 자명하다. 그래프(지도)는 관리자용이라 설정에 있다
-function DetailFace({
-  pkg,
-  reg,
-  edges,
-  onChanged,
-  onGone,
-}: {
-  pkg: Pkg;
-  reg: Registry;
-  edges: EdgeView[];
-  onChanged: () => void;
-  onGone: () => void;
-}) {
-  const m = pkg.manifest;
-  const mine = edges.filter((e) => e.consumer === pkg.name); // 이 앱이 쓰는 것
-  const users = edges.filter((e) => e.provider === pkg.name); // 이 앱을 쓰는 앱 — 소비자 역색인
-  const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const label = useCallback(
-    (name: string) => reg.packages.find((p) => p.name === name)?.manifest?.display_name ?? name,
-    [reg],
-  );
-
-  async function approve(e: EdgeView) {
-    setError(null);
-    try {
-      await approveGrant({ consumer: e.consumer, provider: e.provider!, tools: e.tools, mission: e.mission });
-      onChanged();
-    } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
-    }
-  }
-
-  async function remove() {
-    setError(null);
-    setBusy(true);
-    try {
-      await removePkg(pkg.name);
-      onGone();
-    } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
-      setBusy(false);
-    }
-  }
-
-  const outward = (m?.services ?? []).filter((s) => s.url != null || s.api != null);
-
-  return (
-    <div className="pane-body">
-      {m?.description ? <p className="lede">{m.description}</p> : null}
-      {error ? <div className="banner">{error}</div> : null}
-
-      <div className="detail-grid">
-        <div className="rc-card pad">
-          <h3>이 앱이 내놓는 것</h3>
-          <p className="hint">다른 앱이 빌려 쓸 수 있는 문과, 사람이 말을 거는 창구</p>
-          {(m?.missions ?? []).map((x) => (
-            <div className="cap-row" key={`m-${x.name}`}>
-              <span className="mono">{x.name}</span>
-              <span className="why">{x.description ?? "a2a 미션"}</span>
-            </div>
-          ))}
-          {outward.flatMap((s) => (s.tools ?? []).map((t) => (
-            <div className="cap-row" key={`t-${s.name}-${t}`}>
-              <span className="mono">{t}</span>
-              <span className="why">{s.name} 도구</span>
-            </div>
-          )))}
-          {(m?.surfaces?.channels ?? []).map((c) => (
-            <div className="cap-row" key={`c-${c.name}`}>
-              <span className="mono">{c.name}</span>
-              <span className="why">멘션·DM 이 대화로 들어옴</span>
-            </div>
-          ))}
-          {(m?.agents ?? []).map((a) => (
-            <div className="cap-row" key={`a-${a.name}`}>
-              <span className="mono">{a.name}</span>
-              <span className="why">{a.name === landingAgent(m) ? "착지 — 대화의 문" : "sub 에이전트"}</span>
-            </div>
-          ))}
-          {!(m?.missions ?? []).length && !outward.length && !(m?.surfaces?.channels ?? []).length && !(m?.agents ?? []).length ? (
-            <div className="row none">없음</div>
-          ) : null}
-        </div>
-
-        <div className="rc-card pad">
-          <h3>이 앱을 쓰는 앱</h3>
-          <p className="hint">지우면 여기 있는 앱들이 함께 멈춥니다</p>
-          {users.length ? (
-            users.map((e, i) => (
-              <div className="cap-row" key={`u-${e.consumer}-${i}`}>
-                <b>{label(e.consumer)}</b>
-                <span className="why">
-                  {e.mission ? `미션 ${e.mission}` : e.tools?.length ? e.tools.join(", ") : "연결"}
-                  {e.granted ? "" : " · 미결재"}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="row none">없음</div>
-          )}
-        </div>
-
-        <div className="rc-card pad span2">
-          <h3>이 앱이 쓰는 것</h3>
-          <p className="hint">선언은 캡, 승인은 대장 — 결재된 것만 세션에 실립니다</p>
-          {mine.length ? (
-            mine.map((e, i) => (
-              <div className="row" key={`e-${e.ref}-${i}`}>
-                <span className="grow">
-                  {e.provider ? label(e.provider) : e.ref}
-                  {e.mission ? ` · 미션 ${e.mission}` : ""}
-                  {e.tools?.length ? ` · ${e.tools.join(", ")}` : ""}
-                </span>
-                {e.granted ? (
-                  <span className="rc-chip">활성</span>
-                ) : e.provider ? (
-                  <button className="rc-btn" type="button" onClick={() => approve(e)}>연결 승인</button>
-                ) : (
-                  <span className="rc-chip gray">provider 미설치</span>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="row none">없음</div>
-          )}
-        </div>
-      </div>
-
-      <div className="detail-foot">
-        <Link className="rc-btn" href={`/studio/?pkg=${encodeURIComponent(pkg.name)}`}>스튜디오에서 편집</Link>
-        <button
-          className="rc-btn"
-          type="button"
-          title={`${pkg.workspace} 폴더를 파일 탐색기로 엽니다`}
-          onClick={() => { void fetch(`/pkg/${encodeURIComponent(pkg.name)}/workspace/open`, { method: "POST" }).catch(() => {}); }}
-        >
-          데이터 폴더 열기
-        </button>
-        <span className="grow" />
-        {confirming ? (
-          <>
-            <span className="warn-text">
-              {users.length ? `${users.map((e) => label(e.consumer)).join(", ")} 이(가) 함께 멈춥니다.` : "되돌릴 수 없습니다."}
-            </span>
-            <button className="rc-btn" type="button" onClick={() => setConfirming(false)} disabled={busy}>취소</button>
-            <button className="rc-btn danger" type="button" onClick={() => void remove()} disabled={busy}>
-              {busy ? "제거 중…" : "정말 제거"}
-            </button>
-          </>
-        ) : (
-          <button className="rc-btn danger" type="button" onClick={() => setConfirming(true)}>제거</button>
-        )}
-      </div>
-    </div>
-  );
-}

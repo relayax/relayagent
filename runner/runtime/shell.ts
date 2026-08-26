@@ -193,13 +193,14 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
   const pending = drafts
     .filter((d) => !d.installed)
-    .map(({ name, version, changes }) => ({ name, version, changes, href: consoleHref(`studio/?pkg=${encodeURIComponent(name)}`) }));
+    .map(({ name, version, changes }) => ({ name, version, changes, href: consoleHref(`?p=${encodeURIComponent(name)}&face=detail`) }));
   return {
     items,
     home: "/",
-    create: consoleHref("studio/?new=1"),
+    create: consoleHref("?new=1"),
     importer: "/store/import",
-    studio: consoleHref("studio/"),
+    // 초안 목록은 셸 홈에 있다 — 스튜디오는 패키지 화면의 층이 되어 시작 화면이 따로 없다
+    studio: "/",
     drafts: pending,
     store,
     library: store ? store + "library" : null,
@@ -482,7 +483,7 @@ function renderSide(nav, err){
     ft.appendChild(item(nav.create, svg(ICONS.plus), "패키지 만들기"));
     // 만드는 중인 초안 — 발행 전 패키지로 돌아가는 유일한 문이 스튜디오 시작 화면이다
     if (nav.drafts && nav.drafts.length) {
-      ft.appendChild(item(nav.studio, svg(ICONS.draft), "만드는 중 " + nav.drafts.length, { title: "만드는 중인 초안 — 스튜디오에서 이어서 만듭니다" }));
+      ft.appendChild(item(nav.studio, svg(ICONS.draft), "만드는 중 " + nav.drafts.length, { title: "만드는 중인 초안 — 홈에서 골라 이어서 만듭니다" }));
     }
     ft.appendChild(item(nav.importer, svg(ICONS.down), "불러오기", { title: "누군가에게 받은 에이전트 파일을 엽니다" }));
   }
@@ -552,7 +553,7 @@ function renderHome(nav, err){
     }
     dr.innerHTML = '<span>만드는 중인 초안 <b>' + drafts.length + '</b>개</span>' +
       '<span class="dn">' + names + (drafts.length > 6 ? " …" : "") + '</span>' +
-      '<a class="mo" href="' + esc(nav.studio) + '">스튜디오에서 이어서 만들기</a>';
+      '';
     home.appendChild(dr);
   }
 

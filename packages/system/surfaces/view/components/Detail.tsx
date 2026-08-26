@@ -66,7 +66,7 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
         ) : null}
         {/* 앱 내부 경로는 반드시 Link 로 — 생짜 <a> 는 basePath(/pkg/<이름>/view) 가 안 붙어 기판 404 로 샌다.
             위 새 탭 링크는 기판이 직접 서빙하는 경로라 <a> 가 맞다 */}
-        <Link className="rc-btn" style={{ textDecoration: "none" }} href={`/studio/?pkg=${encodeURIComponent(pkg.name)}`}>
+        <Link className="rc-btn" style={{ textDecoration: "none" }} href={`/?p=${encodeURIComponent(pkg.name)}&face=detail`}>
           스튜디오에서 편집
         </Link>
         <button
