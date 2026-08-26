@@ -375,6 +375,20 @@
 .rc-plan-row.run .rc-plan-tx { color: var(--rc-ink); font-weight: 500; }
 .rc-plan-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ── 얹기 표시 (턴이 도는 중에 사용자가 더한 말 — client-protocol §5.1-16-a) ────
+   말풍선이 아니라 흐름 안의 표시다: 새 턴의 시작이 아니라 이 턴에 얹힌 말이고, 화면이
+   그 차이를 지우면 사용자는 자기 말이 다음 턴으로 밀렸다고 읽는다. 왼쪽 세로선이
+   "여기서부터 방향이 바뀌었다"를 도구 카드들 사이에서 눈에 걸리게 한다. */
+.rc-steer {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 2px 0; padding: 7px 12px; max-width: 520px;
+  border-left: 2px solid var(--rc-accent); border-radius: 0 10px 10px 0;
+  background: var(--rc-ground); font-size: 13px; line-height: 1.5; color: var(--rc-ink);
+  animation: rc-rise 0.18s ease-out;
+}
+.rc-steer-ic { color: var(--rc-accent); font-weight: 600; flex: 0 0 auto; }
+.rc-steer-tx { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ── AskUserQuestion 질문 카드 (mid-turn 사용자 결정 — can_use_tool 회송) ─── */
 .rc-ask {
   border: 1px solid var(--rc-line); border-radius: var(--rc-radius); background: var(--rc-bg);

@@ -116,6 +116,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 | `task` | `id`, `status: "started"`, `note?` | A background task the model launched is now running. |
 | `task` | `id`, `status: "done"`, `ok` | That background task settled. |
 | `ask` | `id`, `questions` | The model asked the user a question (requires capability `ask`). Answer via the `answer` control line; the adapter must resolve unanswered asks itself (timeout with a sensible default) — an unanswered ask must never hang the turn forever. |
+| `steer` | `text` | The substrate's `steer` control line reached the conversation. Echoed at the moment of injection, so the ledger — and every observer replaying it — shows the user's mid-turn words where they actually landed, between two tool calls. Emit exactly once per accepted `steer`, and never for one that was dropped. |
 | `file` | `path` (stage-relative) | A successful write landed in the file-exchange stage. |
 | `reply` | `text`, `session`, `model`, `usage {input, output, context_window, cache_read?, cache_creation?, cost_usd?}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `usage.input` stays cache-inclusive for compatibility; `cache_read` / `cache_creation` break the cached tokens out (non-cache input = `input − cache_read − cache_creation`) and `cost_usd` is the CLI's own cost ledger when it reports one — all three additive. `origin: "task"` marks a spontaneous continuation (below). |
 | `error` | `message` | Turn failure. Exactly one of `reply`/`error` settles a turn. Failures are never disguised as text. |
@@ -125,6 +126,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 | Line | Meaning |
 |---|---|
 | `{"type":"turn","prompt":…}` | Inject the next turn (`serve` only). The substrate serializes turns per slot. |
+| `{"type":"steer","prompt":…}` | Add a user utterance to the **turn already in flight** (requires capability `steer`). Never opens a turn: no second `reply`, and the settlement that arrives covers both utterances. Echo it back as a `steer` event when it lands. |
 | `{"type":"cancel"}` | Abort the in-flight turn. The adapter kills its CLI and settles with `error` + exit 130. |
 | `{"type":"answer","id":…,"answers":[{question,selected[]}…]}` | Resolve a pending `ask`. Empty `answers` = the user cancelled. |
 | EOF | Retire. `serve`: finish the in-flight turn, then drain (below), then exit 0. |
@@ -143,6 +145,17 @@ client-side field invented downstream is how two substrates end up meaning diffe
   session is idle, the resulting spontaneous turn is emitted as a normal event stream ending in
   `reply {origin:"task"}`; the substrate appends it to the conversation history. A turn injected
   while a spontaneous turn is in flight must be queued behind it, never cross-wired.
+- **Steering** — `steer` adds an utterance to a turn that is already running, and is the only
+  control line that carries user text without opening a turn. The adapter hands it to its CLI on
+  the same conversation and changes nothing else: one turn, one `reply`, one settlement covering
+  every utterance the turn received. A `steer` arriving when no turn is in flight is dropped — the
+  substrate owns that race (it knows whether the turn is still running and falls back to sending a
+  normal turn), so an adapter that queued it instead would deliver the same words twice.
+  *Physical basis (claude-code 2.1.222, measured 2026-08-26): a user frame written to an
+  `--input-format stream-json` CLI mid-turn lands at the next sampling boundary — after the tool
+  call in flight returns, before the next one is chosen — and the CLI still emits exactly one
+  `result`. The words arrive between tool calls, never inside one; an adapter must not promise the
+  latter.*
 - **Stall** — the substrate watches for event silence on an in-flight turn
   (`RELAY_TURN_STALL_S`, default 1200 s) and injects `cancel`. Adapters should therefore emit
   events as work happens, not in one batch at the end.
@@ -167,12 +180,12 @@ client-side field invented downstream is how two substrates end up meaning diffe
 ## Declarations
 
 `info.protocol`: integer. 3 = the vocabulary above. `info.capabilities` is a closed vocabulary
-judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`. Declare only what is
-physically implemented — the console enables UI per capability, and a declared-but-dead capability
+judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`, `steer`. Declare only
+what is physically implemented — the console enables UI per capability, and a declared-but-dead capability
 is a broken screen.
 
 ## Reference
 
-`packages/system/harness/claude-code/run` implements protocol 3 including `serve`, `ask`, and
-`tasks`; `codex`, `kimi`, and `pi` in the same directory are protocol-2 per-turn adapters and show
+`packages/system/harness/claude-code/run` implements protocol 3 including `serve`, `ask`, `tasks`,
+and `steer`; `codex`, `kimi`, and `pi` in the same directory are protocol-2 per-turn adapters and show
 the minimal shape.

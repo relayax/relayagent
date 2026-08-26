@@ -109,6 +109,7 @@ OSS 데몬(`runner/daemon.ts`)과 relayos deployd(`runtime/deployd/`). 두 구�
 | 축 | 동사 | capability |
 |---|---|---|
 | 턴 | `turn.send` · `turn.stream` · `turn.attach` · `turn.interrupt` · `turn.respond` | — |
+| 턴(진행 중) | `turn.steer` | steer |
 | 턴(대화축) | `turn.cancel` | cancel-by-session |
 | 세션 | `session.list` · `session.open` · `session.create` · `session.rename` · `session.archive` · `session.pin` · `session.remove` · `session.reset` | — |
 | 이력 | `history.get` | — |
@@ -187,6 +188,24 @@ OSS 데몬(`runner/daemon.ts`)과 relayos deployd(`runtime/deployd/`). 두 구�
 16. **[현행 v1]** `turn.respond` = `POST {base}/turns/<id>/respond`
     요청: `{ask, answers: [{question, selected[]}]}` → `{ok}`.
     봉투 `ask` 이벤트(harness-protocol.md:65)의 회송. 빈 `answers` = 사용자 취소.
+
+16-a. **[신설]** `turn.steer` = `POST {base}/turns/<id>/steer` — capability `steer`.
+    요청: `{prompt}` → `{ok}`. 봉투 `steer` 제어(harness-protocol.md §Control)로 전달되고,
+    **진행 중 턴에 사용자 발화를 얹을 뿐 턴을 열지 않는다** — `reply` 는 여전히 하나이고,
+    그 하나가 얹힌 발화까지 포함해 정산한다.
+    - `ok:false` = **얹을 턴이 없다**(그 사이 종결됐거나 아직 시작 전인 큐 턴). 이때 발화를
+      버리면 안 된다 — 클라이언트는 `turn.send` 로 **새 턴을 보내 폴백한다**.
+      *왜 기판이 판정하는가: 이 경주는 기판만 볼 수 있다(진행 명부가 프로세스 지역이다).
+      어댑터가 대신 큐잉하면 같은 말이 두 번 간다 — 어댑터의 큐와 클라이언트의 폴백이
+      각자 한 번씩 보낸다. 판정을 한 곳에 두는 것이 중복을 없애는 유일한 방법이다.*
+    - 얹힌 발화는 **이력에 사용자 메시지로 즉시 앉는다** — 정산을 기다리지 않는다(§5.1-12 의
+      `appendUser` 와 같은 규율: "물음은 지금, 답은 끝나고"). 기다리면 그 사이 죽은 기판에서
+      사용자가 한 말만 통째로 사라진다.
+    - 미선언 기판(capability `steer` 부재)에서 이 동사는 404 다(§3-8). 클라이언트는 개막에서
+      이미 부재를 알므로 **큐 의미론으로 떨어진다**: 발화를 들고 있다가 턴이 끝나면 보낸다.
+      *왜 폴백을 계약이 규정하는가: 두 경로 모두 "사용자가 턴 중에 친 말은 잃지 않는다" 를
+      지켜야 화면이 기판을 몰라도 된다. 하네스가 고르는 것은 **언제 전달되는가** 하나뿐이고,
+      무엇이 보장되는가는 하네스가 고르지 않는다.*
 
 경로 명명은 relayos 현행(`/api/turns*`, api_turns.go:154-186)에 가장 가깝다 — deployd
 정렬(§9)의 diff 를 최소화하기 위해서다. 단 relayos 의 "GET /turns/stream 쿼리로 턴을
@@ -400,8 +419,8 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 ## 6. 이벤트 어휘 — 하네스 봉투 protocol 3 재사용
 
 35. `turn.stream`/`turn.attach` 에 실리는 이벤트는 **하네스 봉투 protocol 3 의 어휘를
-    그대로 재사용한다**: `delta` · `tool` · `usage` · `task` · `ask` · `file` ·
-    `reply` · `error` — 필드 포함 전부 harness-protocol.md:55-68 이 정본이다.
+    그대로 재사용한다**: `delta` · `tool` · `usage` · `task` · `ask` · `steer` · `file` ·
+    `reply` · `error` — 필드 포함 전부 harness-protocol.md §Events 가 정본이다.
     프레이밍만 JSONL(stdout)→SSE(§5.2)로 바뀐다.
     *왜: 어댑터가 만든 이벤트를 기판이 번역 없이 나른다 — 번역기가 없으면 번역 드리프트도
     없다. 구 OSS 폴링 응답의 `events[]` 도 이미 이 봉투 원본이었다(구 wire — 삭제됨, 컷 2639dae).*
@@ -462,6 +481,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
 | `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |
+| `steer` | 진행 중 턴에 사용자 발화 얹기 | `turn.steer` | 하네스 어댑터 capability `steer` 의 투영 — claude-code ○ · codex/kimi/pi ×(`serve` 자체가 없어 얹을 프로세스가 없다) |
 | `cancel-by-session` | 턴 id 없이 대화축으로 진행 턴 취소 | `turn.cancel` | relayos ○ (채널 어댑터가 소비 — POST /turns/cancel) · OSS × (턴 id 를 쥔 화면뿐) |
 
 38. 이 표가 어휘의 전부다. 새 capability = 이 문서의 개정이다. `turn.attach` 는 이 표에

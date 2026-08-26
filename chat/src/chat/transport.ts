@@ -483,6 +483,11 @@ export function createTransport(opts: TransportOptions) {
       /** §5.1-16 — 봉투 ask 이벤트의 회송. 빈 answers = 사용자 취소. */
       respond: (turn: string, req: RespondRequest): Promise<Result<{ ok: boolean }>> =>
         post<{ ok: boolean }>(base + "/turns/" + encodeURIComponent(turn) + "/respond", req),
+
+      /** §5.1-16-a — capability `steer`. 진행 중 턴에 발화를 얹는다(턴을 열지 않는다).
+       *  `ok:false` = 얹을 턴이 없다 — 호출자는 발화를 버리지 말고 turn.send 로 폴백한다. */
+      steer: (turn: string, prompt: string): Promise<Result<{ ok: boolean }>> =>
+        post<{ ok: boolean }>(base + "/turns/" + encodeURIComponent(turn) + "/steer", { prompt }),
     },
 
     session: {

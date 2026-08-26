@@ -20,7 +20,7 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import type { TurnMeta, RelayCtx, ReplayMessage } from "./runtime";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
+import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, hasSteer, steerTurn, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
   loadHarnessVariants,
   setHarnessVariant,
   hasEffort,
@@ -31,6 +31,7 @@ import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
 import { loadInbox, loadInstances, type NavInstance } from "./runtime";
 import { threadFamily, siblingThread, displayBinding, paramTargets, withTargets, targetCandidates } from "./routematch";
+import { STEER_TOOL } from "./envelope-reducer";
 import { broadcastLogout, installAuthWatch } from "../auth-sync";
 
 function resultText(result: unknown): string {
@@ -65,6 +66,7 @@ type Group =
   | { kind: "trace"; steps: AnyPart[] }
   | { kind: "plan"; todos: any[] | null }
   | { kind: "ask"; part: AnyPart }
+  | { kind: "steer"; part: AnyPart }
   | { kind: "choice"; part: AnyPart }
   | { kind: "files"; part: AnyPart };
 
@@ -73,6 +75,12 @@ type Group =
  *  렌더용으로만 매칭한다. */
 function isAskTool(name: unknown): boolean {
   return name === "AskUserQuestion" || name === "mcp__ask__ask_user";
+}
+
+/** 얹기 카드 — 진짜 도구가 아니라 리듀서가 봉투 `steer` 이벤트로 세운 예약 파트다
+ *  (envelope-reducer 의 STEER_TOOL). 이름 문자열은 리듀서가 정본이라 여기서 다시 쓰지 않는다. */
+function isSteerPart(name: unknown): boolean {
+  return name === STEER_TOOL;
 }
 
 /** @relay/builder ask 스크립트(논블로킹 선택지) — scripts-engine 이 script_ask 로 합성하고
@@ -107,6 +115,13 @@ function groupParts(content: readonly AnyPart[]): Group[] {
     if (p.type === "tool-call" && isAskTool(p.toolName)) {
       flush();
       groups.push({ kind: "ask", part: p });
+      return;
+    }
+    // 얹기 — 턴이 도는 중에 사용자가 더한 말. 타임라인(trace)에 접어 넣지 않고 흐름을 끊어
+    // 제 자리에 세운다: 이 말이 들어간 지점이 곧 이후 도구 호출들이 갈린 이유다.
+    if (p.type === "tool-call" && isSteerPart(p.toolName)) {
+      flush();
+      groups.push({ kind: "steer", part: p });
       return;
     }
     // script_ask 는 턴을 끝내고 답을 다음 사용자 메시지로 받는 논블로킹 카드 —
@@ -420,6 +435,20 @@ function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
  *  새 턴을 시작하는 정본 경로(Composer.sendNow·AttachOnMount 와 동일). 턴 실행 중이거나
  *  이미 답했으면(카드 뒤 user 메시지 존재) 비활성 — 리플레이에선 다음 user 메시지가 옵션
  *  라벨과 일치할 때 선택 표시를 복원한다. */
+/** 얹기 카드 — 턴이 도는 중에 사용자가 더한 말을 그 말이 들어간 자리에 세운다.
+ *  말풍선이 아니라 흐름 안의 표시인 이유: 이것은 새 턴의 시작이 아니라 **이 턴에 얹힌 것**이고,
+ *  화면이 그 차이를 지워 버리면 사용자는 자기 말이 다음 턴으로 밀렸다고 읽는다. */
+function SteerCard({ part }: { part: AnyPart }) {
+  const text = String(part?.args?.text ?? part?.argsText ?? "");
+  if (!text) return null;
+  return (
+    <div className="rc-steer" role="note">
+      <span className="rc-steer-ic" aria-hidden>↳</span>
+      <span className="rc-steer-tx">{text}</span>
+    </div>
+  );
+}
+
 function ChoiceCard({ part }: { part: AnyPart }) {
   const rt = useThreadRuntime();
   const running = useThread((t) => t.isRunning);
@@ -1338,6 +1367,7 @@ function AssistantMessage() {
         if (g.kind === "md") return <MdBlock key={i} text={g.text} streaming={running && isLast} />;
         if (g.kind === "plan") return <PlanCard key={i} todos={g.todos} active={running} />;
         if (g.kind === "ask") return <AskCard key={i} part={g.part} active={running} />;
+        if (g.kind === "steer") return <SteerCard key={i} part={g.part} />;
         if (g.kind === "choice") return <ChoiceCard key={i} part={g.part} />;
         if (g.kind === "files") return <FileCard key={i} part={g.part} />;
         return (
@@ -1949,11 +1979,16 @@ function saveQueue(conv: string, q: QItem[]): void {
   }
 }
 
-/** Composer with a CLIENT-SIDE QUEUE. assistant-ui (and our turn/session backend) run one
- *  turn at a time per conversation, so we can't inject a prompt mid-turn. Instead of locking
- *  the input while running, we let the user type & submit: if a turn is in flight the message
- *  is HELD and auto-sent (via threadRuntime.append) the moment that turn completes. Sequential
- *  auto-send, never concurrent — so it never collides with the resumed claude session. */
+/** Composer — 턴이 도는 중에도 입력을 잠그지 않는다. 제출된 말이 가는 길은 둘이고, 갈림은
+ *  기판의 capability `steer` 가 정한다(client-protocol §5.1-16-a):
+ *
+ *  - **얹기**: 진행 중 턴에 발화를 더한다. 턴은 열리지 않고 정산도 하나 그대로다 — 하네스는
+ *    다음 샘플링 경계(진행 중 도구가 결과를 낸 뒤)에서 그 말을 읽는다.
+ *  - **대기**: 얹기를 모르는 기판·첨부가 붙은 발화·앞에 이미 대기가 있는 경우. 턴이 끝나는
+ *    순간 자동 전송되고, 대기 하나가 턴 하나다(동시 턴 없음 — 재개된 세션과 충돌하지 않는다).
+ *
+ *  두 길 모두 **사용자가 친 말은 잃지 않는다**. 갈리는 것은 언제 전달되는가 하나뿐이고,
+ *  그래서 화면은 어느 기판에 붙었는지 몰라도 된다. */
 /** 탭 셸이 제공하는 "이 대화를 새 탭으로 열기" 훅 — pane 내부 전환(onSwitch)은 탭 strip 과
  *  desync 되므로(탭 key/제목이 옛 대화에 고정), 셸이 있으면 이 경로가 우선한다. */
 export const OpenConversationCtx = createContext<((conv: string) => void) | null>(null);
@@ -2010,6 +2045,10 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
   const queueRef = useRef<QItem[]>(initialQueue);
   const [queued, setQueued] = useState<QItem[]>(initialQueue);
   const prevRunning = useRef(running);
+  // running 의 최신값 — 착지 판정(deliver/enqueue)이 await 뒤에서 읽으므로 렌더 클로저로는
+  // 늦는다. 매 렌더 갱신하는 ref 가 그 자리다.
+  const runningRef = useRef(running);
+  runningRef.current = running;
   const taRef = useRef<HTMLTextAreaElement>(null);
   const syncQueued = () => { setQueued([...queueRef.current]); saveQueue(convKey, queueRef.current); };
 
@@ -2033,6 +2072,16 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     let alive = true;
     loadCommands(ctx).then((c) => { if (alive) setCommands(c); });
     return () => { alive = false; };
+  }, [ctx.conversationId]);
+  // 이 기판이 얹기를 아는가(§7 steer). 제출 시점에 동기로 알아야 착지가 한 프레임 안에
+  // 정해진다 — 하네스를 바꾸면 capability 집합 자체가 그 하네스 것이라 다시 읽는다.
+  const [steerable, setSteerable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () => hasSteer(ctx).then((v) => { if (alive) setSteerable(v); });
+    void load();
+    const off = onOverridesChanged(() => { void load(); });
+    return () => { alive = false; off(); };
   }, [ctx.conversationId]);
 
   const slashMatch = /^\/([\w-]*)$/.exec(text);
@@ -2098,8 +2147,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     if (!body) return false;
     if (displayBinding(ctx.conversationId).agent === agent.name) {
       // 이미 그 에이전트의 대화 — 멘션만 벗겨 일반 경로로.
-      if (running || queueRef.current.length) { queueRef.current.push({ text: body, atts: list }); syncQueued(); }
-      else sendNow(body, list);
+      deliver(body, list);
       return true;
     }
     // 로컬 드래프트 좌표 — 첫 발화(아래 큐 드레인) 직전에 session.create 가 민팅한다(§5.3-22).
@@ -2121,12 +2169,35 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     rt.append({ role: "user", content });
   };
 
-  // UI 가 사용자를 대신해 보내는 한 줄(대상 피커의 "대상 추가" 등) — 턴이 돌고 있으면 큐로 넘긴다
-  // (동시 턴 금지 규약은 사용자가 친 메시지와 동일하게 적용).
-  const sendOrQueue = (t: string) => {
-    if (running || queueRef.current.length) { queueRef.current.push({ text: t, atts: [] }); syncQueued(); }
-    else sendNow(t, []);
+  // 대기열 착지 — 유휴면 곧장 흘린다. 유휴 분기가 여기 있어야 하는 이유: 얹기 실패처럼
+  // falling-edge 가 오지 않는 경로가 있고, 그때 큐에 넣기만 하면 그 말이 다음 턴까지 묶인다.
+  const enqueue = (it: QItem) => {
+    if (!runningRef.current && queueRef.current.length === 0) { sendNow(it.text, it.atts); return; }
+    queueRef.current.push(it);
+    syncQueued();
   };
+
+  // 얹기 시도 — 실패는 오류가 아니라 경로 선택이다(그 사이 턴이 끝났거나 기판이 모른다).
+  // 어느 쪽이든 말은 버리지 않는다.
+  const trySteer = async (t: string) => {
+    if (await steerTurn(ctx, t)) return;
+    enqueue({ text: t, atts: [] });
+  };
+
+  // 제출된 말의 유일한 착지점. 세 조건이 모두 서야 얹는다:
+  //  · 기판이 얹기를 안다 — 아니면 얹을 문 자체가 없다
+  //  · 첨부가 없다 — 얹기 본문은 {prompt} 단일이라 첨부를 나르지 않는다(§5.1-16-a)
+  //  · 앞에 대기가 없다 — 대기를 건너뛰고 얹으면 사용자가 친 순서가 뒤집힌다
+  const deliver = (t: string, list: PendingAtt[]) => {
+    if (runningRef.current && steerable && !list.length && queueRef.current.length === 0) {
+      void trySteer(t);
+      return;
+    }
+    enqueue({ text: t, atts: list });
+  };
+
+  // UI 가 사용자를 대신해 보내는 한 줄(대상 피커의 "대상 추가" 등) — 사용자가 친 말과 같은 길.
+  const sendOrQueue = (t: string) => deliver(t, []);
 
   // On the running falling-edge (a turn just finished), send the NEXT queued message —
   // exactly ONE per turn, so each queued message runs as its own sequential turn.
@@ -2203,8 +2274,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     _sendExternal = (t: string) => {
       const promptText = t.trim();
       if (!promptText) return;
-      if (running || queueRef.current.length) { queueRef.current.push({ text: promptText, atts: [] }); syncQueued(); }
-      else sendNow(promptText, []);
+      deliver(promptText, []);
     };
     return () => { if (_sendExternal) _sendExternal = null; };
   });
@@ -2337,9 +2407,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     requestAnimationFrame(grow);
     // "@에이전트 메시지" — 바인딩 대화로 라우팅(민팅+전환). 개입 안 하면 일반 경로.
     if (routeMention(promptText, sendAtts)) return;
-    // Queue (as a separate entry) while a turn runs OR a drain is pending; else send now.
-    if (running || queueRef.current.length) { queueRef.current.push({ text: promptText, atts: sendAtts }); syncQueued(); }
-    else sendNow(promptText, sendAtts);
+    deliver(promptText, sendAtts);
   };
 
   const removeQueued = (i: number) => { queueRef.current.splice(i, 1); syncQueued(); };

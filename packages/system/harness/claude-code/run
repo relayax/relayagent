@@ -17,7 +17,7 @@ case "$VERB" in
     LOGIN="$LOGIN" EFFORT="$EFFORT" node --input-type=module -e '
 let a = {};
 try { a = JSON.parse(process.env.LOGIN || "{}"); } catch { /* 형식이 바뀌면 계정 미상으로 강등 */ }
-const caps = ["cancel", "vision", "resume", "ask", "tasks"];
+const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer"];
 if (process.env.EFFORT === "1") caps.push("effort");
 process.stdout.write(JSON.stringify({
   name: "claude-code",
@@ -751,7 +751,7 @@ const onLine = (line) => {
   }
 };
 
-// 제어 채널: turn(상주 주입) · cancel(중단) · answer(ask 회송). EOF = 은퇴 지시
+// 제어 채널: turn(상주 주입) · steer(진행 턴에 얹기) · cancel(중단) · answer(ask 회송). EOF = 은퇴 지시
 let ctl = null;
 try {
   ctl = readline.createInterface({ input: process.stdin });
@@ -770,6 +770,29 @@ try {
     }
     if (c?.type === "answer") {
       if (ask && (!c.id || c.id === ask.reqId)) askSettle(Array.isArray(c.answers) ? c.answers : null);
+      return;
+    }
+    if (c?.type === "steer") {
+      // 진행 중 턴에 얹기만 한다 — 턴을 열지 않으므로 turn 슬롯도 정산도 건드리지 않는다.
+      // CLI 는 이 프레임을 다음 샘플링 경계(진행 중 도구가 결과를 낸 뒤, 다음 도구를 고르기
+      // 전)에서 읽고 result 는 여전히 하나만 낸다 — 실측 2026-08-26, 2.1.222.
+      if (typeof c.prompt !== "string" || !c.prompt.trim()) return;
+      // 얹을 턴이 없으면 **버린다**. 기판이 이미 진행 명부로 판정하고 없으면 새 턴으로
+      // 폴백하므로(client-protocol §5.1-16-a), 여기서 큐잉하면 같은 말이 두 번 간다
+      if (!child || !turn || turn.done || closing || cancelled) {
+        process.stderr.write("relay 봉투: 얹을 턴 없음 — steer 버림\n");
+        return;
+      }
+      try {
+        child.stdin.write(JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text: translateSlash(c.prompt) }] },
+        }) + "\n");
+      } catch {
+        return; // stdin 이미 닫힘 — 얹히지 않았으므로 증언도 하지 않는다
+      }
+      // 얹힌 뒤에만 증언한다 — 이 이벤트가 장부의 그 자리에 남아 재생이 같은 순서를 본다
+      emit({ event: "steer", text: c.prompt });
       return;
     }
     if (c?.type === "turn" && MODE === "serve") {

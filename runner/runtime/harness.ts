@@ -492,6 +492,31 @@ export function deliverAnswer(pkg: string, slot: string, id: string, answers: un
   }
 }
 
+/**
+ * steer(얹기) — 진행 중 턴에 사용자 발화를 더한다(client-protocol §5.1-16-a).
+ * 턴을 열지 않는다: 정산은 여전히 하나이고 그 하나가 얹힌 발화까지 포함한다.
+ *
+ * false = **얹을 턴이 없다**(진행 명부에 없음 = 그 사이 종결됐거나 애초에 안 돌고 있다).
+ * 이 판정을 여기서 하는 이유는 진행 명부가 프로세스 지역이라 여기만 볼 수 있어서다 —
+ * 어댑터에 맡기면 어댑터의 큐와 화면의 새 턴 폴백이 같은 말을 두 번 보낸다.
+ *
+ * 이력 기록은 얹힌 **직후**다. appendUser 와 같은 규율이다("물음은 지금, 답은 끝나고"):
+ * 정산까지 모아 두면 그 사이 죽은 기판에서 사용자가 한 말만 통째로 사라진다. 반대로 쓰기가
+ * 실패했으면 적지 않는다 — 얹히지 않은 말이 이력에 앉으면 다음 턴의 하네스가 사용자가 한 적
+ * 없는 지시를 읽는다.
+ */
+export function deliverSteer(io: SessionIO, pkg: string, slot: string, prompt: string): boolean {
+  const child = live.get(`${pkg}/${slot}`);
+  if (!child?.stdin) return false;
+  try {
+    child.stdin.write(JSON.stringify({ type: "steer", prompt }) + "\n");
+  } catch {
+    return false;
+  }
+  appendUser(io, pkg, slot, prompt);
+  return true;
+}
+
 // 유휴 은퇴 시계 — 미완 백그라운드가 있으면 은퇴 대신 재무장한다(드레인)
 function armIdle(key: string, r: Resident): void {
   r.idle = setTimeout(() => {
@@ -740,8 +765,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 이 축은 이음새에 없다: 기판 사본 디렉토리가 없으면 PATH 를 건드리지 않는 항등이라,
   // 도구를 실행 이미지에 동봉하는 임베더에서 그대로 무해하다
   Object.assign(env, binaryEnv(input.pkg, env));
-  if (variant?.llm?.auth?.kind === "token" && variant.llm.auth.env) {
-    // LLM 토큰 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다
+  if (variant?.llm?.auth?.env) {
+    // LLM 자격 — 스폰 직전 요청 시점에 권위 이음새로 발급받아 이 세션의 env 에만 싣는다.
+    // kind 를 가리지 않는다: oauth 변형도 선언이 env 이름을 말하면 기판이 댈 수 있다 —
+    // 무인 기판(조직 pod)에는 로그인할 사람이 없다. 이음새가 null 이면 항등이라 1인
+    // 기판에서는 도구 자신의 로그인(Keychain·홈)이 그대로 답이다
     const cred = await authority.credential(`llm/${variant.llm.provider}`);
     if (cred) env[variant.llm.auth.env] = cred;
   }
@@ -750,7 +778,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
 
   // 상주 지문: 이 값이 달라지면 낡은 상주를 은퇴시키고 새로 편다.
   // 자격은 값 대신 해시로 — 지문이 로그에 실려도 비밀이 새지 않는다
-  const cred = variant.llm?.auth?.kind === "token" && variant.llm.auth.env ? env[variant.llm.auth.env] ?? "" : "";
+  const cred = variant.llm?.auth?.env ? env[variant.llm.auth.env] ?? "" : "";
   const fp = crypto.createHash("sha256")
     .update([rec.path, agent, variant.name, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
     .digest("hex").slice(0, 16);

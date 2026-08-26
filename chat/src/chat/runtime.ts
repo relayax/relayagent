@@ -1158,6 +1158,36 @@ export function stepMeta(toolName: string, args: any, result?: unknown, isError?
 // attach 재생의 ask 이벤트가 다시 채운다).
 const _pendingAsks = new Map<string, { turn: string; ask: string }>();
 
+/** 지금 이 대화에서 도는 턴 — 얹기의 좌표. 수명주기 에코(§6-36 turn started/settled)가 정본이라
+ *  새로 연 턴과 attach 로 되찾은 턴이 같은 자리에 선다. 왕복 없이 읽히는 것이 요점이다:
+ *  얹기는 사용자가 엔터를 친 순간의 동작이라 좌표를 물으러 가는 왕복이 그대로 지연이 된다. */
+const _liveTurns = new Map<string, string>();
+
+/** 이 기판이 얹기를 아는가(§7 steer) — 화면이 제출 전에 미리 알아야 칩 문구가 갈린다. */
+export async function hasSteer(ctx: RelayCtx): Promise<boolean> {
+  return (await capsOf(ctx)).has("steer");
+}
+
+/**
+ * 얹기 — 진행 중 턴에 발화를 더한다(§5.1-16-a). 턴은 열리지 않는다.
+ *
+ * 반환 false = **얹지 못했다**(미지원 기판·도는 턴 없음·그 사이 종결). 호출자는 이 말을 버리면
+ * 안 된다: 큐로 떨어뜨리거나 새 턴으로 보낸다. 이 판정을 여기서 내려 주지 않고 던지지도 않는
+ * 이유는, 얹기 실패가 오류가 아니라 **경로 선택**이기 때문이다 — 사용자가 한 말은 어느 경로로도
+ * 도착한다.
+ */
+export async function steerTurn(ctx: RelayCtx, text: string): Promise<boolean> {
+  const t = text.trim();
+  if (!t) return false;
+  if (!(await capsOf(ctx)).has("steer")) return false;
+  let turn = _liveTurns.get(ctx.conversationId) || "";
+  // 재마운트로 수명주기 에코를 못 본 화면(위젯 재삽입·pane 전환)만 한 왕복으로 좌표를 되찾는다
+  if (!turn) turn = (await loadActiveTurn(ctx))?.turnId || "";
+  if (!turn) return false;
+  const r = await wireOf(ctx).turn.steer(turn, t);
+  return !isError(r) && r.ok === true;
+}
+
 /** 반환 false = 회송 실패(카드가 안내 렌더). 빈 answers = 사용자 취소(§5.1-16). */
 export async function respondAsk(ctx: RelayCtx, answers: unknown): Promise<boolean> {
   const pending = _pendingAsks.get(ctx.conversationId);
@@ -1287,6 +1317,14 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       const onEvent = (ev: WireEvent): void => {
         if (ev.event === "turn" && (ev.status === "started" || ev.status === "settled")) {
           signalTurn(ev.status, typeof (ev as any).ok === "boolean" ? (ev as any).ok : undefined);
+          // 얹기 좌표 — 개설 응답이 아니라 수명주기 에코를 딛는다. attach 로 되찾은 턴도
+          // 같은 에코를 맨 앞에 재생하므로(§5.1-14) 새로고침 뒤에도 얹을 자리가 선다
+          if (ev.status === "started") {
+            const tid = typeof (ev as any).turn === "string" ? (ev as any).turn : knownTurnId;
+            if (tid) _liveTurns.set(ctx.conversationId, tid);
+          } else {
+            _liveTurns.delete(ctx.conversationId);
+          }
         }
         // ask 회송 좌표 — respondAsk 가 (turn, ask) 쌍으로 turn.respond 를 부른다.
         if (ev.event === "ask" && typeof ev.id === "string" && ev.id) {
@@ -1409,7 +1447,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         .catch((e: any) => {
           outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || "턴 실행 실패") };
         })
-        .finally(() => { finished = true; wake(); });
+        .finally(() => { finished = true; _liveTurns.delete(ctx.conversationId); wake(); });
 
       yield { content: [], status: { type: "running" } };
       while (true) {

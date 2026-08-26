@@ -199,6 +199,12 @@ export interface ChatClient {
   cancel(): Promise<Envelope<{ ok: boolean }>>;
   /** ask(질문) 회송 — 봉투 ask 이벤트의 답(§5.1-16). 빈 answers = 사용자 취소 */
   answer(id: string, answers: { question: string; selected: string[] }[]): Promise<Envelope<{ ok: boolean }>>;
+  /**
+   * 얹기 — 진행 중 턴에 발화를 더한다(§5.1-16-a, capability `steer`). 턴은 열리지 않고
+   * 정산은 여전히 하나다. 얹을 턴이 없거나 기판이 얹기를 모르면 **다음 턴으로 보낸다** —
+   * 사용자가 턴 중에 친 말은 어느 쪽에서도 잃지 않고, `steered` 가 어느 쪽인지 밝힌다.
+   */
+  steer(text: string, opts?: SendOptions): Promise<Envelope<{ ok: boolean; steered: boolean }>>;
   /** 하네스 대화 포인터만 끊는다 — 이력은 남는다(§5.3-23) */
   reset(): Promise<Envelope<{ ok: boolean }>>;
   upload(file: File, onProgress?: (pct: number) => void): Promise<Envelope<FileRef & { size: number }>>;

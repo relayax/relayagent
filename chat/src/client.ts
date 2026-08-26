@@ -182,6 +182,8 @@ const wireTurnAttach = (base: string, session: string, onEvent: OnEvent): Stream
 const wireTurnInterrupt = async (base: string, turn: string) => unwrap(await tFor(base).turn.interrupt(turn));
 const wireTurnRespond = async (base: string, turn: string, req: { ask: string; answers: unknown[] }) =>
   unwrap(await tFor(base).turn.respond(turn, req as unknown as RespondRequest));
+const wireTurnSteer = async (base: string, turn: string, prompt: string) =>
+  unwrap(await tFor(base).turn.steer(turn, prompt));
 const wireSessionList = async (base: string) => unwrap(await tFor(base).session.list());
 const wireSessionCreate = async (base: string) => unwrap(await tFor(base).session.create());
 /** §5.3-23 부속 동사 — wire op 명(rename/archive/pin/delete/reset)을 팩토리 동사로 나른다. */
@@ -585,6 +587,33 @@ export function createChat(opts: CreateChatOptions) {
     return envelope(() => wireTurnRespond(base, turn, { ask: String(askId ?? ""), answers: answers || [] }));
   }
 
+  /**
+   * 얹기 — 진행 중 턴에 발화를 더한다(§5.1-16-a). 못 얹으면 다음 턴으로 보낸다.
+   *
+   * 폴백이 이 함수 안에 있는 이유: 사용자가 턴 중에 친 말은 **어느 기판에서도 잃지 않는다** 가
+   * 계약의 보장이고, 갈리는 것은 언제 전달되는가 하나뿐이다. 그 분기를 소비자마다 다시 쓰게
+   * 하면 어떤 임베더에서는 말이 사라진다. `steered` 가 어느 쪽으로 갔는지 밝힌다.
+   */
+  async function steer(text: string, sendOpts?: SendOptions): Promise<Envelope<{ ok: boolean; steered: boolean }>> {
+    const t = String(text ?? "").trim();
+    if (!t) return { error: { code: "E_EMPTY", message: "빈 메시지" } };
+    if (caps.includes("steer")) {
+      const turn = liveTurn || (await currentTurn());
+      if (turn) {
+        const r = await envelope(() => wireTurnSteer(base, turn, t));
+        // ok:false = 그 사이 턴이 끝났다(또는 아직 시작 전) — 실패가 아니라 폴백 신호다
+        if (!r.error && r.ok) {
+          // 말풍선은 얹은 즉시 그린다 — 기판도 같은 줄을 이력에 적으므로 새로고침 후에도 남는다
+          push("user", sendOpts?.display || t);
+          return { ok: true, steered: true };
+        }
+      }
+    }
+    const s = await send(t, sendOpts);
+    if (s.error) return { error: s.error };
+    return { ok: true, steered: false };
+  }
+
   /** 이력 한 왕복으로 진행 중 턴을 해석한다 — 폴링이 아니라 1회 조회다(§5.3-24). */
   async function currentTurn(): Promise<string> {
     if (!session) return "";
@@ -753,6 +782,7 @@ export function createChat(opts: CreateChatOptions) {
     send,
     cancel,
     answer,
+    steer,
     reset,
     upload,
     fileUrl,

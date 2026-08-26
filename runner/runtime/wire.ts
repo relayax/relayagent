@@ -19,6 +19,7 @@ import {
   cancelSession,
   autoTitleSession,
   deliverAnswer,
+  deliverSteer,
   isSessionBusy,
   retireResident,
   retireResidents,
@@ -75,7 +76,7 @@ export const CLIENT_PROTOCOL = 1;
 //    같은 근거). 게다가 세션 직렬화는 계약이 **기판에게 맡긴 판정**이다(§5.1-12 "기판만이 세션의
 //    유일한 직렬화 지점") — 인자화하면 그 불변식이 구현마다 갈린다. 턴 장부의 **파일 자리**는
 //    주입된 session.sessionDir 을 따라간다(세션의 턴 장부와 같은 자리).
-//  · 취소·회송·busy(cancelSession·deliverAnswer·isSessionBusy·retireResident) — 착지점이
+//  · 취소·회송·얹기·busy(cancelSession·deliverAnswer·deliverSteer·isSessionBusy·retireResident) — 착지점이
 //    session.ts 의 진행 명부(ChildProcess 핸들·stdin)다. 턴을 이 데몬이 돌리는 한 같은 프로세스
 //    안이고, 돌리지 않는 기판이면 이 파일이 애초에 그 문의 서버가 아니다.
 //  · 인스턴스 열거(/instances) — 이미 갈아 끼워져 있다. getLedger()+manifest 파생이라 임베더가
@@ -823,6 +824,10 @@ export const WIRE_ROUTES: WireRoute[] = [
         // 하네스 조회 3동사는 어댑터 필수 동사(info/models/commands)의 중계라 하네스가 있으면 산다
         caps.push("harness-info", "harness-models", "harness-commands");
         if (adapter.includes("effort")) caps.push("effort"); // 어댑터 capability 의 투영(§7)
+        // 얹기도 같은 투영이다(§7 steer) — 얹을 프로세스가 있는 하네스만 선언한다.
+        // 미선언이면 화면은 큐 의미론으로 떨어진다(§5.1-16-a): 어느 쪽이든 사용자가 턴
+        // 중에 친 말은 잃지 않고, 갈리는 것은 **언제 전달되는가** 하나뿐이다
+        if (adapter.includes("steer")) caps.push("steer");
         // 변형 선택은 자격 행위가 아니라 설정이다(§5.5-30-a) — 매니페스트가 후보를 선언하고
         // 장부가 활성 하나를 든다. 후보가 둘 이상일 때만 고를 것이 있다.
         try {
@@ -923,6 +928,32 @@ export const WIRE_ROUTES: WireRoute[] = [
       const b = await readBody(req);
       // 봉투 ask 회송(§5.1-16) — 빈 answers = 사용자 취소
       json(res, 200, { ok: deliverAnswer(pkg, t.session, String(b.ask ?? ""), Array.isArray(b.answers) ? b.answers : []) });
+    },
+  },
+  {
+    methods: ["POST"],
+    scope: "base",
+    pattern: /^\/turns\/([A-Za-z0-9-]{1,80})\/steer$/,
+    handler: async ({ deps, io, req, res, pkg, m }) => {
+      requirePkg(deps.getLedger(), pkg);
+      // 미선언 capability 의 동사는 없는 문이다(§3-8) — 501 이 아니라 404 다
+      const adapter = await io.harnessCapabilities(pkg);
+      if (!adapter?.includes("steer")) throw new WireError(404, "E_NO_STEER", `얹기를 지원하지 않는 하네스입니다: ${pkg}`);
+      const t = turns.get(m[1]);
+      // 종결한 턴에는 얹을 자리가 없다 — interrupt·respond 와 같은 판정(장부 있음 = ok:false)
+      if (!t || t.pkg !== pkg) {
+        if (await findTurnFile(io, pkg, m[1])) return void json(res, 200, { ok: false });
+        throw new WireError(404, "E_NO_TURN", `없는 턴: ${m[1]}`);
+      }
+      const b = await readBody(req);
+      const prompt = String(b.prompt ?? "");
+      if (!prompt.trim()) throw new WireError(400, "E_BAD_PROMPT", "빈 발화는 얹을 수 없습니다");
+      // 시작 전 큐 턴에는 얹을 프로세스가 없다. ok:false 로 답해 화면을 새 턴 폴백으로 보낸다 —
+      // 여기서 큐에 얹어 주면 도착순 직렬화(§5.1-12)가 이 문에서만 다르게 굽는다
+      if (t.status !== "running") return void json(res, 200, { ok: false });
+      // 봉투 steer 제어(§5.1-16-a). 이력 기록은 deliverSteer 안에서 얹힌 직후에 일어나고,
+      // 화면에 보이는 것은 어댑터가 되돌려 주는 steer 이벤트다(장부·라이브 같은 줄)
+      json(res, 200, { ok: deliverSteer(io.session, pkg, t.session, prompt) });
     },
   },
 

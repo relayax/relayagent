@@ -1,8 +1,8 @@
 /*!
  * envelope-reducer.ts — 하네스 봉투(protocol 3) 이벤트 → 채팅 파트 모델.
  *
- * 입력 어휘는 docs/harness-protocol.md:55-68 의 8종(delta·tool·usage·task·ask·file·reply·
- * error)과 docs/client-protocol.md §6-36 의 수명주기 2종(turn started/settled)뿐이다.
+ * 입력 어휘는 docs/harness-protocol.md §Events 의 9종(delta·tool·usage·task·ask·steer·file·
+ * reply·error)과 docs/client-protocol.md §6-36 의 수명주기 2종(turn started/settled)뿐이다.
  * 출력 파트 모델·TurnMeta 는 stream-json 판 Reducer(runtime.ts:129-143, 277-285)의 것을
  * 그대로 쓴다 — Chat 렌더(말풍선·타임라인·툴 카드·완료 칩·컨텍스트 미터)가 무수정으로 붙어야
  * 하기 때문이다.
@@ -115,6 +115,11 @@ function projectContext(c: Record<string, unknown> | null | undefined): any {
  *  카드다 — 파트 모델을 하나로 두어 렌더가 분기하지 않게 한다. */
 const ASK_TOOL = "AskUserQuestion";
 
+/** 얹기 카드의 예약 이름. 진짜 도구가 아니다 — 어댑터가 되돌려 준 `steer` 이벤트를 리듀서가
+ *  파트로 세운 것이고, 파트 모델을 하나로 두는 것은 ask 와 같은 판정이다(렌더가 분기하지
+ *  않는다). 도구 이름 문법(§8-41 `a2a__`·`edge__`·`mcp__`)과 겹치지 않는 접두를 쓴다. */
+export const STEER_TOOL = "__steer";
+
 export class EnvelopeReducer {
   parts: Part[] = [];
   meta: EnvelopeTurnMeta = {};
@@ -144,6 +149,8 @@ export class EnvelopeReducer {
   // 클라이언트가 다시 추정하지 않는다. 방향만 가린다.
   private inTok = 0;
   private outTok = 0;
+  /** 얹기 파트의 순번 — 장부 순서 기반이라 재생이 라이브와 같은 id 를 만든다 */
+  private steerSeq = 0;
 
   constructor(opts: ReducerOptions = {}) {
     this.opts = opts;
@@ -181,6 +188,7 @@ export class EnvelopeReducer {
       case "usage": return this.usage(ev);
       case "task": return this.task(ev);
       case "ask": return this.ask(ev);
+      case "steer": return this.steer(ev);
       case "file": return this.file(ev);
       case "reply": return this.reply(ev);
       case "error": return this.error(ev);
@@ -278,6 +286,22 @@ export class EnvelopeReducer {
       card.argsText = "";
     }
     this.pendingAsk = id;
+  }
+
+  /**
+   * 얹기 — 턴이 도는 중에 사용자가 더한 발화(§5.1-16-a). 어댑터가 **얹힌 직후에** 증언하므로
+   * 이 파트는 말이 실제로 들어간 자리(도구 호출 사이)에 앉는다. 카드를 여는 것이 진행 중
+   * 텍스트 런을 끊는데, 그게 맞다 — 화면의 순서가 대화의 순서다.
+   *
+   * id 는 장부 순서에서 결정론적으로 나온다: 라이브와 재생이 같은 열을 지나므로 같은 파트가
+   * 선다(리듀서 단일 판정). 봉투가 id 를 주지 않는 이유이기도 하다 — 셀 것이 순서뿐이다.
+   */
+  private steer(ev: Record<string, unknown>): void {
+    const text = str(ev.text);
+    if (!text) return;
+    const card = this.tool(`steer#${this.steerSeq++}`, STEER_TOOL);
+    card.args = { text };
+    card.argsText = text;
   }
 
   /** ask 회송 성공을 카드에 반영한다 — 봉투에는 답변 이벤트가 없으므로(회송은 stdin 제어)
