@@ -33,6 +33,10 @@ export interface HostBridge {
   draftPublish(name: string, opts?: { version?: string }): unknown;
   draftDiscard(name: string): unknown;
   draftList(): unknown;
+  /** 기록 이력 — 화면의 [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록 */
+  draftHistory(name: string): unknown;
+  /** 기록 지점으로 되돌리기 — 파일만 그 모습으로, 이력은 그대로(HEAD 불변) */
+  draftRestore(name: string, hash: string): unknown;
   /** 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다(도는 판은 그대로) */
   draftBuild(name: string): unknown;
   /** 작업 사본의 동사 한 번 — 발행 전에 돌려보는 자리. 맥락(작업폴더·자격·서비스)은
