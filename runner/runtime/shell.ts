@@ -270,7 +270,7 @@ var css = [
 '#rlys .gp{display:flex;flex-direction:column;gap:1px}',
 '#rlys .pk{overflow-y:auto;overflow-x:hidden;min-height:0;flex:0 1 auto}',
 '#rlys .sp{flex:1 1 auto;min-height:8px}',
-'#rlys .it.mk{background:#0d9488;color:#fff;font-weight:600;margin:4px 0 6px}',
+'#rlys .it.mk{background:#0d9488;color:#fff;font-weight:600;margin:4px 0 12px}',
 '#rlys .it.mk:hover{background:#0f766e}',
 '#rlys .it.mk .ic{color:#fff}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
@@ -457,11 +457,6 @@ function renderSide(nav, err){
   }
 
   if (nav) {
-    var lb = document.createElement("div");
-    lb.className = "lb";
-    lb.textContent = "설치된 것";
-    el.appendChild(lb);
-
     var pk = document.createElement("div");
     pk.className = "gp pk";
     if (!nav.items.length) {
@@ -573,12 +568,12 @@ function renderHome(nav, err){
   if (todo.length || drafts.length) {
     var th = document.createElement("h3");
     th.className = "gh";
-    th.textContent = "손볼 것";
+    th.textContent = "진행 중";
     home.appendChild(th);
   } else {
     var no = document.createElement("p");
     no.className = "gn";
-    no.textContent = "손볼 것이 없습니다 — 설치된 앱은 왼쪽 목록에서 골라 쓰세요.";
+    no.textContent = "진행 중인 것이 없습니다 — 앱은 왼쪽 목록에서 골라 쓰세요.";
     home.appendChild(no);
   }
   var gr = document.createElement("div");
