@@ -632,6 +632,24 @@ export function createApi(
 }
 
 
+/**
+ * 위젯 번들 부재 판정 — 없으면 **부트 로그에** 처방을 남긴다.
+ *
+ * 404 핸들러에도 같은 처방이 있지만(위 /assets 분기) 그것은 읽는 사람이 없는 채널이다:
+ * 소비자가 `<script src>` 태그라 브라우저가 404 본문을 버린다. 사용자가 보는 것은 "채팅이
+ * 안 뜬다" 하나뿐이고, 원인은 devtools 네트워크 탭까지 내려가야 나온다. 그래서 판정을 **사람이
+ * 지금 보고 있는 터미널**로 옮긴다 — 바로 다음 줄이 그 페이지의 주소이므로, 열기 전에 읽는다.
+ *
+ * 죽이지 않는 이유: 번들은 채팅 표면의 전제일 뿐 데몬의 전제가 아니다. CLI·도구·트리거만 쓰는
+ * 기동에서 이것으로 문을 닫으면 없어도 되는 의존을 강제하는 것이다. 릴리스 번들에는 항상
+ * 들어 있으므로(release.yml build:widget) 이 줄이 뜨는 것은 개발 트리뿐이다.
+ */
+function widgetBundleNote(): string {
+  if (fs.existsSync(path.join(ASSETS_DIR, "chat-app.js"))) return "";
+  return "⚠ 채팅 위젯 번들이 없습니다(chat/dist — 빌드 산출물이라 갓 클론한 트리에는 없다).\n"
+    + "  콘솔의 채팅이 뜨지 않습니다: `npm run build:widget` 을 실행하세요.";
+}
+
 // ── 데몬 기동·종료 ───────────────────────────────────────────────────────────
 // 순서가 계약이다. 끊긴 턴 복구는 서비스 기동보다 **먼저** 와야 한다 — 도는 턴이 하나도
 // 없는 이 순간만이 죽은 턴과 살아 있는 턴을 구별할 수 있는 자리다.
@@ -690,6 +708,8 @@ export function startDaemon(): void {
     .then((notes) => { for (const n of notes) console.log(n); })
     .catch((e) => console.error(`원격 제어 상주 재개 실패 - ${e}`));
   console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
+  const widget = widgetBundleNote();
+  if (widget) console.log(widget);
   console.log(`콘솔: ${API_URL}/pkg/system/view/`);
   // 종료 신호는 둘이다 — 사람이 내리는 Ctrl-C(SIGINT)와 기계가 내리는 종료(SIGTERM: kill·
   // pkill·시스템 종료·프로세스 관리자). 정리가 한쪽에만 걸려 있으면 다른 쪽으로 죽을 때
