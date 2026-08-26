@@ -186,7 +186,10 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
       editing,
     });
   }
-  items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
+  // 설치한 순서대로 아래로 쌓인다 — 이름순은 새로 하나 앉힐 때마다 자리가 흔들려 손이 외우지 못한다.
+  // 순서는 원장 키 순서 그대로(재설치는 같은 키를 덮어써 자리를 지킨다). 셸 자신(ring 0)은
+  // 설치된 것들과 성격이 다르니 맨 위에 고정한다 — sort 는 안정 정렬이라 나머지 순서는 남는다
+  items.sort((a, b) => Number(b.ring0) - Number(a.ring0));
   // 인덱스 주소에서 웹 주소를 얻는 규칙은 데스크톱 앱(daemon.rs store_web)과 같다
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
   const pending = drafts
@@ -239,12 +242,6 @@ var collapsed = false;
 try { collapsed = localStorage.getItem(KEY) === "1"; } catch (e) {}
 if (window.matchMedia("(max-width: 900px)").matches) collapsed = true;
 
-var GLYPH = {
-  view: '<rect x="1.5" y="2.5" width="11" height="8" rx="1"/><path d="M5 12.5h4"/>',
-  chat: '<path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h7A1.5 1.5 0 0 1 12 3.5v4A1.5 1.5 0 0 1 10.5 9H6l-3 3V9h-.5A1.5 1.5 0 0 1 2 7.5z"/>',
-  live: '<circle cx="7" cy="7" r="5.5"/><path d="M7 4v3l2 1.5"/>',
-  parts: '<path d="M5 2v3M9 2v3M4 5h6v3a3 3 0 0 1-6 0zM7 11v2"/>'
-};
 var FACE_KO = { view: "화면", chat: "대화", live: "상주", parts: "부품" };
 var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
@@ -285,12 +282,11 @@ var css = [
 '#rlys .it .ic img{width:18px;height:18px;border-radius:4px;object-fit:cover;display:block}',
 '#rlys .it .ic.ltr{background:#eef0f2;font:700 11px inherit;color:#5c6570}',
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
-'#rlys .it .fc{width:13px;height:13px;flex:none;color:#98a1aa;stroke-width:1.4}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .er{font-size:11.5px;color:#c0392b;padding:8px 10px;white-space:normal}',
 '#rlys .em{font-size:12px;color:#98a1aa;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
-'#rlys.cl .nm,#rlys.cl .lb,#rlys.cl .fc,#rlys.cl .hd span,#rlys.cl .em,#rlys.cl .er{display:none}',
+'#rlys.cl .nm,#rlys.cl .lb,#rlys.cl .hd span,#rlys.cl .em,#rlys.cl .er{display:none}',
 '#rlys.cl a.it,#rlys.cl button.it{justify-content:center;padding:7px 0;position:relative}',
 '#rlys.cl .hd{padding:10px 0 12px;justify-content:center}',
 '#rlys.cl .hd .fold{margin:0}',
@@ -409,7 +405,8 @@ function item(href, iconHtml, label, opts){
   a.title = opts.title || label;
   a.innerHTML = '<span class="ic' + (opts.letter ? " ltr" : "") + '">' + iconHtml + '</span>' +
     '<span class="nm">' + esc(label) + '</span>' +
-    (opts.face ? '<svg class="fc" viewBox="0 0 14 14" fill="none" stroke="currentColor" aria-label="' + FACE_KO[opts.face] + '">' + GLYPH[opts.face] + '</svg>' : "") +
+    // 얼굴(화면·대화…) 글리프는 두지 않는다 — 오른쪽 끝의 작은 아이콘은 버튼으로 읽히는데 눌러도 아무 일이 없다.
+    // 종류는 title 과 홈 카드의 칩이 말한다
     (opts.dot ? '<span class="dt" title="도는 중"></span>' : "");
   return a;
 }
