@@ -22,7 +22,8 @@ export interface HostBridge {
   /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다 */
   dispatch(provider: string, mission: string, payload: string, consumer?: string): Promise<string>;
   // 수정 레이어 (draft.ts). 설치본은 실행 중이라 직접 만지지 않는다 — 편집은 draft, 반영은 publish
-  draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[] }): unknown;
+  /** manifest = 새 스캐폴드의 매니페스트 객체 — 기판이 relay.yaml 로 적는다(동사는 yaml 을 모른다) */
+  draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[]; manifest?: Record<string, unknown> }): unknown;
   draftRead(name: string, file?: string): unknown;
   /** base = 파일별 마지막 읽기 지문(draft-read 의 hash) — 실으면 그 사이 다른 손의 수정을
    *  E_CONFLICT 로 판정한다(동시 편집 방어, opt-in). null = 없는 파일로 알고 있다 */

@@ -1,5 +1,3 @@
-import { stringify } from "yaml";
-
 interface Input {
   name: string;
   /** 새 패키지 스캐폴드 — 이미 있는 draft 나 설치본을 열 때는 생략한다 */
@@ -56,7 +54,6 @@ export default async function (input: Input, ctx: any) {
     for (const v of m.harness?.variants ?? []) {
       if (!v.llm && HARNESS_LLM[v.source]) v.llm = HARNESS_LLM[v.source];
     }
-    files["relay.yaml"] = stringify(m);
 
     for (const a of m.agents ?? []) {
       if (!a.persona) continue;
@@ -97,6 +94,7 @@ export default async function (input: Input, ctx: any) {
     if (String(s.source ?? "").startsWith("harness/")) seedHarness.push({ source: s.source, entry: String(s.entry ?? "run") });
   }
 
-  const opened = ctx.host.draftOpen(input.name, { files, seedHarness });
+  // relay.yaml 은 기판이 매니페스트 객체로부터 적는다 — 이 동사는 yaml 을 모른다
+  const opened = ctx.host.draftOpen(input.name, { files, seedHarness, ...(m ? { manifest: m } : {}) });
   return { ...(opened as object), ...(ctx.host.draftRead(input.name) as object) };
 }

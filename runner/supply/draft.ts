@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, parseDocument } from "yaml";
+import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from "yaml";
 import { packagesPath, saveLedger, consoleInstall, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
@@ -172,9 +172,15 @@ export interface OpenResult {
 export function openDraft(
   ledger: Ledger,
   name: string,
-  opts: { files?: Record<string, string>; seedHarness?: SeedHarness[] } = {},
+  opts: { files?: Record<string, string>; seedHarness?: SeedHarness[]; manifest?: Record<string, unknown> } = {},
 ): OpenResult {
   assertSlug(name);
+  // 매니페스트 객체 → relay.yaml 은 기판이 적는다. 동사(system draft-open)가 yaml 을 수입하면
+  // 설치본 트리 위에서 그 의존이 풀리지 않는다(실측 2026-08-26: 임베더 pod 의 store 마운트) —
+  // 동사는 파일이 곧 동사이고 의존이 없다는 계약을 시스템 패키지도 지킨다
+  if (opts.manifest && !opts.files?.["relay.yaml"]) {
+    opts = { ...opts, files: { ...(opts.files ?? {}), "relay.yaml": stringifyYaml(opts.manifest) } };
+  }
   const droot = draftPath(name);
   const existed = fs.existsSync(droot);
   let from: OpenResult["from"] = "existing";
