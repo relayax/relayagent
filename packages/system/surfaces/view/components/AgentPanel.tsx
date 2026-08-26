@@ -100,7 +100,7 @@ export interface AgentPanelProps {
   onPick: (c: Creatable) => void;
   /** [＋ 추가] 메뉴의 "말로 만들기" — 오른쪽 빌더 대화에 문장을 미리 채운다 */
   onAsk: (text: string) => void;
-  /** 엔진 칩 — 안 붙은 엔진을 눌렀다. 붙이는 동안 busy */
+  /** 엔진 칩 — 켜면 붙이고 끄면 뺀다. 도는 동안 busy */
   onEngine: (template: string) => void;
   engineBusy?: boolean;
 }
@@ -280,13 +280,12 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
                 <span>에이전트</span>
               </span>
             </div>
-            {/* 엔진 — 펼칠 것 없이 줄 안에서 바로 고른다. 어댑터 파일은 설정 › 고급 › 기타 파일에서 */}
-            <div className="ap-item ap-engine" title="이 패키지를 돌릴 수 있는 엔진 — 누르면 붙습니다. 실제로 어느 것으로 돌릴지는 설치한 쪽에서 고릅니다">
-              <Icon k="engine" />
-              <span className="ap-item-t">엔진</span>
+            {/* 엔진 — 펼칠 것 없이 여기서 바로 고른다. 켜면 붙고 끄면 뺀다 */}
+            <div className="ap-engine">
+              <span className="ap-engine-l"><Icon k="engine" />돌릴 수 있는 엔진</span>
               <span className="st-picks">
                 {ENGINES.map((e) => (
-                  <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy || have.has(e.id)} onClick={() => onEngine(e.id)}>
+                  <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy} title={have.has(e.id) ? `${e.label} 빼기` : `${e.label} 붙이기`} onClick={() => onEngine(e.id)}>
                     {e.label}
                   </button>
                 ))}

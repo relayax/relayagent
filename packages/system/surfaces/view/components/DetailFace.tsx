@@ -151,15 +151,20 @@ export default function DetailFace({
   };
 
   // 항목·섹션 누름 — draft 가 없으면 열고 나서 간다(설치본 사본)
-  // 엔진 칩 — 팔레트의 harness 레시피를 바로 부른다(이름 물을 것이 없다)
+  // 엔진 칩 — 켜면 팔레트의 harness 레시피로 붙이고, 끄면 그 후보를 뺀다(어댑터 파일은 남는다)
   const [engineBusy, setEngineBusy] = useState(false);
-  const addEngine = (template: string) => {
+  const toggleEngine = (template: string) => {
     if (engineBusy) return;
     setEngineBusy(true);
     const go = editing ? Promise.resolve() : draft.open();
     void go
-      .then(() => (draft.ctx ? creatable("harness").make(draft.ctx, template) : Promise.reject(new Error("작업 사본이 아직 없습니다"))))
-      .then((made) => draft.onMade(made))
+      .then(() => {
+        const ctx = draft.ctx;
+        if (!ctx) throw new Error("작업 사본이 아직 없습니다");
+        const idx = (ctx.manifest.harness?.variants ?? []).findIndex((v) => v.name === template);
+        if (idx >= 0) { ctx.apply((d) => d.deleteIn(["harness", "variants", idx])); return; }
+        return creatable("harness").make(ctx, template).then((made) => draft.onMade(made));
+      })
       .catch(() => {})
       .finally(() => setEngineBusy(false));
   };
@@ -303,7 +308,7 @@ export default function DetailFace({
           danger={foot}
           onPick={pickKind}
           onAsk={ask}
-          onEngine={addEngine}
+          onEngine={toggleEngine}
           engineBusy={engineBusy}
         >
           {editing && view.sec && draft.ctx ? (
