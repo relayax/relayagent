@@ -334,13 +334,20 @@ var css = [
 '#relay-home .cd .cp.er{color:#c0392b;background:#fdf2f1}',
 '#relay-home .cd .cp.ed{color:#b45309;background:#fef3c7}',
 // 말로 만들기 — 홈의 첫 입력. 위젯 대화로 보내진다
-'#relay-home .ask{padding:16px 20px 0}',
-'#relay-home .af{display:flex;gap:8px}',
-'#relay-home .af input{flex:1 1 auto;min-width:0;border:1px solid #e6e9ec;border-radius:10px;padding:10px 13px;font:14px inherit;background:#fff;color:#16181b}',
-'#relay-home .af input:focus{outline:none;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}',
-'#relay-home .af .bt{flex:none;padding:8px 14px;font-size:13px}',
-'#relay-home .ah{margin:7px 2px 0;font-size:12px;color:#98a1aa}',
-'#relay-home .ah a{color:#0f766e;font-weight:600;text-decoration:none}',
+'#relay-home .ask{max-width:620px;margin:0 auto;padding:56px 20px 28px}',
+'#relay-home .ask h2{margin:0 0 16px;text-align:center;font-size:22px;font-weight:700;letter-spacing:-0.02em}',
+'#relay-home .af{display:flex;flex-direction:column;gap:10px;background:#fff;border:1px solid #e6e9ec;border-radius:14px;padding:14px 14px 10px;box-shadow:0 1px 2px rgba(22,24,27,.04)}',
+'#relay-home .af:focus-within{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}',
+'#relay-home .af textarea{border:0;resize:none;min-height:58px;font:14.5px/1.55 inherit;font-family:inherit;background:transparent;color:#16181b;outline:none;padding:0 2px}',
+'#relay-home .af .fr{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+'#relay-home .af .fr .ah{margin:0;font-size:12px;color:#98a1aa}',
+'#relay-home .af .bt{flex:none;padding:7px 14px;font-size:13px;border-radius:999px}',
+'#relay-home .op{display:flex;flex-direction:column;margin-top:14px;border-top:1px solid #e6e9ec}',
+'#relay-home .op a{display:flex;align-items:center;gap:10px;padding:10px 6px;border-bottom:1px solid #e6e9ec;color:#16181b;text-decoration:none;font-size:13.5px}',
+'#relay-home .op a:hover{background:#eef0f2}',
+'#relay-home .op a svg{width:15px;height:15px;color:#5c6570;flex:none}',
+'#relay-home .op a span{color:#98a1aa;font-size:12.5px;flex:1 1 auto}',
+'#relay-home .op a i{color:#98a1aa;font-style:normal}',
 // 만드는 중인 초안 — 장부에 없어 카드는 아니지만 잃어버린 것처럼 보이면 안 된다
 '#relay-home .dr{margin:14px 20px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 14px;font-size:12.5px;color:#92400e}',
 '#relay-home .dr .dn a{color:#92400e;font-weight:600;text-decoration:none}',
@@ -480,7 +487,7 @@ function renderSide(nav, err){
   var ft = document.createElement("div");
   ft.className = "gp ft";
   if (nav) {
-    ft.appendChild(item(nav.create, svg(ICONS.plus), "패키지 만들기"));
+    // 만드는 문은 홈의 입력창 아래 한 줄뿐이다 — 여기엔 두지 않는다
     // 만드는 중인 초안 — 발행 전 패키지로 돌아가는 유일한 문이 스튜디오 시작 화면이다
     if (nav.drafts && nav.drafts.length) {
       ft.appendChild(item(nav.studio, svg(ICONS.draft), "만드는 중 " + nav.drafts.length, { title: "만드는 중인 초안 — 홈에서 골라 이어서 만듭니다" }));
@@ -495,34 +502,32 @@ function renderHome(nav, err){
   if (!home) return;
   // 다시 그릴 때(재조회) 입력 중이던 문장을 지키지 않으면 새로고침이 사용자의 글을 지운다
   var typed = "";
-  try { var prev = home.querySelector(".af input"); if (prev) typed = prev.value; } catch (e) {}
+  try { var prev = home.querySelector(".af textarea"); if (prev) typed = prev.value; } catch (e) {}
   home.textContent = "";
   var drafts = nav && nav.drafts ? nav.drafts : [];
   var hh = document.createElement("div");
   hh.className = "hh";
   hh.innerHTML = '<div class="tl"><h1>홈</h1><span class="mt">' +
     (nav ? "설치된 에이전트 " + nav.items.length + "개" + (drafts.length ? " · 만드는 중 " + drafts.length + "개" : "") : "불러오는 중…") + '</span></div>';
-  if (nav) {
-    // 주연은 "얻는 문"이다: 스토어가 연결된 기판이면 스토어가 강조 버튼, 만들기·불러오기는
-    // 저작자 동선이라 보조로 선다. 스토어 없는 순정 OSS 에서는 만들기가 강조를 되찾는다.
-    var rt = document.createElement("div");
-    rt.className = "rt";
-    rt.innerHTML = '<a class="bt" href="' + esc(nav.importer) + '">불러오기</a>' +
-      '<a class="bt' + (nav.store ? "" : " ac") + '" href="' + esc(nav.create) + '">패키지 만들기</a>' +
-      (nav.store ? '<a class="bt ac" href="' + esc(nav.store) + '">스토어에서 담기</a>' : "");
-    hh.appendChild(rt);
-  }
   home.appendChild(hh);
 
   // 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 콘솔 에이전트의 대화로
   // 보내지고(relay:chat-open send), 빌더 위임이 시작되면 위젯이 그 탭을 연다
+  // 시작은 이 상자 하나다. 별도의 "패키지 만들기" 버튼은 두지 않는다 — 직접 만들기·불러오기·
+  // 스토어는 상자 아래 한 줄씩이라, 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
   if (nav) {
     var ask = document.createElement("div");
     ask.className = "ask";
-    ask.innerHTML = '<form class="af"><input type="text" maxlength="2000" placeholder="무엇을 만들까요? 예: 매일 저녁 하루를 정리해 일기로 남겨 주는 비서" aria-label="만들 것을 말로 설명"><button type="submit" class="bt ac">말로 만들기</button></form>' +
-      '<p class="ah">설명하면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다. 직접 만들려면 <a href="' + esc(nav.create) + '">패키지 만들기</a>.</p>';
+    ask.innerHTML = '<h2>무엇을 만들까요?</h2>' +
+      '<form class="af"><textarea maxlength="2000" rows="2" placeholder="만들고 싶은 비서를 적어 주세요. 예: 매일 저녁 하루를 정리해 일기로 남겨 주는 비서" aria-label="만들 것을 말로 설명"></textarea>' +
+      '<div class="fr"><p class="ah">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p><button type="submit" class="bt ac">시작</button></div></form>' +
+      '<div class="op">' +
+        '<a href="' + esc(nav.create) + '">' + svg(ICONS.plus) + '직접 만들기<span>이름만 정하고 빈 패키지에서 시작합니다</span><i>›</i></a>' +
+        '<a href="' + esc(nav.importer) + '">' + svg(ICONS.down) + '불러오기<span>누군가에게 받은 에이전트 파일을 엽니다</span><i>›</i></a>' +
+        (nav.store ? '<a href="' + esc(nav.store) + '">' + svg(ICONS.store) + '스토어에서 담기<span>만들어진 에이전트를 골라 설치합니다</span><i>›</i></a>' : "") +
+      '</div>';
     var af = ask.querySelector("form");
-    var ai = ask.querySelector("input");
+    var ai = ask.querySelector("textarea");
     if (typed) ai.value = typed;
     af.onsubmit = function(ev){
       ev.preventDefault();
@@ -531,6 +536,8 @@ function renderHome(nav, err){
       sendToChat(text);
       ai.value = "";
     };
+    // Enter 는 보내기, Shift+Enter 는 줄바꿈
+    ai.onkeydown = function(ev){ if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); af.requestSubmit(); } };
     home.appendChild(ask);
   }
 
@@ -561,13 +568,7 @@ function renderHome(nav, err){
     var ep = document.createElement("div");
     ep.className = "ep";
     ep.innerHTML = '<h2>아직 설치된 에이전트가 없습니다</h2>' +
-      (nav.store
-        ? '<p>스토어에서 담거나, 직접 만들거나, 받은 봉투를 열어 시작합니다.</p>' +
-          '<a class="bt ac" href="' + esc(nav.store) + '">스토어에서 담기</a> ' +
-          '<a class="bt" href="' + esc(nav.create) + '">패키지 만들기</a> '
-        : '<p>직접 만들거나, 누군가에게 받은 봉투를 열어 시작합니다.</p>' +
-          '<a class="bt ac" href="' + esc(nav.create) + '">패키지 만들기</a> ') +
-      '<a class="bt" href="' + esc(nav.importer) + '">불러오기</a>';
+      '<p>위 상자에 만들고 싶은 것을 적어 시작하세요.</p>';
     home.appendChild(ep);
     return;
   }
