@@ -207,7 +207,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "host_methods",
-    label: "기판 브리지 캡",
+    label: "기판 기능 허용",
     advanced: true,
     material: "계약",
     yamlKey: "host_methods",

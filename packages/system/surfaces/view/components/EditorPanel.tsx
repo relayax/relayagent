@@ -11,7 +11,7 @@ export default function EditorPanel({ draft, onBack }: { draft: Draft; onBack: (
   return (
     <div className="ed">
       <div className="ed-bar">
-        <button type="button" className="rc-btn" onClick={onBack} title="설명서로 돌아갑니다">
+        <button type="button" className="rc-btn" onClick={onBack} title="파일을 닫고 실제 화면으로 돌아갑니다">
           ◀ 돌아가기
         </button>
         <span className="mono ed-path">{effFile}</span>

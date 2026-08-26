@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AgentScope } from "@relay/chat";
 import DetailFace from "@/components/DetailFace";
 import { channelStatus, serviceStatus, type ChannelStatusView, type ServiceStatusView, type ShellItem } from "@/lib/api";
-import { residentDecls } from "@/lib/faces";
+import { landingAgent, residentDecls } from "@/lib/faces";
+import { draftBuild } from "@/lib/studio";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
 import type { Nav, View } from "@/lib/useDraft";
 
-// 기판이 서빙할 문서가 없는 얼굴의 자리. 화면·대화는 기판이 직접 문서를 내므로 사이드바가
-// 그리로 곧장 가고, 여기 오지 않는다. 남는 것은 둘이다:
-//   상주 — 무엇이 돌기로 되어 있고 지금 떠 있는가
-//   상세 — 권한 화면(내놓는 것 / 쓰는 앱 / 쓰는 것 / 제거)
-type Tab = "live" | "detail";
+// 패키지 화면은 세 칸이다 — 고치는 자리·써보는 자리·고쳐달라는 자리가 한 화면에 있어야
+// "써보다 → 고쳐달라" 가 돈다:
+//   왼쪽   설정 패널 — 설명서·폼 (DetailFace 의 1·2층). 상주 선언이 있으면 [구조|상주] 로 바꿔 본다
+//   가운데 실제 화면 — /pkg/<이름>/view/ 를 iframe 으로. 화면 없는 대화형 패키지는 기판이 대화
+//          폴백 문서를 내므로(view.ts) 착지 에이전트가 있으면 늘 있다. 그 패키지 자신의 채팅
+//          위젯은 iframe 이 데려온다
+//   오른쪽 빌더 대화 — 콘솔의 도킹 위젯. 이 화면에 들어오면 열어 둔다(열리면 body 폭을 양보하므로
+//          겹치지 않고 나란히 선다). 상대는 AgentScope 가 선언한 이 패키지의 빌더
+// 고치는 일은 전부 왼쪽 칸 안에서 끝난다(폼 · 결과면 · 파일 에디터). 가운데 실제 화면은 침범하지
+// 않는다 — 파일을 열면 왼쪽 칸이 조금 넓어질 뿐이다.
+type Tab = "detail" | "live";
 
 export default function PkgPane({
   pkg,
@@ -42,17 +50,83 @@ export default function PkgPane({
 }) {
   const m = pkg.manifest;
   const hasLive = item ? item.faces.includes("live") : residentDecls(m).channels.length > 0;
-  const tabs: Tab[] = [...(hasLive ? (["live"] as Tab[]) : []), "detail"];
+  // 뷰 탭의 판정은 기판과 같다(shell.ts facesOf: view 또는 chat) — 장부에 없는 초안은 매니페스트로
+  const hasView = item ? item.faces.some((f) => f === "view" || f === "chat") : Boolean(m?.surfaces?.view || landingAgent(m));
+  const tabs: Tab[] = ["detail", ...(hasLive ? (["live"] as Tab[]) : [])];
   // 주소에 없는 얼굴로는 앉지 않는다 — 패키지를 갈아타도 직전 패키지에만 있던 탭이 남지 않는다
   const tab: Tab = tabs.includes(face as Tab) ? (face as Tab) : tabs[0];
   // 설치 안 된 초안은 장부에 이름이 없다 — 상세가 draft 를 열어 알려 준다
   const [title, setTitle] = useState<{ display: string | null; live: string | null; draft: string | null } | null>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
+  // 파일 에디터가 서는 자리 — 가운데 칸. 왼쪽 칸은 목록 그대로, 폭도 그대로(코드가 열린다고 칸이 커지지 않는다)
+  const [editorSlot, setEditorSlot] = useState<HTMLElement | null>(null);
+  const [draftInfo, setDraftInfo] = useState<{ changed: number; rev: string; hasView: boolean } | null>(null);
   const ghost = pkg.workspace === "";
 
+  // 왼쪽 칸 폭 — 경계를 끌어 조절하고 기억한다(relay-side-w). 기본 360. 파일 에디터가 열리면 CSS 가 넓힌다
+  const [sideW, setSideW] = useState(360);
+  useEffect(() => { try { const v = Number(localStorage.getItem(SIDE_KEY)); if (v >= SIDE_MIN && v <= SIDE_MAX) setSideW(v); } catch { /* 무시 */ } }, []);
+  const cols = useRef<HTMLDivElement>(null);
+  const onGrip = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    document.body.classList.add("rc-resizing");
+    let w = sideW;
+    const move = (ev: PointerEvent) => {
+      const left = cols.current?.getBoundingClientRect().left ?? 0;
+      w = Math.min(SIDE_MAX, Math.max(SIDE_MIN, Math.round(ev.clientX - left)));
+      setSideW(w);
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      document.body.classList.remove("rc-resizing");
+      try { localStorage.setItem(SIDE_KEY, String(w)); } catch { /* 무시 */ }
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  };
+
+  // 세 칸만으로도 복잡한 화면이라 전역 사이드바는 아예 숨긴다(shell.ts relay:shell-fold). 돌아가는
+  // 길은 머리의 ← 뒤로. 사람의 접기 선호는 건드리지 않고, 이 화면을 떠나면 셸이 선호로 되돌린다
+  useEffect(() => {
+    const fold = (hide: boolean) => { try { window.dispatchEvent(new CustomEvent("relay:shell-fold", { detail: { hide } })); } catch { /* 무시 */ } };
+    fold(true);
+    return () => fold(false);
+  }, []);
+
+  // 탑바 한 줄이 화면 끝까지 — 도크는 탑바 아래에서 시작한다(위젯이 --rc-dock-top 을 읽는다).
+  // 이 화면을 떠나면 되돌린다(홈·앱 화면에서는 도크가 위까지 올라온다)
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--rc-dock-top", "var(--rc-head-h)");
+    return () => { root.style.removeProperty("--rc-dock-top"); };
+  }, []);
+
+  // 오른쪽 빌더 대화를 열어 둔다 — 위젯 번들은 async 라 늦게 설 수 있어 전역 표면이 설 때까지
+  // 기다린다(shell.ts chatOpen 과 같은 관용구). 대상 지정은 없다: AgentScope 의 선언이
+  // 열리는 순간 착지한다(main.tsx pendingScope). 패키지마다 한 번.
+  useEffect(() => {
+    let tries = 0;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const fire = () => {
+      if ((window as any).RelayChat) {
+        try { window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: {} })); } catch { /* 무시 */ }
+        return;
+      }
+      if (++tries > 32) return;
+      t = setTimeout(fire, 250);
+    };
+    fire();
+    return () => { if (t) clearTimeout(t); };
+  }, [pkg.name]);
+
   return (
-    <section className="pane">
+    <section className="pane pkg">
       <header className="pane-head">
+        {/* 사이드바가 숨는 화면이라 나가는 문은 여기 하나다 — 셸 홈은 기판 주소라 <a> */}
+        <a className="rc-btn back" href="/" title="홈으로">←</a>
         {item?.icon ? <img className="p-ic" src={item.icon} alt="" /> : <span className="p-ic ltr">{(pkg.name[0] ?? "?").toUpperCase()}</span>}
         <h2>{m?.display_name ?? title?.display ?? pkg.name}</h2>
         <span className="meta mono">
@@ -64,26 +138,97 @@ export default function PkgPane({
         <span ref={setSlot} className="pane-actions" />
         <div className="right">
           {tabs.length > 1 ? (
-            <div className="seg" role="group" aria-label="얼굴 전환">
+            <div className="seg" role="group" aria-label="탭 전환">
               {tabs.map((t) => (
                 <button key={t} type="button" aria-pressed={tab === t} onClick={() => onFace(t)}>
-                  {t === "live" ? "상주" : "상세"}
+                  {TAB_LABEL[t]}
                 </button>
               ))}
             </div>
           ) : null}
-          {/* 기판이 서빙하는 주소라 <a> 가 맞다(basePath 를 붙이면 안 된다) */}
-          {item?.view ? <a className="rc-btn accent" href={item.view}>화면 열기</a> : null}
         </div>
       </header>
 
       {pkg.error ? <div className="banner">검사 실패: {pkg.error}</div> : null}
 
-      {tab === "live" ? <LiveFace pkg={pkg} running={running} /> : null}
-      {tab === "detail" ? (
-        <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} />
-      ) : null}
+      {/* 페이지 정체성 선언(view-bridge §5) — "이 화면의 대화는 이 패키지의 빌더". 탭 바깥에 두어
+          뷰 탭에서도 오른쪽 빌더 대화가 남는다(안쪽 iframe 의 패키지 채팅과는 별개) */}
+      <AgentScope agent="agent-builder" param={pkg.name}>
+        <div ref={cols} className={`pkg-cols${hasView ? "" : " no-view"}`}>
+          <div className="pkg-col side" style={hasView ? { flexBasis: sideW } : undefined}>
+            {tab === "live" ? <LiveFace pkg={pkg} running={running} /> : null}
+            {tab === "detail" ? (
+              <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} editorSlot={hasView ? editorSlot : null} onDraft={setDraftInfo} />
+            ) : null}
+          </div>
+          {hasView ? (
+            <div className="pkg-col stage">
+              <div className="pkg-grip" onPointerDown={onGrip} title="끌어서 폭 조절" />
+              {view.file && tab === "detail" ? <div ref={setEditorSlot} className="pkg-editor" /> : <ViewFace pkg={pkg} item={item} draft={draftInfo} />}
+            </div>
+          ) : null}
+        </div>
+      </AgentScope>
     </section>
+  );
+}
+
+const SIDE_KEY = "relay-side-w";
+const SIDE_MIN = 280, SIDE_MAX = 720;
+
+const TAB_LABEL: Record<Tab, string> = { detail: "구조", live: "상주" };
+
+// ── 가운데 화면 ─────────────────────────────────────────────────────────────
+// 그 패키지의 화면을 이 자리에 크게 — 기판이 서빙하는 /pkg/<이름>/view/ 를 iframe 으로 든다.
+// 안에서는 패키지 자신의 부유 채팅 위젯이 뜨고(회색 상자 안의 "패키지 에이전트 채팅"), 전역
+// 사이드바는 top 창이 아니면 서지 않는다(shell.ts SHELL_JS 의 self!==top 게이트).
+// 보이는 것은 **설치본**이다 — 왼쪽에서 고친 것은 [적용] 뒤에야 여기 나타난다. 그 사실은 탑바의
+// "수정 n건 · 아직 적용 안 됨" 칩이 말한다(여기 따로 줄을 두지 않는다 — 새 탭 열기는 머리의
+// [화면 열기]와 중복이었다).
+function ViewFace({ pkg, item, draft }: { pkg: Pkg; item: ShellItem | null; draft: { changed: number; rev: string; hasView: boolean } | null }) {
+  const ghost = pkg.workspace === "";
+  const live = item?.view ?? `/pkg/${encodeURIComponent(pkg.name)}/view/`;
+  // 고친 게 있으면 기본은 "고친 판" — 빌더가 고친 것을 적용 전에 써보는 자리다. 화면 없는(대화만)
+  // 패키지도 된다: 기판이 /draft/ 문에서 작업 사본 위 세션으로 대화를 세운다(harness.ts sessionTreeOf)
+  const canDraft = !!draft && draft.changed > 0 && !ghost;
+  const [mode, setMode] = useState<"draft" | "live">("live");
+  useEffect(() => { setMode(canDraft ? "draft" : "live"); }, [canDraft]);
+  // 작업 사본은 바뀔 때마다 굽는다(out 선언 표면은 굽기 전엔 옛 산출이 선다). 600ms 모아서
+  const [nonce, setNonce] = useState(0);
+  const [baking, setBaking] = useState(false);
+  useEffect(() => {
+    if (!canDraft || mode !== "draft" || !draft?.hasView) return;
+    let on = true;
+    const t = setTimeout(() => {
+      setBaking(true);
+      draftBuild(pkg.name).catch(() => {}).finally(() => { if (on) { setBaking(false); setNonce((n) => n + 1); } });
+    }, 600);
+    return () => { on = false; clearTimeout(t); };
+  }, [canDraft, mode, draft?.rev, pkg.name]);
+
+  if (ghost) {
+    return (
+      <div className="pane-body">
+        <div className="rc-card pad">
+          <p className="hint">아직 적용한 적이 없는 초안이라 돌아가는 화면이 없습니다. [적용] 하면 여기서 써볼 수 있습니다.</p>
+        </div>
+      </div>
+    );
+  }
+  const src = mode === "draft" ? `/draft/${encodeURIComponent(pkg.name)}/view/?_rev=${nonce}` : live;
+  return (
+    <div className="pane-body viewface">
+      {canDraft ? (
+        <div className="vf-mode">
+          <div className="seg" role="group" aria-label="어느 판을 볼지">
+            <button type="button" aria-pressed={mode === "draft"} onClick={() => setMode("draft")} title="고친 판 — 아직 적용 전">고친 판 써보기</button>
+            <button type="button" aria-pressed={mode === "live"} onClick={() => setMode("live")} title="지금 돌아가는 판">돌아가는 판</button>
+          </div>
+          <span className="hint">{mode === "draft" ? (baking ? "고친 판을 만드는 중…" : "마음에 들면 위의 [적용]을 누르세요") : "고친 것은 아직 여기 없습니다"}</span>
+        </div>
+      ) : null}
+      <iframe key={mode} className="vf-frame" src={src} title={`${pkg.manifest?.display_name ?? pkg.name} 화면`} />
+    </div>
   );
 }
 

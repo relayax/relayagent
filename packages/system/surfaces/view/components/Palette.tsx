@@ -20,12 +20,15 @@ export default function Palette({
   ctx,
   onMade,
   onClose,
+  initial,
 }: {
   manifest: Manifest;
   files: string[];
   ctx: CreateCtx;
   onMade: (made: Made) => void;
   onClose: () => void;
+  /** 이미 고른 것 — 설정 패널의 [＋ 추가] 메뉴에서 왔다. 목록을 건너뛰고 그 항목의 질문으로 연다 */
+  initial?: Creatable | null;
 }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Creatable | null>(null);
@@ -84,6 +87,8 @@ export default function Palette({
     setOpen(c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manifest, files]);
+
+  useEffect(() => { if (initial) pick(initial); }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needs = open?.needs;
   const choices = needs?.kind === "choice" ? (needs.choices?.(manifest, files) ?? []) : [];

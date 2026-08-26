@@ -170,7 +170,7 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
     items: (m.requires?.binaries ?? []).map((b) => ({ text: b.name, sub: undefined })),
   });
 
-  rows.push({ key: "host", q: "기판 브리지 캡", sec: "host_methods", empty: "전체 허용", advanced: true, items: (m.host_methods ?? []).map((x) => ({ text: x })) });
+  rows.push({ key: "host", q: "기판 기능 허용", sec: "host_methods", empty: "제한 없음 — 기판 기능을 전부 쓸 수 있습니다", advanced: true, items: (m.host_methods ?? []).map((x) => ({ text: x })) });
   rows.push({ key: "org", q: "조직 설정", sec: "org", empty: "없음", advanced: true, items: m.org ? [{ text: "있음" }] : [] });
   rows.push({ key: "files", q: "기타 파일", sec: "files", empty: "없음", advanced: true, items: unclaimedFiles(m, ctx.files).map((f) => ({ text: f })) });
 

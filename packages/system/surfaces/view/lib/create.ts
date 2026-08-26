@@ -416,7 +416,7 @@ export const CREATABLES: Creatable[] = [
   {
     id: "host-method",
     group: "관문",
-    label: "기판 브리지 캡",
+    label: "기판 기능 허용",
     yaml: "host_methods[]",
     detail: "이 앱의 동사가 부를 수 있는 host.* 를 좁힙니다. 미선언 = 전체이므로 좁히는 선언입니다.",
     needs: { kind: "text", label: "메서드 이름", placeholder: "host.draft_publish" },

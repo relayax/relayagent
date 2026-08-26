@@ -416,7 +416,7 @@ function ScriptItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     if (src && ctx.files.includes(f)) ctx.openFile(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return <div className="empty">{f} 여는 중…</div>;
+  return <div className="empty">{ctx.files.includes(f) ? `${f} — 가운데 칸에서 고칩니다` : `${f} 없음`}</div>;
 }
 
 function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
