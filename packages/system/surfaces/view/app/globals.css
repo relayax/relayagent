@@ -83,21 +83,40 @@ textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
 .detail-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .detail-foot .grow { flex: 1; }
 
-/* ── 설명서 (패키지 화면 1층) — 질문-답 목록. 매니페스트 어휘가 아니라 사람 말.
+/* ── 설명서 (패키지 화면 1층) — 세 묶음 카드 안의 질문-답 줄. 매니페스트 어휘가 아니라 사람 말.
    줄은 버튼이다: 누르면 그 아래로 2층(그 섹션의 폼 · 결과면)이 펼쳐진다 ── */
-.ds { display: flex; flex-direction: column; }
-.ds-row { display: flex; gap: 14px; padding: 10px 6px; border: none; border-bottom: 1px solid var(--rc-line-soft); background: none; width: 100%; text-align: left; color: inherit; font: inherit; border-radius: 8px; cursor: pointer; }
+.ds { display: flex; flex-direction: column; gap: 12px; }
+.ds-group { padding: 6px 10px 8px; }
+.ds-title { margin: 6px 6px 4px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--rc-faint); text-transform: uppercase; }
+.ds-row { display: flex; gap: 14px; padding: 10px 8px; border: none; border-bottom: 1px solid var(--rc-line-soft); background: none; width: 100%; text-align: left; color: inherit; font: inherit; border-radius: 8px; cursor: pointer; }
 .ds-row:hover { background: var(--rc-hover); }
-.ds-sec:last-child > .ds-row { border-bottom: none; }
+.ds-sec:last-child > .ds-row, .ds-group > .ds-sec:last-of-type > .ds-row { border-bottom: none; }
 .ds-sec.open > .ds-row { background: var(--rc-accent-soft); border-bottom-color: transparent; }
-.ds-q { flex: 0 0 120px; font-size: 12.5px; color: var(--rc-faint); padding-top: 2px; }
-.ds-a { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 13.5px; }
+.ds-q { flex: 0 0 150px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--rc-soft); padding-top: 1px; }
+.ds-ic { flex: none; color: var(--rc-faint); }
+.ds-sec.open .ds-ic, .ds-row:hover .ds-ic { color: var(--rc-accent-strong); }
+.ds-n { font-size: 10.5px; font-weight: 700; color: var(--rc-accent-strong); background: var(--rc-accent-soft); border-radius: 6px; padding: 0 6px; }
+.ds-a { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 13.5px; }
 .ds-item { display: inline-flex; align-items: baseline; gap: 6px; }
 .ds-sub { font: 11.5px var(--rc-mono); color: var(--rc-faint); }
 .ds-empty { color: var(--rc-faint); }
 .ds-caret { color: var(--rc-faint); font-size: 11px; padding-top: 3px; }
-.ds-adv .ds-q { color: var(--rc-faint); }
+.ds-adv .ds-q { color: var(--rc-faint); font-weight: 500; }
 .ds-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 기능 목록 — 한 줄에 하나, 설명 왼쪽·이름 오른쪽, 두 열 */
+.ds-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 3px 18px; }
+.ds-list .ds-item { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dashed var(--rc-line-soft); }
+.ds-list .ds-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-list .ds-sub { flex: none; }
+/* 빈 줄들은 한 줄로 — 채운 것만 자리를 차지한다 */
+.ds-none { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 8px 8px 4px; font-size: 12px; color: var(--rc-faint); }
+.ds-none-btn { border: 1px dashed var(--rc-line); border-radius: 999px; background: none; padding: 2px 9px; font: 500 12px var(--rc-sans); color: var(--rc-soft); cursor: pointer; }
+.ds-none-btn:hover { border-color: var(--rc-accent); color: var(--rc-accent-strong); }
+.ds-none-btn b { font-weight: 600; margin-left: 2px; }
+/* 머리의 요약 칩 — 첫눈에 무엇인지 */
+.ds-facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ds-fact { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--rc-ground); border: 1px solid var(--rc-line-soft); font-size: 12.5px; font-weight: 600; color: var(--rc-ink); }
+.ds-fact .ds-ic { color: var(--rc-accent-strong); }
 /* 2층 — 왼쪽 폼, 오른쪽 결과면. 좁으면 한 열 */
 .ds-x { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr); gap: 12px; padding: 12px 6px 16px; border-bottom: 1px solid var(--rc-line-soft); }
 .ds-x > .rc-card { min-height: 0; max-height: 64vh; display: flex; flex-direction: column; overflow: hidden; }

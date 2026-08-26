@@ -439,12 +439,12 @@ export async function verbLabels(ledger: Ledger, pkg: string, agent: string): Pr
 }
 
 /** 서술의 첫 마디 — 카드 한 줄에 서는 길이로 자른다. 문장 전체는 대상 자리를 밀어낸다 */
-function shortLabel(description?: string): string | null {
+function shortLabel(description?: string, max = 24): string | null {
   const d = (description ?? "").trim();
   if (!d) return null;
   const head = d.split(/\s+—\s+|\n|(?<=[.。])\s/)[0].trim();
   const one = (head || d).replace(/\s+/g, " ");
-  return one.length > 24 ? one.slice(0, 23) + "…" : one;
+  return one.length > max ? one.slice(0, max - 1) + "…" : one;
 }
 
 /**
@@ -474,7 +474,8 @@ export async function verbLabelsAt(root: string): Promise<Record<string, string>
   }
   const out: Record<string, string> = {};
   for (const name of listScripts(root, m)) {
-    const short = shortLabel((await scriptMetaAt(root, m, name))?.description);
+    // 설명서의 목록은 한 줄에 하나라 칩(24자)보다 길게 둔다
+    const short = shortLabel((await scriptMetaAt(root, m, name))?.description, 60);
     if (short) out[name] = short;
   }
   return out;

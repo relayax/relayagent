@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgentScope } from "@relay/chat";
-import Describe from "@/components/Describe";
+import Describe, { Icon } from "@/components/Describe";
 import DraftActions from "@/components/DraftActions";
 import DraftConsole from "@/components/DraftConsole";
 import EditorPanel from "@/components/EditorPanel";
@@ -115,6 +115,17 @@ export default function DetailFace({
     { editing },
   );
   const pending = mine.filter((e) => !e.granted && e.provider);
+  // 머리의 요약 칩 — 첫눈에 "무엇을 하는 앱인가". 줄의 재료를 그대로 센다
+  const nVerbs = rows.find((r) => r.key === "verbs")?.items.length ?? 0;
+  const nWhen = rows.find((r) => r.key === "when")?.items.length ?? 0;
+  const talk = rows.find((r) => r.key === "talk")?.items.length ?? 0;
+  const engine = rows.find((r) => r.key === "engine")?.items[0]?.text;
+  const facts: { k: Parameters<typeof Icon>[0]["k"]; text: string }[] = [
+    ...(nVerbs ? [{ k: "verbs" as const, text: `기능 ${nVerbs}개` }] : []),
+    { k: "talk" as const, text: talk ? "대화 가능" : "대화 없음" },
+    ...(nWhen ? [{ k: "when" as const, text: `스스로 ${nWhen}번 예약` }] : []),
+    ...(engine ? [{ k: "engine" as const, text: `${engine} 로 동작` }] : []),
+  ];
 
   async function approve(e: EdgeView) {
     setError(null);
@@ -207,6 +218,14 @@ export default function DetailFace({
               빌더 작업 중…
             </span>
           ) : null}
+        </div>
+        <div className="ds-facts">
+          {facts.map((f) => (
+            <span key={f.k} className="ds-fact">
+              <Icon k={f.k} />
+              {f.text}
+            </span>
+          ))}
         </div>
         {draft.fatal ? <div className="banner">{draft.fatal}</div> : null}
         {error ? <div className="banner">{error}</div> : null}
