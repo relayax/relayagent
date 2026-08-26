@@ -48,6 +48,9 @@ export interface HostBridge {
   pack(name: string, deliverTo?: string): unknown;
   releaseList(name: string): unknown;
   releaseRollback(name: string, version: string): unknown;
+  /** 동사 이름 → 짧은 서술(meta.description 의 첫 마디). 화면이 슬러그 대신 이것을 그린다.
+   *  draft = 작업 사본의 코드에서 읽는다(설치본이 아니라) */
+  verbLabels(name: string, draft?: boolean): Promise<Record<string, string>>;
 }
 
 /** 누구로서 — 이 실행을 감싸는 신원. principal 은 권위 이음새의 답, agent 는 그 안의 세션 얼굴 */
@@ -454,9 +457,32 @@ function shortLabel(description?: string): string | null {
 export async function scriptMeta(ledger: Ledger, pkg: string, name: string): Promise<ScriptMeta | null> {
   const rec = ledger.packages[pkg];
   if (!rec) return null;
-  const m = loadManifest(rec.path);
+  return scriptMetaAt(rec.path, loadManifest(rec.path), name);
+}
+
+/**
+ * 한 뿌리(설치본이든 작업 사본이든)의 동사 전부에 대한 짧은 서술. 패키지 화면의 "시킬 수 있는 일"
+ * 줄이 슬러그 대신 이것을 그린다 — verbLabels(세션용)와 같은 앎을 사람에게도 보낸다.
+ * 서술 없는 동사는 빠진다(부르는 쪽이 이름으로 떨어진다).
+ */
+export async function verbLabelsAt(root: string): Promise<Record<string, string>> {
+  let m: Manifest;
+  try {
+    m = loadManifest(root);
+  } catch {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const name of listScripts(root, m)) {
+    const short = shortLabel((await scriptMetaAt(root, m, name))?.description);
+    if (short) out[name] = short;
+  }
+  return out;
+}
+
+async function scriptMetaAt(root: string, m: Manifest, name: string): Promise<ScriptMeta | null> {
   if (!m.scripts) return null;
-  const file = path.join(rec.path, m.scripts.source, name + ".ts");
+  const file = path.join(root, m.scripts.source, name + ".ts");
   if (!fs.existsSync(file)) return null;
   let mod: Record<string, unknown>;
   try {

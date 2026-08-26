@@ -92,6 +92,8 @@ export interface DescribeCtx {
   labelOf: (name: string) => string;
   /** 패키지의 파일 목록 — "기타 파일" 줄의 재료. 모르면 빈 배열 */
   files: string[];
+  /** 동사 이름 → 짧은 서술(pkg-verbs). 있으면 서술을 크게, 이름을 작게 */
+  verbLabels?: Record<string, string>;
 }
 
 /**
@@ -105,7 +107,7 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
 
   rows.push({ key: "identity", q: "이름과 버전", sec: "identity", empty: "아직 없음", items: [{ text: m.name ?? "(이름 없음)", sub: m.version }] });
 
-  rows.push({ key: "verbs", q: "시킬 수 있는 일", sec: "scripts", empty: "아직 없음", items: ctx.scripts.map((s) => ({ text: s })) });
+  rows.push({ key: "verbs", q: "시킬 수 있는 일", sec: "scripts", empty: "아직 없음", items: ctx.scripts.map((s) => (ctx.verbLabels?.[s] ? { text: ctx.verbLabels[s], sub: s } : { text: s })) });
 
   rows.push({
     key: "when", q: "스스로 움직이는 때", sec: "triggers", empty: "아직 없음 — 부르면 움직입니다",

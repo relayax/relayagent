@@ -65,6 +65,16 @@ export default function DetailFace({
   const [palette, setPalette] = useState(false);
   // 설치본의 동사 이름 — 설치본 트리에서. draft 가 열리면 draft 의 파일 목록이 대신한다
   const [liveScripts, setLiveScripts] = useState<string[]>([]);
+  // 동사의 짧은 서술 — 설치본은 설치본 코드에서, draft 가 열리면 작업 사본 코드에서. 내용 지문(rev)이
+  // 바뀌면 다시 묻는다(동사 파일을 고치면 서술도 따라온다)
+  const [verbLabels, setVerbLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let on = true;
+    void callScript<{ labels: Record<string, string> }>("pkg-verbs", { name: pkg.name, draft: editing })
+      .then((r) => { if (on) setVerbLabels(r.labels ?? {}); })
+      .catch(() => { if (on) setVerbLabels({}); });
+    return () => { on = false; };
+  }, [pkg.name, editing, draft.rev]);
 
   const label = useCallback((name: string) => reg.packages.find((p) => p.name === name)?.manifest?.display_name ?? name, [reg]);
 
@@ -100,6 +110,7 @@ export default function DetailFace({
       activeHarness: pkg.harness,
       labelOf: label,
       files: draft.status?.files ?? [],
+      verbLabels,
     },
     { editing },
   );

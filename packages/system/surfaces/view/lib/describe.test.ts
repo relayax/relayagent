@@ -114,3 +114,8 @@ test("describe — faces 줄과 보조 에이전트", () => {
   assert.deepEqual(byKey(rows, "faces").items, [{ text: "화면", sub: "view" }, { text: "끼울 부품", sub: "parts" }, { text: "slack", sub: "채널" }]);
   assert.deepEqual(byKey(rows, "talk").items, [{ text: "이 화면" }, { text: "indexer", sub: "보조" }]);
 });
+
+test("describe — 동사 서술이 있으면 서술을 크게, 이름을 작게", () => {
+  const rows = describe({}, { ...base, scripts: ["save", "list"], verbLabels: { save: "일기 저장" } });
+  assert.deepEqual(byKey(rows, "verbs").items, [{ text: "일기 저장", sub: "save" }, { text: "list" }]);
+});

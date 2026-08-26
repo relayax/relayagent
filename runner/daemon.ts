@@ -10,7 +10,7 @@ import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
-import { runScript, runScriptFrom, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, type HostBridge } from "./runtime/scripts.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
@@ -159,6 +159,12 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),
+    // 동사의 짧은 서술 — 설치본은 장부의 뿌리에서, 작업 사본은 draft 뿌리에서. 모듈을 import 만
+    // 하고 부르지 않는다(scriptMeta 와 같은 규율). 없는 이름은 빈 답
+    verbLabels: async (name, draft) => {
+      const root = draft ? draftPath(name) : getLedger().packages[name]?.path;
+      return root && fs.existsSync(root) ? verbLabelsAt(root) : {};
+    },
     draftHistory: (name) => historyDraft(name),
     draftRestore: (name, hash) => restoreDraft(name, hash),
     // 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다. 장부도 도는 판도 건드리지
