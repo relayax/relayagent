@@ -10,7 +10,7 @@ import Palette from "@/components/Palette";
 import SectionView from "@/components/SectionView";
 import { approveGrant, callScript, removePkg } from "@/lib/api";
 import { describe, scriptNamesFromFiles, scriptNamesFromTree } from "@/lib/describe";
-import type { Creatable } from "@/lib/create";
+import { creatable, type Creatable } from "@/lib/create";
 import { landingAgent } from "@/lib/faces";
 import { SECTIONS } from "@/lib/sections";
 import { draftList } from "@/lib/studio";
@@ -151,6 +151,18 @@ export default function DetailFace({
   };
 
   // 항목·섹션 누름 — draft 가 없으면 열고 나서 간다(설치본 사본)
+  // 엔진 칩 — 팔레트의 harness 레시피를 바로 부른다(이름 물을 것이 없다)
+  const [engineBusy, setEngineBusy] = useState(false);
+  const addEngine = (template: string) => {
+    if (engineBusy) return;
+    setEngineBusy(true);
+    const go = editing ? Promise.resolve() : draft.open();
+    void go
+      .then(() => (draft.ctx ? creatable("harness").make(draft.ctx, template) : Promise.reject(new Error("작업 사본이 아직 없습니다"))))
+      .then((made) => draft.onMade(made))
+      .catch(() => {})
+      .finally(() => setEngineBusy(false));
+  };
   const openAt = (sec: string, item: string | null) => {
     if (!editing) {
       void draft.open().then(() => nav({ sec, item, file: null }));
@@ -291,6 +303,8 @@ export default function DetailFace({
           danger={foot}
           onPick={pickKind}
           onAsk={ask}
+          onEngine={addEngine}
+          engineBusy={engineBusy}
         >
           {editing && view.sec && draft.ctx ? (
             <>

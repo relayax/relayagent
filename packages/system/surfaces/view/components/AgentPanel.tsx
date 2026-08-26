@@ -59,6 +59,14 @@ const AGENT_SECS: { k: Key; sec: string; title: string; add: string }[] = [
 /** 항목 목록을 갖는 섹션 — 이 패널이 이미 목록·＋추가·빈 상태를 다 보여주므로 섹션 랜딩(같은 목록을
  *  한 번 더 그리는 화면)으로 가는 문이 없다. 문은 항목과 ＋ 추가 둘뿐. 나머지(기본 정보·엔진·필요한 것
  *  ·브리지 캡·조직·기타 파일)는 섹션 자체가 폼 하나라 제목이 문이다 */
+/** 붙일 수 있는 엔진 — 팔레트의 harness 레시피 템플릿 이름 */
+const ENGINES = [
+  { id: "claude-code", label: "Claude" },
+  { id: "codex", label: "Codex" },
+  { id: "pi", label: "Pi" },
+  { id: "kimi", label: "Kimi" },
+];
+
 const LIST_SECS = new Set(["triggers", "scripts", "edges", "services", "surfaces", "missions", "agents"]);
 
 const SETTING_SECS: { k: Key; sec: string; title: string; add?: string }[] = [
@@ -92,6 +100,9 @@ export interface AgentPanelProps {
   onPick: (c: Creatable) => void;
   /** [＋ 추가] 메뉴의 "말로 만들기" — 오른쪽 빌더 대화에 문장을 미리 채운다 */
   onAsk: (text: string) => void;
+  /** 엔진 칩 — 안 붙은 엔진을 눌렀다. 붙이는 동안 busy */
+  onEngine: (template: string) => void;
+  engineBusy?: boolean;
 }
 
 /** 섹션마다 [＋ 추가] 가 내놓는 종류 — 팔레트의 레시피를 문법 좌표(yaml)로 고른다 */
@@ -166,7 +177,7 @@ function loadFold(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk }: AgentPanelProps) {
+export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy }: AgentPanelProps) {
   const [tab, setTab] = useState<"agent" | "settings">("agent");
   // 접힌 섹션 — 기능처럼 항목이 많으면 목록이 길어진다. 제목을 누르면 접히고, 선택은 기억한다
   const [fold, setFold] = useState<Set<string>>(() => (typeof window === "undefined" ? new Set() : loadFold()));
@@ -204,11 +215,9 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
   const isOpen = (sec: string, item: string | null) => open.sec === sec && (open.item ?? null) === item;
   const toggle = (sec: string, item: string | null) => (isOpen(sec, item) ? onBack() : onOpen(sec, item));
   const slot = (sec: string, item: string | null) => (isOpen(sec, item) ? <div className="ap-inline">{children}</div> : null);
-  // 엔진 줄은 섹션 전체(칩 + 어댑터 상세)를 받는다 — 상세도 안으로 들어가지 않고 같은 줄 아래
-  const engineOpen = open.sec === "harness";
 
   // ── 목록 ─────────────────────────────────────────────────────────────────
-  const engine = byKey.get("engine")?.items[0]?.text;
+  const have = new Set((m.harness?.variants ?? []).map((v) => v.name));
   const helpers = itemsOf("agents").filter((a) => a.id !== landing);
   const agentItems = (s: { sec: string }) => (s.sec === "agents" ? helpers : itemsOf(s.sec));
 
@@ -271,12 +280,18 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
                 <span>에이전트</span>
               </span>
             </div>
-            <button type="button" className="ap-item ap-pick" aria-expanded={engineOpen} onClick={() => (engineOpen ? onBack() : onOpen("harness", null))}>
+            {/* 엔진 — 펼칠 것 없이 줄 안에서 바로 고른다. 어댑터 파일은 설정 › 고급 › 기타 파일에서 */}
+            <div className="ap-item ap-engine" title="이 패키지를 돌릴 수 있는 엔진 — 누르면 붙습니다. 실제로 어느 것으로 돌릴지는 설치한 쪽에서 고릅니다">
               <Icon k="engine" />
-              <span className="ap-item-t">{engine ? `${engine} 로 동작` : "엔진 고르기"}</span>
-              <Chevron />
-            </button>
-            {engineOpen ? <div className="ap-inline">{children}</div> : null}
+              <span className="ap-item-t">엔진</span>
+              <span className="st-picks">
+                {ENGINES.map((e) => (
+                  <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy || have.has(e.id)} onClick={() => onEngine(e.id)}>
+                    {e.label}
+                  </button>
+                ))}
+              </span>
+            </div>
             {landing ? (
               <>
               <button type="button" className="ap-item" aria-expanded={isOpen("agents", landing)} onClick={() => toggle("agents", landing)}>
