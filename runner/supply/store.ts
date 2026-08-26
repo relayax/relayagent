@@ -88,7 +88,12 @@ function installPage(res: http.ServerResponse, code: number, title: string, deta
   res.writeHead(code, { "content-type": "text/html; charset=utf-8" });
   res.end(
     `${SHELL}<div class="card"><h1>${esc(title)}</h1><p>${esc(detail)}</p>` +
-      (ok ? `<a class="btn" href="/pkg/system/view/">콘솔 열기</a>` : "") +
+      // 실패도 막다른 골목이 아니어야 한다 — 온 곳(서재)으로 되돌아가거나 홈으로 나간다
+      (ok
+        ? `<a class="btn" href="/pkg/system/view/">콘솔 열기</a>`
+        : `<div style="display:flex;gap:8px;margin-top:16px">` +
+          `<a class="btn" href="javascript:history.back()">← 돌아가기</a>` +
+          `<a class="btn" href="/">홈으로</a></div>`) +
       `</div></body></html>`,
   );
 }
