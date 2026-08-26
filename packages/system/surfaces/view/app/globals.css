@@ -326,7 +326,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-form { display: flex; flex-direction: column; gap: 10px; }
 .st-field { display: flex; flex-direction: column; gap: 4px; }
 .st-field > span { font-size: 11.5px; font-weight: 600; color: var(--rc-faint); }
-.st-key { margin-left: 6px; font: 10.5px var(--rc-mono); color: var(--rc-faint); font-weight: 400; }
 .st-files { display: flex; flex-direction: column; gap: 4px; }
 .st-file { display: flex; align-items: center; gap: 8px; border: 1px solid var(--rc-line-soft); border-radius: 8px; padding: 7px 11px; cursor: pointer; background: var(--rc-bg); }
 .st-file:hover { border-color: var(--rc-accent); }
@@ -654,3 +653,18 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-done .big { font-size: 15px; font-weight: 700; line-height: 1.5; }
 .st-done .ok { color: var(--rc-ok); }
 .st-done .warn { color: var(--rc-err); }
+
+/* 접힌 도움말 · 고급 필드 · 빈 섹션 묶음 */
+.st-hint.fold { padding: 6px 12px; }
+.st-hint.fold summary { cursor: pointer; color: var(--rc-faint); font-size: 12px; list-style: none; }
+.st-hint.fold summary::before { content: "ⓘ "; }
+.st-hint.fold[open] summary { margin-bottom: 6px; color: var(--rc-soft); }
+.st-adv { margin-top: 4px; border-top: 1px dashed var(--rc-line-soft); padding-top: 6px; }
+.st-adv > summary { cursor: pointer; font-size: 12px; color: var(--rc-faint); margin-bottom: 6px; }
+.st-adv > summary:hover { color: var(--rc-ink); }
+.st-adv[open] > summary { color: var(--rc-soft); }
+.ap-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 8px 6px; }
+.ap-add.chip { font-size: 12px; }
+.ap-advanced { margin-top: 6px; }
+.ap-advanced > summary { cursor: pointer; font-size: 12px; color: var(--rc-faint); padding: 6px 8px; }
+.ap-advanced > summary:hover { color: var(--rc-ink); }

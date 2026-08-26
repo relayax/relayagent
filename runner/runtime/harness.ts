@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, loadLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
+import { API_URL, RELAY_HOME, loadLedger, saveLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { spawnEntry, spawnEntrySync } from "../spawn.ts";
 // 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
@@ -390,6 +390,25 @@ const STALL_MS = (() => {
   const v = Number(process.env.RELAY_TURN_STALL_S);
   return Number.isFinite(v) && v > 0 ? v * 1000 : 1_200_000;
 })();
+// 검사 주기는 판정선보다 촘촘해야 한다 — 60초 고정이면 RELAY_TURN_STALL_S=5 로 줄여도 첫
+// 검사가 60초 뒤라 그 설정이 아무 일도 하지 않는다(시험도 못 한다)
+const STALL_TICK_MS = Math.min(60_000, Math.max(250, STALL_MS));
+
+/**
+ * 질문이 서 있는 슬롯(`pkg/slot`) — 스톨 시계를 멈추는 근거.
+ *
+ * 대기 중 ask 는 **무이벤트지 고착이 아니다**: 턴이 사람을 올바르게 기다리는 중이다. 이 명부가
+ * 없으면 두 시계가 싸우고 늘 긴 쪽이 틀린 방향으로 이긴다 — 사람이 20분 넘게 고민하면 기판이
+ * 그 질문을 취소해 버린다. 어댑터의 10분 자동 기본값이 은퇴한 자리가 여기다(2026-08-26):
+ * 답을 지어내지 않는 대신, 기다림이 턴에 아무 비용도 물리지 않게 한다.
+ */
+const askPending = new Set<string>();
+
+/** 봉투가 지나가는 두 경로(상주·1회)가 같이 부른다 — ask 는 시계를 멈추고, 답·정산은 푼다 */
+function trackAsk(key: string, event: string): void {
+  if (event === "ask") askPending.add(key);
+  else if (event === "reply" || event === "error") askPending.delete(key);
+}
 
 // serve 선언 조회 — info 는 어댑터 프로세스 1회 비용이라 mtime 캐시로 어댑터당 한 번만 돈다
 const serveCache = new Map<string, { mtime: number; serves: boolean }>();
@@ -486,10 +505,12 @@ export function deliverAnswer(pkg: string, slot: string, id: string, answers: un
   if (!child?.stdin) return false;
   try {
     child.stdin.write(JSON.stringify({ type: "answer", id, answers }) + "\n");
-    return true;
   } catch {
     return false;
   }
+  // 답이 돌아갔으니 기다림이 끝났다 — 여기서 풀지 않으면 이 턴은 남은 구간 내내 워치독 밖이다
+  askPending.delete(`${pkg}/${slot}`);
+  return true;
 }
 
 /**
@@ -619,19 +640,21 @@ function residentTurn(
     r.ledgerFile = eventsFile; // 이 턴 이후의 유휴 이벤트도 같은 장부에 남는다
     // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
     const stall = setInterval(() => {
+      if (askPending.has(key)) return; // 사람을 기다리는 중 — 무이벤트지 고착이 아니다
       if (Date.now() - r.lastEvent < STALL_MS) return;
       void authority.audit("sessions", { pkg, slot, stall_s: Math.round((Date.now() - r.lastEvent) / 1000) });
       condemnResident(key, r.child); // cancel 은 사형선고 — 죽어가는 상주를 다음 턴이 재사용하지 않게
       try {
         r.child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
       } catch { /* 이미 닫힘 */ }
-    }, 60_000);
+    }, STALL_TICK_MS);
     stall.unref?.();
     let settled = false;
     const finish = (fn: () => void): void => {
       if (settled) return;
       settled = true;
       clearInterval(stall);
+      askPending.delete(key);
       r.sink = null;
       if (live.get(key) === r.child) live.delete(key);
       if (residents.get(key) === r && r.child.exitCode === null) {
@@ -642,6 +665,7 @@ function residentTurn(
     };
     r.sink = (raw) => {
       const ev = labelTool(raw, toolLabels);
+      trackAsk(key, ev.event);
       appendEvent(eventsFile, ev);
       tap(pkg, slot, ev);
       if (ev.event === "reply") {
@@ -850,12 +874,13 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       let lastLine = Date.now();
       // 스톨 워치독 — 봉투가 취소 제어를 받는 어댑터라면 고착 턴이 여기서 풀린다
       const stall = setInterval(() => {
+        if (askPending.has(key)) return; // 사람을 기다리는 중 — 무이벤트지 고착이 아니다
         if (Date.now() - lastLine < STALL_MS) return;
         void authority.audit("sessions", { pkg: input.pkg, slot, stall_s: Math.round((Date.now() - lastLine) / 1000) });
         try {
           child.stdin?.write(JSON.stringify({ type: "cancel" }) + "\n");
         } catch { /* 이미 닫힘 */ }
-      }, 60_000);
+      }, STALL_TICK_MS);
       stall.unref?.();
       let reply: { text: string; model: string | null; usage: unknown; context: unknown } | null = null;
       let errEvent = "";
@@ -874,6 +899,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         }
         // 위 가드(typeof ev.event !== "string" 조기 반환)가 이미 증명한 형 — 인덱스 시그니처라 좁혀지지 않는다
         ev = labelTool(ev as { event: string; [k: string]: unknown }, toolLabels);
+        trackAsk(key, ev.event as string);
         appendEvent(eventsFile, ev as { event: string; [k: string]: unknown });
         tap(input.pkg, slot, ev as { event: string; [k: string]: unknown });
         if (ev.event === "reply") {
@@ -892,11 +918,13 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       child.stderr!.on("data", (d) => (err += d));
       child.on("error", (e) => {
         clearInterval(stall);
+        askPending.delete(key);
         live.delete(key);
         reject(e);
       });
       child.on("close", (code) => {
         clearInterval(stall);
+        askPending.delete(key);
         live.delete(key);
         if (reply) return resolve({ reply: reply.text, code: code ?? 0, model: reply.model, usage: reply.usage, context: reply.context });
         if (errEvent) return reject(new Error(errEvent));
@@ -1099,4 +1127,100 @@ export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = 
       : `${INTERRUPTED_MARK} 답변이 저장되지 못했습니다. 남은 내용이 없습니다.)`,
   );
   return true;
+}
+
+// ── 원격 제어 상주(remote) — 로그인된 자격으로 상주하는 프로세스 ─────────────────────
+// `login`(자격은 도구 소유, pty 중계)과 `serve`(상주, 데몬이 수명을 쥠)의 합성이다: 어댑터가
+// verb `remote` 를 선언하면 그 도구의 원격 조종 클라이언트(claude remote-control 류)를 이 패키지의
+// 작업 무대(cwd=workspace) 위에 상주시킨다. 턴이 아니므로 번들·슬롯이 없고, 봉투도 없다 —
+// stdout/stderr 는 진단용 꼬리만 남긴다. 무인 기판(org pod)에서 "누가 이 프로세스를 띄우는가"
+// 의 답이 이 파일이 되면서 기판별 투영(별도 Deployment)이 필요 없어진다.
+// 상태는 장부(PkgRecord.remote)에 남아 데몬 재기동을 넘긴다(resumeRemotes).
+interface Remote {
+  child: ChildProcess;
+  variant: string;
+  startedAt: number;
+  stderrTail: string;
+}
+const remotes = new Map<string, Remote>();
+
+export function remoteStatus(pkg: string): { running: boolean; pid: number | null; variant: string | null; since: string | null } {
+  const r = remotes.get(pkg);
+  if (!r || r.child.exitCode !== null) return { running: false, pid: null, variant: null, since: null };
+  return { running: true, pid: r.child.pid ?? null, variant: r.variant, since: new Date(r.startedAt).toISOString() };
+}
+
+/** 원격 제어 상주 기동 — 이미 떠 있으면 은퇴 후 새로 편다(자격·모델 변경의 반영). */
+export async function startRemote(authority: Authority, io: SessionIO, pkg: string): Promise<{ pid: number; variant: string }> {
+  const l = loadLedger();
+  const rec = l.packages[pkg];
+  if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
+  const m = loadManifest(rec.path);
+  const variant = activeHarness(m, rec.harness);
+  if (!variant) throw new Error(`하네스 미동봉 패키지: ${pkg}`);
+  const workdir = path.join(io.workspaceDir(pkg), m.harness?.workdir ?? "");
+  fs.mkdirSync(workdir, { recursive: true });
+  const entry = path.join(rec.path, variant.source, variant.entry);
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    RELAY_NAME: pkg,
+    RELAY_PRINCIPAL: authority.principal(),
+    RELAY_API: io.apiUrl,
+    RELAY_TOKEN: authority.packageToken(pkg),
+  };
+  Object.assign(env, binaryEnv(pkg, env));
+  // 스폰 자격 — 세션과 같은 이음새(auth.env 를 선언이 말하면 기판이 댄다, kind 무관)
+  if (variant.llm?.auth?.env) {
+    const cred = await authority.credential(`llm/${variant.llm.provider}`);
+    if (cred) env[variant.llm.auth.env] = cred;
+  }
+  if (rec.model) env.RELAY_MODEL = rec.model;
+  if (rec.effort) env.RELAY_EFFORT = rec.effort;
+  stopRemote(pkg);
+  const child = spawnEntry(entry, ["remote"], { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
+  const r: Remote = { child, variant: variant.name, startedAt: Date.now(), stderrTail: "" };
+  child.stdout?.on("data", () => { /* 원격 클라이언트의 화면 출력 — 봉투가 아니다 */ });
+  child.stderr?.on("data", (d) => { r.stderrTail = (r.stderrTail + String(d)).slice(-2000); });
+  child.on("close", () => { if (remotes.get(pkg) === r) remotes.delete(pkg); });
+  remotes.set(pkg, r);
+  rec.remote = true;
+  saveLedger(l);
+  return { pid: child.pid ?? 0, variant: variant.name };
+}
+
+/** 원격 제어 상주 은퇴 — persist 면 장부의 켜짐 표시도 지운다. 떠 있었으면 true */
+export function stopRemote(pkg: string, persist = false): boolean {
+  const r = remotes.get(pkg);
+  if (r) {
+    remotes.delete(pkg);
+    if (r.child.exitCode === null) r.child.kill();
+  }
+  if (persist) {
+    const l = loadLedger();
+    if (l.packages[pkg]?.remote) {
+      delete l.packages[pkg].remote;
+      saveLedger(l);
+    }
+  }
+  return !!r;
+}
+
+/** 데몬 종료 — 상주 하네스와 같은 자리에서 원격 상주도 내린다(장부 표시는 남긴다: 재기동이 잇는다) */
+export function stopAllRemotes(): void {
+  for (const pkg of [...remotes.keys()]) stopRemote(pkg);
+}
+
+/** 데몬 기동 — 장부에 켜짐이 남은 패키지의 원격 상주를 다시 편다. 실패는 그 패키지의 실패다 */
+export async function resumeRemotes(authority: Authority, io: SessionIO): Promise<string[]> {
+  const notes: string[] = [];
+  for (const [pkg, rec] of Object.entries(loadLedger().packages)) {
+    if (!rec.remote) continue;
+    try {
+      const r = await startRemote(authority, io, pkg);
+      notes.push(`${pkg}: 원격 제어 상주 재개 (${r.variant}, pid ${r.pid})`);
+    } catch (e) {
+      notes.push(`${pkg}: 원격 제어 상주 재개 실패 - ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return notes;
 }

@@ -73,7 +73,7 @@ export const SECTIONS: SectionDef[] = [
     label: "화면과 창구",
     material: "그림",
     yamlKey: "surfaces",
-    hint: "밖에서 보이는 것 — 이 앱의 화면, 다른 앱 화면에 끼울 부품, 슬랙·디스코드 같은 채널. 직접 대화는 '대화 상대'가 있으면 저절로 생깁니다.",
+    hint: "밖에서 보이는 것 — 이 패키지의 화면, 다른 패키지 화면에 끼울 부품, 슬랙·디스코드 같은 채널. 직접 대화는 '대화 상대'가 있으면 저절로 생깁니다.",
     declared: (m) => !!m.surfaces,
     items: (m, files) => {
       const out: SectionItem[] = [];
@@ -81,7 +81,7 @@ export const SECTIONS: SectionDef[] = [
         out.push({
           id: "view",
           title: "view",
-          sub: m.surfaces.view.out ? `${m.surfaces.view.source} (빌드: ${m.surfaces.view.out})` : `${m.surfaces.view.source} (정적)`,
+          sub: "웹 화면",
           files: under(files, m.surfaces.view.source),
         });
       }
@@ -92,12 +92,12 @@ export const SECTIONS: SectionDef[] = [
         out.push({
           id: "components",
           title: "components",
-          sub: c.out ? `${c.source} (빌드: ${c.out})` : `${c.source} (손저작 ESM)`,
+          sub: "다른 화면에 끼우는 부품",
           files: under(files, c.source),
         });
       }
       for (const c of m.surfaces?.channels ?? []) {
-        out.push({ id: `channel:${c.name}`, title: c.name, sub: "채널 어댑터", files: under(files, c.source) });
+        out.push({ id: `channel:${c.name}`, title: c.name, sub: "채널", files: under(files, c.source) });
       }
       return out;
     },
@@ -107,7 +107,7 @@ export const SECTIONS: SectionDef[] = [
     label: "실행 도구",
     material: "계약",
     yamlKey: "harness",
-    hint: "이 앱을 돌릴 수 있는 도구 후보들 (Claude, Codex …). 여기서는 후보를 붙이고, 실제로 쓸 것은 설정에서 고릅니다.",
+    hint: "이 패키지을 돌릴 수 있는 도구 후보들 (Claude, Codex …). 여기서는 후보를 붙이고, 실제로 쓸 것은 설정에서 고릅니다.",
     declared: (m) => !!m.harness,
     items: (m, files) =>
       (m.harness?.variants ?? []).map((v) => ({
@@ -128,7 +128,7 @@ export const SECTIONS: SectionDef[] = [
       (m.agents ?? []).map((a) => ({
         id: a.name,
         title: a.name,
-        sub: [a.dispatch?.length ? `dispatch ${a.dispatch.join(",")}` : null, a.scripts?.length ? `scope ${a.scripts.join(" ")}` : null]
+        sub: [a.dispatch?.length ? `보조 ${a.dispatch.length}` : null, a.scripts?.length ? `기능 ${a.scripts.length}` : null]
           .filter(Boolean)
           .join(" · ") || undefined,
         files: [...exist(files, a.persona), ...under(files, a.skills), ...under(files, a.commands)],
@@ -156,13 +156,13 @@ export const SECTIONS: SectionDef[] = [
     label: "자원",
     material: "배선",
     yamlKey: "services",
-    hint: "이 앱이 쓰는 것들 — 함께 띄우는 프로그램, 바깥 서비스(원격 도구·REST), 폴더. 바깥 서비스의 로그인 정보는 설정에서 넣고 파일에는 남지 않습니다.",
+    hint: "이 패키지이 쓰는 것들 — 함께 띄우는 프로그램, 바깥 서비스(원격 도구·REST), 폴더. 바깥 서비스의 로그인 정보는 설정에서 넣고 파일에는 남지 않습니다.",
     declared: (m) => !!m.services?.length,
     items: (m, files) =>
       (m.services ?? []).map((s) => ({
         id: s.name,
         title: s.name,
-        sub: s.url ? "원격 MCP" : s.api ? `REST ${s.api}` : s.dir ? `폴더 ${s.dir}` : s.dockerfile ? "컨테이너" : "프로세스",
+        sub: s.url ? "바깥 도구" : s.api ? "바깥 서비스" : s.dir ? "폴더" : s.dockerfile ? "컨테이너" : "프로그램",
         files: under(files, s.source),
       })),
   },
@@ -186,7 +186,7 @@ export const SECTIONS: SectionDef[] = [
     label: "맡길 수 있는 일",
     material: "배선",
     yamlKey: "missions",
-    hint: "다른 앱이 이 앱에 맡길 수 있는 일. 이름과 설명을 적어 두면 다른 앱이 그 이름으로 일을 넘깁니다.",
+    hint: "다른 패키지이 이 패키지에 맡길 수 있는 일. 이름과 설명을 적어 두면 다른 패키지이 그 이름으로 일을 넘깁니다.",
     declared: (m) => !!m.missions?.length,
     items: (m) => (m.missions ?? []).map((x) => ({ id: x.name, title: x.name, sub: x.description, files: [] })),
   },
@@ -195,13 +195,13 @@ export const SECTIONS: SectionDef[] = [
     label: "빌려 쓰는 것",
     material: "배선",
     yamlKey: "edges",
-    hint: "다른 앱의 것을 빌려 씁니다 — 기능, 일 맡기기, 화면 부품. 여기 적는 것은 신청이고, 허락은 설정의 연결 지도에서 합니다.",
+    hint: "다른 패키지의 것을 빌려 씁니다 — 기능, 일 맡기기, 화면 부품. 여기 적는 것은 신청이고, 허락은 설정의 연결 지도에서 합니다.",
     declared: (m) => !!m.edges?.length,
     items: (m) =>
       (m.edges ?? []).map((e, i) => ({
         id: String(i),
         title: e.provider,
-        sub: e.mission ? `mission ${e.mission}` : e.components ? "components 마운트" : e.tools?.length ? `tools ${e.tools.join(",")}` : undefined,
+        sub: e.mission ? `일 맡기기: ${e.mission}` : e.components ? "화면 부품" : e.tools?.length ? `기능 ${e.tools.length}` : undefined,
         files: [],
       })),
   },
@@ -211,7 +211,7 @@ export const SECTIONS: SectionDef[] = [
     advanced: true,
     material: "계약",
     yamlKey: "host_methods",
-    hint: "이 앱의 기능이 부를 수 있는 기판 기능의 상한. 비워 두면 전부, 적으면 적은 것만.",
+    hint: "이 패키지의 기능이 부를 수 있는 기판 기능의 상한. 비워 두면 전부, 적으면 적은 것만.",
     declared: (m) => !!m.host_methods?.length,
     items: (m) => (m.host_methods ?? []).map((x) => ({ id: x, title: x, sub: "허용", files: [] })),
   },

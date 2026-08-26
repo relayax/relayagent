@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import { useEffect, useState } from "react";
 import type { Document } from "yaml";
 import { creatable, push, slugOk, type Made } from "@/lib/create";
@@ -71,11 +72,8 @@ function Field({
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   return (
-    <label className="st-field">
-      <span>
-        {label}
-        {k ? <small className="st-key">{k}</small> : null}
-      </span>
+    <label className="st-field" title={k ? `relay.yaml: ${k}` : undefined}>
+      <span>{label}</span>
       <input
         value={v}
         placeholder={placeholder}
@@ -148,11 +146,26 @@ function ItemList({ def, items, ctx, onAdd, addLabel }: { def: SectionDef; items
   );
 }
 
+/** 손댈 일이 드문 필드를 접는다 — 값이 있으면 펼쳐 둔다(비어 있지 않은 것을 숨기면 안 된다) */
+function Advanced({ open, children }: { open?: boolean; children: React.ReactNode }) {
+  return (
+    <details className="st-adv" open={open}>
+      <summary>고급</summary>
+      {children}
+    </details>
+  );
+}
+
 function Hint({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   // 사람 말(sections.ts)이 먼저다. 스키마의 description 은 문법 설명이라 개발자 말이고, 그것은
   // relay.yaml 에디터의 lint 가 제 자리에서 보여 준다
   const hint = def.hint || schemaHint(ctx.schema, def.yamlKey);
-  return <div className="st-hint">{hint}</div>;
+  return (
+    <details className="st-hint fold">
+      <summary>이 묶음은?</summary>
+      {hint}
+    </details>
+  );
 }
 
 // ── 섹션별 캔버스 ─────────────────────────────────────────────────────────
@@ -161,11 +174,13 @@ function IdentityView({ ctx }: { ctx: SectionCtx }) {
   const m = ctx.manifest;
   return (
     <div className="st-form">
-      <Field label="고유 이름" k="name" value={m.name ?? ""} mono placeholder="@local/my-agent" onCommit={(v) => ctx.apply((d) => set(d, ["name"], v))} />
-      <Field label="버전" k="version" value={m.version ?? ""} mono placeholder="0.1.0" onCommit={(v) => ctx.apply((d) => set(d, ["version"], v))} />
-      <Field label="표시 이름" k="display_name" value={m.display_name ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["display_name"], v))} />
-      <Field label="한 줄 설명" k="description" value={m.description ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["description"], v))} />
-      <Field label="아이콘 파일" k="icon" value={m.icon ?? ""} mono placeholder="assets/icon.svg" onCommit={(v) => ctx.apply((d) => set(d, ["icon"], v))} />
+      <Field label="이름" k="display_name" value={m.display_name ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["display_name"], v))} />
+      <Field label="한 줄 소개" k="description" value={m.description ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["description"], v))} />
+      <Advanced>
+        <Field label="고유 이름 (설치·배포에 쓰는 id)" k="name" value={m.name ?? ""} mono placeholder="@local/my-agent" onCommit={(v) => ctx.apply((d) => set(d, ["name"], v))} />
+        <Field label="버전" k="version" value={m.version ?? ""} mono placeholder="0.1.0" onCommit={(v) => ctx.apply((d) => set(d, ["version"], v))} />
+        <Field label="아이콘 파일" k="icon" value={m.icon ?? ""} mono placeholder="assets/icon.svg" onCommit={(v) => ctx.apply((d) => set(d, ["icon"], v))} />
+      </Advanced>
     </div>
   );
 }
@@ -363,19 +378,20 @@ function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   }
   return (
     <div className="st-form">
-      <Field label="성격 글 파일" k="persona" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
-      <Field label="인사말 — 빈 대화의 첫 줄 (선택)" k="greeting" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
-      <Field label="기술 폴더 (선택)" k="skills" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
-      <Field label="명령 폴더 (선택)" k="commands" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
-      <Field label="일을 넘길 보조 (쉼표)" k="dispatch" value={(a.dispatch ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], listField(x)))} />
-      <Field label="쓸 수 있는 기능 (쉼표 — log-* 처럼 앞글자로도)" k="scripts" value={(a.scripts ?? []).join(", ")} mono placeholder="log-*, report" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], listField(x)))} />
-      <div className="st-hint">기술을 더하려면 기술 폴더를 적은 뒤 아래 파일 카드에서 {"<기술>"}/SKILL.md 를 만드세요.</div>
-      {a.skills ? (
-        <button className="rc-btn add" onClick={() => ctx.createFile(`${a.skills}/new-skill/SKILL.md`, `---\nname: new-skill\ndescription: 무엇을 하는 스킬인지 한 줄\n---\n\n# new-skill\n`)}>
-          + 스킬 스캐폴드
-        </button>
-      ) : null}
+      <Field label="첫 인사 — 빈 대화에 먼저 보이는 말" k="greeting" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
+      <Field label="쓸 수 있는 기능 — 쉼표로 여러 개, log-* 처럼 앞글자로도" k="scripts" value={(a.scripts ?? []).join(", ")} mono placeholder="log-*, report" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], listField(x)))} />
       <FileCards item={item} ctx={ctx} missing={missing} />
+      <Advanced open={!!(a.dispatch?.length || a.skills || a.commands)}>
+        <Field label="성격 글 파일" k="persona" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
+        <Field label="일을 넘길 보조 에이전트 — 쉼표" k="dispatch" value={(a.dispatch ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], listField(x)))} />
+        <Field label="기술(스킬) 폴더" k="skills" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
+        <Field label="명령 폴더" k="commands" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
+        {a.skills ? (
+          <button className="rc-btn add" onClick={() => ctx.createFile(`${a.skills}/new-skill/SKILL.md`, `---\nname: new-skill\ndescription: 무엇을 하는 스킬인지 한 줄\n---\n\n# new-skill\n`)}>
+            + 기술 하나 만들기
+          </button>
+        ) : null}
+      </Advanced>
       <button
         className="rc-btn"
         onClick={() => {
@@ -464,7 +480,7 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
           <Field label="원격 도구 주소" k="url" value={s.url} mono onCommit={(x) => ctx.apply((d) => set(d, p("url"), x))} />
           <Field label="빌려 쓸 도구 (쉼표)" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
           <label className="st-field">
-            <span>로그인 방식<small className="st-key">auth.kind</small></span>
+            <span>로그인 방식</span>
             <select value={(s as any).auth?.kind ?? "none"} onChange={(e) => ctx.apply((d) => d.setIn([...p("auth"), "kind"], e.target.value))}>
               <option value="none">없음</option>
               <option value="token">토큰</option>
@@ -531,7 +547,7 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   return (
     <div className="st-form">
       <label className="st-field">
-        <span>언제<small className="st-key">when</small></span>
+        <span>언제</span>
         <select
           value={kind}
           onChange={(e) =>
@@ -546,17 +562,17 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       </label>
       {kind === "cron" ? (
         <>
-          <Field label="시각 (cron)" k="cron" value={t.when?.cron ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "cron"], x))} />
-          <Field label="시간대" k="tz" value={t.when?.tz ?? ""} mono placeholder="Asia/Seoul" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "tz"], x))} />
+          <Field label="시각 — cron 식 (예: 0 9 * * * = 매일 9시)" k="cron" value={t.when?.cron ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "cron"], x))} />
+          <Advanced><Field label="시간대" k="tz" value={t.when?.tz ?? ""} mono placeholder="Asia/Seoul" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "tz"], x))} /></Advanced>
         </>
       ) : (
         <>
           <Field label="사건 이름" k="event" value={t.when?.event ?? ""} mono placeholder="relay.package.installed" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "event"], x))} />
-          <Field label="묶어서 기다릴 시간 (ms)" k="debounce_ms" value={t.when?.debounce_ms != null ? String(t.when.debounce_ms) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "debounce_ms"], x ? Number(x) : ""))} />
+          <Advanced open={t.when?.debounce_ms != null}><Field label="연달아 생기면 묶어서 기다릴 시간 (밀리초)" k="debounce_ms" value={t.when?.debounce_ms != null ? String(t.when.debounce_ms) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "debounce_ms"], x ? Number(x) : ""))} /></Advanced>
         </>
       )}
       <label className="st-field">
-        <span>무엇을<small className="st-key">then</small></span>
+        <span>무엇을</span>
         <select
           value={thenKind}
           onChange={(e) =>
@@ -572,7 +588,7 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       {thenKind === "agent" ? (
         <>
           <label className="st-field">
-            <span>누구를<small className="st-key">agent</small></span>
+            <span>누구를</span>
             <select value={t.then?.agent ?? ""} onChange={(e) => ctx.apply((d) => d.setIn(["triggers", idx, "then", "agent"], e.target.value))}>
               {(m.agents ?? []).map((a) => (
                 <option key={a.name} value={a.name}>
@@ -582,8 +598,8 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
             </select>
           </label>
           <Field label="깨울 때 건넬 말" k="prompt" value={t.then?.prompt ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "prompt"], x))} />
-          <Field label="결과를 보낼 곳 — 채널:대화 (선택)" k="delivery" value={t.then?.delivery ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "delivery"], x))} />
-          <Field label="열어 줄 화면 경로 (선택)" k="route" value={t.then?.route ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "route"], x))} />
+          <Field label="결과를 보낼 곳 — 채널이름:대화 (비우면 안 보냄)" k="delivery" value={t.then?.delivery ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "delivery"], x))} />
+          <Advanced open={!!t.then?.route}><Field label="열어 줄 화면 경로" k="route" value={t.then?.route ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "route"], x))} /></Advanced>
         </>
       ) : (
         <Field label="돌릴 기능" k="script" value={t.then?.script ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "script"], x))} />
@@ -733,7 +749,7 @@ function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { 
   const at = (i: number, k: string) => ["surfaces", "channels", idx, "credential", "fields", i, k];
   return (
     <div className="st-form">
-      <div className="rc-label">로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다<small className="st-key">credential.fields</small></div>
+      <div className="rc-label">로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다</div>
       {fields.map((f, i) => (
         <div key={i} className="item">
           <div className="bar">
@@ -793,7 +809,7 @@ function RequiresView({ ctx }: { ctx: SectionCtx }) {
         mono
         onCommit={(x) => ctx.apply((d) => set(d, ["requires", "os"], listField(x)))}
       />
-      <div className="rc-label">있어야 하는 명령줄 도구 — 전부 있어야 설치됩니다<small className="st-key">binaries</small></div>
+      <div className="rc-label">있어야 하는 명령줄 도구 — 전부 있어야 설치됩니다</div>
       {bins.map((b, i) => (
         <div key={b.name} className="st-file" style={{ cursor: "default" }}>
           <span className="st-file-path">{b.name}</span>

@@ -4,7 +4,7 @@ import { RELAY_HOME, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, type Manifest, type TriggerDecl } from "../supply/manifest.ts";
 import { postToChannel } from "./services.ts";
 import { runSession } from "./harness.ts";
-import { runScript, type HostBridge } from "./scripts.ts";
+import { runScript, localServiceIO, type HostBridge, type ServiceIO } from "./scripts.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
 
@@ -47,10 +47,13 @@ export class Ticker {
   // 에러를 내지 않는 실패라 장부 없이는 아무도 모른다.
   private stateFile = path.join(RELAY_HOME, "triggers.json");
 
-  constructor(getLedger: () => Ledger, hostBridge: HostBridge, authority: Authority = localAuthority(getLedger)) {
+  private service: ServiceIO;
+
+  constructor(getLedger: () => Ledger, hostBridge: HostBridge, authority: Authority = localAuthority(getLedger), service: ServiceIO = localServiceIO) {
     this.getLedger = getLedger;
     this.hostBridge = hostBridge;
     this.authority = authority;
+    this.service = service;
   }
 
   start(): void {
@@ -168,7 +171,7 @@ export class Ticker {
     void this.authority.audit("triggers", { pkg, trigger: t.id });
     const ledger = this.getLedger();
     if (t.then.script) {
-      runScript(ledger, pkg, t.then.script, { trigger: t.id }, { principal: this.authority.principal() }, this.hostBridge, this.authority).catch((e) =>
+      runScript(ledger, pkg, t.then.script, { trigger: t.id }, { principal: this.authority.principal() }, this.hostBridge, this.authority, this.service).catch((e) =>
         void this.authority.audit("triggers", { pkg, trigger: t.id, error: String(e) }),
       );
       return;

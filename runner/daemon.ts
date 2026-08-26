@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
@@ -8,19 +9,19 @@ import { spawn } from "node:child_process";
 import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./supply/ledger.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
-import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
+import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
-import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, type HostBridge } from "./runtime/scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
-import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, discardDraft, listDrafts, buildDraft, draftPath, historyDraft, restoreDraft } from "./supply/draft.ts";
+import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath, historyDraft, restoreDraft } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents } from "./runtime/view.ts";
-import { shellNav, storeLatest, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
+import { shellNav, storeLatest, homeDoc, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
@@ -111,11 +112,15 @@ export interface ApiOptions {
   /** 스폰의 env 반쪽 — 미지정이면 localIO(장부 HMAC·vault·홈 로그).
    *  임베더 장부에 secret 이 없으면 그 기본값의 토큰이 조용히 틀린다 */
   runner?: (ledger: Ledger) => RunnerIO;
+  /** 동사가 보는 몸 주소(ctx.service) — 미지정이면 localServiceIO(이 호스트의 docker/프로세스 몸).
+   *  임베더는 몸이 다른 pod(사람마다 다른 몸)에 있으므로 여기서 갈아 끼운다. 이것이 없던 동안
+   *  HTTP 동사 문·트리거·draft-run 은 임베더 몸을 모른 채 localhost 를 두드렸다(실측 2026-08-26) */
+  service?: ServiceIO;
   door?: ApiDoor;
 }
 
 // 브리지를 그대로 두고 권위 구현만 갈아 끼운다 (조립 지점: relay.ts daemon · createApi)
-export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority): HostBridge {
+export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority, service: ServiceIO = localServiceIO): HostBridge {
   return {
     registry: () => registryData(getLedger()),
     install: (dir, opts) => {
@@ -144,8 +149,22 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     draftDiff: (name) => diffDraft(name),
     draftCommit: (name, message) => commitDraft(name, message),
     draftValidate: (name) => validateDraft(name),
-    draftPublish: (name, opts) => {
+    draftPublish: async (name, opts) => {
       const l = getLedger();
+      // 임베더가 착지를 맡는 기판(Authority.publish) — 발행물은 여기 장부에 앉지 않는다. 스냅샷을
+      // 봉투로 굽고 넘기며, 설치는 그쪽의 별 걸음이다. 거부는 그대로 throw(스튜디오가 사유를 낸다)
+      if (authority.publish) {
+        const st = stageRelease(name, opts);
+        if ("published" in st) return { ...st, landed: "org" };
+        const env = packDir(st.path, path.join(os.tmpdir(), `relay-publish-${name}-${st.version}-${process.pid}.tgz`));
+        try {
+          const landing = await authority.publish({ name: st.name, version: st.version, digest: env.digest, file: env.file, manifest: st.manifest });
+          return { published: true, name: st.name, version: st.version, landed: "org", note: landing?.note, href: landing?.href };
+        } finally {
+          fs.rmSync(env.file, { force: true });
+          fs.rmSync(env.file + ".sig", { force: true });
+        }
+      }
       const r = publishDraft(l, name, opts);
       if (r.published && r.path && r.manifest) {
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
@@ -153,9 +172,9 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         stopServices(name);
         const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
-        return { ...r, manifest: undefined, services: notes };
+        return { ...r, manifest: undefined, services: notes, landed: "local" };
       }
-      return { ...r, manifest: undefined };
+      return { ...r, manifest: undefined, landed: "local" };
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),
@@ -175,7 +194,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     draftRun: (name, verb, input) =>
       // host 를 넘기지 않는다(null) — 시험 삼아 도는 코드에 ring-0 권능까지 주면
       // 미리보기가 설치·발행을 할 수 있는 자리가 된다. 맥락은 주되 권능은 주지 않는다
-      runScriptFrom(getLedger(), name, draftPath(name), verb, input, { principal: authority.principal() }, null, authority),
+      runScriptFrom(getLedger(), name, draftPath(name), verb, input, { principal: authority.principal() }, null, authority, service),
     // 굽기 — 설치본을 봉투 하나로 만들어 선반에 앉힌다.
     // 파일을 사람 손에 쥐여 주지 않는 것이 요점이다: 봉인(sha256)과 요구 범위가 함께
     // 계산된 상태로 선반에 남고, 등재 화면이 그 선반을 읽는다. 손으로 옮기는 순간
@@ -275,10 +294,10 @@ export function createApi(
         }
       }
       // 셸 홈 — 설치된 앱을 늘어놓는 런처. 앱 하나의 화면이 아니므로 패키지에 두지 않고
-      // 기판이 낸다(runtime/shell.ts HOME_DOC). 종전에는 여기서 콘솔 패키지로 302 했다
+      // 기판이 낸다(runtime/shell.ts homeDoc). 종전에는 여기서 콘솔 패키지로 302 했다
       if (p === "/" || p === "") {
         res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
-        return void res.end(HOME_DOC);
+        return void res.end(homeDoc(getLedger()));
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
 
@@ -595,7 +614,7 @@ export function createApi(
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);
       if (script && req.method === "POST") {
         const b = await readBody(req);
-        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority);
+        const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority, opts.service ?? localServiceIO);
         return void json(res, 200, { result });
       }
 
@@ -641,6 +660,24 @@ export function createApi(
   return server;
 }
 
+
+/**
+ * 위젯 번들 부재 판정 — 없으면 **부트 로그에** 처방을 남긴다.
+ *
+ * 404 핸들러에도 같은 처방이 있지만(위 /assets 분기) 그것은 읽는 사람이 없는 채널이다:
+ * 소비자가 `<script src>` 태그라 브라우저가 404 본문을 버린다. 사용자가 보는 것은 "채팅이
+ * 안 뜬다" 하나뿐이고, 원인은 devtools 네트워크 탭까지 내려가야 나온다. 그래서 판정을 **사람이
+ * 지금 보고 있는 터미널**로 옮긴다 — 바로 다음 줄이 그 페이지의 주소이므로, 열기 전에 읽는다.
+ *
+ * 죽이지 않는 이유: 번들은 채팅 표면의 전제일 뿐 데몬의 전제가 아니다. CLI·도구·트리거만 쓰는
+ * 기동에서 이것으로 문을 닫으면 없어도 되는 의존을 강제하는 것이다. 릴리스 번들에는 항상
+ * 들어 있으므로(release.yml build:widget) 이 줄이 뜨는 것은 개발 트리뿐이다.
+ */
+function widgetBundleNote(): string {
+  if (fs.existsSync(path.join(ASSETS_DIR, "chat-app.js"))) return "";
+  return "⚠ 채팅 위젯 번들이 없습니다(chat/dist — 빌드 산출물이라 갓 클론한 트리에는 없다).\n"
+    + "  콘솔의 채팅이 뜨지 않습니다: `npm run build:widget` 을 실행하세요.";
+}
 
 // ── 데몬 기동·종료 ───────────────────────────────────────────────────────────
 // 순서가 계약이다. 끊긴 턴 복구는 서비스 기동보다 **먼저** 와야 한다 — 도는 턴이 하나도
@@ -695,7 +732,13 @@ export function startDaemon(): void {
       console.error(`${name}: 서비스 기동 실패 - ${e}`);
     }
   }
+  // 원격 제어 상주 — 장부에 켜짐이 남은 패키지를 잇는다(서비스와 같은 자리, 문을 막지 않는다)
+  void resumeRemotes(daemonAuthority, localSessionIO(() => loadLedger()))
+    .then((notes) => { for (const n of notes) console.log(n); })
+    .catch((e) => console.error(`원격 제어 상주 재개 실패 - ${e}`));
   console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
+  const widget = widgetBundleNote();
+  if (widget) console.log(widget);
   console.log(`콘솔: ${API_URL}/pkg/system/view/`);
   // 종료 신호는 둘이다 — 사람이 내리는 Ctrl-C(SIGINT)와 기계가 내리는 종료(SIGTERM: kill·
   // pkill·시스템 종료·프로세스 관리자). 정리가 한쪽에만 걸려 있으면 다른 쪽으로 죽을 때
@@ -705,6 +748,7 @@ export function startDaemon(): void {
   const shutdown = (): void => {
     ticker?.stop();
     retireAllResidents();
+    stopAllRemotes();
     stopAll();
     fs.rmSync(pidFile, { force: true });
     process.exit(0);

@@ -89,6 +89,9 @@ jobs:
           #    이걸 사본으로 들고 있을 이유가 없다(매니페스트 BOM 이 요구하는 것은 "선언 경로에
           #    파일이 실재할 것"뿐이고, 실재는 전개로 성립한다). run 의 +x 는 tar 가 보존한다.
           tar -czf "out/relay-adapters-${TAG}.tgz" -C packages/system harness channels
+          # ⑥ 시스템 패키지 트리 — 임베더가 자기 카탈로그에 앉힐 콘솔. 빌드 산출(out·.next·node_modules)은
+          #    빼고 소스만(설치가 굽는다). 임베더는 여기에 자기 스킬 팩을 덧놓아 발행한다(조직판).
+          tar -czf "out/relay-system-${TAG}.tgz" --exclude node_modules --exclude out --exclude .next --exclude .DS_Store -C packages system
           (cd out && sha256sum ./*.tgz > SHA256SUMS)
           cat out/SHA256SUMS
 
@@ -105,6 +108,7 @@ jobs:
             printf -- '- relay-chat-sdk-%s.tgz : @relay/chat npm pack — 위젯 클라이언트 SDK(file: 사본의 대체)\n' "$TAG"
             printf -- '- relay-runner-%s.tgz : runner 전량 + relay.manifest.yaml — 임베더의 runner 스냅샷\n' "$TAG"
             printf -- '- relay-contract-%s.tgz : @relay/contract npm pack — 판정기·권위 계약·MCP 문(.js+.d.ts) 임베더 계약\n' "$TAG"
+            printf -- '- relay-system-%s.tgz : 시스템 패키지 트리(소스) — 임베더가 자기 카탈로그에 앉힐 콘솔\n' "$TAG"
             printf -- '- relay-adapters-%s.tgz : 하네스 변형(run·icon) + 채널 어댑터 실물 — 임베더 저작 트리의 전개 원천\n' "$TAG"
             printf -- '- SHA256SUMS : 아티팩트 digest — 소비자 lock 의 기록 원천\n'
           } > out/NOTES.md

@@ -45,6 +45,16 @@ jobs:
       - name: Test the chat widget
         run: npm run test:widget
 
+      # 타입도 테스트도 **번들을 굽지 않는다** — 그래서 esbuild 가 거절하는 변경(타입만으로는
+      # 해석되는 import, 플랫폼 불일치, 자산 참조)은 CI 를 통과해 릴리스 컷에서야 드러났다.
+      # 여기서 굽는 것은 그 자리를 앞당기는 일이자, 갓 클론한 트리가 번들을 **만들 수 있다**는
+      # 증명이다(번들은 gitignore 라 부재가 정상이고, 만들 수 있는지는 아무도 안 물었다).
+      # 비용은 사실상 0 이다: 위 두 단계가 이미 chat/ 의존을 설치했고 빌드는 100ms 대다.
+      - name: Build the chat widget
+        run: npm run build:widget
+
+      # validate 는 위 빌드 **뒤에** 온다 — 위젯 번들 낡음 판정(tools/validate-all.ts
+      # widgetBuildIssues)이 갓 구운 산출물을 봐야 소스와 번들이 같은 커밋임을 확인한다.
       - name: Validate every package manifest
         run: npm run validate
 

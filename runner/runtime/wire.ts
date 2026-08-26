@@ -14,19 +14,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { RELAY_HOME, sessionDir, sessionPath, saveLedger, type Ledger } from "../supply/ledger.ts";
-import {
-  runSession,
-  cancelSession,
-  autoTitleSession,
-  deliverAnswer,
-  deliverSteer,
-  isSessionBusy,
-  retireResident,
-  retireResidents,
-  localSessionIO,
-  type SessionIO,
-  type SessionResult,
-} from "./harness.ts";
+import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
 import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
 import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX } from "../protocol.ts";
@@ -1198,6 +1186,40 @@ export const WIRE_ROUTES: WireRoute[] = [
         } catch { /* models 불달 — 판정 불가 */ }
       }
       json(res, 200, { ok: true, model: cfg.model, effort: cfg.effort, harness: cfg.harness, known, ...(cfg.ready ? { ready: cfg.ready } : {}) });
+    },
+  },
+
+  // ── 원격 제어 상주(§5.5-30-b) — capability `remote` 를 선언한 하네스에만 있는 문 ──
+  {
+    methods: ["GET"],
+    scope: "base",
+    pattern: /^\/harness\/remote$/,
+    handler: async ({ deps, io, res, pkg }) => {
+      requirePkg(deps.getLedger(), pkg);
+      const caps = await io.harnessCapabilities(pkg);
+      if (!caps?.includes("remote")) throw new WireError(404, "E_NO_REMOTE", `원격 제어를 지원하지 않는 하네스입니다: ${pkg}`);
+      json(res, 200, { ok: true, ...remoteStatus(pkg) });
+    },
+  },
+  {
+    methods: ["POST"],
+    scope: "base",
+    pattern: /^\/harness\/remote$/,
+    handler: async ({ deps, io, req, res, pkg }) => {
+      requirePkg(deps.getLedger(), pkg);
+      const caps = await io.harnessCapabilities(pkg);
+      if (!caps?.includes("remote")) throw new WireError(404, "E_NO_REMOTE", `원격 제어를 지원하지 않는 하네스입니다: ${pkg}`);
+      const b = await readBody(req);
+      if (b.enabled) {
+        try {
+          await startRemote(deps.authority, io.session, pkg);
+        } catch (e) {
+          throw new WireError(400, "E_BAD_REQUEST", String(e instanceof Error ? e.message : e));
+        }
+      } else {
+        stopRemote(pkg, true);
+      }
+      json(res, 200, { ok: true, ...remoteStatus(pkg) });
     },
   },
 

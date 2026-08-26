@@ -16,14 +16,14 @@
 // 판정(무슨 얼굴인가·어디로 가는가)은 **여기 서버 쪽**에 있다. 스크립트는 /shell/nav 가 준
 // 항목을 그리기만 한다 — 마운트 문법(/pkg/…)도 얼굴 규칙도 클라가 조립하지 않는다
 // (client-protocol §2-6 과 같은 규율). 콘솔 화면도 같은 응답을 읽어 판정이 갈라지지 않는다.
-import { STORE_INDEX_URL, type Ledger } from "../supply/ledger.ts";
+import { STORE_INDEX_URL, consoleInstall, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
 import { fetchStoreIndex } from "../supply/registry.ts";
 
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
- *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. */
-const CONSOLE = "system";
-const consoleHref = (rest = ""): string => `/pkg/${CONSOLE}/view/${rest}`;
+ *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. 설치 이름은 장부가 답한다
+ *  (ledger.ts consoleInstall — 1인 기판 `system`, 임베더는 다를 수 있다) */
+const consoleHref = (ledger: Ledger, rest = ""): string => `/pkg/${encodeURIComponent(consoleInstall(ledger))}/view/${rest}`;
 
 export type Face = "view" | "chat" | "live" | "parts";
 
@@ -81,6 +81,18 @@ export interface ShellNav {
   /** 스토어 내 서재 주소 — 새 판 배지의 업데이트 버튼이 여기로 간다. 설치 티켓은 서재가
    *  발급하므로(로그인 세션) 기판이 관문을 새로 만들지 않는다. store 와 같은 조건으로 null */
   library: string | null;
+  /** 크롬의 얼굴 — 이름·마크·강조색 셋만(additive, 2026-08-26). 미선언 = "Relay" 와 기본 색.
+   *  임베더(조직 기판)가 자기 브랜딩을 싣는 자리다. 팔레트 전체는 열지 않는다 — 크롬은 남의
+   *  토큰에 얹지 않는다는 규율(③)과 양립하는 최소 셋이다 */
+  brand?: ShellBrand;
+}
+
+export interface ShellBrand {
+  name: string;
+  /** 마크 이미지 주소 — null 이면 이름만 */
+  logo: string | null;
+  /** 강조색(CSS 색) — null 이면 기본 */
+  accent: string | null;
 }
 
 /**
@@ -104,11 +116,11 @@ export function facesOf(m: Manifest): Face[] {
   return all.length ? all : ["parts"];
 }
 
-function hrefFor(pkg: string, face: Face): string {
+function hrefFor(ledger: Ledger, pkg: string, face: Face): string {
   // 화면·대화는 기판이 직접 서빙하는 문서다. 상주·부품은 서빙할 문서가 없으므로 콘솔 패키지의
   // 페이지로 간다 — 기판이 UI 를 굽지 않는다는 규율(굽는 것은 대화 폴백과 이 셸 두 장뿐)
   if (face === "view" || face === "chat") return `/pkg/${encodeURIComponent(pkg)}/view/`;
-  return consoleHref(`?p=${encodeURIComponent(pkg)}&face=${face === "live" ? "live" : "detail"}`);
+  return consoleHref(ledger, `?p=${encodeURIComponent(pkg)}&face=${face === "live" ? "live" : "detail"}`);
 }
 
 /** semver 앞섬 판정 — a 가 b 보다 새 판인가. 프리릴리스 꼬리는 무시한다(등재 실측이 x.y.z) */
@@ -147,8 +159,8 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   for (const [pkg, rec] of Object.entries(ledger.packages)) {
     const base = {
       pkg,
-      href: hrefFor(pkg, "parts"),
-      detail: hrefFor(pkg, "parts"),
+      href: hrefFor(ledger, pkg, "parts"),
+      detail: hrefFor(ledger, pkg, "parts"),
       resident: live.has(pkg),
       ring0: rec.ring === 0,
     };
@@ -179,7 +191,7 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
       icon: m.icon ? `/pkg/${encodeURIComponent(pkg)}/asset/${m.icon}` : null,
       face,
       faces,
-      href: hrefFor(pkg, face),
+      href: hrefFor(ledger, pkg, face),
       view: face === "view" || face === "chat" ? `/pkg/${encodeURIComponent(pkg)}/view/` : null,
       error: null,
       update,
@@ -194,7 +206,7 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
   const pending = drafts
     .filter((d) => !d.installed)
-    .map(({ name, version, changes }) => ({ name, version, changes, href: consoleHref(`?p=${encodeURIComponent(name)}&face=detail`) }));
+    .map(({ name, version, changes }) => ({ name, version, changes, href: consoleHref(ledger, `?p=${encodeURIComponent(name)}&face=detail`) }));
   return {
     items,
     home: "/",
@@ -221,14 +233,18 @@ export function injectShell(html: string): string {
 // 홈에도 대화 위젯이 선다 — "말만 하면 된다" 는 이 제품의 대표 동선인데, 종전에는 첫 화면에
 // 말할 곳이 없었다(채팅은 콘솔 설정 화면과 앱 화면에만). 좌표는 콘솔 패키지의 것: 홈의 대화
 // 상대는 기판 관리 셸 에이전트다(view.ts viewContextTag 와 같은 주입 문법)
-export const HOME_DOC = injectShell(`<!doctype html>
+export function homeDoc(ledger: Ledger): string {
+  const console = consoleInstall(ledger);
+  const enc = encodeURIComponent(console);
+  return injectShell(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Relay</title><link rel="icon" href="/pkg/${CONSOLE}/view/icon.svg">
+<title>Relay</title><link rel="icon" href="/pkg/${enc}/view/icon.svg">
 <link rel="stylesheet" href="/assets/chat-app.css">
 </head><body><div id="relay-home"></div>
-<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + CONSOLE)},root:"",instanceId:${JSON.stringify(CONSOLE)}};</script>
+<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + enc)},root:"",instanceId:${JSON.stringify(console)}};</script>
 <script type="module" src="/assets/chat-app.js" async></script>
 </body></html>`);
+}
 
 // ── 사이드바·런처 본체(외부 자산 0) ────────────────────────────────────────
 // 색은 패키지 문서의 팔레트를 빌리지 않는다 — 남의 토큰에 얹으면 패키지마다 다른 크롬이 된다.
@@ -259,11 +275,13 @@ function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace
 var home = document.getElementById("relay-home");
 
 var css = [
-':root{--relay-side:' + (collapsed ? RAIL : W) + 'px}',
+':root{--relay-side:' + (collapsed ? RAIL : W) + 'px;--relay-accent:#0f766e;--relay-accent-deep:#115e59;--relay-accent-soft:rgba(13,148,136,.1)}',
 'body{margin-left:var(--relay-side);transition:margin-left .16s ease}',
 '#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fff;border-right:1px solid #e6e9ec;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
-'#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap}',
+'#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
+'#rlys .hd img{height:22px;width:auto;max-width:150px;object-fit:contain;display:block;flex:none}',
+'#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
 '#rlys .hd .fold:hover{background:#eef0f2;color:#5c6570}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
@@ -276,9 +294,9 @@ var css = [
 '#rlys .it.mk .ic{color:#fff}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
 '#rlys .it:hover{background:#eef0f2}',
-'#rlys .it.on{background:rgba(13,148,136,.1);color:#115e59;font-weight:600}',
+'#rlys .it.on{background:var(--relay-accent-soft);color:var(--relay-accent-deep);font-weight:600}',
 '#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#5c6570;border-radius:5px;overflow:hidden}',
-'#rlys .it.on .ic{color:#0f766e}',
+'#rlys .it.on .ic{color:var(--relay-accent)}',
 '#rlys .it .ic svg{width:15px;height:15px}',
 '#rlys .it .ic img{width:18px;height:18px;border-radius:4px;object-fit:cover;display:block}',
 '#rlys .it .ic.ltr{background:#eef0f2;font:700 11px inherit;color:#5c6570}',
@@ -304,11 +322,11 @@ var css = [
 '#relay-home *{box-sizing:border-box}',
 '#relay-home .bt{border:1px solid #e6e9ec;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
 '#relay-home .bt:hover{background:#eef0f2}',
-'#relay-home .bt.ac{background:#0f766e;border-color:#0f766e;color:#fff}',
-'#relay-home .bt.ac:hover{background:#115e59}',
+'#relay-home .bt.ac{background:var(--relay-accent);border-color:var(--relay-accent);color:#fff}',
+'#relay-home .bt.ac:hover{background:var(--relay-accent-deep)}',
 '#relay-home .gr{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px;padding:18px 20px}',
 '#relay-home .cd{background:#fff;border:1px solid #e6e9ec;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}',
-'#relay-home .cd:hover{border-color:#0f766e}',
+'#relay-home .cd:hover{border-color:var(--relay-accent)}',
 '#relay-home .cd .go{display:flex;flex-direction:column;gap:8px;text-decoration:none;color:inherit}',
 '#relay-home .cd .tp{display:flex;align-items:center;gap:10px}',
 '#relay-home .cd .av{width:30px;height:30px;border-radius:8px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#eef0f2;font:700 13px inherit;color:#5c6570;overflow:hidden}',
@@ -317,10 +335,10 @@ var css = [
 '#relay-home .cd b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '#relay-home .cd .ver{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#98a1aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 // 새 판 배지 — 버전 라인의 화살표 칩(.nv) · 푸터의 업데이트 버튼(.upb) · 상단 요약 배너(.ub)
-'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#115e59;background:rgba(13,148,136,.1)}',
-'#relay-home .cd .upb{background:#0f766e;color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
-'#relay-home .cd .upb:hover{background:#115e59}',
-'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:rgba(13,148,136,.08);border:1px solid rgba(13,148,136,.25);border-radius:10px;font-size:12.5px;color:#115e59}',
+'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--relay-accent-deep);background:var(--relay-accent-soft)}',
+'#relay-home .cd .upb{background:var(--relay-accent);color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
+'#relay-home .cd .upb:hover{background:var(--relay-accent-deep)}',
+'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:var(--relay-accent-soft);border:1px solid var(--relay-accent);border-radius:10px;font-size:12.5px;color:var(--relay-accent-deep)}',
 '#relay-home .ub b{font-weight:800}',
 '#relay-home .ub .gap{flex:1}',
 '#relay-home .ub a{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}',
@@ -418,13 +436,27 @@ function item(href, iconHtml, label, opts){
   return a;
 }
 
+function applyBrand(nav){
+  var b = nav && nav.brand;
+  if (!b || !b.accent) return;
+  var r = document.documentElement.style;
+  r.setProperty("--relay-accent", b.accent);
+  r.setProperty("--relay-accent-deep", "color-mix(in srgb, " + b.accent + " 82%, black)");
+  r.setProperty("--relay-accent-soft", "color-mix(in srgb, " + b.accent + " 12%, white)");
+  if (b.name) document.title = document.title === "Relay" ? b.name : document.title;
+}
+
 function renderSide(nav, err){
   var here = current();
+  applyBrand(nav);
   el.textContent = "";
 
   var hd = document.createElement("div");
   hd.className = "hd";
-  hd.innerHTML = '<span>Relay</span>';
+  // 얼굴 — 기판이 nav.brand 로 준 이름·마크(임베더 브랜딩). 없으면 "Relay"
+  var brand = nav && nav.brand;
+  hd.innerHTML = (brand && brand.logo ? '<img src="' + esc(brand.logo) + '" alt="">' : '') +
+    '<span>' + esc(brand && brand.name ? brand.name : "Relay") + '</span>';
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";

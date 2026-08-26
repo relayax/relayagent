@@ -17,13 +17,13 @@ case "$VERB" in
     LOGIN="$LOGIN" EFFORT="$EFFORT" node --input-type=module -e '
 let a = {};
 try { a = JSON.parse(process.env.LOGIN || "{}"); } catch { /* 형식이 바뀌면 계정 미상으로 강등 */ }
-const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer"];
+const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer", "remote"];
 if (process.env.EFFORT === "1") caps.push("effort");
 process.stdout.write(JSON.stringify({
   name: "claude-code",
   provider: "anthropic",
   protocol: 3,
-  verbs: ["session", "serve", "setup", "login", "models", "commands", "info"],
+  verbs: ["session", "serve", "setup", "login", "remote", "models", "commands", "info"],
   capabilities: caps,
   account: a.loggedIn ? { email: a.email ?? null, plan: a.subscriptionType ?? null, method: a.authMethod ?? null } : null,
 }));'
@@ -75,6 +75,16 @@ process.stdout.write(process.env.VER + "\n" + who);'; then
       claude auth logout >/dev/null 2>&1 || true
     fi
     exec claude auth login
+    ;;
+  remote)
+    # 원격 제어 상주(harness-protocol §remote) — claude.ai/모바일 앱이 이 작업 무대 위의 세션을
+    # 원격 조종한다. 자격은 login 동사와 같은 도구 소유 로그인(setup-token/OAuth env 는
+    # inference-only 라 RC 가 거절한다 — 실측). 기판이 cwd=workspace 로 띄우고 수명을 쥔다.
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "claude CLI 없음: npm install -g @anthropic-ai/claude-code" >&2
+      exit 3
+    fi
+    exec claude remote-control
     ;;
   models)
     # 정본 = Anthropic /v1/models. 자격이 기판 손(ANTHROPIC_API_KEY)에 있을 때만 닿는다 —
@@ -442,8 +452,10 @@ function resetTick() {
 const tasks = new Map();   // task_id -> note
 let sawTaskDone = false;   // 자발 턴 승격 게이트 — 유령 턴 방지 (relayos 실측 계보)
 
-// 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약)
-let ask = null;            // { reqId, input, timer }
+// 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약).
+// 시계는 없다: 답이 올 때까지 기다린다(harness-protocol §Lifecycle). 기다림을 끊는 것은
+// 사람뿐이다 — 답하거나, Stop(cancel) 하거나.
+let ask = null;            // { reqId, input }
 
 // 죽은 resume 포인터는 복구 대상이다. 계약은 "있으면 잇고, 없으면 새로" — 없는 과거가
 // 현재 턴을 죽이면 그 슬롯은 영영 실패를 반복한다 (실측 2026-08-09, 2.1.153)
@@ -552,7 +564,6 @@ function askSettle(answers, denyMsg) {
   if (!ask) return;
   const a = ask;
   ask = null;
-  clearTimeout(a.timer);
   if (!answers || !answers.length) {
     controlRespond(a.reqId, { behavior: "deny", message: denyMsg ?? "사용자가 응답을 취소했습니다 — 질문 없이 진행하세요." });
     return;
@@ -575,13 +586,18 @@ function onControlRequest(j) {
       controlRespond(reqId, { behavior: "deny", message: "이미 대기 중인 질문이 있습니다 — 한 번에 하나씩 질문하세요." });
       return;
     }
-    ask = {
-      reqId,
-      input: req.input ?? {},
-      timer: setTimeout(() => askSettle(null, "사용자가 10분 내에 응답하지 않았습니다 — 합리적인 기본값으로 진행하거나 다음 턴에서 다시 확인하세요."), 600000),
-    };
-    ask.timer.unref?.();
-    emit({ event: "ask", id: reqId, questions: Array.isArray(req.input?.questions) ? req.input.questions : [] });
+    ask = { reqId, input: req.input ?? {} };
+    // 이 질문이 앉을 카드 — 같은 질문의 tool_use 블록이 수십 ms 앞서 지나갔고(실측 장부), 그
+    // id 를 같이 실어야 화면이 카드를 하나로 세운다. reqId 는 control 채널 좌표라 tool_use id 와
+    // 다르므로, 앵커 없이 보내면 소비자가 그 id 로 두 번째 카드를 연다(2026-08-26 실사고).
+    let anchor = "";
+    for (const [id, t] of tools) if (t.name === "AskUserQuestion") anchor = id;
+    emit({
+      event: "ask",
+      id: reqId,
+      ...(anchor ? { tool: anchor } : {}),
+      questions: Array.isArray(req.input?.questions) ? req.input.questions : [],
+    });
     return;
   }
   if (req.subtype === "can_use_tool") {

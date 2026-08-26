@@ -63,10 +63,10 @@ const LIST_SECS = new Set(["triggers", "scripts", "edges", "services", "surfaces
 
 const SETTING_SECS: { k: Key; sec: string; title: string; add?: string }[] = [
   { k: "needs", sec: "requires", title: "필요한 것", add: "실행파일" },
-  { k: "host", sec: "host_methods", title: "기판 기능 허용", add: "기능" },
 ];
 /** 고급 — 보통은 비어 있다. 비면 섹션이 아니라 줄 하나로 선다 */
-const ADVANCED_SECS: { k: Key; sec: string; title: string }[] = [
+const ADVANCED_SECS: { k: Key; sec: string; title: string; add?: string }[] = [
+  { k: "host", sec: "host_methods", title: "기판 기능 허용", add: "기능" },
   { k: "org", sec: "org", title: "조직 설정" },
   { k: "files", sec: "files", title: "기타 파일" },
 ];
@@ -101,7 +101,7 @@ function creatablesFor(sec: string): Creatable[] {
 }
 
 /** ＋ 추가 — 눌린 자리 아래 종류 메뉴(스크린샷의 Add 메뉴). 바깥을 누르거나 Esc 로 닫는다 */
-function AddMenu({ sec, title, m, files, onPick, onAsk }: { sec: string; title: string; m: Manifest; files: string[]; onPick: (c: Creatable) => void; onAsk: (t: string) => void }) {
+function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; title: string; label?: string; m: Manifest; files: string[]; onPick: (c: Creatable) => void; onAsk: (t: string) => void }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -208,6 +208,7 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
   // ── 목록 ─────────────────────────────────────────────────────────────────
   const engine = byKey.get("engine")?.items[0]?.text;
   const helpers = itemsOf("agents").filter((a) => a.id !== landing);
+  const agentItems = (s: { sec: string }) => (s.sec === "agents" ? helpers : itemsOf(s.sec));
 
   const section = (s: { k: Key; sec: string; title: string; add?: string }, items: SectionItem[], row: Row | undefined) => {
     // 열린 항목이 있는 섹션은 접혀 있어도 펼쳐 보인다 — 고치는 줄이 안 보이면 안 된다
@@ -287,7 +288,18 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
               <p className="ap-empty">대화 없음 — 에이전트를 하나 만들면 이 화면에서 대화할 수 있습니다</p>
             )}
           </section>
-          {AGENT_SECS.map((s) => section(s, s.sec === "agents" ? helpers : itemsOf(s.sec), byKey.get(s.k)))}
+          {/* 비어 있는 섹션은 "아직 없음" 네 줄 대신 맨 아래 한 묶음으로 — 있는 것부터 보인다 */}
+          {AGENT_SECS.filter((s) => agentItems(s).length || open.sec === s.sec).map((s) => section(s, agentItems(s), byKey.get(s.k)))}
+          {AGENT_SECS.some((s) => !agentItems(s).length && open.sec !== s.sec) ? (
+            <section className="ap-sec ap-more">
+              <div className="ap-sec-h"><span className="ap-sec-t plain"><span>더 붙일 수 있는 것</span></span></div>
+              <div className="ap-chips">
+                {AGENT_SECS.filter((s) => !agentItems(s).length && open.sec !== s.sec).map((s) => (
+                  <AddMenu key={s.sec} sec={s.sec} title={s.add} label={s.title} m={m} files={files} onPick={onPick} onAsk={onAsk} />
+                ))}
+              </div>
+            </section>
+          ) : null}
         </>
       ) : (
         <>
@@ -310,6 +322,8 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
             {slot("identity", null)}
           </section>
           {SETTING_SECS.map((s) => section(s, itemsOf(s.sec), byKey.get(s.k)))}
+          <details className="ap-advanced" open={ADVANCED_SECS.some((s) => open.sec === s.sec)}>
+          <summary>고급 — 개인 사용에서는 보통 손대지 않습니다</summary>
           {ADVANCED_SECS.map((s) => {
             const items = itemsOf(s.sec);
             // 비어 있지 않으면 보통 섹션, 비면 줄 하나 — "없음" 이 두 번 서던 자리
@@ -318,13 +332,14 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
                 <button type="button" className="ap-item ap-adv" aria-expanded={isOpen(s.sec, null)} onClick={() => toggle(s.sec, null)}>
                   <Icon k={s.k} />
                   <span className="ap-item-t">{s.title}</span>
-                  <span className="ap-item-s">없음</span>
+                  <span className="ap-item-s">{s.sec === "host_methods" ? "제한 없음" : "없음"}</span>
                   <Chevron />
                 </button>
                 {slot(s.sec, null)}
               </div>
             );
           })}
+          </details>
           {links ? <div className="ap-links">{links}</div> : null}
           {danger ? (
             <section className="ap-sec ap-danger">

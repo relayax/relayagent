@@ -3,8 +3,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, parseDocument } from "yaml";
-import { packagesPath, saveLedger, type Ledger } from "./ledger.ts";
+import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from "yaml";
+import { packagesPath, saveLedger, consoleInstall, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
@@ -172,9 +172,15 @@ export interface OpenResult {
 export function openDraft(
   ledger: Ledger,
   name: string,
-  opts: { files?: Record<string, string>; seedHarness?: SeedHarness[] } = {},
+  opts: { files?: Record<string, string>; seedHarness?: SeedHarness[]; manifest?: Record<string, unknown> } = {},
 ): OpenResult {
   assertSlug(name);
+  // 매니페스트 객체 → relay.yaml 은 기판이 적는다. 동사(system draft-open)가 yaml 을 수입하면
+  // 설치본 트리 위에서 그 의존이 풀리지 않는다(실측 2026-08-26: 임베더 pod 의 store 마운트) —
+  // 동사는 파일이 곧 동사이고 의존이 없다는 계약을 시스템 패키지도 지킨다
+  if (opts.manifest && !opts.files?.["relay.yaml"]) {
+    opts = { ...opts, files: { ...(opts.files ?? {}), "relay.yaml": stringifyYaml(opts.manifest) } };
+  }
   const droot = draftPath(name);
   const existed = fs.existsSync(droot);
   let from: OpenResult["from"] = "existing";
@@ -216,7 +222,9 @@ export function openDraft(
 }
 
 function systemRoot(ledger: Ledger): string {
-  const rec = ledger.packages["system"];
+  // 콘솔의 설치 이름은 기판마다 다르다(ledger.ts consoleInstall) — 상수 "system" 을 박으면 임베더에서
+  // 하네스 템플릿이 "없음"으로 떨어진다
+  const rec = ledger.packages[consoleInstall(ledger)];
   if (rec && fs.existsSync(rec.path)) return rec.path;
   return path.join(RUNNER_DIR, "..", "..", "packages", "system");
 }
@@ -436,6 +444,22 @@ export interface PublishResult {
   note?: string;
 }
 
+/** 스테이지할 것이 없다 — 변경도 새 버전 지정도 없음 */
+export interface NotStaged {
+  published: false;
+  name: string;
+  note: string;
+}
+
+/** 판정을 통과해 스냅샷까지 뜬 릴리스 — 아직 어디에도 앉지 않았다(장부 무변) */
+export interface StagedRelease {
+  name: string;
+  version: string;
+  /** 불변 스냅샷(releases/<이름>/<버전>) */
+  path: string;
+  manifest: Manifest;
+}
+
 /**
  * 판정 통과 스냅샷만 실행본이 된다. 순서가 계약이다:
  * 버전 확정(자동 patch 범프) → 판정 + requires + conform → 커밋 + 태그 → 스냅샷 → 장부 전환.
@@ -444,6 +468,18 @@ export interface PublishResult {
  * 서비스 재기동은 데몬 소유라 여기서 하지 않는다 — 브리지가 publish 후 stop/start 를 잇는다.
  */
 export function publishDraft(ledger: Ledger, name: string, opts: { version?: string } = {}): PublishResult {
+  const staged = stageRelease(name, opts);
+  if ("published" in staged) return staged;
+  return { published: true, ...staged, ...landRelease(ledger, staged) };
+}
+
+/**
+ * 발행의 앞 절반 — 버전 확정 → 판정 + requires + conform → 커밋 + 태그 → 스냅샷. 장부는 건드리지
+ * 않는다. 뒤 절반(어디에 앉히는가)이 갈라지는 자리라 둘로 나눴다: 1인 기판은 landRelease 로 같은
+ * 데몬의 장부에 앉히고(저작자 = 사용자), 임베더는 Authority.publish 로 자기 유통망에 올린다.
+ * 변경도 새 버전 지정도 없으면 스테이지할 것이 없다 — published:false 로 돌려준다.
+ */
+export function stageRelease(name: string, opts: { version?: string } = {}): StagedRelease | NotStaged {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
@@ -488,7 +524,18 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
 
   const snapshot = path.join(relRoot, version);
   copyTree(droot, snapshot, buildOutSkip(droot));
+  return { name, version, path: snapshot, manifest: m };
+}
 
+/**
+ * 발행의 뒤 절반(1인 기판) — 장부 전환 + 하네스 재선출 + 표면 굽기. 장부 전환은 rec.path 만
+ * 바꾼다 — ring, workspace, model, harness, dirBindings 는 결재·설정이라 재발행이 지우면 안 된다.
+ */
+export function landRelease(
+  ledger: Ledger,
+  staged: StagedRelease,
+): { fresh: boolean; setup: PublishResult["setup"]; build: BuildResult | null } {
+  const { name, path: snapshot, manifest: m } = staged;
   const rec = ledger.packages[name];
   const fresh = !rec;
   if (rec) rec.path = snapshot;
@@ -516,7 +563,7 @@ export function publishDraft(ledger: Ledger, name: string, opts: { version?: str
   // 스튜디오에서 발행하면 번들이 없는 스냅샷이 떠서 소비자 문서의 import 가 503 을 받았다 —
   // 설치·재빌드(buildSurfaces)와 발행이 서로 다른 것을 구운 자리다.
   const build = buildSurfaces(name, snapshot, m) ?? null;
-  return { published: true, name, version, path: snapshot, manifest: m, fresh, setup, build };
+  return { fresh, setup, build };
 }
 
 /**

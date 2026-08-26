@@ -22,7 +22,8 @@ export interface HostBridge {
   /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다 */
   dispatch(provider: string, mission: string, payload: string, consumer?: string): Promise<string>;
   // 수정 레이어 (draft.ts). 설치본은 실행 중이라 직접 만지지 않는다 — 편집은 draft, 반영은 publish
-  draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[] }): unknown;
+  /** manifest = 새 스캐폴드의 매니페스트 객체 — 기판이 relay.yaml 로 적는다(동사는 yaml 을 모른다) */
+  draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[]; manifest?: Record<string, unknown> }): unknown;
   draftRead(name: string, file?: string): unknown;
   /** base = 파일별 마지막 읽기 지문(draft-read 의 hash) — 실으면 그 사이 다른 손의 수정을
    *  E_CONFLICT 로 판정한다(동시 편집 방어, opt-in). null = 없는 파일로 알고 있다 */
@@ -299,7 +300,7 @@ export function makeCtx(
       if (!provider) throw new Error(`E_NO_PROVIDER: edge provider 미설치 — ${ref} (edges[] 선언의 provider 가 장부에 없습니다)`);
       return {
         provider,
-        call: (verb, args) => callEdgeTool(ledger, authority, pkg, provider, verb, args ?? {}, hostBridge, caller.agent, chain),
+        call: (verb, args) => callEdgeTool(ledger, authority, pkg, provider, verb, args ?? {}, hostBridge, caller.agent, chain, io),
       };
     },
     dispatch: (provider, mission, payload) => {
@@ -328,6 +329,7 @@ export async function callEdgeTool(
   host: HostBridge | null,
   agent?: string,
   chain: string[] = [],
+  io: ServiceIO = localServiceIO,
 ): Promise<unknown> {
   if (chain.includes(provider)) {
     throw new Error(`E_EDGE_CYCLE: 순환 소비 — ${[...chain, provider].join(" -> ")}`);
@@ -350,7 +352,7 @@ export async function callEdgeTool(
   //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
   const identity = { principal: authority.principal(), agent };
   if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
-  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, localServiceIO, chain);
+  if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, io, chain);
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 

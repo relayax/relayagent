@@ -102,6 +102,8 @@ export interface PkgRecord {
   /** 추론 강도 — RELAY_EFFORT 로 전달. 어댑터가 모르는 값은 무시한다 (capabilities: effort) */
   effort?: string;
   harness?: string;
+  /** 원격 제어 상주 켜짐 — 데몬 재기동이 잇는다(harness.ts remote) */
+  remote?: boolean;
   dirBindings?: Record<string, string>;
   origin?: PkgOrigin;
 }
@@ -212,3 +214,26 @@ export function expandHome(p: string): string {
 }
 
 export const PRINCIPAL = os.userInfo().username;
+
+/** 콘솔(시스템) 패키지의 매니페스트 이름 — 설치 이름이 아니다 */
+export const CONSOLE_PKG_NAME = "@relay/system";
+
+/**
+ * 콘솔의 **설치 이름** — 1인 기판은 `system`(relay install packages/system)이지만 임베더는 다른
+ * 이름으로 앉힌다(relayos: 패키지 이름 그대로 `@relay/system`). 장부를 훑어 매니페스트 이름이
+ * 콘솔인 설치를 찾고, 없으면 관례 `system`. 이름을 상수로 박으면 임베더에서 하네스 템플릿·콘솔
+ * 주소가 조용히 어긋난다(실측 2026-08-26).
+ */
+export function consoleInstall(ledger: Ledger): string {
+  for (const [name, rec] of Object.entries(ledger.packages)) {
+    if (name === "system") return name;
+    try {
+      const doc = fs.readFileSync(path.join(rec.path, "relay.yaml"), "utf8");
+      const m = /^name:\s*["']?(@[^"'\s]+)["']?\s*$/m.exec(doc);
+      if (m && m[1] === CONSOLE_PKG_NAME) return name;
+    } catch {
+      /* 판정 실패한 설치 — 콘솔 후보가 아니다 */
+    }
+  }
+  return "system";
+}

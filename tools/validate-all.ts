@@ -88,6 +88,32 @@ function componentsBuildIssues(pkgDir: string): string[] {
   ];
 }
 
+/**
+ * widgetBuildIssues — 채팅 위젯 번들의 낡음 판정. view·components 와 **같은 사고의 세 번째
+ * 얼굴**인데, 앞의 둘과 달리 지금까지 판정이 없었다: 이 루프는 `packages/*` 를 도는데 위젯은
+ * 패키지가 아니라 `chat/` 에 살아서 구조적으로 순회 밖이었다.
+ *
+ * 축은 낡음 하나다. **부재는 여기서 말하지 않는다** — view 와 같은 이유(갓 클론·CI 에는 없고
+ * 부재는 고장이 아니다)에 더해, 부재를 아는 가장 좋은 자리가 따로 있기 때문이다: 데몬 부트
+ * (daemon.ts widgetBundleNote). 거기는 "지금 채팅을 서빙하려는 참" 이라는 맥락이 있고 여기는
+ * 없다 — 러너만 고치는 사람에게 위젯 미빌드로 낙방을 주면 판정이 소음이 된다.
+ *
+ * 비교 입력을 `chat/src` 로 한정한 이유: `chat/` 전체를 걸면 package-lock.json 이 `npm install`
+ * 마다 갱신되어 소스를 한 줄도 안 고친 트리가 "낡았다" 로 낙방한다. 매번 틀리는 판정은 사람이
+ * 무시하는 법을 배우게 만들고, 그러면 진짜 낡음도 같이 지나간다.
+ */
+function widgetBuildIssues(): string[] {
+  const srcDir = path.resolve(process.cwd(), "chat", "src");
+  const outDir = path.resolve(process.cwd(), "chat", "dist");
+  if (!fs.existsSync(outDir) || !fs.existsSync(srcDir)) return []; // 미빌드 — 부재는 부트가 말한다
+  const stale = staleBuild(srcDir, outDir, "chat-app.js");
+  if (!stale) return [];
+  return [
+    `chat/dist 가 소스보다 낡았습니다 — ${stale.rel} 가 ${stale.gap} 더 최신입니다. ` +
+      `데몬은 /assets 로 굽힌 번들을 서빙하므로 고친 위젯이 화면에 나가지 않습니다: npm run build:widget`,
+  ];
+}
+
 /** 이름이 무엇이든 산출·툴 부산물은 빌드 입력이 아니다. .env* 는 next 의 입력이라 남긴다. */
 const SKIP_ANYWHERE = new Set(["node_modules", ".next", ".git"]);
 function isArtifact(name: string): boolean {
@@ -156,6 +182,14 @@ for (const entry of entries) {
   failed = true;
   console.error(`${entry.name}: 판정 실패`);
   for (const issue of [...result.issues, ...viewIssues]) console.error(`  - ${issue}`);
+}
+
+// 위젯은 패키지가 아니라 기판의 자산이다 — 루프 밖에서 한 번 판정한다
+const widgetIssues = widgetBuildIssues();
+if (widgetIssues.length) {
+  failed = true;
+  console.error("chat(위젯 번들): 판정 실패");
+  for (const issue of widgetIssues) console.error(`  - ${issue}`);
 }
 
 process.exitCode = failed ? 1 : 0;
