@@ -17,3 +17,6 @@ dist/
 
 # substrate state (never belongs in the tree)
 .relay/
+
+# brainstorming visual companion sessions
+.superpowers/
