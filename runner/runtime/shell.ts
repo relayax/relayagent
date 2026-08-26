@@ -297,6 +297,7 @@ var css = [
 '#rlys.cl .hd .fold{margin:0}',
 '#rlys.cl .it .dt{position:absolute;right:6px;bottom:6px}',
 // ── 홈(런처) ─────────────────────────────────────────────────────────────
+'body:has(#relay-home){margin:0 0 0 var(--relay-side);background:#f5f6f7}',
 '#relay-home{min-height:100vh;background:#f5f6f7;color:#16181b;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif}',
 '#relay-home *{box-sizing:border-box}',
 '#relay-home .bt{border:1px solid #e6e9ec;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
