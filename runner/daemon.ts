@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./supply/ledger.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
-import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents } from "./runtime/harness.ts";
+import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
 import { runScript, runScriptFrom, scriptMeta, mcpCall, type HostBridge } from "./runtime/scripts.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
@@ -685,6 +685,10 @@ export function startDaemon(): void {
       console.error(`${name}: 서비스 기동 실패 - ${e}`);
     }
   }
+  // 원격 제어 상주 — 장부에 켜짐이 남은 패키지를 잇는다(서비스와 같은 자리, 문을 막지 않는다)
+  void resumeRemotes(daemonAuthority, localSessionIO(() => loadLedger()))
+    .then((notes) => { for (const n of notes) console.log(n); })
+    .catch((e) => console.error(`원격 제어 상주 재개 실패 - ${e}`));
   console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
   console.log(`콘솔: ${API_URL}/pkg/system/view/`);
   // 종료 신호는 둘이다 — 사람이 내리는 Ctrl-C(SIGINT)와 기계가 내리는 종료(SIGTERM: kill·
@@ -695,6 +699,7 @@ export function startDaemon(): void {
   const shutdown = (): void => {
     ticker?.stop();
     retireAllResidents();
+    stopAllRemotes();
     stopAll();
     fs.rmSync(pidFile, { force: true });
     process.exit(0);

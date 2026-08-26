@@ -21,6 +21,7 @@ Invocation: `run <verb> [args…]`. Unknown verbs must exit non-zero.
 | `session` | yes | With a prompt argument: run exactly one turn through the envelope (below), then exit. Without a prompt: exec the native interactive TUI, inheriting the TTY. |
 | `login` | optional | Interactive credential flow. Owns the TTY. `--switch` clears credentials first. |
 | `serve` | optional | Resident session: the envelope stays up across turns; turns are injected over stdin. Declare it in `info.verbs` to opt in — the daemon prefers it when present. |
+| `remote` | optional | Remote-control resident: exec the tool's own remote-control client (e.g. `claude remote-control`) on the workspace, using the same tool-owned credentials as `login`. No envelope. The substrate owns its lifetime (`POST /harness/remote {enabled}`, capability `remote`) and resumes it across daemon restarts. |
 
 Environment: the substrate passes `RELAY_BUNDLE` (assembled bundle dir), `RELAY_NAME`, `RELAY_AGENT`,
 `RELAY_SESSION`, `RELAY_API`, `RELAY_TOKEN`, `RELAY_PRINCIPAL`, and optionally `RELAY_MODEL` /
@@ -180,7 +181,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 ## Declarations
 
 `info.protocol`: integer. 3 = the vocabulary above. `info.capabilities` is a closed vocabulary
-judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`, `steer`. Declare only
+judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`, `steer`, `remote`. Declare only
 what is physically implemented — the console enables UI per capability, and a declared-but-dead capability
 is a broken screen.
 

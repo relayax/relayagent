@@ -13,7 +13,7 @@ export interface ConformResult {
 }
 
 const REQUIRED_VERBS = ["session", "setup", "models", "commands", "info"];
-const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "tasks"]);
+const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "tasks", "steer", "remote"]);
 
 /**
  * 하네스 계약 적합성 판정 — 어댑터가 동사 프로토콜을 지키는지 기계로 검사한다.

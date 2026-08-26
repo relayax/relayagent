@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, loadLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
+import { API_URL, RELAY_HOME, loadLedger, saveLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { spawnEntry, spawnEntrySync } from "../spawn.ts";
 // 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
@@ -1099,4 +1099,100 @@ export function recoverDanglingTurns(pkg: string, slot: string, io: SessionIO = 
       : `${INTERRUPTED_MARK} 답변이 저장되지 못했습니다. 남은 내용이 없습니다.)`,
   );
   return true;
+}
+
+// ── 원격 제어 상주(remote) — 로그인된 자격으로 상주하는 프로세스 ─────────────────────
+// `login`(자격은 도구 소유, pty 중계)과 `serve`(상주, 데몬이 수명을 쥠)의 합성이다: 어댑터가
+// verb `remote` 를 선언하면 그 도구의 원격 조종 클라이언트(claude remote-control 류)를 이 패키지의
+// 작업 무대(cwd=workspace) 위에 상주시킨다. 턴이 아니므로 번들·슬롯이 없고, 봉투도 없다 —
+// stdout/stderr 는 진단용 꼬리만 남긴다. 무인 기판(org pod)에서 "누가 이 프로세스를 띄우는가"
+// 의 답이 이 파일이 되면서 기판별 투영(별도 Deployment)이 필요 없어진다.
+// 상태는 장부(PkgRecord.remote)에 남아 데몬 재기동을 넘긴다(resumeRemotes).
+interface Remote {
+  child: ChildProcess;
+  variant: string;
+  startedAt: number;
+  stderrTail: string;
+}
+const remotes = new Map<string, Remote>();
+
+export function remoteStatus(pkg: string): { running: boolean; pid: number | null; variant: string | null; since: string | null } {
+  const r = remotes.get(pkg);
+  if (!r || r.child.exitCode !== null) return { running: false, pid: null, variant: null, since: null };
+  return { running: true, pid: r.child.pid ?? null, variant: r.variant, since: new Date(r.startedAt).toISOString() };
+}
+
+/** 원격 제어 상주 기동 — 이미 떠 있으면 은퇴 후 새로 편다(자격·모델 변경의 반영). */
+export async function startRemote(authority: Authority, io: SessionIO, pkg: string): Promise<{ pid: number; variant: string }> {
+  const l = loadLedger();
+  const rec = l.packages[pkg];
+  if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
+  const m = loadManifest(rec.path);
+  const variant = activeHarness(m, rec.harness);
+  if (!variant) throw new Error(`하네스 미동봉 패키지: ${pkg}`);
+  const workdir = path.join(io.workspaceDir(pkg), m.harness?.workdir ?? "");
+  fs.mkdirSync(workdir, { recursive: true });
+  const entry = path.join(rec.path, variant.source, variant.entry);
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    RELAY_NAME: pkg,
+    RELAY_PRINCIPAL: authority.principal(),
+    RELAY_API: io.apiUrl,
+    RELAY_TOKEN: authority.packageToken(pkg),
+  };
+  Object.assign(env, binaryEnv(pkg, env));
+  // 스폰 자격 — 세션과 같은 이음새(auth.env 를 선언이 말하면 기판이 댄다, kind 무관)
+  if (variant.llm?.auth?.env) {
+    const cred = await authority.credential(`llm/${variant.llm.provider}`);
+    if (cred) env[variant.llm.auth.env] = cred;
+  }
+  if (rec.model) env.RELAY_MODEL = rec.model;
+  if (rec.effort) env.RELAY_EFFORT = rec.effort;
+  stopRemote(pkg);
+  const child = spawnEntry(entry, ["remote"], { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
+  const r: Remote = { child, variant: variant.name, startedAt: Date.now(), stderrTail: "" };
+  child.stdout?.on("data", () => { /* 원격 클라이언트의 화면 출력 — 봉투가 아니다 */ });
+  child.stderr?.on("data", (d) => { r.stderrTail = (r.stderrTail + String(d)).slice(-2000); });
+  child.on("close", () => { if (remotes.get(pkg) === r) remotes.delete(pkg); });
+  remotes.set(pkg, r);
+  rec.remote = true;
+  saveLedger(l);
+  return { pid: child.pid ?? 0, variant: variant.name };
+}
+
+/** 원격 제어 상주 은퇴 — persist 면 장부의 켜짐 표시도 지운다. 떠 있었으면 true */
+export function stopRemote(pkg: string, persist = false): boolean {
+  const r = remotes.get(pkg);
+  if (r) {
+    remotes.delete(pkg);
+    if (r.child.exitCode === null) r.child.kill();
+  }
+  if (persist) {
+    const l = loadLedger();
+    if (l.packages[pkg]?.remote) {
+      delete l.packages[pkg].remote;
+      saveLedger(l);
+    }
+  }
+  return !!r;
+}
+
+/** 데몬 종료 — 상주 하네스와 같은 자리에서 원격 상주도 내린다(장부 표시는 남긴다: 재기동이 잇는다) */
+export function stopAllRemotes(): void {
+  for (const pkg of [...remotes.keys()]) stopRemote(pkg);
+}
+
+/** 데몬 기동 — 장부에 켜짐이 남은 패키지의 원격 상주를 다시 편다. 실패는 그 패키지의 실패다 */
+export async function resumeRemotes(authority: Authority, io: SessionIO): Promise<string[]> {
+  const notes: string[] = [];
+  for (const [pkg, rec] of Object.entries(loadLedger().packages)) {
+    if (!rec.remote) continue;
+    try {
+      const r = await startRemote(authority, io, pkg);
+      notes.push(`${pkg}: 원격 제어 상주 재개 (${r.variant}, pid ${r.pid})`);
+    } catch (e) {
+      notes.push(`${pkg}: 원격 제어 상주 재개 실패 - ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return notes;
 }

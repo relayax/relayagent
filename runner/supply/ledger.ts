@@ -102,6 +102,8 @@ export interface PkgRecord {
   /** 추론 강도 — RELAY_EFFORT 로 전달. 어댑터가 모르는 값은 무시한다 (capabilities: effort) */
   effort?: string;
   harness?: string;
+  /** 원격 제어 상주 켜짐 — 데몬 재기동이 잇는다(harness.ts remote) */
+  remote?: boolean;
   dirBindings?: Record<string, string>;
   origin?: PkgOrigin;
 }

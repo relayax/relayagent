@@ -371,6 +371,11 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     자격 브로커 축(누가 OAuth 를 수행하나)은 이 계약이 아니라 권위 이음새 소관이다 —
     [authority-interface.md](authority-interface.md) §3.2.
 
+30-b. **[신설]** `harness.remote` = `GET|POST {base}/harness/remote` — capability `remote`.
+    POST 요청: `{enabled}` → `{ok, running, pid, variant, since}`. 어댑터의 `remote` 동사
+    (harness-protocol.md §Verbs)를 작업 무대 위에 상주시키거나 내린다. 켜짐은 장부에 남아
+    데몬 재기동을 넘긴다. 미선언 하네스는 404 `E_NO_REMOTE`(§3-8 — 없는 문).
+
 ### 5.6 열거 — capability `enumerate`, root 소속
 
 32. **[현행 v1]** `instances.list` = `GET {root}/instances` → `{instances: [{

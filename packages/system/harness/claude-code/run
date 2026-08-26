@@ -17,13 +17,13 @@ case "$VERB" in
     LOGIN="$LOGIN" EFFORT="$EFFORT" node --input-type=module -e '
 let a = {};
 try { a = JSON.parse(process.env.LOGIN || "{}"); } catch { /* 형식이 바뀌면 계정 미상으로 강등 */ }
-const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer"];
+const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer", "remote"];
 if (process.env.EFFORT === "1") caps.push("effort");
 process.stdout.write(JSON.stringify({
   name: "claude-code",
   provider: "anthropic",
   protocol: 3,
-  verbs: ["session", "serve", "setup", "login", "models", "commands", "info"],
+  verbs: ["session", "serve", "setup", "login", "remote", "models", "commands", "info"],
   capabilities: caps,
   account: a.loggedIn ? { email: a.email ?? null, plan: a.subscriptionType ?? null, method: a.authMethod ?? null } : null,
 }));'
@@ -75,6 +75,16 @@ process.stdout.write(process.env.VER + "\n" + who);'; then
       claude auth logout >/dev/null 2>&1 || true
     fi
     exec claude auth login
+    ;;
+  remote)
+    # 원격 제어 상주(harness-protocol §remote) — claude.ai/모바일 앱이 이 작업 무대 위의 세션을
+    # 원격 조종한다. 자격은 login 동사와 같은 도구 소유 로그인(setup-token/OAuth env 는
+    # inference-only 라 RC 가 거절한다 — 실측). 기판이 cwd=workspace 로 띄우고 수명을 쥔다.
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "claude CLI 없음: npm install -g @anthropic-ai/claude-code" >&2
+      exit 3
+    fi
+    exec claude remote-control
     ;;
   models)
     # 정본 = Anthropic /v1/models. 자격이 기판 손(ANTHROPIC_API_KEY)에 있을 때만 닿는다 —
