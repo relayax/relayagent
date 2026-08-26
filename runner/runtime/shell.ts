@@ -299,11 +299,6 @@ var css = [
 // ── 홈(런처) ─────────────────────────────────────────────────────────────
 '#relay-home{min-height:100vh;background:#f5f6f7;color:#16181b;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif}',
 '#relay-home *{box-sizing:border-box}',
-'#relay-home .hh{display:flex;align-items:center;gap:10px;padding:16px 20px;background:#fff;border-bottom:1px solid #e6e9ec}',
-'#relay-home .hh .tl{display:flex;flex-direction:column;gap:3px}',
-'#relay-home .hh h1{margin:0;font-size:19px;letter-spacing:-0.02em;line-height:1.2}',
-'#relay-home .hh .mt{font-size:12px;color:#98a1aa}',
-'#relay-home .hh .rt{margin-left:auto;display:flex;gap:8px}',
 '#relay-home .bt{border:1px solid #e6e9ec;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
 '#relay-home .bt:hover{background:#eef0f2}',
 '#relay-home .bt.ac{background:#0f766e;border-color:#0f766e;color:#fff}',
@@ -503,11 +498,6 @@ function renderHome(nav, err){
   try { var prev = home.querySelector(".af textarea"); if (prev) typed = prev.value; } catch (e) {}
   home.textContent = "";
   var drafts = nav && nav.drafts ? nav.drafts : [];
-  var hh = document.createElement("div");
-  hh.className = "hh";
-  hh.innerHTML = '<div class="tl"><h1>홈</h1><span class="mt">' +
-    (nav ? "설치된 에이전트 " + nav.items.length + "개" + (drafts.length ? " · 만드는 중 " + drafts.length + "개" : "") : "불러오는 중…") + '</span></div>';
-  home.appendChild(hh);
 
   // 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 콘솔 에이전트의 대화로
   // 보내지고(relay:chat-open send), 빌더 위임이 시작되면 위젯이 그 탭을 연다
