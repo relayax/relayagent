@@ -30,6 +30,8 @@ export default function SettingsPane({ reg, edges, onChanged }: { reg: Registry;
         <div className="right">
           {/* 사용 안내는 홈(기판 셸)에 산다 — 처음 닿는 자리가 거기라서. 여기서는 그 문으로 보낸다 */}
           <a className="ob-open" href="/?guide=1" title="사용 안내 다시 보기">안내</a>
+          {/* 빈 패키지를 손으로 여는 화면은 없다 — 빌더 없이 시작할 사람을 위한 한 문장 */}
+          <span className="meta" title="빌더 없이 빈 패키지를 열려면">터미널: <code>relay draft &lt;이름&gt;</code></span>
         </div>
       </header>
       <div className={`settings-body${selected ? " has-detail" : ""}${!selected && closing ? " detail-closing" : ""}`}>

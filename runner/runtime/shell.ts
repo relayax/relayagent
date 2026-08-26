@@ -70,7 +70,6 @@ export interface ShellNav {
   items: ShellItem[];
   /** 고정 목적지 — 스크립트가 주소를 조립하지 않도록 기판이 다 싣는다 */
   home: string;
-  create: string;
   importer: string;
   /** 스튜디오 시작 화면 — 만드는 중인 초안 목록이 여기 있다 */
   studio: string;
@@ -197,7 +196,6 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   return {
     items,
     home: "/",
-    create: consoleHref("?new=1"),
     importer: "/store/import",
     // 초안 목록은 셸 홈에 있다 — 스튜디오는 패키지 화면의 층이 되어 시작 화면이 따로 없다
     studio: "/",
@@ -348,11 +346,11 @@ var css = [
 '#relay-home .op a svg{width:15px;height:15px;color:#5c6570;flex:none}',
 '#relay-home .op a span{color:#98a1aa;font-size:12.5px;flex:1 1 auto}',
 '#relay-home .op a i{color:#98a1aa;font-style:normal}',
-// 만드는 중인 초안 — 장부에 없어 카드는 아니지만 잃어버린 것처럼 보이면 안 된다
-'#relay-home .dr{margin:14px 20px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 14px;font-size:12.5px;color:#92400e}',
-'#relay-home .dr .dn a{color:#92400e;font-weight:600;text-decoration:none}',
-'#relay-home .dr .dn a:hover{text-decoration:underline}',
-'#relay-home .dr .mo{margin-left:auto;border:1px solid #fde68a;background:#fff;color:#92400e;border-radius:7px;padding:3px 9px;font:600 11.5px inherit;text-decoration:none}',
+// 만드는 중인 초안 — 장부에 없어도 설치본과 같은 카드로 격자 끝에 선다 (점선 테두리가 "아직" 의 표식)
+'#relay-home .cd.df{border-style:dashed;background:#fffdf5}',
+'#relay-home .cd.df:hover{border-color:#b45309}',
+'#relay-home .cd.df .av{background:#fef3c7;color:#b45309}',
+'#relay-home .cd.df .av svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}',
 // 사용 안내 — 첫 방문에 한 번, 이후엔 ?guide=1
 '.gd-veil{position:fixed;inset:0;background:rgba(22,24,27,.45);display:flex;align-items:center;justify-content:center;z-index:2147483200}',
 '.gd{width:min(440px,calc(100vw - 48px));background:#fff;border:1px solid #e6e9ec;border-radius:14px;padding:26px 28px;display:flex;flex-direction:column;gap:12px;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;box-sizing:border-box}',
@@ -515,7 +513,7 @@ function renderHome(nav, err){
   // 보내지고(relay:chat-open send), 빌더 위임이 시작되면 위젯이 그 탭을 연다
   // 시작은 이 상자 하나다. 별도의 "패키지 만들기" 버튼은 두지 않는다 — 불러오기·스토어는
   // 상자 아래 한 줄씩이라, 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
-  // 빈 패키지를 손으로 여는 문(nav.create, /?new=1)은 일부러 화면에 두지 않는다 — 주소로만 연다.
+  // 빈 패키지를 손으로 여는 화면은 없다 — 빌더 없이 시작하려면 터미널의 relay draft <이름> 이다.
   if (nav) {
     var ask = document.createElement("div");
     ask.className = "ask";
@@ -550,21 +548,7 @@ function renderHome(nav, err){
   }
   if (!nav) return;
 
-  // 만드는 중인 초안 — 장부에 없어 카드는 아니지만, 어디에도 없으면 만들다 만 것이 잃은 것처럼 보인다
-  if (drafts.length) {
-    var dr = document.createElement("div");
-    dr.className = "dr";
-    var names = "";
-    for (var d = 0; d < drafts.length && d < 6; d++) {
-      names += (d ? " · " : "") + '<a href="' + esc(drafts[d].href) + '">' + esc(drafts[d].name) + '</a>';
-    }
-    dr.innerHTML = '<span>만드는 중인 초안 <b>' + drafts.length + '</b>개</span>' +
-      '<span class="dn">' + names + (drafts.length > 6 ? " …" : "") + '</span>' +
-      '';
-    home.appendChild(dr);
-  }
-
-  if (!nav.items.length) {
+  if (!nav.items.length && !drafts.length) {
     var ep = document.createElement("div");
     ep.className = "ep";
     ep.innerHTML = '<h2>아직 설치된 에이전트가 없습니다</h2>' +
@@ -617,6 +601,29 @@ function renderHome(nav, err){
         '<a class="mo" href="' + esc(it.detail) + '">상세</a>' +
       '</div>';
     gr.appendChild(cd);
+  }
+  // 만드는 중인 초안 — 장부에 없어 설치 카드는 못 되지만, 어디에도 없으면 만들다 만 것이 잃은 것처럼
+  // 보인다. 설치본과 같은 격자에 같은 모양으로 세우고, 점선과 "초안" 배지로만 가른다
+  for (var d = 0; d < drafts.length; d++) {
+    var df = drafts[d];
+    var dc = document.createElement("div");
+    dc.className = "cd df";
+    dc.innerHTML =
+      '<a class="go" href="' + esc(df.href) + '">' +
+        '<span class="tp">' +
+          '<span class="av">' + svg(ICONS.draft) + '</span>' +
+          '<span class="nm"><b>' + esc(df.name) + '</b>' +
+            '<span class="ver">' + esc(df.name) + (df.version ? "@" + esc(df.version) : "") + '</span>' +
+          '</span>' +
+        '</span>' +
+        '<p>' + (df.changes ? '아직 발행하지 않은 초안 — 바뀐 파일 ' + df.changes + '개' : '아직 발행하지 않은 초안') + '</p>' +
+      '</a>' +
+      '<div class="ft">' +
+        '<span class="cp ed">초안</span>' +
+        '<span class="sp"></span>' +
+        '<a class="mo" href="' + esc(df.href) + '">이어 만들기</a>' +
+      '</div>';
+    gr.appendChild(dc);
   }
   home.appendChild(gr);
 }

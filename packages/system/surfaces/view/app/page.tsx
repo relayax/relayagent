@@ -3,7 +3,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ChatNudge from "@/components/ChatNudge"; // 말풍선
-import NewPackage from "@/components/NewPackage";
 import PkgPane from "@/components/PkgPane";
 import SettingsPane from "@/components/SettingsPane";
 import { edgesData, fetchRegistry, fetchResidency, fetchShellNav, type ShellNav } from "@/lib/api";
@@ -17,7 +16,6 @@ import type { Pkg, Registry } from "@/lib/types";
 //   /?p=<설치이름>        상주 상태와 패키지 화면(기판이 낼 문서가 없는 얼굴)
 //     &face=live|detail
 //     &sec=&item=&file=   상세의 깊이 — 설명서 줄의 펼침(2층)과 열린 파일(3층). 스튜디오 규약 그대로
-//   /?new=1              새 패키지
 // 설치 안 된 초안(만드는 중)도 /?p= 로 연다 — 장부에 없으면 draft 목록에서 찾아 합성한다.
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리가 정본이다(스튜디오와 같은 규약).
 const EMPTY: Registry = { packages: [], grants: [] };
@@ -35,7 +33,6 @@ function Console() {
   const sp = useSearchParams();
   const sel = sp.get("p");
   const face = sp.get("face");
-  const isNew = sp.get("new") === "1";
   const view = useMemo(() => ({ sec: sp.get("sec"), item: sp.get("item"), file: sp.get("file") }), [sp]);
   const pane: "pkg" | "settings" = sel ? "pkg" : "settings";
 
@@ -107,15 +104,6 @@ function Console() {
     },
     [router, sel, view],
   );
-
-  if (isNew) {
-    return (
-      <div className="console">
-        <NewPackage onOpen={(name) => router.replace(`/?p=${encodeURIComponent(name)}&face=detail`)} />
-        <ChatNudge />
-      </div>
-    );
-  }
 
   return (
     <div className="console">

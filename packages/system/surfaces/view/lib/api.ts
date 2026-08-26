@@ -59,7 +59,6 @@ export interface ShellItem {
 export interface ShellNav {
   items: ShellItem[];
   home: string;
-  create: string;
   importer: string;
   /** 스튜디오 시작 화면 — 만드는 중인 초안 목록 */
   studio: string;

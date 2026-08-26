@@ -19,10 +19,6 @@ function Go() {
   const router = useRouter();
   const sp = useSearchParams();
   useEffect(() => {
-    if (sp.get("new") === "1") {
-      router.replace("/?new=1");
-      return;
-    }
     const pkg = sp.get("pkg");
     if (!pkg) {
       router.replace("/");
