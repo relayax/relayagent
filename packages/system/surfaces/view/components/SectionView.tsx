@@ -360,30 +360,76 @@ function AgentsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   );
 }
 
+/** 여러 개 고르기 — 쉼표 입력 대신 칩. 목록에 없는 값(글롭 등)은 그대로 칩으로 보여 주고 뺄 수 있다 */
+function Picks({ value, options, onChange, empty }: { value: string[]; options: { id: string; label?: string }[]; onChange: (v: string[]) => void; empty: string }) {
+  const known = new Set(options.map((o) => o.id));
+  const extra = value.filter((v) => !known.has(v));
+  if (!options.length && !extra.length) return <div className="st-picks-empty">{empty}</div>;
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="st-picks">
+      {options.map((o) => (
+        <button key={o.id} type="button" className="st-pick" aria-pressed={value.includes(o.id)} onClick={() => toggle(o.id)} title={o.id}>
+          {o.label ?? o.id}
+        </button>
+      ))}
+      {extra.map((v) => (
+        <button key={v} type="button" className="st-pick" aria-pressed onClick={() => toggle(v)} title="누르면 뺍니다">
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const idx = (m.agents ?? []).findIndex((a) => a.name === id);
   const a = (m.agents ?? [])[idx];
   if (!a) return <div className="empty">없는 에이전트</div>;
-  const item = {
-    files: [
-      ...(a.persona && ctx.files.includes(a.persona) ? [a.persona] : []),
-      ...ctx.files.filter((f) => (a.skills ? f.startsWith(a.skills + "/") : false)),
-      ...ctx.files.filter((f) => (a.commands ? f.startsWith(a.commands + "/") : false)),
-    ],
-  };
-  const missing: { path: string; make: () => void }[] = [];
-  if (a.persona && !ctx.files.includes(a.persona)) {
-    missing.push({ path: a.persona, make: () => ctx.createFile(a.persona!, `당신은 ${a.name}입니다.\n`) });
-  }
+  const src = m.scripts?.source;
+  // 고를 수 있는 기능 — scripts.source 바로 아래 *.ts (도우미 파일은 동사가 아니다)
+  const verbs = src
+    ? ctx.files.filter((f) => f.startsWith(src + "/") && f.endsWith(".ts") && !f.slice(src.length + 1).includes("/")).map((f) => f.slice(src.length + 1, -3))
+    : [];
+  const others = (m.agents ?? []).filter((x) => x.name !== a.name).map((x) => ({ id: x.name }));
+  const personaOk = !!a.persona && ctx.files.includes(a.persona);
+  const extraFiles = [
+    ...ctx.files.filter((f) => (a.skills ? f.startsWith(a.skills + "/") : false)),
+    ...ctx.files.filter((f) => (a.commands ? f.startsWith(a.commands + "/") : false)),
+  ];
   return (
     <div className="st-form">
+      {/* 성격과 역할 글 — 이 에이전트의 핵심. 경로 카드가 아니라 "열기" 버튼 */}
+      {personaOk ? (
+        <button type="button" className="st-open" onClick={() => ctx.openFile(a.persona!)} title={a.persona}>
+          <span className="st-open-t">성격과 역할 글 열기</span>
+          <span className="st-open-s">누구인지, 무엇을 어떻게 하는지 적은 글 — 가운데 칸에서 고칩니다</span>
+        </button>
+      ) : a.persona ? (
+        <button type="button" className="st-open missing" onClick={() => ctx.createFile(a.persona!, `당신은 ${a.name}입니다.\n`)}>
+          <span className="st-open-t">성격과 역할 글 만들기</span>
+          <span className="st-open-s">아직 파일이 없습니다 — 누르면 만들어서 엽니다</span>
+        </button>
+      ) : null}
       <Field label="첫 인사 — 빈 대화에 먼저 보이는 말" k="greeting" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
-      <Field label="쓸 수 있는 기능 — 쉼표로 여러 개, log-* 처럼 앞글자로도" k="scripts" value={(a.scripts ?? []).join(", ")} mono placeholder="log-*, report" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], listField(x)))} />
-      <FileCards item={item} ctx={ctx} missing={missing} />
-      <Advanced open={!!(a.dispatch?.length || a.skills || a.commands)}>
-        <Field label="성격 글 파일" k="persona" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
-        <Field label="일을 넘길 보조 에이전트 — 쉼표" k="dispatch" value={(a.dispatch ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], listField(x)))} />
+      <div className="st-field" title="relay.yaml: agents[].scripts">
+        <span>쓸 수 있는 기능 — 누르면 켜고 끕니다</span>
+        <Picks
+          value={a.scripts ?? []}
+          options={verbs.map((v) => ({ id: v }))}
+          empty="아직 기능이 없습니다 — 기능 묶음의 ＋ 추가로 만드세요"
+          onChange={(v) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], v))}
+        />
+      </div>
+      {others.length ? (
+        <div className="st-field" title="relay.yaml: agents[].dispatch">
+          <span>일을 넘길 수 있는 보조 에이전트</span>
+          <Picks value={a.dispatch ?? []} options={others} empty="" onChange={(v) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], v))} />
+        </div>
+      ) : null}
+      <Advanced open={!!(a.skills || a.commands)}>
+        <Field label="성격 글 파일 경로" k="persona" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
         <Field label="기술(스킬) 폴더" k="skills" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
         <Field label="명령 폴더" k="commands" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
         {a.skills ? (
@@ -391,6 +437,7 @@ function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
             + 기술 하나 만들기
           </button>
         ) : null}
+        <FileCards item={{ files: extraFiles }} ctx={ctx} />
       </Advanced>
       <button
         className="rc-btn"
@@ -399,7 +446,7 @@ function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
           ctx.openItem(null);
         }}
       >
-        대화 상대 빼기 (파일은 남습니다)
+        이 에이전트 빼기 (파일은 남습니다)
       </button>
     </div>
   );
