@@ -274,10 +274,26 @@ export class EnvelopeReducer {
     else this.tasks.delete(id);
   }
 
+  /**
+   * 질문 — **카드를 여는 이벤트가 아니라 그 카드를 채우는 이벤트다**(봉투 ask.tool).
+   *
+   * 같은 질문의 `tool_use` 블록이 수십 ms 앞서 지나가 카드를 이미 열었다. ask 의 `id` 는
+   * 어댑터 control 채널의 회신 좌표라 그 tool_use id 와 **다르고**, 그 id 로 카드를 또 열면
+   * 같은 질문이 두 벌 뜬다 — 하나는 tool 결과를 받아 닫히고 하나는 영영 열린 채 남는 유령이
+   * 된다(2026-08-26 실사고). 그래서 앵커가 가리키는 카드에 붙는다.
+   *
+   * 붙으면서 questions 를 덮는 것이 요점 하나 더다: `tool.start` 의 args 는 2KB 상한이라
+   * (harness-protocol §Events) 설명이 긴 질문은 잘린 JSON 으로 도착해 파싱이 깨지고 선택지가
+   * 통째로 사라진다. 이 이벤트의 questions 는 온전하다.
+   *
+   * 앵커 없는 봉투(구 어댑터·다른 하네스)는 종전대로 자기 id 로 카드를 연다 — additive 규율.
+   */
   private ask(ev: Record<string, unknown>): void {
     const id = str(ev.id);
     if (!id) return;
-    const card = this.tool(id, ASK_TOOL);
+    const anchor = str(ev.tool);
+    const pos = anchor ? this.toolPos[anchor] : undefined;
+    const card = pos != null ? (this.parts[pos] as ToolPart) : this.tool(id, ASK_TOOL);
     const questions: AskQuestion[] = Array.isArray(ev.questions) ? (ev.questions as AskQuestion[]) : [];
     card.args = { questions };
     try {
@@ -302,20 +318,6 @@ export class EnvelopeReducer {
     const card = this.tool(`steer#${this.steerSeq++}`, STEER_TOOL);
     card.args = { text };
     card.argsText = text;
-  }
-
-  /** ask 회송 성공을 카드에 반영한다 — 봉투에는 답변 이벤트가 없으므로(회송은 stdin 제어)
-   *  이 전이만은 클라이언트가 찍는다. 결과가 있어야 카드가 대기 상태를 푼다. */
-  settleAsk(id: string, answers: unknown): void {
-    const pos = this.toolPos[id];
-    if (pos == null) return;
-    const card = this.parts[pos] as ToolPart;
-    try {
-      card.result = JSON.stringify(answers);
-    } catch {
-      card.result = "";
-    }
-    if (this.pendingAsk === id) this.pendingAsk = "";
   }
 
   private file(ev: Record<string, unknown>): void {

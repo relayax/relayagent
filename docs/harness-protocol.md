@@ -116,7 +116,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 | `usage` | `input`, `output` | Live token ticker, throttled (≈250 ms). Estimates allowed between exact checkpoints; the final `reply.usage` is authoritative. |
 | `task` | `id`, `status: "started"`, `note?` | A background task the model launched is now running. |
 | `task` | `id`, `status: "done"`, `ok` | That background task settled. |
-| `ask` | `id`, `questions` | The model asked the user a question (requires capability `ask`). Answer via the `answer` control line; the adapter must resolve unanswered asks itself (timeout with a sensible default) — an unanswered ask must never hang the turn forever. |
+| `ask` | `id`, `questions`, `tool?` | The model asked the user a question (requires capability `ask`). `id` is the coordinate to answer on — it belongs to the adapter's control channel, **not** to the tool call, so `tool` names the `tool_use` id this question came from and the clients hang the question on that card. Without it the same question renders twice: once from the `tool` event, once from this one. Answer via the `answer` control line. |
 | `steer` | `text` | The substrate's `steer` control line reached the conversation. Echoed at the moment of injection, so the ledger — and every observer replaying it — shows the user's mid-turn words where they actually landed, between two tool calls. Emit exactly once per accepted `steer`, and never for one that was dropped. |
 | `file` | `path` (stage-relative) | A successful write landed in the file-exchange stage. |
 | `reply` | `text`, `session`, `model`, `usage {input, output, context_window, cache_read?, cache_creation?, cost_usd?}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `usage.input` stays cache-inclusive for compatibility; `cache_read` / `cache_creation` break the cached tokens out (non-cache input = `input − cache_read − cache_creation`) and `cost_usd` is the CLI's own cost ledger when it reports one — all three additive. `origin: "task"` marks a spontaneous continuation (below). |
@@ -157,9 +157,20 @@ client-side field invented downstream is how two substrates end up meaning diffe
   call in flight returns, before the next one is chosen — and the CLI still emits exactly one
   `result`. The words arrive between tool calls, never inside one; an adapter must not promise the
   latter.*
+- **A pending `ask` waits.** The adapter does not time it out and does not answer on the user's
+  behalf: a question with no answer yet is a turn correctly waiting on a person, and the only one
+  who may end that wait is the person — by answering, or by `cancel` (the Stop button). The
+  substrate suspends its stall clock for the duration, so the wait costs the turn nothing.
+  *Why this is a contract clause and not an adapter choice: an adapter that guesses a default
+  puts words in the user's mouth and the transcript records them as the user's. It was a 10-minute
+  timeout here until 2026-08-26; what it bought was a substrate that never had to think about
+  human latency, and what it cost was answers nobody gave. The suspension is what makes waiting
+  affordable — without it the two clocks fight and the longer one always wins the wrong way.*
 - **Stall** — the substrate watches for event silence on an in-flight turn
   (`RELAY_TURN_STALL_S`, default 1200 s) and injects `cancel`. Adapters should therefore emit
-  events as work happens, not in one batch at the end.
+  events as work happens, not in one batch at the end. **Time spent under a pending `ask` is not
+  silence** — the substrate stops the clock when an `ask` event passes and restarts it when the
+  `answer` goes back, so a question can stand as long as the person needs.
   A substrate that *also* reclaims the execution container (kills a pod, tears down a sandbox)
   must put that deadline **strictly after** the cancel deadline, with enough margin for the
   adapter to settle. Reclaiming at the same threshold races the `cancel` it just sent: the

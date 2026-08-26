@@ -452,8 +452,10 @@ function resetTick() {
 const tasks = new Map();   // task_id -> note
 let sawTaskDone = false;   // 자발 턴 승격 게이트 — 유령 턴 방지 (relayos 실측 계보)
 
-// 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약)
-let ask = null;            // { reqId, input, timer }
+// 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약).
+// 시계는 없다: 답이 올 때까지 기다린다(harness-protocol §Lifecycle). 기다림을 끊는 것은
+// 사람뿐이다 — 답하거나, Stop(cancel) 하거나.
+let ask = null;            // { reqId, input }
 
 // 죽은 resume 포인터는 복구 대상이다. 계약은 "있으면 잇고, 없으면 새로" — 없는 과거가
 // 현재 턴을 죽이면 그 슬롯은 영영 실패를 반복한다 (실측 2026-08-09, 2.1.153)
@@ -562,7 +564,6 @@ function askSettle(answers, denyMsg) {
   if (!ask) return;
   const a = ask;
   ask = null;
-  clearTimeout(a.timer);
   if (!answers || !answers.length) {
     controlRespond(a.reqId, { behavior: "deny", message: denyMsg ?? "사용자가 응답을 취소했습니다 — 질문 없이 진행하세요." });
     return;
@@ -585,13 +586,18 @@ function onControlRequest(j) {
       controlRespond(reqId, { behavior: "deny", message: "이미 대기 중인 질문이 있습니다 — 한 번에 하나씩 질문하세요." });
       return;
     }
-    ask = {
-      reqId,
-      input: req.input ?? {},
-      timer: setTimeout(() => askSettle(null, "사용자가 10분 내에 응답하지 않았습니다 — 합리적인 기본값으로 진행하거나 다음 턴에서 다시 확인하세요."), 600000),
-    };
-    ask.timer.unref?.();
-    emit({ event: "ask", id: reqId, questions: Array.isArray(req.input?.questions) ? req.input.questions : [] });
+    ask = { reqId, input: req.input ?? {} };
+    // 이 질문이 앉을 카드 — 같은 질문의 tool_use 블록이 수십 ms 앞서 지나갔고(실측 장부), 그
+    // id 를 같이 실어야 화면이 카드를 하나로 세운다. reqId 는 control 채널 좌표라 tool_use id 와
+    // 다르므로, 앵커 없이 보내면 소비자가 그 id 로 두 번째 카드를 연다(2026-08-26 실사고).
+    let anchor = "";
+    for (const [id, t] of tools) if (t.name === "AskUserQuestion") anchor = id;
+    emit({
+      event: "ask",
+      id: reqId,
+      ...(anchor ? { tool: anchor } : {}),
+      questions: Array.isArray(req.input?.questions) ? req.input.questions : [],
+    });
     return;
   }
   if (req.subtype === "can_use_tool") {
