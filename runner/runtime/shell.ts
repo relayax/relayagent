@@ -72,7 +72,6 @@ export interface ShellNav {
   home: string;
   importer: string;
   /** 스튜디오 시작 화면 — 만드는 중인 초안 목록이 여기 있다 */
-  studio: string;
   /** 발행 전 초안 — 장부에 없어 카드로는 서지 않지만, 어느 화면에도 없으면 만들다 만 것이 잃은
    *  것처럼 보인다. href 는 그 초안을 여는 스튜디오 주소(마운트 문법은 기판이 조립한다) */
   drafts: { name: string; version: string | null; changes: number; href: string }[];
@@ -197,8 +196,6 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
     items,
     home: "/",
     importer: "/store/import",
-    // 초안 목록은 셸 홈에 있다 — 스튜디오는 패키지 화면의 층이 되어 시작 화면이 따로 없다
-    studio: "/",
     drafts: pending,
     store,
     library: store ? store + "library" : null,
@@ -482,10 +479,6 @@ function renderSide(nav, err){
   ft.className = "gp ft";
   if (nav) {
     // 만드는 문은 홈의 입력창 아래 한 줄뿐이다 — 여기엔 두지 않는다
-    // 만드는 중인 초안 — 발행 전 패키지로 돌아가는 유일한 문이 스튜디오 시작 화면이다
-    if (nav.drafts && nav.drafts.length) {
-      ft.appendChild(item(nav.studio, svg(ICONS.draft), "만드는 중 " + nav.drafts.length, { title: "만드는 중인 초안 — 홈에서 골라 이어서 만듭니다" }));
-    }
     ft.appendChild(item(nav.importer, svg(ICONS.down), "불러오기", { title: "누군가에게 받은 에이전트 파일을 엽니다" }));
   }
   el.appendChild(ft);
