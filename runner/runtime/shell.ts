@@ -513,8 +513,9 @@ function renderHome(nav, err){
 
   // 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 콘솔 에이전트의 대화로
   // 보내지고(relay:chat-open send), 빌더 위임이 시작되면 위젯이 그 탭을 연다
-  // 시작은 이 상자 하나다. 별도의 "패키지 만들기" 버튼은 두지 않는다 — 직접 만들기·불러오기·
-  // 스토어는 상자 아래 한 줄씩이라, 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
+  // 시작은 이 상자 하나다. 별도의 "패키지 만들기" 버튼은 두지 않는다 — 불러오기·스토어는
+  // 상자 아래 한 줄씩이라, 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
+  // 빈 패키지를 손으로 여는 문(nav.create, /?new=1)은 일부러 화면에 두지 않는다 — 주소로만 연다.
   if (nav) {
     var ask = document.createElement("div");
     ask.className = "ask";
@@ -522,7 +523,6 @@ function renderHome(nav, err){
       '<form class="af"><textarea maxlength="2000" rows="2" placeholder="만들고 싶은 비서를 적어 주세요. 예: 매일 저녁 하루를 정리해 일기로 남겨 주는 비서" aria-label="만들 것을 말로 설명"></textarea>' +
       '<div class="fr"><p class="ah">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p><button type="submit" class="bt ac">시작</button></div></form>' +
       '<div class="op">' +
-        '<a href="' + esc(nav.create) + '">' + svg(ICONS.plus) + '직접 만들기<span>이름만 정하고 빈 패키지에서 시작합니다</span><i>›</i></a>' +
         '<a href="' + esc(nav.importer) + '">' + svg(ICONS.down) + '불러오기<span>누군가에게 받은 에이전트 파일을 엽니다</span><i>›</i></a>' +
         (nav.store ? '<a href="' + esc(nav.store) + '">' + svg(ICONS.store) + '스토어에서 담기<span>만들어진 에이전트를 골라 설치합니다</span><i>›</i></a>' : "") +
       '</div>';
