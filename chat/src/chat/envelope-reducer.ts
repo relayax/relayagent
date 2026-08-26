@@ -424,6 +424,11 @@ export class EnvelopeReducer {
         isError: p.isError,
       };
       if (p.parent) card.parent = p.parent;
+      // label 은 기판이 이동 중에 붙인 유일한 필드다(harness-protocol.md §Events). 여기서
+      // 안 실으면 리듀서가 세운 값이 렌더에 닿지 못하고, 우리 문의 동사(`orders-sync` 같은
+      // 접두 없는 슬러그)가 이름 그대로 화면에 뜬다 — 기판이 자기 tools/list 에서 지어 보낸
+      // 뜻이 통째로 죽는다. 파트는 호출마다 새로 짓는 사본이라 빠뜨리면 조용히 사라진다.
+      if (p.label) card.label = p.label;
       return card;
     });
   }
