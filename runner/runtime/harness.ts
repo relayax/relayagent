@@ -180,6 +180,9 @@ export interface SessionInput {
   attachments?: { path: string; name?: string }[];
   /** 화면 맥락 스냅샷 — 프롬프트 서문으로만 붙는다. 이력의 user text 는 원문으로 남는다 (첨부와 같은 계약) */
   scene?: string;
+  /** 이 턴의 모델·강도 오버라이드 — 계약 축(ClientWireIO.harnessConfig)이 답한 값. 없으면 장부(rec) */
+  model?: string;
+  effort?: string;
   /** 이 턴의 장부 파일. wire 가 개설한 턴은 그 turns/<id>.jsonl 을 넘긴다 —
    *  넘기지 않으면(CLI·트리거·a2a) 세션이 같은 자리에 자기 id 로 하나 뜬다.
    *  종전에는 세션이 events.jsonl(턴마다 truncate)에, wire 가 턴 장부에 같은 봉투를
@@ -797,14 +800,16 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     const cred = await authority.credential(`llm/${variant.llm.provider}`);
     if (cred) env[variant.llm.auth.env] = cred;
   }
-  if (rec.model) env.RELAY_MODEL = rec.model;
-  if (rec.effort) env.RELAY_EFFORT = rec.effort;
+  const model = input.model ?? rec.model;
+  const effort = input.effort ?? rec.effort;
+  if (model) env.RELAY_MODEL = model;
+  if (effort) env.RELAY_EFFORT = effort;
 
   // 상주 지문: 이 값이 달라지면 낡은 상주를 은퇴시키고 새로 편다.
   // 자격은 값 대신 해시로 — 지문이 로그에 실려도 비밀이 새지 않는다
   const cred = variant.llm?.auth?.env ? env[variant.llm.auth.env] ?? "" : "";
   const fp = crypto.createHash("sha256")
-    .update([rec.path, agent, variant.name, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
+    .update([rec.path, agent, variant.name, model ?? "", effort ?? "", cred].join("\u0000"))
     .digest("hex").slice(0, 16);
   const resident = !input.interactive && residentsEnabled && harnessServes(entry, env);
 

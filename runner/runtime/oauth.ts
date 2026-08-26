@@ -4,12 +4,23 @@
 // 소비는 요청 시점 pull — 만료 60초 전이면 자동 회전한다. env 상주 없음(oauth 는 만료·회전
 // 축이라 env 상주가 애초에 성립하지 않는다 — 조직 기판과 같은 결론).
 // 브라우저 열기와 client_id 입력은 주입 가능(opts) — 검사·헤드리스가 같은 흐름을 지난다.
-import crypto from "node:crypto";
+// RFC 조각(디스커버리·DCR·PKCE·교환·회전)은 oauth-rfc.ts 가 소유한다 — 여기는 1인 기판의
+// 제어점(loopback 콜백·vault 저장·화면 흐름)만 든다. 조직 기판은 같은 조각을 자기 제어점에서 부른다.
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { credKey } from "../vault.ts";
 import type { Authority } from "../authority-contract.ts";
 import type { AuthDecl } from "../supply/manifest.ts";
+import {
+  authorizeUrl,
+  discoverOAuthMeta,
+  exchangeCode,
+  newPkce,
+  refreshToken,
+  registerClient,
+  type OAuthMeta,
+  type TokenResponse,
+} from "./oauth-rfc.ts";
 
 export interface OAuthBundle {
   access_token: string;
@@ -20,39 +31,15 @@ export interface OAuthBundle {
   client_id: string;
 }
 
-interface OAuthMeta {
-  authorization_endpoint: string;
-  token_endpoint: string;
-  registration_endpoint?: string;
-}
-
-const b64url = (b: Buffer) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-/** 메타 해석 — 선언(auth_meta) 우선, 없으면 RFC 8414 디스커버리 */
+/** 메타 해석 — 선언(auth_meta)이 완전하면 그것, 아니면 RFC 9728 → 8414 → OIDC 사다리(oauth-rfc) */
 export async function discoverMeta(baseUrl: string, auth: AuthDecl): Promise<OAuthMeta> {
-  const declared = (auth.oauth_client as { auth_meta?: Record<string, string> } | undefined)?.auth_meta;
-  if (declared?.authorization_endpoint && declared?.token_endpoint) return declared as unknown as OAuthMeta;
-  const origin = new URL(baseUrl).origin;
-  const res = await fetch(`${origin}/.well-known/oauth-authorization-server`);
-  if (!res.ok) throw new Error(`OAuth 디스커버리 실패(${res.status}) — auth_meta 에 endpoint 를 명시하세요: ${origin}`);
-  const j = (await res.json()) as OAuthMeta;
-  if (!j.authorization_endpoint || !j.token_endpoint) throw new Error("디스커버리 응답에 endpoint 없음");
-  return j;
+  const declared = (auth.oauth_client as { auth_meta?: Partial<OAuthMeta> } | undefined)?.auth_meta;
+  const meta = await discoverOAuthMeta(baseUrl, declared);
+  if (!meta) throw new Error(`OAuth 디스커버리 실패 — auth_meta 에 endpoint 를 명시하세요: ${baseUrl}`);
+  return meta;
 }
 
-async function postForm(url: string, form: Record<string, string>): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams(form).toString(),
-  });
-  const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw new Error(`토큰 교환 실패(${res.status}): ${JSON.stringify(j).slice(0, 200)}`);
-  return j;
-}
-
-function toBundle(tok: Record<string, unknown>, tokenEndpoint: string, clientId: string, prev?: OAuthBundle): OAuthBundle {
-  if (typeof tok.access_token !== "string") throw new Error("토큰 응답에 access_token 없음");
+function toBundle(tok: TokenResponse, tokenEndpoint: string, clientId: string, prev?: OAuthBundle): OAuthBundle {
   return {
     access_token: tok.access_token,
     // 회전 시 새 refresh 가 없으면 이전 것을 유지한다(회전-비발급 서버)
@@ -95,34 +82,21 @@ export async function runOAuthFlow(serviceUrl: string, auth: AuthDecl, opts: OAu
       if (!clientId) throw new Error("빈 client_id");
     } else {
       if (!meta.registration_endpoint) throw new Error("DCR registration_endpoint 없음 — client: registered + client_id 경로를 쓰세요");
-      const reg = await fetch(meta.registration_endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          client_name: "relay",
-          redirect_uris: [redirectUri],
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-          token_endpoint_auth_method: "none",
-        }),
-      });
-      const rj = (await reg.json().catch(() => ({}))) as { client_id?: string };
-      if (!reg.ok || !rj.client_id) throw new Error(`DCR 실패(${reg.status})`);
-      clientId = rj.client_id;
+      const reg = await registerClient(meta.registration_endpoint, redirectUri, { scopes: oc.scopes });
+      if (!reg) throw new Error("DCR 실패");
+      clientId = reg.client_id;
     }
 
-    const verifier = b64url(crypto.randomBytes(32));
-    const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
-    const state = b64url(crypto.randomBytes(16));
-    const u = new URL(meta.authorization_endpoint);
-    u.searchParams.set("response_type", "code");
-    u.searchParams.set("client_id", clientId);
-    u.searchParams.set("redirect_uri", redirectUri);
-    u.searchParams.set("code_challenge", challenge);
-    u.searchParams.set("code_challenge_method", "S256");
-    u.searchParams.set("state", state);
-    if (oc.scopes?.length) u.searchParams.set("scope", oc.scopes.join(" "));
-    for (const [k, v] of Object.entries(oc.auth_meta?.authorize_params ?? {})) u.searchParams.set(k, v);
+    const pkce = newPkce();
+    const state = pkce.state;
+    const url = authorizeUrl(meta, {
+      clientId,
+      redirectUri,
+      pkce,
+      scopes: oc.scopes,
+      extra: oc.auth_meta?.authorize_params,
+    });
+    if (!url) throw new Error(`인가 endpoint 가 URL 이 아닙니다: ${meta.authorization_endpoint}`);
 
     const code = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("인가 대기 시간 초과")), opts.timeoutMs ?? 5 * 60_000);
@@ -137,16 +111,16 @@ export async function runOAuthFlow(serviceUrl: string, auth: AuthDecl, opts: OAu
         const c = q.searchParams.get("code");
         c ? resolve(c) : reject(new Error(`인가 거부: ${q.searchParams.get("error") ?? "code 없음"}`));
       });
-      (opts.open ?? ((url: string) => spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" }).unref()))(u.toString());
+      (opts.open ?? ((u: string) => spawn(process.platform === "darwin" ? "open" : "xdg-open", [u], { detached: true, stdio: "ignore" }).unref()))(url);
     });
 
-    const tok = await postForm(meta.token_endpoint, {
-      grant_type: "authorization_code",
+    const tok = await exchangeCode(meta.token_endpoint, {
       code,
-      redirect_uri: redirectUri,
-      client_id: clientId,
-      code_verifier: verifier,
+      redirectUri,
+      client: { client_id: clientId },
+      codeVerifier: pkce.verifier,
     });
+    if (!tok) throw new Error("토큰 교환 실패 — 인가 서버가 access_token 을 주지 않았습니다");
     return toBundle(tok, meta.token_endpoint, clientId);
   } finally {
     server.close();
@@ -163,11 +137,8 @@ function rotate(authority: Authority, key: string, b: OAuthBundle): Promise<OAut
   if (running) return running;
   const flight = (async () => {
     try {
-      const tok = await postForm(b.token_endpoint, {
-        grant_type: "refresh_token",
-        refresh_token: b.refresh_token as string,
-        client_id: b.client_id,
-      });
+      const tok = await refreshToken(b.token_endpoint, { refreshToken: b.refresh_token as string, client: { client_id: b.client_id } });
+      if (!tok) throw new Error("토큰 회전 실패 — 인가 서버가 access_token 을 주지 않았습니다");
       const next = toBundle(tok, b.token_endpoint, b.client_id, b);
       await authority.setCredential(key, JSON.stringify(next));
       return next;
