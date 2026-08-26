@@ -478,7 +478,18 @@ function renderSide(nav, err){
   var ft = document.createElement("div");
   ft.className = "gp ft";
   if (nav) {
-    // 만드는 문은 홈의 입력창 아래 한 줄뿐이다 — 여기엔 두지 않는다
+    // 새로 만들기 = 빌더와의 대화다. 폼이 아니라 채팅을 연다 — 홈이면 그 자리에서, 다른
+    // 화면이면 홈으로 가서 연다(그 화면의 위젯은 그 패키지의 대화라 만들기 상대가 아니다)
+    var mk = document.createElement("button");
+    mk.type = "button";
+    mk.className = "it";
+    mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
+    mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
+    mk.onclick = function(){
+      if (home) openChat();
+      else location.href = "/#new";
+    };
+    ft.appendChild(mk);
     ft.appendChild(item(nav.importer, svg(ICONS.down), "불러오기", { title: "누군가에게 받은 에이전트 파일을 엽니다" }));
   }
   el.appendChild(ft);
@@ -487,6 +498,10 @@ function renderSide(nav, err){
 // ── 홈(런처) — 사이드바와 같은 nav 를 그린다 ───────────────────────────────
 function renderHome(nav, err){
   if (!home) return;
+  if (location.hash === "#new") {
+    try { history.replaceState(null, "", location.pathname); } catch (e) {}
+    openChat();
+  }
   // 다시 그릴 때(재조회) 입력 중이던 문장을 지키지 않으면 새로고침이 사용자의 글을 지운다
   var typed = "";
   try { var prev = home.querySelector(".af textarea"); if (prev) typed = prev.value; } catch (e) {}
@@ -614,11 +629,14 @@ function renderHome(nav, err){
 
 // 홈의 문장을 위젯 대화로 보낸다. 위젯 번들은 async 라 늦게 뜰 수 있다 — 전역 표면
 // (window.RelayChat, 번들 로드 시 선다)이 설 때까지 250ms 간격으로 기다린다(최대 8초)
-function sendToChat(text){
+function sendToChat(text){ chatOpen({ send: text }); }
+/** 패널만 연다 — 사이드바의 [새로 만들기]. 홈의 대화 상대가 곧 빌더다 */
+function openChat(){ chatOpen({}); }
+function chatOpen(detail){
   var tries = 0;
   (function fire(){
     if (window.RelayChat) {
-      try { window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: { send: text } })); } catch (e) {}
+      try { window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: detail })); } catch (e) {}
       return;
     }
     if (++tries > 32) return;
