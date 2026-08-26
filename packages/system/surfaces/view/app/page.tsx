@@ -3,7 +3,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ChatNudge from "@/components/ChatNudge"; // 말풍선
-import Onboarding, { ONBOARD_KEY } from "@/components/Onboarding"; // 온보딩
 import PkgPane from "@/components/PkgPane";
 import SettingsPane from "@/components/SettingsPane";
 import { edgesData, fetchRegistry, fetchResidency, fetchShellNav, type ShellNav } from "@/lib/api";
@@ -38,17 +37,9 @@ function Console() {
   const [running, setRunning] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [onboard, setOnboard] = useState(false);
 
-  // 첫 실행 안내는 **자동으로 뜨지 않는다** — 이 화면은 더 이상 처음 닿는 자리가 아니다.
-  // 처음 닿는 자리는 셸 홈(기판이 내는 런처)이고, 안내의 문구도 그 IA 를 설명해야 한다.
-  // 그 이사가 끝날 때까지 안내는 아래 [안내] 버튼으로만 열린다(문구는 손대지 않았다).
-
-  const closeOnboard = useCallback((never: boolean) => {
-    if (never) localStorage.setItem(ONBOARD_KEY, "1");
-    setOnboard(false);
-  }, []);
-  const openGuide = useCallback(() => setOnboard(true), []);
+  // 첫 실행 안내는 셸 홈(기판이 내는 런처, runner/runtime/shell.ts)에 산다 — 처음 닿는 자리가
+  // 거기라서. 이 화면의 [안내] 는 그 문(/?guide=1)으로 가는 링크다.
 
   const load = useCallback(async () => {
     try {
@@ -115,11 +106,10 @@ function Console() {
           <div className="pane-body center"><span className="rc-ring" /></div>
         )
       ) : (
-        <SettingsPane reg={reg} edges={edges} onChanged={() => void load()} onGuide={openGuide} />
+        <SettingsPane reg={reg} edges={edges} onChanged={() => void load()} />
       )}
 
-      <Onboarding open={onboard} onClose={closeOnboard} /> {/* 온보딩 */}
-      {!onboard ? <ChatNudge /> : null} {/* 말풍선 */}
+      <ChatNudge /> {/* 말풍선 */}
     </div>
   );
 }

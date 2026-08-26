@@ -503,3 +503,38 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .pl-ask-hd b { font-size: 14px; }
 .pl-detail { font-size: 12px; color: var(--rc-soft); line-height: 1.6; background: var(--rc-ground); border-radius: 8px; padding: 9px 11px; }
 .pl-ask-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+
+/* ── UX 정비(2026-08-26) — 안내 링크 · 트리 라벨 · ⋯ 메뉴 · 판정 행 · 초안 목록 · 기록 이력 · 적용 시트 ── */
+/* 온보딩은 홈(기판 셸)으로 옮겼다 — 설정의 [안내] 는 그 문으로 가는 링크다 */
+.ob-open { margin-left: auto; border: 1px solid var(--rc-line); background: var(--rc-bg); color: var(--rc-soft); border-radius: 999px; padding: 2px 10px; font: 600 11.5px var(--rc-sans); cursor: pointer; text-decoration: none; }
+.ob-open:hover { background: var(--rc-hover); }
+/* 트리 — 사람 말 라벨 + 문법 키 병기, 고급 접기 */
+.st-key { margin-left: 6px; font: 10.5px var(--rc-mono); color: var(--rc-faint); }
+.st-node.st-adv { margin-top: 6px; }
+/* ⋯ 메뉴 — 이전 판으로 · 작업 사본 버리기 (자주 누르는 버튼과 떨어뜨린다) */
+.st-more { position: relative; }
+.st-menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 240px; background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.12); padding: 6px; z-index: 50; display: flex; flex-direction: column; gap: 2px; }
+.st-menu button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; border: none; background: none; text-align: left; padding: 8px 10px; border-radius: 7px; cursor: pointer; font: 600 12.5px var(--rc-sans); color: var(--rc-ink); }
+.st-menu button:hover { background: var(--rc-hover); }
+.st-menu button small { font-size: 11px; font-weight: 500; color: var(--rc-faint); }
+.st-menu button.danger { color: var(--rc-err); }
+/* 판정 행 — 문장 + 고치러 가기 */
+.st-issue { display: flex; align-items: center; gap: 8px; }
+.st-issue .rc-btn { padding: 2px 8px; font-size: 11px; flex: none; }
+/* 스튜디오 시작 화면 — 만드는 중인 초안 */
+.st-landing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px 20px; overflow: auto; }
+.st-drafts { display: flex; flex-direction: column; gap: 6px; width: min(560px, 100%); }
+.st-draft { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rc-line-soft); border-radius: 10px; padding: 10px 14px; text-decoration: none; color: inherit; background: var(--rc-bg); }
+.st-draft:hover { border-color: var(--rc-accent); }
+.st-draft b { font-size: 13px; }
+.st-draft .st-ver { margin-left: auto; }
+/* 기록 이력 */
+.st-hist { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+.st-hist-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--rc-line-soft); font-size: 12px; }
+.st-hist-row .msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-hist-row .when { color: var(--rc-faint); font-size: 11px; flex: none; }
+/* 적용 결과 시트 */
+.st-done { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.st-done .big { font-size: 15px; font-weight: 700; line-height: 1.5; }
+.st-done .ok { color: var(--rc-ok); }
+.st-done .warn { color: var(--rc-err); }

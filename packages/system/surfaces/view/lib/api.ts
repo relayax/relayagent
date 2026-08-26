@@ -53,12 +53,18 @@ export interface ShellItem {
   resident: boolean;
   ring0: boolean;
   error: string | null;
+  /** 도는 판 위에 적용하지 않은 수정이 있다 — 작업 사본이 앞서 있다 */
+  editing: boolean;
 }
 export interface ShellNav {
   items: ShellItem[];
   home: string;
   create: string;
   importer: string;
+  /** 스튜디오 시작 화면 — 만드는 중인 초안 목록 */
+  studio: string;
+  /** 발행 전 초안 — 장부에 없어 카드로는 서지 않는 것들 */
+  drafts: { name: string; version: string | null; changes: number; href: string }[];
 }
 
 export async function fetchShellNav(): Promise<ShellNav> {

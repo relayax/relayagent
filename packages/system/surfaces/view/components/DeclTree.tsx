@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { SECTIONS, sectionChangeCount, unclaimedFiles, type SectionDef } from "@/lib/sections";
 import type { Manifest } from "@/lib/types";
 import type { DraftChange } from "@/lib/studio";
 
 // Figma 의 레이어 패널에 해당하는 선언 트리. 노드 = relay.yaml 선언.
 // 미선언 섹션도 흐리게 전부 보여준다 — 트리 자체가 문법의 전체 어휘를 가르친다.
+// 이름은 사람 말(lib/sections.ts label)로 부르고 문법 키는 작게 병기한다 — 팔레트와 같은 어휘다.
+// 고급 선언(org · host_methods)은 접어 둔다: 개인 기판에서 거의 손대지 않는 것이 목록 한복판에
+// 서면 나머지가 묻힌다. 선언돼 있거나 지금 보고 있으면 펼친다.
 
 export default function DeclTree({
   manifest,
@@ -25,6 +29,23 @@ export default function DeclTree({
   const m = manifest ?? {};
   const changed = new Set(changes.map((c) => c.file));
   const extra = manifest ? unclaimedFiles(m, files) : files;
+  const main = SECTIONS.filter((s) => !s.advanced);
+  const adv = SECTIONS.filter((s) => s.advanced);
+  const [advOpen, setAdvOpen] = useState(false);
+  const advShown = advOpen || adv.some((s) => s.key === sec || s.declared(m));
+
+  const section = (s: SectionDef) => (
+    <TreeSection
+      key={s.key}
+      def={s}
+      m={m}
+      files={files}
+      changed={changed}
+      active={sec === s.key}
+      activeItem={sec === s.key ? item : null}
+      onSelect={onSelect}
+    />
+  );
 
   return (
     <div className="st-tree">
@@ -35,18 +56,16 @@ export default function DeclTree({
         <b>{m.display_name ?? "패키지"}</b>
         {changed.size ? <span className="st-badge">{changed.size}</span> : null}
       </div>
-      {SECTIONS.map((s) => (
-        <TreeSection
-          key={s.key}
-          def={s}
-          m={m}
-          files={files}
-          changed={changed}
-          active={sec === s.key}
-          activeItem={sec === s.key ? item : null}
-          onSelect={onSelect}
-        />
-      ))}
+      {main.map(section)}
+      {adv.length ? (
+        <div className="st-sec">
+          <div className="st-node dim st-adv" onClick={() => setAdvOpen((v) => !v)} title="거의 손대지 않는 선언">
+            <span>고급</span>
+            <span className="st-count">{advShown ? "▾" : "▸"}</span>
+          </div>
+          {advShown ? adv.map(section) : null}
+        </div>
+      ) : null}
       {extra.length ? (
         <div className="st-sec">
           <div
@@ -88,8 +107,12 @@ function TreeSection({
       <div
         className={`st-node${declared ? "" : " dim"}${active && !activeItem ? " sel" : ""}`}
         onClick={() => onSelect(def.key)}
+        title={def.yamlKey ? `relay.yaml: ${def.yamlKey}` : undefined}
       >
-        <span>{def.label}</span>
+        <span className="st-it">
+          {def.label}
+          {def.yamlKey ? <small className="st-key">{def.yamlKey}</small> : null}
+        </span>
         {dirty ? <span className="st-badge">{dirty}</span> : null}
         {items?.length ? <span className="st-count">{items.length}</span> : null}
         {!declared ? <span className="st-add">+</span> : null}

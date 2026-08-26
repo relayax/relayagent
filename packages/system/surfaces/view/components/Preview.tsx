@@ -73,21 +73,21 @@ function BuildButton({ ctx, onDone }: { ctx: PreviewCtx; onDone: () => void }) {
     <button
       className="rc-btn"
       disabled={busy}
-      title="작업 사본을 미리보기 좌표로 굽습니다 — 도는 판은 그대로입니다"
+      title="작업 사본의 화면을 미리보기용으로 만듭니다 — 돌아가는 판은 그대로입니다"
       onClick={async () => {
         setBusy(true);
         try {
           const r = await draftBuild(ctx.pkg);
-          ctx.say("ok", r.out || "굽기 완료");
+          ctx.say("ok", r.out || "미리보기를 만들었습니다");
           onDone();
         } catch (e) {
-          ctx.say("err", `미리보기 굽기 실패: ${String(e instanceof Error ? e.message : e)}`);
+          ctx.say("err", `미리보기 만들기 실패: ${String(e instanceof Error ? e.message : e)}`);
         } finally {
           setBusy(false);
         }
       }}
     >
-      {busy ? "굽는 중…" : "미리보기 굽기"}
+      {busy ? "만드는 중…" : "미리보기 만들기"}
     </button>
   );
 }
@@ -107,7 +107,7 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
   if (!view) {
     return (
       <div className="pv">
-        <Head chip="그림 재료" />
+        <Head chip="미리보기" />
         <div className="empty">
           <span>view 표면이 선언되지 않았습니다.</span>
           <Note>선언하면 이 자리에 작업 사본의 화면이 뜹니다 — 발행 전에, 새 탭 없이.</Note>
@@ -133,8 +133,8 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
       </div>
       <div className="pv-foot">
         {view.out
-          ? `out 을 선언한 표면입니다 — 소스를 고친 뒤 [미리보기 굽기] 를 눌러야 이 프레임이 새 판을 냅니다.`
-          : `정적 소스라 굽지 않습니다 — 파일을 저장하면 이 프레임이 곧바로 새로 읽습니다.`}
+          ? `빌드가 필요한 화면입니다 — 소스를 고친 뒤 [미리보기 만들기] 를 눌러야 이 프레임이 새 판을 냅니다.`
+          : `빌드 없는 화면이라 파일을 저장하면 이 프레임이 곧바로 새로 읽습니다.`}
       </div>
     </div>
   );
@@ -455,7 +455,7 @@ function TimePane({ ctx }: { ctx: PreviewCtx }) {
   if (!trig) {
     return (
       <div className="pv">
-        <Head chip="시간 재료" />
+        <Head chip="일정" />
         <div className="empty"><span>트리거가 없습니다.</span><Note>선언하면 언제 도는지가 여기 격자와 목록으로 뜹니다.</Note></div>
       </div>
     );
@@ -648,7 +648,7 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
   }, [ctx.pkg, agent?.persona, ctx.rev]);
 
   if (!agent) {
-    return <div className="pv"><Head chip="말 재료" /><div className="empty"><span>에이전트가 없습니다.</span></div></div>;
+    return <div className="pv"><Head chip="시연 대화" /><div className="empty"><span>에이전트가 없습니다.</span></div></div>;
   }
   const tools = derivedTools(ctx.manifest, agent.name, ctx.status.files);
 
@@ -715,7 +715,7 @@ function RunPane({ ctx }: { ctx: PreviewCtx }) {
   }, [ctx.item]);
 
   if (!src) {
-    return <div className="pv"><Head chip="동사 재료" /><div className="empty"><span>scripts 가 선언되지 않았습니다.</span></div></div>;
+    return <div className="pv"><Head chip="실행" /><div className="empty"><span>scripts 가 선언되지 않았습니다.</span></div></div>;
   }
 
   const run = async () => {

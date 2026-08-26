@@ -29,7 +29,12 @@ export type Material = "그림" | "배선" | "시간" | "말" | "동사" | "계�
 
 export interface SectionDef {
   key: string;
+  /** 사람이 읽는 이름 — 팔레트(lib/create.ts)와 같은 말투다. 문법 키는 yamlKey 로 작게 병기한다.
+   *  종전에는 트리가 문법 키(agents, edges …)를 그대로 썼고 팔레트는 "말 상대 하나" 라고 불러,
+   *  같은 것을 만들 때와 찾을 때 다른 이름으로 불렀다 */
   label: string;
+  /** 고급 — 개인 기판에서 거의 손대지 않는 선언. 트리가 접어 둔다(선언돼 있으면 펼친다) */
+  advanced?: boolean;
   material: Material;
   /** relay.manifest.yaml 의 최상위 키. 스키마 description 조회와 YAML 조각 표시에 쓴다 */
   yamlKey?: string;
@@ -49,7 +54,7 @@ const exist = (files: string[], ...paths: (string | undefined | null)[]): string
 export const SECTIONS: SectionDef[] = [
   {
     key: "identity",
-    label: "신분",
+    label: "기본 정보",
     material: "계약",
     hint: "이름, 버전, 표시 이름, 설명, 아이콘. 카드와 지도, 설치 화면이 이 문장을 그대로 쓴다.",
     declared: () => true,
@@ -57,7 +62,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "requires",
-    label: "requires",
+    label: "설치 요구",
     material: "계약",
     yamlKey: "requires",
     hint: "호스트 환경 요구 = 설치 관문. OS, PATH 바이너리, 데스크톱 앱. 설치가 실체를 판정해 미충족이면 fail-loud.",
@@ -65,7 +70,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "surfaces",
-    label: "surfaces",
+    label: "화면과 창구",
     material: "그림",
     yamlKey: "surfaces",
     hint: "패키지가 세상에 내미는 창구. view 화면, components 번들 수출, channels 외부 대화 어댑터. 직접 대화는 선언이 아니라 agents[] 에서 도출된다.",
@@ -99,7 +104,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "harness",
-    label: "harness",
+    label: "실행 도구",
     material: "계약",
     yamlKey: "harness",
     hint: "동봉한 실행 어댑터 후보들. 선언 = 후보 목록(BOM), 활성 선택 = 장부. 에이전트 패키지는 최소 1개.",
@@ -114,7 +119,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "agents",
-    label: "agents",
+    label: "대화 상대",
     material: "말",
     yamlKey: "agents",
     hint: "착지점 = 패키지 짧은 이름과 같은 에이전트. 페르소나, 스킬, 커맨드, 서브에이전트 위임, 동사 scope.",
@@ -131,7 +136,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "scripts",
-    label: "scripts",
+    label: "기능",
     material: "동사",
     yamlKey: "scripts",
     hint: "동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON. 에이전트 scope 가 여기를 가리킨다.",
@@ -148,7 +153,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "services",
-    label: "services",
+    label: "자원",
     material: "배선",
     yamlKey: "services",
     hint: "패키지의 자원. source 자기 몸(프로세스·컨테이너), url 원격 MCP 문, api 원격 REST 베이스, dir 폴더. 자격(auth)은 밖으로 나가는 두 형에 앉고 좌표는 vault 의 <패키지>/<서비스> 다.",
@@ -163,7 +168,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "triggers",
-    label: "triggers",
+    label: "깨움",
     material: "시간",
     yamlKey: "triggers",
     hint: "시간(cron)과 사건(event)이 세션이나 동사를 깨운다. delivery 를 선언하면 결과가 채널 대화로 배달된다.",
@@ -178,7 +183,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "missions",
-    label: "missions",
+    label: "맡길 수 있는 일",
     material: "배선",
     yamlKey: "missions",
     hint: "a2a 수신 선언. 다른 패키지가 이 미션으로 위임을 보낼 수 있다.",
@@ -187,7 +192,7 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "edges",
-    label: "edges",
+    label: "빌려 쓰는 것",
     material: "배선",
     yamlKey: "edges",
     hint: "남의 것 소비 선언. 선언은 신청, 활성화는 결재 — 결재는 콘솔 그래프에서 한다.",
@@ -202,7 +207,8 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "host_methods",
-    label: "host_methods",
+    label: "기판 브리지 캡",
+    advanced: true,
     material: "계약",
     yamlKey: "host_methods",
     hint: "이 패키지의 동사가 부를 수 있는 host.* 의 캡. 미선언 = 전체이고, 선언하면 목록 밖은 거부된다. 고지서에 실린다.",
@@ -211,7 +217,8 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     key: "org",
-    label: "org",
+    label: "조직 설정",
+    advanced: true,
     material: "계약",
     yamlKey: "org",
     hint: "org 기판이 호스팅할 때만 읽는 확장. 1인 기판에서는 무시된다.",

@@ -10,10 +10,10 @@ import DeclTree from "@/components/DeclTree";
 import Palette from "@/components/Palette";
 import Preview, { materialOf, type PreviewCtx } from "@/components/Preview";
 import SectionView, { type SectionCtx } from "@/components/SectionView";
-import { CommitDialog, DiscardDialog, PublishDialog, ReleasesDialog } from "@/components/StudioDialogs";
+import { CommitDialog, DiscardDialog, PublishDialog, PublishedDialog, ReleasesDialog } from "@/components/StudioDialogs";
 import { fetchRegistry } from "@/lib/api";
 import type { Made } from "@/lib/create";
-import { SECTIONS } from "@/lib/sections";
+import { SECTIONS, type Material } from "@/lib/sections";
 import {
   draftList,
   draftOpen,
@@ -23,6 +23,7 @@ import {
   draftWrite,
   fetchSchema,
   packPkg,
+  type DraftEntry,
   type DraftStatus,
   type PublishOutcome,
   type Verdict,
@@ -41,6 +42,29 @@ import type { Manifest, Registry } from "@/lib/types";
 // 갈아치운다 → 본다" 였다는 뜻이다. 결과면의 모양은 재료가 정한다(lib/sections.ts Material).
 
 type LogLine = { kind: "ok" | "err" | "info"; text: string; href?: string };
+
+/** 결과면 이름표 — "재료" 는 설계 은유(lib/sections.ts)라 화면에는 얻는 것의 이름으로 쓴다 */
+const FACE_OF: Record<Material, string> = { 그림: "미리보기", 배선: "연결 지도", 시간: "일정", 말: "시연 대화", 동사: "실행", 계약: "설정" };
+
+/** 전역 셸(사이드바·홈)에 목록 재조회를 알린다 — 적용·버리기 뒤 새로고침 없이 카드가 따라오게 */
+function notifyNav(): void {
+  try {
+    window.dispatchEvent(new CustomEvent("relay:nav-refresh"));
+  } catch {
+    /* 셸 없는 문서 — 무시 */
+  }
+}
+
+/** 판정 좌표(relay.yaml 경로) → 스튜디오의 고치는 자리. 최상위 키가 곧 섹션이고 둘째 조각이 항목이다 */
+const IDENTITY_KEYS = new Set(["schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at"]);
+function fixTargetOf(path: string | null): { sec: string; item: string | null; label: string } | null {
+  if (!path) return null;
+  const [first, second] = path.split(".");
+  const def = IDENTITY_KEYS.has(first) ? SECTIONS.find((d) => d.key === "identity") : SECTIONS.find((d) => d.yamlKey === first || d.key === first);
+  if (!def) return null;
+  const item = second && def.items ? second.replace(/\[.*$/, "") : null;
+  return { sec: def.key, item: item || null, label: `고치러 가기 → ${def.label}${item ? ` · ${item}` : ""}` };
+}
 type Dialog = null | "commit" | "publish" | "releases" | "discard";
 
 export default function StudioPage() {
@@ -81,6 +105,10 @@ function Studio() {
   // 않는다. 텍스트 편집은 CodeMirror 의 이력이 따로 맡는다(에디터 안에서 ⌘Z)
   const [undo, setUndo] = useState<string[]>([]);
   const [redo, setRedo] = useState<string[]>([]);
+  // 적용 결과 시트 — 접힌 로그 한 줄 대신 열기 버튼과 실행 도구 상태를 한 자리에
+  const [published, setPublished] = useState<PublishOutcome | null>(null);
+  // ⋯ 메뉴 — 이전 판으로 · 작업 사본 버리기. 자주 누르는 버튼과 떨어뜨린다
+  const [more, setMore] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 경로별 마지막 읽기 지문 — draft-write 의 base. 디바운스 발화 시점에 읽어야 하므로
   // (in-flight 저장이 지문을 갱신하는 사이 잡힌 클로저가 낡은 값을 들 수 있다) ref 다
@@ -419,8 +447,8 @@ function Studio() {
     try {
       const r = await packPkg(pkg);
       say("ok", `만들었습니다: ${r.ref}@${r.version} · 파일 ${r.files}개 · ${(r.size / 1024).toFixed(0)}KB`);
-      say("ok", `봉인 ${r.digest}`);
-      say("ok", `스토어에 올릴 준비가 됐습니다 · ${r.shelf}`);
+      say("ok", `검증값 ${r.digest}`);
+      say("ok", `저장 위치: ${r.shelf} — 스토어에 올릴 수 있습니다`);
       say("ok", `↓ 파일로 받기 — ${r.file}`, `/store/export/${encodeURIComponent(r.file)}`);
       if (r.excluded.length) {
         say("err", `선언 밖이라 빠진 파일 ${r.excluded.length}개 — 매니페스트에 없으면 봉투에도 없다`);
@@ -440,9 +468,11 @@ function Studio() {
       return;
     }
     say("ok", `적용됨: ${r.name}@${r.version}${r.fresh ? " (첫 설치)" : ""}`);
-    if (r.build) say(r.build.ok ? "info" : "err", `view 빌드: ${r.build.out}`);
+    if (r.build) say(r.build.ok ? "info" : "err", `화면 빌드: ${r.build.out}`);
     for (const s of r.services ?? []) say("info", s);
     setIssues([]);
+    setPublished(r);
+    notifyNav();
     void refresh();
   }
 
@@ -513,7 +543,7 @@ function Studio() {
             (앱 내부 경로였다면 basePath 때문에 Link 여야 한다) */}
         {status?.installed && pkg ? (
           <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${pkg}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다">
-            실행본 열기
+            돌아가는 판 열기
           </a>
         ) : null}
         <button className="rc-btn" title="남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다" disabled={!status?.version.live} onClick={() => void pack()}>
@@ -522,12 +552,25 @@ function Studio() {
 
         <span className="st-div" aria-hidden="true" />
 
-        <button className="rc-btn" title="예전 판 목록을 보고 그때로 돌립니다" onClick={() => setDialog("releases")}>
-          되돌리기
-        </button>
-        <button className="rc-btn" title="고치던 내용을 지웁니다 — 되돌릴 수 없습니다" onClick={() => setDialog("discard")}>
-          초기화
-        </button>
+        {/* 드물고 무거운 둘은 ⋯ 뒤에 — "되돌리기" 가 ⌘Z 되돌리기와 같은 말로 나란히 서 있었고
+            그 옆이 복구 불가능한 "초기화" 였다. 메뉴는 이름 아래에 무엇을 하는지 한 줄을 단다 */}
+        <span className="st-more">
+          <button className="rc-btn" title="이전 판으로 · 작업 사본 버리기" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
+            ⋯
+          </button>
+          {more ? (
+            <div className="st-menu" role="menu" onMouseLeave={() => setMore(false)}>
+              <button role="menuitem" onClick={() => { setMore(false); setDialog("releases"); }}>
+                이전 판으로
+                <small>예전에 적용했던 판 목록을 보고 그 판으로 바꿉니다</small>
+              </button>
+              <button role="menuitem" className="danger" onClick={() => { setMore(false); setDialog("discard"); }}>
+                작업 사본 버리기
+                <small>고치던 내용과 이력을 지웁니다 — 되돌릴 수 없습니다</small>
+              </button>
+            </div>
+          ) : null}
+        </span>
       </div>
 
       <div className={`st-body${previewCtx ? " st-3" : ""}`}>
@@ -660,11 +703,25 @@ function Studio() {
               <div className="st-console-body">
                 {issues?.length ? (
                   <div className="st-issues">
-                    {issues.map((i, x) => (
-                      <div key={x} className="err">
-                        - {i}
-                      </div>
-                    ))}
+                    {issues.map((text, x) => {
+                      // 판정은 원인만 말한다 — 고치는 자리로 가는 버튼을 붙인다(좌표가 있을 때)
+                      const v = verdicts[x];
+                      const go = v ? fixTargetOf(v.path) : null;
+                      return (
+                        <div key={x} className="st-issue err">
+                          <span>- {text}</span>
+                          {go ? (
+                            <button className="rc-btn" onClick={() => nav({ sec: go.sec, item: go.item, file: null })}>
+                              {go.label}
+                            </button>
+                          ) : v?.line != null && effFile !== "relay.yaml" ? (
+                            <button className="rc-btn" onClick={() => nav({ sec: null, item: null, file: "relay.yaml" })}>
+                              relay.yaml {v.line}행 보기
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
                 {log.map((l, x) => (
@@ -700,7 +757,7 @@ function Studio() {
           <div className="rc-card st-right">
             <div className="st-crumb">
               <span className="cur">결과</span>
-              <span className="rc-chip gray">{material} 재료</span>
+              <span className="rc-chip gray">{FACE_OF[material]}</span>
               <span className="st-sp" />
               <span className="st-ver">발행 전 · 작업 사본</span>
             </div>
@@ -712,6 +769,7 @@ function Studio() {
       {dialog === "commit" && pkg ? (
         <CommitDialog
           pkg={pkg}
+          changedCount={changedCount}
           onDone={(line) => {
             say("ok", line);
             void refresh();
@@ -720,7 +778,14 @@ function Studio() {
         />
       ) : null}
       {dialog === "publish" && pkg ? (
-        <PublishDialog pkg={pkg} draftVersion={status?.version.draft ?? null} onDone={onPublished} onClose={() => setDialog(null)} />
+        <PublishDialog
+          pkg={pkg}
+          draftVersion={status?.version.draft ?? null}
+          installed={!!status?.installed}
+          manifest={manifest}
+          onDone={onPublished}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === "releases" && pkg ? (
         <ReleasesDialog
@@ -733,14 +798,38 @@ function Studio() {
         />
       ) : null}
       {dialog === "discard" && pkg ? (
-        <DiscardDialog pkg={pkg} installed={!!status?.installed} onDone={() => router.push("/")} onClose={() => setDialog(null)} />
+        <DiscardDialog pkg={pkg} installed={!!status?.installed} onDone={() => { notifyNav(); router.push("/"); }} onClose={() => setDialog(null)} />
+      ) : null}
+      {published && pkg ? (
+        <PublishedDialog pkg={pkg} display={manifest?.display_name ?? pkg} outcome={published} onClose={() => setPublished(null)} />
       ) : null}
     </div>
     </AgentScope>
   );
 }
 
+/** 시작 화면 — 만드는 중인 초안이 여기 선다. 종전에는 "콘솔에서 골라 들어오라" 한 줄뿐이라,
+ *  적용 전에 탭을 닫은 초안으로 돌아갈 화면이 없었다(주소를 손으로 치는 수밖에) */
 function Landing() {
+  const [drafts, setDrafts] = useState<DraftEntry[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    draftList()
+      .then((r) => setDrafts(r.drafts))
+      .catch((e) => setErr(String(e instanceof Error ? e.message : e)));
+  }, []);
+  const pending = (drafts ?? []).filter((d) => !d.installed);
+  const editing = (drafts ?? []).filter((d) => d.installed && d.changes > 0);
+  const row = (d: DraftEntry, chip: string) => (
+    <Link key={d.name} href={`/studio/?pkg=${encodeURIComponent(d.name)}`} className="st-draft">
+      <b>{d.name}</b>
+      <span className="rc-chip">{chip}</span>
+      <span className="st-ver">
+        {d.version ? `v${d.version}` : ""}
+        {d.changes ? ` · 기록 안 한 변경 ${d.changes}건` : ""}
+      </span>
+    </Link>
+  );
   return (
     <div className="st-shell">
       <div className="rc-card st-top">
@@ -748,26 +837,59 @@ function Landing() {
           ◀ 콘솔
         </Link>
         <b>스튜디오</b>
+        <span className="st-sp" />
+        <Link href="/studio/?new=1" className="rc-btn accent" style={{ textDecoration: "none" }}>
+          새 패키지
+        </Link>
       </div>
-      <div className="rc-card" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div className="empty">
-          콘솔에서 패키지를 골라 들어오거나, <Link href="/studio/?new=1">새 패키지</Link>를 만드세요.
-        </div>
+      <div className="rc-card st-landing">
+        {drafts == null && !err ? <span className="rc-ring" /> : null}
+        {err ? <div className="banner">{err}</div> : null}
+        {pending.length ? (
+          <div className="st-drafts">
+            <div className="rc-label">만드는 중 — 아직 한 번도 적용하지 않은 패키지</div>
+            {pending.map((d) => row(d, "초안"))}
+          </div>
+        ) : null}
+        {editing.length ? (
+          <div className="st-drafts">
+            <div className="rc-label">수정 중 — 적용하지 않은 변경이 있는 패키지</div>
+            {editing.map((d) => row(d, "수정 중"))}
+          </div>
+        ) : null}
+        {drafts && !pending.length && !editing.length ? (
+          <div className="empty">
+            콘솔에서 패키지를 골라 들어오거나, <Link href="/studio/?new=1">새 패키지</Link>를 만드세요.
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-/** 새 패키지 마법사 — 신분 세 칸만 받고 나머지는 스튜디오 안에서 붙여 나간다 */
+/** 표시 이름에서 폴더 이름을 만든다 — 영문·숫자만 남기고 나머지는 하이픈. 한글만 있으면 빈 값 */
+function slugOf(display: string): string {
+  return display
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** 새 패키지 — 표시 이름과 한 줄 설명만 받는다. 폴더 이름은 표시 이름에서 만들고, 나머지는
+ *  스튜디오 안의 [＋ 만들기]로 붙여 나간다. 첫 화면부터 내부 용어(draft·스캐폴드·하네스)를
+ *  쓰지 않는다 — 팔레트의 말투와 같아야 한다 */
 function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
-  const [dir, setDir] = useState("");
   const [display, setDisplay] = useState("");
   const [desc, setDesc] = useState("");
+  const [dir, setDir] = useState("");
+  const [dirTouched, setDirTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const dirValue = dir.trim();
+  const dirValue = (dirTouched ? dir : slugOf(display)).trim();
   const valid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(dirValue);
   const invalidDir = dirValue.length > 0 && !valid;
+  const needsDir = display.trim().length > 0 && !dirTouched && !dirValue;
 
   return (
     <div className="st-shell">
@@ -780,39 +902,43 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
       <div className="rc-card st-wizard">
         <div className="st-form" style={{ maxWidth: 480 }}>
           <label className="st-field">
-            <span>디렉토리 이름 (영문 소문자, 숫자, 하이픈)</span>
+            <span>이름</span>
+            <input autoFocus placeholder="일기 비서" value={display} onChange={(e) => setDisplay(e.target.value)} />
+          </label>
+          <label className="st-field">
+            <span>한 줄 설명 — 홈 카드에 그대로 보입니다</span>
+            <input placeholder="하루를 정리해 일기로 남깁니다" value={desc} onChange={(e) => setDesc(e.target.value)} />
+          </label>
+          <label className="st-field">
+            <span>폴더 이름 — 주소와 파일 위치에 쓰입니다 (영문 소문자, 숫자, 하이픈)</span>
             <input
-              autoFocus
               placeholder="diary"
-              value={dir}
-              onChange={(e) => setDir(e.target.value)}
+              value={dirTouched ? dir : dirValue}
+              onChange={(e) => {
+                setDirTouched(true);
+                setDir(e.target.value);
+              }}
               aria-invalid={invalidDir}
               aria-describedby="new-package-dir-help"
             />
             <div id="new-package-dir-help" className={invalidDir ? "gx-err" : "st-hint"}>
               {invalidDir
-                ? "영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다. 한글 디렉터리 이름은 지원하지 않습니다."
-                : "패키지 식별자로 사용되므로 영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다. 한글은 지원하지 않습니다."}
+                ? "영문 소문자, 숫자, 하이픈(-)만 쓸 수 있습니다. 한글은 폴더 이름에 쓸 수 없습니다."
+                : needsDir
+                  ? "이름이 한글이라 폴더 이름을 만들지 못했습니다 — 영문으로 짧게 적어 주세요 (예: diary)."
+                  : "이름에서 자동으로 만듭니다. 고쳐도 됩니다."}
             </div>
           </label>
-          <label className="st-field">
-            <span>표시 이름</span>
-            <input placeholder="일기 비서" value={display} onChange={(e) => setDisplay(e.target.value)} />
-          </label>
-          <label className="st-field">
-            <span>카드 한 줄 설명</span>
-            <input placeholder="지도, 카탈로그, 설치 화면이 이 문장을 그대로 쓴다" value={desc} onChange={(e) => setDesc(e.target.value)} />
-          </label>
           <div className="st-hint">
-            착지 에이전트(이름 = 패키지 이름)와 claude-code 하네스가 함께 스캐폴드된다. 페르소나, 동사, 서비스, 트리거는 스튜디오에서
-            붙인다.
+            만들면 대화 상대 하나와 기본 실행 도구가 함께 준비됩니다. 화면, 기능, 폴더, 예약은 만든 뒤 왼쪽 [＋ 만들기]에서 붙입니다.
           </div>
           {err ? <div className="gx-err">{err}</div> : null}
           <button
             className="rc-btn accent"
             disabled={!valid || busy}
             onClick={async () => {
-              const name = dir.trim();
+              const name = dirValue;
+              const shown = display.trim() || name;
               setBusy(true);
               setErr(null);
               try {
@@ -821,11 +947,12 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
                     schema: "relay/v1",
                     name: `@local/${name}`,
                     version: "0.1.0",
-                    display_name: display.trim() || name,
-                    description: desc.trim() || "설명을 적어 주세요.",
+                    display_name: shown,
+                    description: desc.trim() || shown,
                     agents: [{ name, persona: `agents/${name}/AGENT.md`, greeting: "무엇을 도와드릴까요?" }],
                   },
                 });
+                notifyNav();
                 onOpen(name);
               } catch (e) {
                 setErr(String(e instanceof Error ? e.message : e));
@@ -833,7 +960,7 @@ function Wizard({ onOpen }: { onOpen: (name: string) => void }) {
               }
             }}
           >
-            {busy ? "스캐폴드 중…" : "draft 만들기"}
+            {busy ? "만드는 중…" : "만들기"}
           </button>
         </div>
       </div>

@@ -113,6 +113,22 @@ export function draftPublish(name: string, version?: string): Promise<PublishOut
   return callScript("draft-publish", { name, version });
 }
 
+export interface DraftCommit {
+  hash: string;
+  message: string;
+  time: number;
+}
+
+/** 기록 이력 — [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록. 종전에는 기록만 되고 돌아갈 문이 없었다 */
+export function draftHistory(name: string): Promise<{ commits: DraftCommit[] }> {
+  return callScript("draft-history", { name });
+}
+
+/** 기록 지점으로 되돌리기 — 파일만 그 모습으로, 이력은 그대로. 결과는 "기록하지 않은 변경" 으로 선다 */
+export function draftRestore(name: string, hash: string): Promise<{ restored: string; message: string }> {
+  return callScript("draft-restore", { name, hash });
+}
+
 export function draftDiscard(name: string): Promise<{ removed: string }> {
   return callScript("draft-discard", { name });
 }
