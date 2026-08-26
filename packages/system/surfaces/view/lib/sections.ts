@@ -56,7 +56,7 @@ export const SECTIONS: SectionDef[] = [
     key: "identity",
     label: "기본 정보",
     material: "계약",
-    hint: "이름, 버전, 표시 이름, 설명, 아이콘. 카드와 지도, 설치 화면이 이 문장을 그대로 쓴다.",
+    hint: "이름, 버전, 한 줄 설명, 아이콘. 홈 카드와 설치 화면이 이 문장을 그대로 씁니다.",
     declared: () => true,
     files: (m, files) => exist(files, "relay.yaml", m.icon),
   },
@@ -65,7 +65,7 @@ export const SECTIONS: SectionDef[] = [
     label: "설치 요구",
     material: "계약",
     yamlKey: "requires",
-    hint: "호스트 환경 요구 = 설치 관문. OS, PATH 바이너리, 데스크톱 앱. 설치가 실체를 판정해 미충족이면 fail-loud.",
+    hint: "이 컴퓨터에 미리 있어야 하는 것 — 운영체제, 명령줄 도구, 데스크톱 앱. 없으면 설치가 거부되고 안내가 뜹니다.",
     declared: (m) => !!m.requires,
   },
   {
@@ -73,7 +73,7 @@ export const SECTIONS: SectionDef[] = [
     label: "화면과 창구",
     material: "그림",
     yamlKey: "surfaces",
-    hint: "패키지가 세상에 내미는 창구. view 화면, components 번들 수출, channels 외부 대화 어댑터. 직접 대화는 선언이 아니라 agents[] 에서 도출된다.",
+    hint: "밖에서 보이는 것 — 이 앱의 화면, 다른 앱 화면에 끼울 부품, 슬랙·디스코드 같은 채널. 직접 대화는 '대화 상대'가 있으면 저절로 생깁니다.",
     declared: (m) => !!m.surfaces,
     items: (m, files) => {
       const out: SectionItem[] = [];
@@ -107,7 +107,7 @@ export const SECTIONS: SectionDef[] = [
     label: "실행 도구",
     material: "계약",
     yamlKey: "harness",
-    hint: "동봉한 실행 어댑터 후보들. 선언 = 후보 목록(BOM), 활성 선택 = 장부. 에이전트 패키지는 최소 1개.",
+    hint: "이 앱을 돌릴 수 있는 도구 후보들 (Claude, Codex …). 여기서는 후보를 붙이고, 실제로 쓸 것은 설정에서 고릅니다.",
     declared: (m) => !!m.harness,
     items: (m, files) =>
       (m.harness?.variants ?? []).map((v) => ({
@@ -122,7 +122,7 @@ export const SECTIONS: SectionDef[] = [
     label: "대화 상대",
     material: "말",
     yamlKey: "agents",
-    hint: "착지점 = 패키지 짧은 이름과 같은 에이전트. 페르소나, 스킬, 커맨드, 서브에이전트 위임, 동사 scope.",
+    hint: "말을 거는 상대. 첫 번째(패키지 이름과 같은 것)가 대화의 문이고, 나머지는 일을 나눠 맡는 보조입니다. 각자 성격 글·기술·쓸 수 있는 기능을 가집니다.",
     declared: (m) => !!m.agents?.length,
     items: (m, files) =>
       (m.agents ?? []).map((a) => ({
@@ -139,7 +139,7 @@ export const SECTIONS: SectionDef[] = [
     label: "기능",
     material: "동사",
     yamlKey: "scripts",
-    hint: "동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON. 에이전트 scope 가 여기를 가리킨다.",
+    hint: "시킬 수 있는 일 하나가 파일 하나입니다. 대화 상대에게 '쓸 수 있는 기능'으로 연결하면 그 기능을 부를 수 있습니다.",
     declared: (m) => !!m.scripts,
     items: (m, files) =>
       under(files, m.scripts?.source)
@@ -156,7 +156,7 @@ export const SECTIONS: SectionDef[] = [
     label: "자원",
     material: "배선",
     yamlKey: "services",
-    hint: "패키지의 자원. source 자기 몸(프로세스·컨테이너), url 원격 MCP 문, api 원격 REST 베이스, dir 폴더. 자격(auth)은 밖으로 나가는 두 형에 앉고 좌표는 vault 의 <패키지>/<서비스> 다.",
+    hint: "이 앱이 쓰는 것들 — 함께 띄우는 프로그램, 바깥 서비스(원격 도구·REST), 폴더. 바깥 서비스의 로그인 정보는 설정에서 넣고 파일에는 남지 않습니다.",
     declared: (m) => !!m.services?.length,
     items: (m, files) =>
       (m.services ?? []).map((s) => ({
@@ -171,7 +171,7 @@ export const SECTIONS: SectionDef[] = [
     label: "깨움",
     material: "시간",
     yamlKey: "triggers",
-    hint: "시간(cron)과 사건(event)이 세션이나 동사를 깨운다. delivery 를 선언하면 결과가 채널 대화로 배달된다.",
+    hint: "정해진 시각이나 어떤 사건이 생겼을 때 스스로 움직입니다. 대화 상대를 깨우거나 기능 하나를 돌리고, 결과를 채널로 보낼 수도 있습니다.",
     declared: (m) => !!m.triggers?.length,
     items: (m) =>
       (m.triggers ?? []).map((t) => ({
@@ -186,7 +186,7 @@ export const SECTIONS: SectionDef[] = [
     label: "맡길 수 있는 일",
     material: "배선",
     yamlKey: "missions",
-    hint: "a2a 수신 선언. 다른 패키지가 이 미션으로 위임을 보낼 수 있다.",
+    hint: "다른 앱이 이 앱에 맡길 수 있는 일. 이름과 설명을 적어 두면 다른 앱이 그 이름으로 일을 넘깁니다.",
     declared: (m) => !!m.missions?.length,
     items: (m) => (m.missions ?? []).map((x) => ({ id: x.name, title: x.name, sub: x.description, files: [] })),
   },
@@ -195,7 +195,7 @@ export const SECTIONS: SectionDef[] = [
     label: "빌려 쓰는 것",
     material: "배선",
     yamlKey: "edges",
-    hint: "남의 것 소비 선언. 선언은 신청, 활성화는 결재 — 결재는 콘솔 그래프에서 한다.",
+    hint: "다른 앱의 것을 빌려 씁니다 — 기능, 일 맡기기, 화면 부품. 여기 적는 것은 신청이고, 허락은 설정의 연결 지도에서 합니다.",
     declared: (m) => !!m.edges?.length,
     items: (m) =>
       (m.edges ?? []).map((e, i) => ({
@@ -211,7 +211,7 @@ export const SECTIONS: SectionDef[] = [
     advanced: true,
     material: "계약",
     yamlKey: "host_methods",
-    hint: "이 패키지의 동사가 부를 수 있는 host.* 의 캡. 미선언 = 전체이고, 선언하면 목록 밖은 거부된다. 고지서에 실린다.",
+    hint: "이 앱의 기능이 부를 수 있는 기판 기능의 상한. 비워 두면 전부, 적으면 적은 것만.",
     declared: (m) => !!m.host_methods?.length,
     items: (m) => (m.host_methods ?? []).map((x) => ({ id: x, title: x, sub: "허용", files: [] })),
   },
@@ -221,7 +221,7 @@ export const SECTIONS: SectionDef[] = [
     advanced: true,
     material: "계약",
     yamlKey: "org",
-    hint: "org 기판이 호스팅할 때만 읽는 확장. 1인 기판에서는 무시된다.",
+    hint: "조직용 기판에서만 읽는 설정. 개인 기판에서는 무시됩니다.",
     declared: (m) => !!m.org,
   },
 ];
