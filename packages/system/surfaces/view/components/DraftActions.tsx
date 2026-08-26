@@ -34,13 +34,19 @@ export default function DraftActions({
   );
   return (
     <>
+      {/* 패널 수정은 여기 [적용]으로 반영한다 — 폼은 눌러볼 수 있으므로 바로 적용하지 않는다.
+          채팅 수정은 빌더가 바로 적용하므로 이 버튼을 거치지 않는다(그때는 changedCount 0). */}
       <button
         className="rc-btn accent"
-        title={changedCount ? "고친 것을 실제로 돌아가는 판으로 바꿉니다 — 검사를 통과해야 적용됩니다" : "고친 것이 없습니다"}
+        title={changedCount ? "패널에서 고친 것을 지금 도는 판으로 반영합니다" : "패널에서 고친 것이 없습니다"}
         disabled={!changedCount && !!status?.installed}
         onClick={() => setDialog("publish")}
       >
         적용{changedCount ? ` (${changedCount})` : ""}
+      </button>
+      {/* 되돌리기 — 방금 적용한 것이 마음에 안 들 때 이전 판으로. 채팅이 바로 적용하는 흐름의 안전망 */}
+      <button className="rc-btn" title="예전에 적용했던 판으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
+        되돌리기
       </button>
       <span className="st-more">
         <button className="rc-btn" title="더 보기" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
@@ -56,8 +62,7 @@ export default function DraftActions({
             {item("내보내기", "남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다", () => void draft.pack(), { disabled: !status?.version.live })}
             {status?.installed ? item("새 탭에서 열기", "지금 돌아가고 있는 판의 화면", () => window.open(viewHref, "_blank", "noreferrer")) : null}
             <span className="st-menu-div" aria-hidden="true" />
-            {item("이전 판으로", "예전에 적용했던 판 목록을 보고 그 판으로 바꿉니다", () => setDialog("releases"))}
-            {item("작업 사본 버리기", "고치던 내용과 이력을 지웁니다 — 되돌릴 수 없습니다", () => setDialog("discard"), { danger: true })}
+            {item("작업 사본 버리기", "패널에서 고치던 것과 이력을 지웁니다 — 되돌릴 수 없습니다", () => setDialog("discard"), { danger: true })}
           </div>
         ) : null}
       </span>

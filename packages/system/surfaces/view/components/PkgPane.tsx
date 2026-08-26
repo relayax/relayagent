@@ -5,7 +5,6 @@ import { AgentScope } from "@relay/chat";
 import DetailFace from "@/components/DetailFace";
 import { channelStatus, serviceStatus, type ChannelStatusView, type ServiceStatusView, type ShellItem } from "@/lib/api";
 import { landingAgent, residentDecls } from "@/lib/faces";
-import { draftBuild } from "@/lib/studio";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
 import type { Nav, View } from "@/lib/useDraft";
 
@@ -60,7 +59,6 @@ export default function PkgPane({
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   // 파일 에디터가 서는 자리 — 가운데 칸. 왼쪽 칸은 목록 그대로, 폭도 그대로(코드가 열린다고 칸이 커지지 않는다)
   const [editorSlot, setEditorSlot] = useState<HTMLElement | null>(null);
-  const [draftInfo, setDraftInfo] = useState<{ changed: number; rev: string; hasView: boolean } | null>(null);
   const ghost = pkg.workspace === "";
 
   // 왼쪽 칸 폭 — 경계를 끌어 조절하고 기억한다(relay-side-w). 기본 360. 파일 에디터가 열리면 CSS 가 넓힌다
@@ -158,13 +156,13 @@ export default function PkgPane({
           <div className="pkg-col side" style={hasView ? { flexBasis: sideW } : undefined}>
             {tab === "live" ? <LiveFace pkg={pkg} running={running} /> : null}
             {tab === "detail" ? (
-              <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} editorSlot={hasView ? editorSlot : null} onDraft={setDraftInfo} />
+              <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} editorSlot={hasView ? editorSlot : null} />
             ) : null}
           </div>
           {hasView ? (
             <div className="pkg-col stage">
               <div className="pkg-grip" onPointerDown={onGrip} title="끌어서 폭 조절" />
-              {view.file && tab === "detail" ? <div ref={setEditorSlot} className="pkg-editor" /> : <ViewFace pkg={pkg} item={item} draft={draftInfo} />}
+              {view.file && tab === "detail" ? <div ref={setEditorSlot} className="pkg-editor" /> : <ViewFace pkg={pkg} item={item} />}
             </div>
           ) : null}
         </div>
@@ -182,52 +180,24 @@ const TAB_LABEL: Record<Tab, string> = { detail: "구조", live: "상주" };
 // 그 패키지의 화면을 이 자리에 크게 — 기판이 서빙하는 /pkg/<이름>/view/ 를 iframe 으로 든다.
 // 안에서는 패키지 자신의 부유 채팅 위젯이 뜨고(회색 상자 안의 "패키지 에이전트 채팅"), 전역
 // 사이드바는 top 창이 아니면 서지 않는다(shell.ts SHELL_JS 의 self!==top 게이트).
-// 보이는 것은 **설치본**이다 — 왼쪽에서 고친 것은 [적용] 뒤에야 여기 나타난다. 그 사실은 탑바의
-// "수정 n건 · 아직 적용 안 됨" 칩이 말한다(여기 따로 줄을 두지 않는다 — 새 탭 열기는 머리의
-// [화면 열기]와 중복이었다).
-function ViewFace({ pkg, item, draft }: { pkg: Pkg; item: ShellItem | null; draft: { changed: number; rev: string; hasView: boolean } | null }) {
+// 언제나 지금 도는 판이다 — 채팅 수정은 바로 적용되고, 패널 수정은 탑바 [적용] 뒤에 여기 반영된다.
+function ViewFace({ pkg, item }: { pkg: Pkg; item: ShellItem | null }) {
   const ghost = pkg.workspace === "";
-  const live = item?.view ?? `/pkg/${encodeURIComponent(pkg.name)}/view/`;
-  // 고친 게 있으면 기본은 "고친 판" — 빌더가 고친 것을 적용 전에 써보는 자리다. 화면 없는(대화만)
-  // 패키지도 된다: 기판이 /draft/ 문에서 작업 사본 위 세션으로 대화를 세운다(harness.ts sessionTreeOf)
-  const canDraft = !!draft && draft.changed > 0 && !ghost;
-  const [mode, setMode] = useState<"draft" | "live">("live");
-  useEffect(() => { setMode(canDraft ? "draft" : "live"); }, [canDraft]);
-  // 작업 사본은 바뀔 때마다 굽는다(out 선언 표면은 굽기 전엔 옛 산출이 선다). 600ms 모아서
-  const [nonce, setNonce] = useState(0);
-  const [baking, setBaking] = useState(false);
-  useEffect(() => {
-    if (!canDraft || mode !== "draft" || !draft?.hasView) return;
-    let on = true;
-    const t = setTimeout(() => {
-      setBaking(true);
-      draftBuild(pkg.name).catch(() => {}).finally(() => { if (on) { setBaking(false); setNonce((n) => n + 1); } });
-    }, 600);
-    return () => { on = false; clearTimeout(t); };
-  }, [canDraft, mode, draft?.rev, pkg.name]);
-
+  const src = item?.view ?? `/pkg/${encodeURIComponent(pkg.name)}/view/`;
+  // 언제나 지금 도는 판이다. 채팅으로 고치면 빌더가 바로 적용하므로(바이브 코딩) 이 화면이 곧
+  // 새 판이다 — "고친 판 vs 돌아가는 판" 토글은 없앴다. 패널 수정은 탑바 [적용] 뒤에 여기 나타난다.
   if (ghost) {
     return (
       <div className="pane-body">
         <div className="rc-card pad">
-          <p className="hint">아직 적용한 적이 없는 초안이라 돌아가는 화면이 없습니다. [적용] 하면 여기서 써볼 수 있습니다.</p>
+          <p className="hint">아직 한 번도 적용한 적이 없어 돌아가는 화면이 없습니다. 오른쪽 빌더에게 만들 것을 말하면 바로 여기 나타납니다.</p>
         </div>
       </div>
     );
   }
-  const src = mode === "draft" ? `/draft/${encodeURIComponent(pkg.name)}/view/?_rev=${nonce}` : live;
   return (
     <div className="pane-body viewface">
-      {canDraft ? (
-        <div className="vf-mode">
-          <div className="seg" role="group" aria-label="어느 판을 볼지">
-            <button type="button" aria-pressed={mode === "draft"} onClick={() => setMode("draft")} title="고친 판 — 아직 적용 전">고친 판 써보기</button>
-            <button type="button" aria-pressed={mode === "live"} onClick={() => setMode("live")} title="지금 돌아가는 판">돌아가는 판</button>
-          </div>
-          <span className="hint">{mode === "draft" ? (baking ? "고친 판을 만드는 중…" : "마음에 들면 위의 [적용]을 누르세요") : "고친 것은 아직 여기 없습니다"}</span>
-        </div>
-      ) : null}
-      <iframe key={mode} className="vf-frame" src={src} title={`${pkg.manifest?.display_name ?? pkg.name} 화면`} />
+      <iframe className="vf-frame" src={src} title={`${pkg.manifest?.display_name ?? pkg.name} 화면`} />
     </div>
   );
 }

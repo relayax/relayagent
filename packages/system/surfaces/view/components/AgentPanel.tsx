@@ -204,6 +204,8 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
   const isOpen = (sec: string, item: string | null) => open.sec === sec && (open.item ?? null) === item;
   const toggle = (sec: string, item: string | null) => (isOpen(sec, item) ? onBack() : onOpen(sec, item));
   const slot = (sec: string, item: string | null) => (isOpen(sec, item) ? <div className="ap-inline">{children}</div> : null);
+  // 엔진 줄은 섹션 전체(칩 + 어댑터 상세)를 받는다 — 상세도 안으로 들어가지 않고 같은 줄 아래
+  const engineOpen = open.sec === "harness";
 
   // ── 목록 ─────────────────────────────────────────────────────────────────
   const engine = byKey.get("engine")?.items[0]?.text;
@@ -269,12 +271,12 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
                 <span>에이전트</span>
               </span>
             </div>
-            <button type="button" className="ap-item ap-pick" aria-expanded={isOpen("harness", null)} onClick={() => toggle("harness", null)}>
+            <button type="button" className="ap-item ap-pick" aria-expanded={engineOpen} onClick={() => (engineOpen ? onBack() : onOpen("harness", null))}>
               <Icon k="engine" />
               <span className="ap-item-t">{engine ? `${engine} 로 동작` : "엔진 고르기"}</span>
               <Chevron />
             </button>
-            {slot("harness", null)}
+            {engineOpen ? <div className="ap-inline">{children}</div> : null}
             {landing ? (
               <>
               <button type="button" className="ap-item" aria-expanded={isOpen("agents", landing)} onClick={() => toggle("agents", landing)}>

@@ -285,36 +285,30 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   );
 }
 
-function HarnessLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
+const HARNESS_LABEL: Record<string, string> = { "claude-code": "Claude", codex: "Codex", pi: "Pi", kimi: "Kimi" };
+
+/** 어떤 엔진으로 돌릴 수 있나 — 후보 목록·드롭다운·추가 버튼 대신 칩 하나로. 켜면 붙고, 켜진 것을 누르면 상세 */
+function HarnessLanding({ ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const m = ctx.manifest;
-  const items = def.items!(m, ctx.files);
   const have = new Set((m.harness?.variants ?? []).map((v) => v.name));
-  const left = HARNESS_TEMPLATES.filter((t) => !have.has(t));
-  const [tpl, setTpl] = useState(left[0] ?? "");
   const [busy, make] = useMake(ctx);
   return (
-    <>
-      <ItemList def={def} items={items} ctx={ctx} />
-      {left.length ? (
-        <div className="lv-in">
-          <select value={left.includes(tpl) ? tpl : left[0]} onChange={(e) => setTpl(e.target.value)}>
-            {left.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <button className="rc-btn accent" disabled={busy} onClick={() => make("harness", left.includes(tpl) ? tpl : left[0])}>
-            + 이 앱을 돌릴 다른 도구
-          </button>
+    <div className="st-form">
+      <div className="st-field">
+        <span>돌릴 수 있는 엔진 — 누르면 붙고, 붙은 것을 누르면 자세히</span>
+        <div className="st-picks">
+          {HARNESS_TEMPLATES.map((t) => (
+            <button key={t} type="button" className="st-pick" aria-pressed={have.has(t)} disabled={busy} title={have.has(t) ? `${t} — 자세히 보기` : `${t} 붙이기`} onClick={() => (have.has(t) ? ctx.openItem(t) : make("harness", t))}>
+              {HARNESS_LABEL[t] ?? t}
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="st-hint">네 가지 후보를 다 붙였습니다.</div>
-      )}
-      <div className="st-form" style={{ marginTop: 4 }}>
-        <Field label="대화가 서는 하위 폴더 (선택)" k="workdir" value={m.harness?.workdir ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "workdir"], x))} />
+        <div className="st-picks-empty">실제로 어느 것으로 돌릴지는 설치한 쪽(설정)에서 고릅니다.</div>
       </div>
-    </>
+      <Advanced open={!!m.harness?.workdir}>
+        <Field label="대화가 서는 하위 폴더" k="workdir" value={m.harness?.workdir ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "workdir"], x))} />
+      </Advanced>
+    </div>
   );
 }
 
@@ -326,6 +320,8 @@ function HarnessItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const item = { files: ctx.files.filter((f) => f.startsWith(v.source + "/")) };
   return (
     <div className="st-form">
+      <button type="button" className="st-back" onClick={() => ctx.openItem(null)}>‹ 엔진 목록</button>
+      <div className="st-picks-empty"><b>{HARNESS_LABEL[v.name] ?? v.name}</b> 어댑터 — 보통 손댈 일이 없습니다.</div>
       <Field label="도구 어댑터 폴더" k="source" value={v.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "source"], x))} />
       <Field label="시작 파일" k="entry" value={v.entry ?? "run"} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "entry"], x))} />
       <Field label="모델 제공자" k="llm.provider" value={v.llm?.provider ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "llm", "provider"], x))} />
@@ -337,7 +333,7 @@ function HarnessItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
           ctx.openItem(null);
         }}
       >
-        도구 후보 빼기
+        이 엔진 빼기
       </button>
     </div>
   );

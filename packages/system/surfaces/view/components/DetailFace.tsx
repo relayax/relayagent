@@ -37,7 +37,6 @@ export default function DetailFace({
   onTitle,
   actionsSlot,
   editorSlot,
-  onDraft,
 }: {
   pkg: Pkg;
   reg: Registry;
@@ -52,8 +51,6 @@ export default function DetailFace({
   actionsSlot: HTMLElement | null;
   /** 파일 에디터가 설 자리(가운데 칸). null 이면 가운데 칸이 없어 왼쪽 칸 전체가 에디터가 된다 */
   editorSlot: HTMLElement | null;
-  /** 작업 사본의 상태 — 가운데 화면이 "고친 판을 써보기"로 바꿀지 정한다. draft 가 없으면 null */
-  onDraft: (d: { changed: number; rev: string; hasView: boolean } | null) => void;
 }) {
   // 설치 안 된 초안 — 장부에 없어 콘솔이 합성한 Pkg (workspace 가 빈 것으로 안다)
   const ghost = pkg.workspace === "";
@@ -100,11 +97,6 @@ export default function DetailFace({
     return () => { on = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg.name, ghost]);
-
-  // 가운데 화면에 작업 사본 상태를 알린다 — 고친 게 있으면 그 판을 써보게
-  useEffect(() => {
-    onDraft(editing ? { changed: draft.changedCount, rev: draft.rev, hasView: !!draft.manifest?.surfaces?.view } : null);
-  }, [editing, draft.changedCount, draft.rev, draft.manifest?.surfaces?.view, onDraft]);
 
   // 머리에 이름을 올린다 — 초안은 장부에 표시 이름이 없다
   useEffect(() => {
