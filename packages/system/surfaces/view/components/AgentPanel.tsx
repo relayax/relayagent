@@ -282,7 +282,7 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
             </div>
             {/* 엔진 — 펼칠 것 없이 여기서 바로 고른다. 켜면 붙고 끄면 뺀다 */}
             <div className="ap-engine">
-              <span className="ap-engine-l"><Icon k="engine" />돌릴 수 있는 엔진</span>
+              <span className="ap-engine-l">엔진</span>
               <span className="st-picks">
                 {ENGINES.map((e) => (
                   <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy} title={have.has(e.id) ? `${e.label} 빼기` : `${e.label} 붙이기`} onClick={() => onEngine(e.id)}>
