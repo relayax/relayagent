@@ -13,7 +13,9 @@ export interface ConformResult {
 }
 
 const REQUIRED_VERBS = ["session", "setup", "models", "commands", "info"];
-const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "tasks"]);
+// 닫힌 어휘의 정본은 docs/harness-protocol.md(capabilities 절)다 — 어댑터가 steer 를 광고하기 시작한
+// 뒤(v0.3.7) 여기만 낡아 시스템 패키지의 설치·발행이 계약 위반으로 막혔다(validate 는 conform 을 돌리지 않는다)
+const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "tasks", "steer"]);
 
 /**
  * 하네스 계약 적합성 판정 — 어댑터가 동사 프로토콜을 지키는지 기계로 검사한다.
