@@ -1045,3 +1045,8 @@
   color: rgba(255, 255, 255, 0.85); font: 12px var(--rc-sans);
   max-width: 90vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 위임 카드 — 그 위임의 대화를 여는 문 */
+.rc-author-act { margin-top: 8px; align-self: flex-start; border: 1px solid var(--rc-line, #e6e9ec); background: var(--rc-bg, #fff); color: var(--rc-accent-strong, #115e59); border-radius: 7px; padding: 4px 10px; font: 600 11.5px var(--rc-sans, -apple-system, sans-serif); cursor: pointer; }
+.rc-author-act:hover { background: var(--rc-hover, #eef0f2); }
+.rc-author-act:disabled { opacity: .6; cursor: default; }

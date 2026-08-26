@@ -505,7 +505,7 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
 
 // ---------------- 대화 목록 (다중세션 헤더) ----------------
 
-export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string };
+export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string; param?: string };
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
@@ -538,6 +538,8 @@ export async function loadConversationsOf(instanceId: string, _principal: string
     .map((s) => ({
       conversation_id: s.session,
       ...(typeof s.agent === "string" && s.agent ? { agent: s.agent } : {}),
+      // 작업 대상 — 위임 카드가 "이 위임의 대화" 를 찾을 때 (agent, param) 으로 맞춘다
+      ...(typeof s.param === "string" && s.param ? { param: s.param } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0

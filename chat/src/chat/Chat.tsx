@@ -26,6 +26,7 @@ import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLi
   hasEffort,
   serverAgentOf,
   serverParamOf,
+  loadConversationsOf,
 } from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
@@ -182,9 +183,40 @@ function MdBlock({ text, streaming }: { text: string; streaming: boolean }) {
 
 /** 타임라인 스텝 한 행 — [아이콘] [동사 · 대상] [· 결과 요약] [›]. 클릭하면 원시 상세 펼침.
  *  실행 중엔 아이콘 자리에 teal ring 스피너. 카드 박스 없음(레퍼런스: 조용한 타임라인). */
+/** 위임(agent_dispatch)의 대화를 찾아 탭으로 연다 — 서브에이전트는 별도 대화에서 돌아, 그 탭이
+ *  열려 있지 않으면 보고와 질문을 놓친다. 세션 목록의 (agent, param) 으로 맞추고, 아직 목록에
+ *  없으면 잠시 기다린다(위임 직후 세션 디렉토리가 생기는 사이). 착지는 크롬의 relay:chat-open. */
+async function openDispatchConversation(instanceId: string, principal: string, sub: string, target: string): Promise<boolean> {
+  const want = target.trim().toLowerCase();
+  for (let i = 0; i < 8; i++) {
+    const info = await loadConversationsOf(instanceId, principal).catch(() => null);
+    const rows = (info?.conversations || []).filter((c) => c.agent === sub && (!want || (c.param || "").toLowerCase() === want));
+    rows.sort((a, b) => (b.last_started_at || "").localeCompare(a.last_started_at || ""));
+    const hit = rows[0];
+    if (hit) {
+      try { window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: { instance: instanceId, conversation: hit.conversation_id } })); } catch { /* 미배선 */ }
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
+/** 한 위임에 한 번만 연다 — 히스토리 재생·리렌더가 탭을 다시 빼앗지 않게 */
+const openedDispatch = new Set<string>();
+
 function StepRow({ part, running }: { part: AnyPart; running: boolean }) {
   const [open, setOpen] = useState(false);
   const done = part.result !== undefined || part.isError;
+  const ctx = useRelayCtx();
+  useEffect(() => {
+    if (!running || done || part.toolName !== "agent_dispatch") return;
+    const id = part.toolCallId || "";
+    if (!id || openedDispatch.has(id)) return;
+    const sub = String(part.args?.agent || "");
+    if (!sub || !ctx.instanceId) return;
+    openedDispatch.add(id);
+    void openDispatchConversation(ctx.instanceId, ctx.principal, sub, String(part.args?.target || ""));
+  }, [running, done, part.toolName, part.toolCallId, part.args, ctx.instanceId, ctx.principal]);
   const meta = stepMeta(part.toolName, part.args, part.result, part.isError, part.label);
   const argDisplay = part.argsText && part.argsText.trim()
     ? part.argsText
@@ -1208,6 +1240,8 @@ function subAgentDispatch(text: string): { inst: string; agent: string } | null 
 function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time: string; inst: string; agent: string }) {
   const marker = text.match(SUBAGENT_RE)?.[0] ?? "";
   const body = text.slice(marker.length).replace(/^\n/, "").trim();
+  const ctx = useRelayCtx();
+  const [seeking, setSeeking] = useState(false);
   return (
     <MessagePrimitive.Root className="rc-msg rc-author">
       <div className="rc-author-card" title={`${inst} 오케스트레이터가 서브에이전트 ${agent} 에게 자동 전달한 지시 · 사용자가 직접 입력한 메시지가 아닙니다`}>
@@ -1217,6 +1251,18 @@ function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time:
           {time ? <span className="rc-wake-time">· {time}</span> : null}
         </div>
         {body ? <div className="rc-author-body">{body}</div> : null}
+        {ctx.instanceId ? (
+          <button type="button" className="rc-author-act" disabled={seeking}
+            title="이 위임이 진행되는 대화를 탭으로 엽니다 — 보고와 질문이 거기 뜹니다"
+            onClick={async () => {
+              setSeeking(true);
+              const ok = await openDispatchConversation(ctx.instanceId, ctx.principal, agent, "");
+              setSeeking(false);
+              if (!ok) alert("이 위임의 대화를 아직 찾지 못했습니다 — 잠시 뒤 다시 눌러 주세요");
+            }}>
+            {seeking ? "찾는 중…" : "이 작업의 대화 열기"}
+          </button>
+        ) : null}
       </div>
     </MessagePrimitive.Root>
   );
@@ -1322,10 +1368,16 @@ function UserMessage() {
   const authorOrigin = authorRequestOrigin(text);
   if (authorOrigin) return <AuthorRequestCard text={text} time={time} origin={authorOrigin} />;
   if (SYSTEM_PROMPT_PREFIXES.some((p) => text.startsWith(p))) {
-    const head = text.split("\n", 1)[0];
+    const head0 = text.split("\n", 1)[0];
+    // "📬 위임 완료 — ↳ agent-builder · diary(완료)" 같은 기계 머리는 사람 말로 — 내부 이름(세션
+    // 라벨·서브에이전트 slug)을 화면에 내지 않는다. 성패만 남긴다
+    const delivered = head0.startsWith("📬 위임 완료");
+    const head = delivered
+      ? `📬 맡긴 작업이 끝났습니다${/\(실패\)\s*$/.test(head0) ? " — 실패" : /\(중단\)\s*$/.test(head0) ? " — 중단됨" : ""}`
+      : head0;
     return (
       <MessagePrimitive.Root className="rc-msg rc-wake">
-        <div className="rc-wake-chip" title="예약된 시각에 에이전트가 스스로 깨어난 턴입니다">
+        <div className="rc-wake-chip" title={delivered ? "다른 대화에서 맡긴 작업의 결과가 이 대화로 배달됐습니다 — 아래 답이 그 결과입니다" : "예약된 시각에 에이전트가 스스로 깨어난 턴입니다"}>
           {head}
           {time ? <span className="rc-wake-time"> · {time}</span> : null}
         </div>
