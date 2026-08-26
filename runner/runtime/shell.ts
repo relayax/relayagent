@@ -18,6 +18,7 @@
 // (client-protocol §2-6 과 같은 규율). 콘솔 화면도 같은 응답을 읽어 판정이 갈라지지 않는다.
 import { STORE_INDEX_URL, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
+import { fetchStoreIndex } from "../supply/registry.ts";
 
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
  *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. */
@@ -50,6 +51,9 @@ export interface ShellItem {
   ring0: boolean;
   /** 판정 실패한 설치 — 런처가 사유를 배지로 낸다 */
   error: string | null;
+  /** 스토어에 더 새 판이 있으면 그 버전 — 홈이 새 판 배지를 그린다. 스토어 미연결(OSS 기본)·
+   *  최신·인덱스 미도착이면 null 이라 아무것도 그려지지 않는다 */
+  update: string | null;
 }
 
 export interface ShellNav {
@@ -61,6 +65,9 @@ export interface ShellNav {
   /** 스토어 웹 주소 — 이 기판에 스토어 연결이 켜져 있을 때만. OSS 기본(연결 없음)은 null 이라
    *  항목 자체가 그려지지 않는다 — "마켓의 문은 여는 쪽이 연다"는 중립 설계가 사이드바에도 그대로 선다 */
   store: string | null;
+  /** 스토어 내 서재 주소 — 새 판 배지의 업데이트 버튼이 여기로 간다. 설치 티켓은 서재가
+   *  발급하므로(로그인 세션) 기판이 관문을 새로 만들지 않는다. store 와 같은 조건으로 null */
+  library: string | null;
 }
 
 /**
@@ -91,8 +98,35 @@ function hrefFor(pkg: string, face: Face): string {
   return consoleHref(`?p=${encodeURIComponent(pkg)}&face=${face === "live" ? "live" : "detail"}`);
 }
 
-/** 사이드바와 런처가 그릴 전부. running = 지금 떠 있는 자식 키(<패키지>/<이름>) */
-export function shellNav(ledger: Ledger, running: string[]): ShellNav {
+/** semver 앞섬 판정 — a 가 b 보다 새 판인가. 프리릴리스 꼬리는 무시한다(등재 실측이 x.y.z) */
+function newerVersion(a: string, b: string): boolean {
+  const pa = a.split("-")[0].split(".").map(Number);
+  const pb = b.split("-")[0].split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0;
+  }
+  return false;
+}
+
+/** 스토어 인덱스에서 ref→최신 버전 지도를 뜬다 — 홈 렌더를 원격 왕복에 저당잡히지 않도록
+ *  짧은 상한을 걸고, 늦으면 배지 없이 그린다(인덱스 캐시가 5분이라 다음 렌더에는 실린다).
+ *  원격 실패는 홈을 죽이지 않는다 — store.ts /market/index 와 같은 규율 */
+const NAV_INDEX_WAIT = 300;
+export async function storeLatest(): Promise<Map<string, string> | undefined> {
+  if (!STORE_INDEX_URL) return undefined;
+  const fetching = fetchStoreIndex(STORE_INDEX_URL).catch(() => null);
+  const idx = await Promise.race([
+    fetching,
+    new Promise<null>((r) => setTimeout(r, NAV_INDEX_WAIT, null)),
+  ]);
+  if (!idx) return undefined;
+  return new Map(idx.entries.map((e) => [e.ref, e.version]));
+}
+
+/** 사이드바와 런처가 그릴 전부. running = 지금 떠 있는 자식 키(<패키지>/<이름>),
+ *  latest = 스토어 ref→최신 버전 (storeLatest — 미연결·미도착이면 undefined, 배지 전부 침묵) */
+export function shellNav(ledger: Ledger, running: string[], latest?: Map<string, string>): ShellNav {
   const live = new Set(running.map((k) => k.split("/")[0]));
   const items: ShellItem[] = [];
   for (const [pkg, rec] of Object.entries(ledger.packages)) {
@@ -109,11 +143,16 @@ export function shellNav(ledger: Ledger, running: string[]): ShellNav {
     } catch (e) {
       // 판정 실패한 설치 — 목록에서 지우면 "왜 안 보이지" 가 되고 진단은 어디에도 없다.
       // 이름만으로 세우고 사유를 실어 상세로 보낸다(그 화면이 처방을 그린다)
-      items.push({ ...base, label: pkg, description: "", version: "", icon: null, face: "parts", faces: ["parts"], view: null, error: String(e) });
+      items.push({ ...base, label: pkg, description: "", version: "", icon: null, face: "parts", faces: ["parts"], view: null, error: String(e), update: null });
       continue;
     }
     const faces = facesOf(m);
     const face = faces[0];
+    // 새 판 대조 — 설치본의 스토어 좌표는 origin.ref(스토어 설치), 없으면 매니페스트 이름
+    // (저자 로컬 설치가 자기 발행본과 만나는 경우). /market/index 의 installed 대조와 같은 축
+    const ref = rec.origin?.ref ?? m.name;
+    const latestVer = latest?.get(ref);
+    const update = latestVer && m.version && newerVersion(latestVer, m.version) ? latestVer : null;
     items.push({
       ...base,
       label: m.display_name || pkg,
@@ -125,12 +164,13 @@ export function shellNav(ledger: Ledger, running: string[]): ShellNav {
       href: hrefFor(pkg, face),
       view: face === "view" || face === "chat" ? `/pkg/${encodeURIComponent(pkg)}/view/` : null,
       error: null,
+      update,
     });
   }
   items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
   // 인덱스 주소에서 웹 주소를 얻는 규칙은 데스크톱 앱(daemon.rs store_web)과 같다
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
-  return { items, home: "/", create: consoleHref("studio/?new=1"), importer: "/store/import", store };
+  return { items, home: "/", create: consoleHref("studio/?new=1"), importer: "/store/import", store, library: store ? store + "library" : null };
 }
 
 /** 문서 말미에 스크립트 한 줄. </body> 부재(손저작 단일 HTML)면 append — injectPortalBar 와 같은 관례 */
@@ -242,6 +282,14 @@ var css = [
 '#relay-home .cd .nm{flex:1 1 auto;min-width:0}',
 '#relay-home .cd b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '#relay-home .cd .ver{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#98a1aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+// 새 판 배지 — 버전 라인의 화살표 칩(.nv) · 푸터의 업데이트 버튼(.upb) · 상단 요약 배너(.ub)
+'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#115e59;background:rgba(13,148,136,.1)}',
+'#relay-home .cd .upb{background:#0f766e;color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
+'#relay-home .cd .upb:hover{background:#115e59}',
+'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:rgba(13,148,136,.08);border:1px solid rgba(13,148,136,.25);border-radius:10px;font-size:12.5px;color:#115e59}',
+'#relay-home .ub b{font-weight:800}',
+'#relay-home .ub .gap{flex:1}',
+'#relay-home .ub a{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}',
 '#relay-home .cd p{margin:0;font-size:12.5px;color:#5c6570;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}',
 '#relay-home .cd .ft{display:flex;align-items:center;gap:6px}',
 '#relay-home .cd .cp{font-size:11px;font-weight:600;color:#5c6570;background:#eef0f2;border-radius:6px;padding:1px 7px}',
@@ -428,6 +476,18 @@ function renderHome(nav, err){
     return;
   }
 
+  // 새 판 요약 배너 — 하나라도 있으면 개수만 말한다. 실행은 각 카드의 버튼이 맡는다
+  // (설치 동의 관문이 판마다 서므로 "모두 업데이트" 일괄 버튼은 두지 않는다)
+  var ups = 0;
+  for (var u = 0; u < nav.items.length; u++) if (nav.items[u].update) ups++;
+  if (ups && nav.library) {
+    var ub = document.createElement("div");
+    ub.className = "ub";
+    ub.innerHTML = '⬆ <b>새 판이 나온 에이전트 ' + ups + '개</b> — 카드의 업데이트 버튼으로 받으세요' +
+      '<span class="gap"></span><a href="' + esc(nav.library) + '">내 서재 열기</a>';
+    home.appendChild(ub);
+  }
+
   var gr = document.createElement("div");
   gr.className = "gr";
   for (var i = 0; i < nav.items.length; i++) {
@@ -440,7 +500,9 @@ function renderHome(nav, err){
         '<span class="tp">' +
           '<span class="av">' + av + '</span>' +
           '<span class="nm"><b>' + esc(it.label) + '</b>' +
-            '<span class="ver">' + esc(it.pkg) + (it.version ? "@" + esc(it.version) : "") + '</span>' +
+            '<span class="ver">' + esc(it.pkg) + (it.version ? "@" + esc(it.version) : "") +
+              (it.update ? '<span class="nv">→ ' + esc(it.update) + '</span>' : "") +
+            '</span>' +
           '</span>' +
           (it.resident ? '<span class="dt" title="도는 중"></span>' : "") +
         '</span>' +
@@ -450,6 +512,10 @@ function renderHome(nav, err){
         '<span class="cp">' + FACE_KO[it.face] + '</span>' +
         (it.error ? '<span class="cp er">검사 실패</span>' : "") +
         '<span class="sp"></span>' +
+        // 새 판 버튼 — 설치 티켓은 스토어 서재가 발급하므로 서재로 보낸다 (동의 관문은 그 다음)
+        (it.update && nav.library
+          ? '<a class="upb" href="' + esc(nav.library) + '" title="스토어 내 서재에서 새 판을 설치합니다">' + esc(it.update) + ' 업데이트</a>'
+          : "") +
         '<a class="mo" href="' + esc(it.detail) + '">상세</a>' +
       '</div>';
     gr.appendChild(cd);

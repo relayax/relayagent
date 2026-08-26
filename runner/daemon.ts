@@ -20,7 +20,7 @@ import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents } from "./runtime/view.ts";
-import { shellNav, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
+import { shellNav, storeLatest, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
@@ -287,7 +287,7 @@ export function createApi(
         res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
         return void res.end(SHELL_JS);
       }
-      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices()));
+      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest()));
 
       // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.
       // 마운트 문법(/pkg/<pkg>·/)은 여기서만 해석되고 클라이언트는 base 주입으로 받는다(§2-6).
