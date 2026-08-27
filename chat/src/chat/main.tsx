@@ -121,7 +121,7 @@ function boot() {
 // relayos 쌍둥이 크롬은 agent.tsx ChatChrome — 같은 wire 를 같은 규칙으로 착지한다.
 const FLOAT_CSS = `
 .rc-float-dock{position:fixed;right:20px;bottom:20px;z-index:2147483000}
-.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;font-size:22px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;display:inline-flex;align-items:center;justify-content:center;padding:0;box-shadow:0 6px 20px rgba(0,0,0,.18)}
 .rc-float-fab:hover{background:var(--rc-accent-strong,#115e59)}
 .rc-float-dock.open .rc-float-fab{display:none}
 .rc-float-panel{position:fixed;top:var(--rc-dock-top,0px);right:0;bottom:0;width:var(--rc-dock-w,380px);max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);display:none;flex-direction:column;overflow:hidden}
@@ -153,7 +153,10 @@ function autoFloat() {
   const fab = document.createElement("button");
   fab.type = "button";
   fab.className = "rc-float-fab";
-  fab.textContent = "✦";
+  // Relay 마크(assets/logo.svg 의 첫 path) — 버튼 채움색 위에 흰색으로.
+  fab.innerHTML =
+    '<svg width="26" height="16" viewBox="0 0 94 54" fill="currentColor" aria-hidden="true">' +
+    '<path transform="translate(0 -35.5776)" d="M67.0781 35.5776C81.9467 35.5779 94 47.6318 94 62.5005C93.9998 77.3689 81.9466 89.4221 67.0781 89.4224C59.903 89.4224 53.3842 86.6144 48.5586 82.0386C47.6928 81.2176 46.3072 81.2176 45.4414 82.0386C40.6158 86.6144 34.097 89.4224 26.9219 89.4224C12.0534 89.4221 0.000245323 77.3689 0 62.5005C3.24964e-07 47.6318 12.0533 35.5779 26.9219 35.5776C34.0969 35.5776 40.6158 38.3857 45.4414 42.9614C46.3071 43.7822 47.6929 43.7822 48.5586 42.9614C53.3842 38.3857 59.9031 35.5776 67.0781 35.5776Z"/></svg>';
   fab.setAttribute("aria-label", "채팅 열기");
   dock.appendChild(panel);
   dock.appendChild(fab);
@@ -202,10 +205,14 @@ function autoFloat() {
       onAllClosed: () => setOpen(false),
     });
   };
-  const setOpen = (v: boolean) => {
+  // 열림 상태도 기억한다(relay-dock-open) — 채팅을 열어 둔 채 다른 화면에 갔다 와도 그대로
+  // 열려 있어야 한다. 탭은 ChatTabs 가 이미 localStorage 로 복원하므로 패널만 다시 열면 된다.
+  const OPEN_KEY = "relay-dock-open";
+  const setOpen = (v: boolean, animate = true) => {
     opened = v;
     dock.classList.toggle("open", v);
-    reserve(v);
+    reserve(v, animate);
+    try { localStorage.setItem(OPEN_KEY, v ? "1" : "0"); } catch { /* 무시 */ }
     // 페이지가 읽는 값 — 열린 도크의 폭(닫히면 0). 패키지 화면의 탑바가 이만큼 오른쪽으로 더 뻗어
     // 도크 위를 덮는다(도크는 페이지가 준 --rc-dock-top 아래에서 시작한다)
     document.documentElement.style.setProperty("--rc-dock-open-w", v ? PANEL_W + "px" : "0px");
@@ -219,6 +226,12 @@ function autoFloat() {
     ensureMounted();
     setOpen(!opened);
   });
+  // 이전 페이지에서 열어 둔 채였으면 즉시(애니메이션 없이) 다시 연다.
+  // 예외: 첫 방문 안내(Home.tsx GUIDE_KEY)가 뜰 홈 — 안내 뒤에 열린 패널이 흐려진 채 서 있었다(2026-08-27).
+  try {
+    const guidePending = !!document.getElementById("relay-home") && localStorage.getItem("relay-guide-v2") !== "1";
+    if (localStorage.getItem(OPEN_KEY) === "1" && !guidePending) { ensureMounted(); setOpen(true, false); }
+  } catch { /* 무시 */ }
 
   // ── 폭 조절 — 패널 왼쪽 가장자리 드래그. 패널 **밖**(dock)에 둔다: 위젯의 React 루트가
   // 패널 안을 통째로 소유해 첫 렌더에 기존 자식을 지우기 때문이다

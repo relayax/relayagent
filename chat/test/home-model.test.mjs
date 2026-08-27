@@ -23,13 +23,20 @@ test("examplesAt — 묶음이 끝에서 처음으로 돌고 음수도 안전", 
 test("문구 — 아바타 글자·초안 한 줄·빈 상태", () => {
   assert.equal(m.initialOf("  relay"), "R");
   assert.equal(m.initialOf(""), "?");
-  assert.equal(m.draftLine(0), "아직 내용이 없어요");
+  assert.equal(m.draftLine(0), "첫 판 기록됨 · 아직 적용 전");
   assert.equal(m.draftLine(4), "바뀐 파일 4개");
   assert.equal(m.describe("설명을 적어 주세요."), null);
   assert.equal(m.describe("  "), null);
   assert.equal(m.describe("가계부"), "가계부");
   assert.equal(m.isEmptyNav({ items: [], drafts: [] }), true);
-  assert.equal(m.isEmptyNav({ items: [], drafts: [{ name: "a", version: null, changes: 0, href: "/" }] }), false);
+  assert.equal(m.isEmptyNav({ items: [], drafts: [{ name: "a", version: null, changes: 0, empty: true, href: "/" }] }), false);
+});
+
+test("splitDrafts — 바뀐 파일 0 인 초안은 빈 초안으로 따로", () => {
+  const d = (name, changes, empty) => ({ name, version: "0.1.0", changes, empty, href: "/" });
+  const r = m.splitDrafts([d("a", 0, true), d("b", 3, false), d("c", 0, true), d("k", 0, false)]);
+  assert.deepEqual(r.live.map((x) => x.name), ["b", "k"]);
+  assert.deepEqual(r.empty.map((x) => x.name), ["a", "c"]);
 });
 
 test("cardAction — 오류 > 새 판 > 수정 중 순으로 칩·버튼·목적지가 하나씩", () => {

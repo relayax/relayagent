@@ -20,7 +20,7 @@ import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, set
   loadInbox, loadInstances } from "./runtime";
 import { threadFamily, siblingThread, displayBinding, paramTargets, withTargets, targetCandidates } from "./routematch";
 import { useRelayCtx, ActivePaneCtx, OpenConversationCtx, PaneTargetCtx, type PaneTarget } from "./ctx";
-import { modelLabelOf, providerLabelOf, harnessShortOf, withRo, fmtSize, fmtTok, attToPayload, loadQueue, saveQueue, type Chip, type PendingAtt, type QItem } from "./parts";
+import { modelLabelOf, providerLabelOf, harnessShortOf, instanceLabelOf, agentLabelOf, withRo, fmtSize, fmtTok, attToPayload, loadQueue, saveQueue, type Chip, type PendingAtt, type QItem } from "./parts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
@@ -45,15 +45,22 @@ function targetChipsOf(ctx: RelayCtx): Chip[] {
   const agent = bind.agent || serverAgentOf(ctx.conversationId);
   const param = bind.param || serverParamOf(ctx.conversationId);
   const chips: Chip[] = [];
-  if (ctx.instanceId) chips.push({ icon: "dot", text: ctx.instanceId });
-  // 작업 대상이 여럿이면 목록으로 편다 — "agent-builder:task, calendar"(좌표는 쉼표 무공백).
-  if (agent) chips.push({ icon: "slash", text: agent + (param ? ":" + paramTargets(param).join(", ") : "") });
+  // 사람 말로 — "system / agent-builder:detail-page" 는 개발자 이름이 좁은 알약에 그대로
+  // 실려 답답했다(2026-08-27). 원문은 칩 title 에 남는다.
+  if (ctx.instanceId) chips.push({ icon: "dot", text: instanceLabelOf(ctx.instanceId) });
+  // 작업 대상이 여럿이면 목록으로 편다 — "빌더 · task, calendar"(좌표는 쉼표 무공백).
+  if (agent) chips.push({ icon: "slash", text: agentLabelOf(agent) + (param ? " · " + paramTargets(param).join(", ") : "") });
   return chips;
 }
 
 /** 피커 카드 안의 안내 한 줄 — 목록 위·빈 목록·불러오는 중 모두 같은 톤 */
 function PickNote({ children }: { children: React.ReactNode }) {
   return <p className="m-0 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{children}</p>;
+}
+
+/** 피커 구역 제목 — 항목 무리에 이름을 붙여 "여기서 바뀐다"·"저기로 간다"를 설명 없이 가른다. */
+function PickSection({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={"px-2.5 pt-1.5 pb-1 text-[11px] font-medium leading-snug text-muted-foreground " + className}>{children}</div>;
 }
 
 /** 입력창 위 컨텍스트 칩들 — 대상 칩(ctx 파생, 정본) + host 주입 칩(__relaySetChip — 보조,
@@ -91,6 +98,8 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
     </span>
   ));
   const label = derived.map((c) => c.text).join(" / ");
+  // hover 원문(좌표) — 헤더 칩과 같은 자리·같은 문법.
+  const raw = ctx.instanceId + " · " + ctx.conversationId;
   const pickCard = "w-max min-w-60 max-w-[min(340px,calc(100vw-40px))] max-h-[300px] overflow-y-auto gap-0 rounded-xl p-1.5";
 
   return (
@@ -99,8 +108,8 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
         <span className="inline-flex max-w-full items-center gap-1.5">
           <Popover open={picking} onOpenChange={(o) => { setPicking(o); if (o) setAdding(false); }}>
             {/* 칩 버튼 — Badge 와 같은 높이(h-5)로 맞춰 정적 칩과 한 줄에 선다 */}
-            <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-5 max-w-full cursor-pointer gap-2 rounded-full px-2 text-xs" />}
-                            title={label + " · 눌러서 대상 바꾸기"} aria-haspopup="listbox">
+            <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-6 max-w-full cursor-pointer gap-1.5 rounded-full pl-2.5 pr-1.5 text-xs" />}
+                            title={raw + " · 눌러서 대상 바꾸기"} aria-haspopup="listbox">
               {chipBody}
               <ChevronDownIcon className="size-3! opacity-45" aria-hidden />
             </PopoverTrigger>
@@ -113,7 +122,7 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
           {hasTargetAxis && (
             <Popover open={adding} onOpenChange={(o) => { setAdding(o); if (o) setPicking(false); }}>
               {/* [+] 대상 추가 — 칩과 같은 알약이되 정사각(아이콘 자리). 교체(▾)와 시각적으로 분리한다. */}
-              <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-5 cursor-pointer rounded-full px-2 text-xs text-muted-foreground hover:text-foreground" />}
+              <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-6 cursor-pointer rounded-full px-2 text-xs text-muted-foreground hover:text-foreground" />}
                               title="작업 대상 추가 · 이 대화에서 함께 볼 화면" aria-haspopup="listbox">
                 <PlusIcon className="size-3!" aria-hidden />
               </PopoverTrigger>
@@ -126,7 +135,7 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
           )}
         </span>
       ) : (
-        <Badge variant="secondary" className="rc-chip" title={label}>{chipBody}</Badge>
+        <Badge variant="secondary" className="rc-chip h-6 px-2.5" title={raw}>{chipBody}</Badge>
       ))}
       {host.map((c, i) => (
         <Badge variant="secondary" className="rc-chip" key={"h" + i} title={c.text}>
@@ -179,7 +188,7 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
     items.push({
       key: "page",
       name: label(pageConv),
-      desc: "지금 보고 있는 화면을 대상으로",
+      desc: "지금 보고 있는 화면 담당",
       run: () => target.retarget(pageConv, empty),
     });
   }
@@ -188,21 +197,19 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
     if (threadFamily(conv) === curFamily) continue;
     items.push({
       key: conv, name: a.name,
-      desc: (a.default ? "기본 에이전트 · " : "") + "이 에이전트를 대상으로",
+      desc: a.default ? "기본 담당" : "담당",
       run: () => target.retarget(conv, empty),
     });
   }
   if (curFamily !== "main") {
-    items.push({ key: "main", name: "기본 대화", desc: "이 인스턴스의 대표 대화로", run: () => target.retarget("main", empty) });
+    items.push({ key: "main", name: "기본 대화", desc: "담당을 정하지 않고 그냥 물어보기", run: () => target.retarget("main", empty) });
   }
 
   return (
     <div className="flex flex-col gap-px" role="listbox" aria-label="대화 대상 바꾸기">
-      <PickNote>
-        {empty ? "빈 대화라 이 자리에서 대상만 바뀌어요" : "이 대화는 그대로 두고 그 대상의 대화로 이동해요"}
-      </PickNote>
+      <PickSection>{empty ? "이 창에서 상대 바꾸기" : "이 창에서 상대 바꾸기 · 지금 대화는 남아요"}</PickSection>
       {items.length === 0 ? (
-        <PickNote>이 에이전트 안에 바꿀 수 있는 다른 대상이 없어요</PickNote>
+        <PickNote>바꿀 수 있는 상대가 없어요</PickNote>
       ) : items.map((it) => (
         <Item key={it.key} render={<button type="button" />} role="option" aria-selected={false} size="xs" className={pickItemCls}
               onClick={() => { it.run(); onClose(); }}>
@@ -214,15 +221,15 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
       ))}
       {insts.length > 0 && (
         <>
-          {/* 섹션 구분 — "여기가 바뀐다"(위)와 "저기로 간다"(아래)를 눈으로 가른다. */}
-          <div className="mt-1 border-t border-border px-2.5 pt-2 pb-1 text-[11px] leading-snug text-muted-foreground">다른 에이전트 · 새 탭으로 열려요</div>
+          {/* 섹션 구분 — "여기가 바뀐다"(위)와 "저기로 간다"(아래)를 이름으로 가른다. */}
+          <PickSection className="mt-1 border-t border-border pt-2">다른 도구로 가기 · 새 탭에서 열려요</PickSection>
           {insts.map((i) => (
             <Item key={i.id} render={<button type="button" />} role="option" aria-selected={false} size="xs" className={pickItemCls}
                   onClick={() => { target.openInstance(i.id); onClose(); }}>
               <ItemMedia variant="icon"><ArrowUpRightIcon className="opacity-60" aria-hidden /></ItemMedia>
               <ItemContent>
-                <ItemTitle className="text-xs">{i.id}</ItemTitle>
-                <ItemDescription className="m-0">{i.pkg || (i.kind === "base" ? "코어 도구" : "에이전트")}</ItemDescription>
+                <ItemTitle className="text-xs">{i.pkg || i.id}</ItemTitle>
+                {i.pkg && i.pkg !== i.id && <ItemDescription className="m-0">{i.id}</ItemDescription>}
               </ItemContent>
             </Item>
           ))}

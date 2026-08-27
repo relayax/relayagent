@@ -52,6 +52,13 @@ export function isDeliverTool(name: unknown): boolean {
   return name === "mcp__ask__deliver_file" || name === "deliver_file";
 }
 
+/** 하네스 내부 동작 — 사람이 읽을 "작업"이 아니다. ToolSearch 는 뒤로 미뤄 둔 도구의 스키마를
+ *  불러오는 호출이라, 화면에 남으면 "작업 1개"라는 뜻 없는 묶음 하나가 선다(2026-08-27 피드백:
+ *  글 위에 "작업 1개"가 접혀 있고 글 아래에 작업 두 개가 또 보여 숫자가 틀린 것처럼 읽혔다). */
+export function isInternalTool(name: unknown): boolean {
+  return name === "ToolSearch";
+}
+
 export function groupParts(content: readonly AnyPart[]): Group[] {
   let lastPlan = -1;
   content.forEach((p, i) => { if (p?.type === "tool-call" && p.toolName === "TodoWrite") lastPlan = i; });
@@ -60,6 +67,8 @@ export function groupParts(content: readonly AnyPart[]): Group[] {
   const flush = () => { if (trace.length) { groups.push({ kind: "trace", steps: trace }); trace = []; } };
   content.forEach((p, i) => {
     if (!p) return;
+    // 내부 도구는 통째로 없는 셈 — 타임라인에 담지도, 흐름(trace run)을 끊지도 않는다.
+    if (p.type === "tool-call" && isInternalTool(p.toolName)) return;
     if (p.type === "tool-call" && p.toolName === "TodoWrite") {
       // 이전 플랜 호출은 렌더 생략(trace run 도 안 끊음) — 마지막 것만 카드로.
       if (i === lastPlan) {
@@ -111,6 +120,15 @@ export function relTime(iso: string): string {
   if (s < 86400) return Math.floor(s / 3600) + "시간 전";
   if (s < 7 * 86400) return Math.floor(s / 86400) + "일 전";
   try { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; } catch { return ""; }
+}
+
+/** 개발자 이름 → 사람 말. 화면엔 이 이름만 내고 원문은 title 에 남긴다(2026-08-27).
+ *  헤더 칩과 컴포저 대상 칩 두 자리가 같은 말을 쓰도록 한 곳에 둔다. */
+export function instanceLabelOf(id: string): string {
+  return id === "system" ? "Relay" : id;
+}
+export function agentLabelOf(agent: string): string {
+  return agent === "agent-builder" ? "빌더" : agent;
 }
 
 /** 모델 id → 피커 라벨("Fable 5"). init 프레임 id 는 날짜 접미가 붙을 수 있어(claude-haiku-4-5-2025…)

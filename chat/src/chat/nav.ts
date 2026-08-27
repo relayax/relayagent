@@ -24,7 +24,7 @@ export interface ShellNav {
   items: ShellItem[];
   home: string;
   importer: string;
-  drafts: { name: string; version: string | null; changes: number; href: string }[];
+  drafts: { name: string; version: string | null; changes: number; empty: boolean; href: string }[];
   store: string | null;
   library: string | null;
   brand?: { name: string; logo: string | null; accent: string | null };

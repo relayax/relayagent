@@ -7,7 +7,7 @@ import type { RelayCtx, ConversationRow, ConversationsInfo, InboxRow } from "./r
 import { loadConversations, renameConversation, deleteConversation, loadInbox, serverAgentOf, serverParamOf } from "./runtime";
 import { threadFamily, siblingThread, displayBinding } from "./routematch";
 import { broadcastLogout } from "../auth-sync";
-import { relTime } from "./parts";
+import { relTime, instanceLabelOf, agentLabelOf } from "./parts";
 import { HeadDot } from "./Trace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -153,8 +153,7 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
   const label = (c: ConversationRow) => {
     if (c.title) return c.title;
     if (c.conversation_id === rows.seed) return "기본 대화";
-    const suffix = c.conversation_id.slice(c.conversation_id.lastIndexOf(c.conversation_id.includes("~") ? "~" : "-") + 1);
-    return "이름 없는 대화";
+    return "새 대화";
   };
 
   const saveRename = async (c: ConversationRow, value: string) => {
@@ -387,9 +386,10 @@ export function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boole
           대화함으로 대상을 바꿔도 ctx 가 정본이라 칩이 따라온다. */}
       {/* 칩에 ● 를 넣지 않는다 — 라이브 상태점(HeadDot)이 바로 왼쪽에 있어 중복. */}
       <span className="rc-head-target" title={ctx.instanceId + " · " + ctx.conversationId}>
-        <Badge variant="secondary" className="rc-chip"><span className="rc-chip-tx">{ctx.instanceId || ctx.title || "agent"}</span></Badge>
+        {/* 사람 말로 — "system / agent-builder:todo" 는 개발자 이름 그대로였다(2026-08-27). 원문은 title 에 남는다 */}
+        <Badge variant="secondary" className="rc-chip"><span className="rc-chip-tx">{ctx.instanceId ? instanceLabelOf(ctx.instanceId) : ctx.title || "agent"}</span></Badge>
         {bind.agent && (
-          <Badge variant="secondary" className="rc-chip"><span className="rc-chip-slash" aria-hidden>/</span><span className="rc-chip-tx">{bind.agent}{bind.param ? ":" + bind.param : ""}</span></Badge>
+          <Badge variant="secondary" className="rc-chip"><span className="rc-chip-slash" aria-hidden>/</span><span className="rc-chip-tx">{agentLabelOf(bind.agent)}{bind.param ? " · " + bind.param : ""}</span></Badge>
         )}
       </span>
       <span className="rc-head-sp" />

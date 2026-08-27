@@ -7,15 +7,15 @@
  * 의존시키지 않는다. 문구·동선은 종전과 같다:
  *   · 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 relay:chat-open {send}
  *     로 콘솔 에이전트의 대화에 보내지고(같은 번들의 autoFloat 가 착지), 빌더 위임이 시작되면
- *     위젯이 그 탭을 연다. 별도의 "패키지 만들기" 버튼은 없다 — 불러오기·스토어는 예시 칩 아래
- *     옅은 글자 링크 한 줄이라 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
+ *     위젯이 그 탭을 연다. 별도의 "패키지 만들기" 버튼은 없다 — 불러오기는 사이드바 [+] 메뉴에만, 스토어는
+ *     예시 칩 아래 옅은 글자 링크 한 줄이라 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
  *   · 진행 중 카드 — 지금 신경 쓸 것(수정 중·새 판·오류·초안)만. 판정은 home-model.ts.
  *   · 사용 안내 — 첫 방문에 한 번, 이후엔 ?guide=1(콘솔 설정의 [안내]).
  * 사이드바의 [새로 만들기]는 relay:home-ask 를 쏘고, 다른 문서에서는 /#new 로 온다.
  * 목록은 relay:turn(settled)·relay:nav-refresh·탭 복귀마다 다시 읽는다 — 사이드바와 같은 조건.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, FileText, Pencil, RefreshCw, Store } from "lucide-react";
+import { FileText, Pencil, RefreshCw, Store, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { fetchNav, type ShellItem, type ShellNav } from "./nav";
-import { cardAction, describe, draftLine, examplesAt, initialOf, isEmptyNav, todoOf, updateCount, type CardAction } from "./home-model";
+import { cardAction, describe, draftLine, examplesAt, initialOf, isEmptyNav, splitDrafts, todoOf, updateCount, type CardAction, type DraftRef } from "./home-model";
 
 const ASK_EVENT = "relay:home-ask";
 const GUIDE_KEY = "relay-guide-v2";
@@ -126,8 +126,7 @@ function Ask({ nav }: { nav: ShellNav }) {
           aria-label="만들 것을 말로 설명"
           className="min-h-[58px] resize-none border-0 bg-transparent px-0.5 py-0 text-[14.5px] leading-[1.55] shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-[14.5px]"
         />
-        <div className="flex items-center justify-between gap-2">
-          <p className="m-0 text-xs text-muted-foreground">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열려요.</p>
+        <div className="flex items-center justify-end gap-2">
           {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스·"수정 중" 칩 셋뿐. 나머지는 neutral */}
           <Button type="submit" size="sm" className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
         </div>
@@ -144,21 +143,16 @@ function Ask({ nav }: { nav: ShellNav }) {
           <RefreshCw />
         </Button>
       </div>
-      {/* 불러오기·스토어는 보조 동선 — 버튼·목록 행이 아니라 예시 칩 아래의 옅은 글자 링크 한 줄.
-          테두리가 있는 행은 입력 상자와 "진행 중" 사이에 낀 표 조각처럼 보였다(2026-08-27). */}
-      <p className="m-0 mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-        <a href={nav.importer} className="inline-flex items-center gap-1 text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">
-          <Download className="size-3.5" />받은 에이전트 파일 불러오기
-        </a>
-        {nav.store ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <a href={nav.store} className="inline-flex items-center gap-1 text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">
-              <Store className="size-3.5" />스토어에서 골라 설치
-            </a>
-          </>
-        ) : null}
-      </p>
+      {/* 스토어는 보조 동선 — 예시 칩 아래의 옅은 글자 링크 한 줄, 스토어가 있을 때만.
+          "받은 에이전트 파일 불러오기"는 2026-08-27 뺐다 — 사이드바 [+] 메뉴에 같은 동작이 있고,
+          홈에서는 처음 온 사람이 고를 것이 "말하기" 하나로 보여야 한다. */}
+      {nav.store ? (
+        <p className="m-0 mt-4 flex items-center justify-center text-xs text-muted-foreground">
+          <a href={nav.store} className="inline-flex items-center gap-1 text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">
+            <Store className="size-3.5" />스토어에서 골라 설치
+          </a>
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -174,7 +168,8 @@ function Progress({ nav }: { nav: ShellNav }) {
   }
   const todo = todoOf(nav.items);
   const ups = updateCount(nav.items);
-  const any = todo.length || nav.drafts.length;
+  const { live, empty } = splitDrafts(nav.drafts);
+  const any = todo.length || live.length;
   return (
     <>
       {ups && nav.library ? (
@@ -190,10 +185,13 @@ function Progress({ nav }: { nav: ShellNav }) {
       ) : (
         <p className="mx-auto my-5 max-w-[620px] px-5 text-center text-[13px] text-muted-foreground">진행 중인 것이 없어요. 에이전트는 왼쪽 목록에서 골라 쓰세요.</p>
       )}
-      <div className="grid gap-3 px-5 py-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))" }}>
-        {todo.map((it) => <ItemCard key={it.pkg} it={it} library={nav.library} />)}
-        {nav.drafts.map((df) => <DraftCard key={df.name} df={df} />)}
-      </div>
+      {any ? (
+        <div className="grid gap-3 px-5 py-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))" }}>
+          {todo.map((it) => <ItemCard key={it.pkg} it={it} library={nav.library} />)}
+          {live.map((df) => <DraftCard key={df.name} df={df} />)}
+        </div>
+      ) : null}
+      {empty.length ? <EmptyDrafts drafts={empty} /> : null}
     </>
   );
 }
@@ -218,7 +216,6 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
           </span>
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px]">{it.label}</b>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">{it.pkg}{it.version ? "@" + it.version : ""}</span>
           </span>
           {it.resident ? <span className="size-[7px] shrink-0 rounded-full bg-emerald-500" title="도는 중" /> : null}
         </CardHeader>
@@ -227,6 +224,8 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
         </CardContent>
         <CardFooter className="flex items-center gap-1.5 px-0">
           <StatusChip status={act.status}>{act.chip}</StatusChip>
+          {/* 이름@버전은 맨 아래 옅게 — 제목 바로 밑의 고정폭 글자는 설명보다 먼저 눈에 들어왔다(2026-08-27) */}
+          <span className="min-w-0 truncate font-mono text-[10.5px] text-muted-foreground/60" title={it.pkg}>{it.pkg}{it.version ? "@" + it.version : ""}</span>
           <span className="flex-1" />
           {act.status === "update" ? (
             <Button size="xs" render={<span />} className="pointer-events-none">{act.label}</Button>
@@ -263,7 +262,6 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
           <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText className="size-4" /></span>
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px]">{df.name}</b>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">{df.version ?? "버전 없음"}</span>
           </span>
         </CardHeader>
         <CardContent className="px-0">
@@ -271,11 +269,45 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
         </CardContent>
         <CardFooter className="flex items-center gap-1.5 px-0">
           <StatusChip status="draft">초안</StatusChip>
+          <span className="min-w-0 truncate font-mono text-[10.5px] text-muted-foreground/60">{df.version ?? ""}</span>
           <span className="flex-1" />
           <EditHint />
         </CardFooter>
       </a>
     </Card>
+  );
+}
+
+// ── 빈 초안 — 이름만 짓고 만 것. 카드가 아니라 한 줄이고, 여기서 바로 버릴 수 있다 ──────────
+// 버리기는 스튜디오 ⋯ 메뉴 깊숙이만 있었다 — 빈 초안 세 개가 카드로 서 있는데 지울 길이 홈에 없었다(2026-08-27).
+// 데몬 호출은 콘솔과 같은 문(/pkg/system/script/draft-discard). 손댄 초안(바뀐 파일 있음)은 여기 오지 않는다.
+function EmptyDrafts({ drafts }: { drafts: DraftRef[] }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const discard = async (name: string) => {
+    if (!confirm(`빈 초안 "${name}" 을 버릴까요? 되돌릴 수 없어요.`)) return;
+    setBusy(name); setErr(null);
+    try {
+      const r = await fetch("/pkg/system/script/draft-discard", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { name } }) });
+      if (!r.ok) { let m = "HTTP " + r.status; try { const d = await r.json(); if (d?.error) m = String(d.error); } catch { /* 본문 없음 */ } throw new Error(m); }
+      window.dispatchEvent(new CustomEvent("relay:nav-refresh"));
+    } catch (e: any) { setErr(`버리지 못했어요: ${String(e?.message || e)}`); }
+    finally { setBusy(null); }
+  };
+  return (
+    <div className="mx-5 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <span>빈 초안 {drafts.length}개</span>
+      {drafts.map((d) => (
+        <span key={d.name} className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border px-1.5 py-0.5">
+          <a href={d.href} className="text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">{d.name}</a>
+          <button type="button" aria-label={`${d.name} 버리기`} title="버리기" disabled={busy === d.name} onClick={() => void discard(d.name)}
+            className="inline-flex cursor-pointer items-center border-0 bg-transparent p-0.5 text-muted-foreground/60 hover:text-destructive disabled:cursor-progress">
+            <Trash2 className="size-3" />
+          </button>
+        </span>
+      ))}
+      {err ? <span className="text-destructive">{err}</span> : null}
+    </div>
   );
 }
 

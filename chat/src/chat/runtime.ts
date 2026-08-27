@@ -388,12 +388,25 @@ function llmNetworkGuide(): string {
 
 // friendlyTurnError — 배너에 실을 사람말. 벌거벗은 기계 코드가 그대로 채팅에 노출되지 않게
 // 계약 소유 코드(client-protocol §5.0-10)는 문장으로, 미등록 E_ 코드는 괄호 보존 문구로 감싼다.
+// 사유 없는 실패의 기본 문장 — 본문에는 싣지 않고 상태 칩(TurnStatusChip)이 대신 말한다.
+const GENERIC_TURN_ERROR = "응답을 만들지 못했어요";
 const TURN_ERROR_TEXT: Record<string, string> = {
   E_DISCONNECTED: "연결이 잠시 끊겼어요. 진행 중이던 응답은 서버에서 계속 만들어져요. 잠시 후 대화를 다시 열어 확인해 주세요.",
   E_NETWORK: "서버와 통신하지 못했어요. 네트워크 상태를 확인하고 다시 시도해 주세요.",
   E_NO_TURN: "진행 중인 응답을 찾지 못했어요. 대화를 다시 불러온 뒤 시도해 주세요.",
   E_PROTOCOL: "화면이 오래됐어요. 새로고침해 주세요.",
 };
+// appendErrorReason — 오류 턴의 사유를 본문 끝에 싣는다. 사유가 기본 문장뿐이면: 본문이 비어
+// 있을 땐 상태 칩이 그 문장을 대신 말하므로 싣지 않고, 이미 답이 진행된 턴이면 칩이 "오류로
+// 중단됨"만 말하게 되므로 사유가 전달되지 않았다는 사실 자체를 적는다 — 왜 멈췄는지 아무 말도
+// 없는 화면이 되지 않게(2026-08-27 피드백).
+function appendErrorReason(parts: any[], msg: string): void {
+  const m = (msg || "").trim();
+  const text = m && m !== GENERIC_TURN_ERROR ? m
+    : parts.length ? "오류 원인이 서버에서 전달되지 않았어요. 다시 시도해도 반복되면 서버 로그를 확인해 주세요."
+    : "";
+  if (text) parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + text });
+}
 function friendlyTurnError(text: string): string {
   const t = (text || "").trim();
   const mapped = TURN_ERROR_TEXT[t];
@@ -1505,7 +1518,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       drive()
         .then((e) => { outcome.error = e; })
         .catch((e: any) => {
-          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || "응답을 만들지 못했어요") };
+          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || GENERIC_TURN_ERROR) };
         })
         .finally(() => { finished = true; _liveTurns.delete(ctx.conversationId); wake(); });
 
@@ -1538,18 +1551,18 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         }
         meta.custom.ended = cutClass ? "cut" : "error";
         const msg = friendlyTurnError(driveError.message || driveError.code);
-        parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + "⚠️ " + msg });
+        appendErrorReason(parts, msg);
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;
       }
       if (!driveError && meta.custom.ended === "error") {
         // 봉투 error 이벤트로 종결된 턴 — 사유는 리듀서가 meta.error 에 보관했다.
-        const raw = (reducer.meta as { error?: string }).error || "응답을 만들지 못했어요";
+        const raw = (reducer.meta as { error?: string }).error || GENERIC_TURN_ERROR;
         const base = friendlyTurnError(String(raw).replace(/^turn failed:\s*ERROR:\s*/i, "").trim());
         // 자격(401) → 연결(refused) 순으로 분류한다. 여기는 실패 확정 경로라 오탐이 없다.
         const guide = isLlmAuthError(raw) ? llmAuthGuide() : isLlmNetworkError(raw) ? llmNetworkGuide() : "";
         const msg = guide ? base + "\n\n" + guide : base;
-        parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + "⚠️ " + msg });
+        appendErrorReason(parts, msg);
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;
       }

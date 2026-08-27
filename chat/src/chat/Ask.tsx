@@ -30,8 +30,8 @@ import {
 } from "@/components/ui/questionnaire";
 
 /** 카드 껍데기 — 두 카드(AskCard·ChoiceCard)가 같은 틀을 쓴다. live = 답을 기다리는 중. */
-const shell = "flex w-full max-w-[520px] flex-col gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground shadow-xs animate-in fade-in-0 slide-in-from-bottom-1 duration-200";
-const shellLive = "border-primary/40 ring-3 ring-primary/10";
+const shell = "flex w-full max-w-[520px] flex-col gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground shadow-none ring-0 animate-in fade-in-0 slide-in-from-bottom-1 duration-200";
+const shellLive = "border-foreground/25";
 const foot = "flex min-h-[18px] flex-wrap items-center gap-2 text-xs text-muted-foreground";
 
 /** AskUserQuestion 질문 카드 — 세션 pod 가 stdio can_use_tool 채널에서 답변을 기다린다.
@@ -193,7 +193,7 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
                 const label = o?.label ?? "";
                 return (
                   <QuestionnaireChoice key={oi} value={label} checked={cur.includes(label)} disabled={!waiting}
-                                       className="min-h-9 px-3 py-2" onChange={() => pick(qi, q, label)}>
+                                       className="min-h-9 px-3 py-2 shadow-none" onChange={() => pick(qi, q, label)}>
                     <span className="font-medium">{label}</span>
                     {o?.description && <QuestionnaireChoiceDescription className="text-xs">{o.description}</QuestionnaireChoiceDescription>}
                   </QuestionnaireChoice>
@@ -201,7 +201,7 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
               })}
               {custom.map((v) => (
                 <QuestionnaireChoice key={"custom:" + v} value={v} checked disabled={!waiting}
-                                     className="min-h-9 px-3 py-2" onChange={() => pick(qi, q, v)}>
+                                     className="min-h-9 px-3 py-2 shadow-none" onChange={() => pick(qi, q, v)}>
                   <span className="font-medium">{v}</span>
                   <QuestionnaireChoiceDescription className="text-xs">직접 입력</QuestionnaireChoiceDescription>
                 </QuestionnaireChoice>
@@ -210,11 +210,11 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
             <QuestionnaireError className="text-xs">답을 하나 골라 주세요</QuestionnaireError>
             {/* 자유 입력줄 — Questionnaire 의 답 추적 밖(plain Input). Enter 는 폼 제출이 아니라 "입력". */}
             <div className="flex items-stretch gap-1.5">
-              <Input type="text" className="h-8 min-w-0 flex-1" placeholder="또는 직접 입력…" aria-label="직접 입력"
+              <Input type="text" className="h-8 min-w-0 flex-1 shadow-none" placeholder="또는 직접 입력…" aria-label="직접 입력"
                      value={text[qi] ?? ""} disabled={!waiting}
                      onChange={(e) => setText((prev) => ({ ...prev, [qi]: e.target.value }))}
                      onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); freeSubmit(qi, q); } }} />
-              <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={!waiting || !draft}
+              <Button type="button" variant="outline" size="sm" className="shrink-0 shadow-none" disabled={!waiting || !draft}
                       onClick={() => freeSubmit(qi, q)}>{instant ? "보내기" : "입력"}</Button>
             </div>
           </QuestionnaireItem>

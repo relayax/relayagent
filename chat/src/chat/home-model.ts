@@ -59,7 +59,16 @@ export function describe(description: string): string | null {
 
 /** 초안 카드의 한 줄 — 칩이 "초안"을 말하므로 여기는 진행 정도만 */
 export function draftLine(changes: number): string {
-  return changes ? `바뀐 파일 ${changes}개` : "아직 내용이 없어요";
+  return changes ? `바뀐 파일 ${changes}개` : "첫 판 기록됨 · 아직 적용 전";
+}
+
+/** 초안 가르기 — 손댄 것은 카드, 빈 것(이름만 짓고 만 것 — 데몬의 empty 판정)은 한 줄로 접는다.
+ *  이름만 짓고 만 초안이 카드로 늘어서면 "진행 중"이 쓰레기 목록이 된다(2026-08-27) */
+export type DraftRef = ShellNav["drafts"][number];
+export function splitDrafts(drafts: ReadonlyArray<DraftRef>): { live: DraftRef[]; empty: DraftRef[] } {
+  const live: DraftRef[] = [], empty: DraftRef[] = [];
+  for (const d of drafts) (d.empty ? empty : live).push(d);
+  return { live, empty };
 }
 
 export function isEmptyNav(nav: ShellNav): boolean {

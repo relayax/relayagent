@@ -38,7 +38,7 @@ import {
   seedConversation, isLocalConversation, onSessionMinted, viewUrlForInstance,
   type InboxRow, type RelayCtx,
 } from "./runtime";
-import { siblingThread, threadFamily } from "./routematch";
+import { displayBinding, siblingThread, threadFamily } from "./routematch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -152,16 +152,19 @@ function loadSplit(v: ChatTabsVariant): SplitPersist {
   } catch { return none; }
 }
 
-/** 표시 이름 — 서버/자동 제목이 있으면 그대로, 없으면 "기본 대화"/"대화 <suffix>". */
+/** 표시 이름 — 서버/자동 제목이 있으면 그대로, 없으면 "기본 대화"/"새 대화". */
 function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
   // 외부(임베더·목록)가 붙인 앞 트리 기호("└ ", "├ ")는 탭 안에서 뜻이 없어 표시에서만 뗀다.
   if (t.title && !isPlaceholderTitle(t.title)) return t.title.replace(/^[\u2500-\u257f\s]+/, "") || t.title;
   const id = t.conversationId;
   // main 패밀리(threadFamily)와 로컬 드래프트("c-…" — 지연 민팅 전) 모두 기본 대화로 그린다.
   if (!id || threadFamily(id) === "main") return "기본 대화";
-  const sep = id.includes("~") ? "~" : "-";
-  const suffix = id.slice(id.lastIndexOf(sep) + 1);
-  return "이름 없는 대화";
+  // 도킹 슬롯은 "새 대화"가 아니라 무엇을 하는 대화인지로 — 빌더 탭이 옆의 "기본 대화"와 무엇이
+  // 다른지 알 수 없었다(2026-08-27). 빈 화면(EmptyStarter)과 같은 말.
+  const b = displayBinding(id);
+  if (b.agent === "agent-builder") return b.param ? `${b.param} 손보기` : "새로 만들기";
+  if (b.agent) return `${b.agent} 대화`;
+  return "새 대화";
 }
 
 /** 자동 제목을 덮어써도 되는 placeholder 인가 — 서버의 진짜 제목은 보존한다.
@@ -169,8 +172,7 @@ function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
  *   인스턴스 id 도 사람이 붙인 제목일 수 있어 placeholder 로 보지 않는다. 자동 제목은 "새/기본/대화 ".) */
 function isPlaceholderTitle(title: string): boolean {
   if (!title) return true;
-  if (title === "새 대화" || title === "기본 대화") return true;
-  return title === "이름 없는 대화";
+  return title === "새 대화" || title === "기본 대화" || title === "이름 없는 대화";
 }
 
 function relTime(iso?: string): string {
@@ -496,11 +498,11 @@ function TabStrip({
                      onClick={() => onActivate(t.key)}
                      onDoubleClick={(e) => { e.stopPropagation(); onEditStart(t.key); }} />
               }>
-                {/* 동작중 점(맥동 애니메이션)은 chat.css 소유 — 질문 대기·완료는 작은 Badge. */}
-                {b && (b.cls === "run"
-                  ? <span className="rc-desk-badge run" aria-label="동작중" />
-                  : <Badge variant={b.cls === "ask" ? "outline" : "secondary"} aria-label={b.cls === "ask" ? "질문 대기" : "완료"}
-                           className={cn("h-4 min-w-4 shrink-0 px-1 text-[10px] leading-none", b.cls === "done" && "font-extrabold text-[var(--rc-ok)]")}>{b.text}</Badge>)}
+                {/* 안 본 결과 점은 chat.css 소유(정지, 애니메이션 없음) — 질문 대기는 작은 Badge. */}
+                {b && (b.cls === "unread"
+                  ? <span className="rc-desk-badge unread" aria-label="안 본 결과" />
+                  : <Badge variant="outline" aria-label="질문 대기"
+                           className="h-4 min-w-4 shrink-0 px-1 text-[10px] leading-none">{b.text}</Badge>)}
                 {editingKey === t.key
                   ? renderRename(t, "rc-tab-rename")
                   : <span className="rc-desk-tab-tx">{labelOf(t)}</span>}
@@ -1054,8 +1056,8 @@ export function ChatTabs({
   const badgeOf = (t: Tab): { cls: string; text: string } | null => {
     const s = status[t.key] || "idle";
     if (s === "ask") return { cls: "ask", text: "❓" };
-    if (s === "running") return { cls: "run", text: "" };
-    if (unread[t.key]) return { cls: "done", text: "✓" };
+    // 실행 중은 탭이 알릴 일이 아니다(들어가 보면 안다). 알릴 것은 "안 본 결과"뿐 — 정지된 점 하나.
+    if (unread[t.key]) return { cls: "unread", text: "" };
     return null;
   };
 
