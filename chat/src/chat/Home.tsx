@@ -113,7 +113,7 @@ function Ask({ nav }: { nav: ShellNav }) {
     <section className="mx-auto max-w-[620px] px-5 pt-14 pb-7">
       <h2 className="m-0 mb-4 text-center text-[22px] font-bold tracking-tight">무엇을 만들까요?</h2>
       <form
-        className="flex flex-col gap-2.5 rounded-xl border border-border bg-background px-3.5 pt-3.5 pb-2.5 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30"
+        className="flex flex-col gap-2.5 rounded-xl border border-border bg-background px-3.5 pt-3.5 pb-2.5 shadow-xs transition-[box-shadow,border-color] focus-within:border-blue-600 focus-within:ring-3 focus-within:ring-blue-600/20"
         onSubmit={(e) => { e.preventDefault(); submit(); }}
       >
         <Textarea
@@ -129,7 +129,8 @@ function Ask({ nav }: { nav: ShellNav }) {
         />
         <div className="flex items-center justify-between gap-2">
           <p className="m-0 text-xs text-muted-foreground">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p>
-          <Button type="submit" size="sm" className="shrink-0 rounded-full px-3.5">시작</Button>
+          {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스·"수정 중" 칩 셋뿐. 나머지는 neutral */}
+          <Button type="submit" size="sm" className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
         </div>
       </form>
       <div className="mt-3 flex flex-wrap justify-center gap-1.5">
@@ -184,10 +185,10 @@ function Progress({ nav }: { nav: ShellNav }) {
     <>
       {ups && nav.library ? (
         // 새 판 요약 배너 — 개수만 말한다. 실행은 각 카드의 버튼(설치 동의 관문이 판마다 선다)
-        <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3.5 py-2 text-xs">
-          ⬆ <b className="font-extrabold">새 판이 나온 에이전트 {ups}개</b> — 카드의 업데이트 버튼으로 받으세요
+        <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3.5 py-2 text-xs">
+          ⬆ <b className="font-semibold">새 판이 나온 에이전트 {ups}개</b> — 카드의 업데이트 버튼으로 받으세요
           <span className="flex-1" />
-          <a href={nav.library} className="font-bold text-inherit underline underline-offset-3">내 서재 열기</a>
+          <a href={nav.library} className="font-semibold text-blue-700 underline underline-offset-3">내 서재 열기</a>
         </div>
       ) : null}
       {any ? (
@@ -204,7 +205,8 @@ function Progress({ nav }: { nav: ShellNav }) {
 }
 
 // preflight 가 없어 border 색은 매번 명시한다(border-border) — 기본값 currentColor 는 검정 테두리가 된다
-const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-none ring-0 hover:border-primary [--card-spacing:0px]";
+// 색은 neutral 하나 — 상태는 채움색이 아니라 칩의 테두리/글자로만 가른다(오류만 붉게). 호버도 테두리 한 단계
+const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-none ring-0 transition-colors hover:border-foreground/30 [--card-spacing:0px]";
 const chip = "rounded-md px-1.5 py-0 text-[11px] font-semibold";
 
 function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
@@ -222,7 +224,7 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
               {it.update ? <Badge variant="secondary" className="ml-1 rounded px-1.5 py-0 font-mono text-[10px] font-bold">→ {it.update}</Badge> : null}
             </span>
           </span>
-          {it.resident ? <span className="size-[7px] shrink-0 rounded-full bg-emerald-600" title="도는 중" /> : null}
+          {it.resident ? <span className="size-[7px] shrink-0 rounded-full bg-emerald-500" title="도는 중" /> : null}
         </CardHeader>
         <CardContent className="px-0">
           <p className="m-0 line-clamp-2 min-h-[2.6em] text-xs text-muted-foreground">{it.description}</p>
@@ -231,7 +233,7 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
       <CardFooter className="flex items-center gap-1.5 px-0">
         <Badge variant="secondary" className={chip}>{FACE_KO[it.face]}</Badge>
         {it.error ? <Badge variant="destructive" className={chip}>검사 실패</Badge> : null}
-        {it.editing ? <Badge className={cn(chip, "bg-amber-100 text-amber-700")} title="적용하지 않은 수정이 스튜디오에 있습니다">수정 중</Badge> : null}
+        {it.editing ? <Badge variant="outline" className={cn(chip, "border-blue-200 bg-blue-50 text-blue-700")} title="적용하지 않은 수정이 스튜디오에 있습니다">수정 중</Badge> : null}
         <span className="flex-1" />
         {it.update && library ? (
           // 새 판 버튼 — 설치 티켓은 스토어 서재가 발급하므로 서재로 보낸다(동의 관문은 그 다음)
@@ -247,10 +249,10 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
 // 보인다. 설치본과 같은 격자에 같은 모양으로 세우고, 점선과 "초안" 배지로만 가른다
 function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
   return (
-    <Card className={cn(cardClass, "border-dashed bg-amber-50/60 hover:border-amber-700")}>
+    <Card className={cn(cardClass, "border-dashed")}>
       <a href={df.href} className="flex flex-col gap-2 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
-          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700"><FileText className="size-4" /></span>
+          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText className="size-4" /></span>
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px]">{df.name}</b>
             <span className="block truncate font-mono text-[11px] text-muted-foreground">{df.name}{df.version ? "@" + df.version : ""}</span>
@@ -261,7 +263,7 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
         </CardContent>
       </a>
       <CardFooter className="flex items-center gap-1.5 px-0">
-        <Badge className={cn(chip, "bg-amber-100 text-amber-700")}>초안</Badge>
+        <Badge variant="outline" className={chip}>초안</Badge>
         <span className="flex-1" />
         <Button size="xs" variant="outline" render={<a href={df.href} />} className="no-underline text-muted-foreground hover:text-foreground">이어 만들기</Button>
       </CardFooter>
