@@ -38,6 +38,7 @@ export default function DetailFace({
   onTitle,
   actionsSlot,
   editorSlot,
+  tail,
 }: {
   pkg: Pkg;
   reg: Registry;
@@ -52,6 +53,8 @@ export default function DetailFace({
   actionsSlot: HTMLElement | null;
   /** 파일 에디터가 설 자리(가운데 칸). null 이면 가운데 칸이 없어 왼쪽 칸 전체가 에디터가 된다 */
   editorSlot: HTMLElement | null;
+  /** 설명서 맨 아래에 붙는 것 — 상주 현황(PkgPane). 고급 아래, 같은 스크롤 안 */
+  tail?: React.ReactNode;
 }) {
   // 설치 안 된 초안 — 장부에 없어 콘솔이 합성한 Pkg (workspace 가 빈 것으로 안다)
   const ghost = pkg.workspace === "";
@@ -339,6 +342,7 @@ export default function DetailFace({
           />
         ) : null}
 
+        {tail}
       </div>
     </>
   );

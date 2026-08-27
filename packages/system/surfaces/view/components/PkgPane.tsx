@@ -5,7 +5,6 @@ import { AgentScope } from "@relay/chat";
 import DetailFace from "@/components/DetailFace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { channelStatus, serviceStatus, type ChannelStatusView, type ServiceStatusView, type ShellItem } from "@/lib/api";
 import { landingAgent, residentDecls } from "@/lib/faces";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
@@ -13,7 +12,9 @@ import type { Nav, View } from "@/lib/useDraft";
 
 // 패키지 화면은 세 칸이다 — 고치는 자리·써보는 자리·고쳐달라는 자리가 한 화면에 있어야
 // "써보다 → 고쳐달라" 가 돈다:
-//   왼쪽   설정 패널 — 설명서·폼 (DetailFace 의 1·2층). 상주 선언이 있으면 [구조|상주] 로 바꿔 본다
+//   왼쪽   설정 패널 — 설명서·폼 (DetailFace 의 1·2층). 상주 선언(채널·스케줄·서비스)이 있으면
+//          설명서 맨 아래에 "실행 현황" 이 접힌 채 붙는다 — 종전의 [구조|상주] 탭은 선언 있는
+//          패키지에서만 툭 튀어나와 정체가 안 보였다(2026-08-27)
 //   가운데 실제 화면 — /pkg/<이름>/view/ 를 iframe 으로. 화면 없는 대화형 패키지는 기판이 대화
 //          폴백 문서를 내므로(view.ts) 착지 에이전트가 있으면 늘 있다. 그 패키지 자신의 채팅
 //          위젯은 iframe 이 데려온다
@@ -21,18 +22,14 @@ import type { Nav, View } from "@/lib/useDraft";
 //          겹치지 않고 나란히 선다). 상대는 AgentScope 가 선언한 이 패키지의 빌더
 // 고치는 일은 전부 왼쪽 칸 안에서 끝난다(폼 · 결과면 · 파일 에디터). 가운데 실제 화면은 침범하지
 // 않는다 — 파일을 열면 왼쪽 칸이 조금 넓어질 뿐이다.
-type Tab = "detail" | "live";
-
 export default function PkgPane({
   pkg,
   reg,
   edges,
   running,
   item,
-  face,
   view,
   nav,
-  onFace,
   onChanged,
   onGone,
 }: {
@@ -42,21 +39,17 @@ export default function PkgPane({
   running: string[];
   /** 기판이 준 이 패키지의 얼굴들 — 판정은 여기서 다시 하지 않는다 */
   item: ShellItem | null;
-  face: string | null;
   /** 상세의 깊이(sec · item · file) — URL 이 정본 */
   view: View;
   nav: Nav;
-  onFace: (face: Tab) => void;
   onChanged: () => void;
   onGone: () => void;
 }) {
   const m = pkg.manifest;
-  const hasLive = item ? item.faces.includes("live") : residentDecls(m).channels.length > 0;
+  const d = residentDecls(m);
+  const hasLive = d.channels.length > 0 || d.triggers.length > 0 || d.services.length > 0;
   // 뷰 탭의 판정은 기판과 같다(shell.ts facesOf: view 또는 chat) — 장부에 없는 초안은 매니페스트로
   const hasView = item ? item.faces.some((f) => f === "view" || f === "chat") : Boolean(m?.surfaces?.view || landingAgent(m));
-  const tabs: Tab[] = ["detail", ...(hasLive ? (["live"] as Tab[]) : [])];
-  // 주소에 없는 얼굴로는 앉지 않는다 — 패키지를 갈아타도 직전 패키지에만 있던 탭이 남지 않는다
-  const tab: Tab = tabs.includes(face as Tab) ? (face as Tab) : tabs[0];
   // 설치 안 된 초안은 장부에 이름이 없다 — 상세가 draft 를 열어 알려 준다
   const [title, setTitle] = useState<{ display: string | null; live: string | null; draft: string | null } | null>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
@@ -137,19 +130,6 @@ export default function PkgPane({
           {pkg.ring === 0 ? " · ring-0" : ""}
         </span>
         <span ref={setSlot} className="pane-actions" />
-        <div className="right">
-          {tabs.length > 1 ? (
-            <Tabs value={tab} onValueChange={(v) => onFace(v as Tab)}>
-              <TabsList aria-label="탭 전환">
-                {tabs.map((t) => (
-                  <TabsTrigger key={t} value={t}>
-                    {TAB_LABEL[t]}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          ) : null}
-        </div>
       </header>
 
       {pkg.error ? <div className="banner">검사 실패: {pkg.error}</div> : null}
@@ -159,15 +139,16 @@ export default function PkgPane({
       <AgentScope agent="agent-builder" param={pkg.name}>
         <div ref={cols} className={`pkg-cols${hasView ? "" : " no-view"}`}>
           <div className="pkg-col side" style={hasView ? { flexBasis: sideW } : undefined}>
-            {tab === "live" ? <LiveFace pkg={pkg} running={running} /> : null}
-            {tab === "detail" ? (
-              <DetailFace pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle} actionsSlot={slot} editorSlot={hasView ? editorSlot : null} />
-            ) : null}
+            <DetailFace
+              pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle}
+              actionsSlot={slot} editorSlot={hasView ? editorSlot : null}
+              tail={hasLive ? <LiveFace pkg={pkg} running={running} /> : null}
+            />
           </div>
           {hasView ? (
             <div className="pkg-col stage">
               <div className="pkg-grip" onPointerDown={onGrip} title="끌어서 폭 조절" />
-              {view.file && tab === "detail" ? <div ref={setEditorSlot} className="pkg-editor" /> : <ViewFace pkg={pkg} item={item} />}
+              {view.file ? <div ref={setEditorSlot} className="pkg-editor" /> : <ViewFace pkg={pkg} item={item} />}
             </div>
           ) : null}
         </div>
@@ -178,8 +159,6 @@ export default function PkgPane({
 
 const SIDE_KEY = "relay-side-w";
 const SIDE_MIN = 280, SIDE_MAX = 720;
-
-const TAB_LABEL: Record<Tab, string> = { detail: "구조", live: "상주" };
 
 // ── 가운데 화면 ─────────────────────────────────────────────────────────────
 // 그 패키지의 화면을 이 자리에 크게 — 기판이 서빙하는 /pkg/<이름>/view/ 를 iframe 으로 든다.
@@ -207,9 +186,9 @@ function ViewFace({ pkg, item }: { pkg: Pkg; item: ShellItem | null }) {
   );
 }
 
-// ── 상주 ────────────────────────────────────────────────────────────────────
+// ── 실행 현황 ───────────────────────────────────────────────────────────────
 // 선언(무엇이 돌기로 되어 있나)과 실상(지금 떠 있나)을 나란히 놓는다. 조작(자격 연결·재기동)은
-// 여기 없다 — 사용과 관리의 분리, 조작은 설정이 소유한다
+// 여기 없다 — 사용과 관리의 분리, 조작은 설정이 소유한다. 설명서 맨 아래 접힌 섹션으로 선다
 function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
   const m = pkg.manifest;
   const decls = residentDecls(m);
@@ -224,7 +203,8 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
   }, [pkg.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="pane-body">
+    <details className="ap-advanced pkg-live">
+      <summary>실행 현황 — 채널·스케줄·프로세스가 지금 떠 있는지</summary>
       {decls.triggers.length ? (
         <div className="rc-card pad">
           <h3>스케줄</h3>
@@ -293,7 +273,7 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
           ))}
         </div>
       ) : null}
-    </div>
+    </details>
   );
 }
 

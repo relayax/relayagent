@@ -15,7 +15,7 @@ import type { Pkg, Registry } from "@/lib/types";
 // 맡는 것은 다스리는 화면과 셸이 서빙할 문서가 없는 얼굴들이다:
 //   /                    설정 — 지도·설치와 버전·권한 대장·자격·하네스
 //   /?p=<설치이름>        상주 상태와 패키지 화면(기판이 낼 문서가 없는 얼굴)
-//     &face=live|detail
+//     &face=            셸이 붙이는 얼굴 이름 — 지금은 읽지 않는다(상주 현황은 설명서 아래 접힌 섹션)
 //     &sec=&item=&file=   상세의 깊이 — 설명서 줄의 펼침(2층)과 열린 파일(3층). 스튜디오 규약 그대로
 // 설치 안 된 초안(만드는 중)도 /?p= 로 연다 — 장부에 없으면 draft 목록에서 찾아 합성한다.
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리가 정본이다(스튜디오와 같은 규약).
@@ -33,7 +33,6 @@ function Console() {
   const router = useRouter();
   const sp = useSearchParams();
   const sel = sp.get("p");
-  const face = sp.get("face");
   const view = useMemo(() => ({ sec: sp.get("sec"), item: sp.get("item"), file: sp.get("file") }), [sp]);
   const pane: "pkg" | "settings" = sel ? "pkg" : "settings";
 
@@ -90,7 +89,6 @@ function Console() {
       : null);
   const item = nav?.items.find((i) => i.pkg === sel) ?? null;
 
-  const goFace = useCallback((f: string) => router.push(`/?p=${encodeURIComponent(sel ?? "")}&face=${f}`), [router, sel]);
   // 상세의 깊이 이동 — p·face 는 지키고 sec·item·file 만 바꾼다 (스튜디오의 nav 와 같은 규칙)
   const goView = useCallback(
     (q: { sec?: string | null; item?: string | null; file?: string | null }) => {
@@ -118,10 +116,8 @@ function Console() {
             edges={edges}
             running={running}
             item={item}
-            face={face}
             view={view}
             nav={goView}
-            onFace={goFace}
             onChanged={() => void load()}
             onGone={() => { void load(); router.push("/"); }}
           />
