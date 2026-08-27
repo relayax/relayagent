@@ -77,14 +77,13 @@
 }
 .rc-head .rc-head-sp { flex: 1 1 auto; }
 /* 헤더 아이콘 버튼(대화 목록·접기) — 텍스트 톤, hover 램프 */
-.rc-head .rc-head-btn {
-  border: none; background: transparent; color: var(--rc-faint); cursor: pointer;
-  padding: 4px; line-height: 0; border-radius: 6px; flex: 0 0 auto;
-}
-.rc-head .rc-head-btn:hover { background: var(--rc-hover); color: var(--rc-soft); }
+/* 헤더 버튼은 shadcn Button(ghost·icon-xs) — 여기선 색과 flex 만. hover 배경은 변형이 칠한다 */
+.rc-head .rc-head-btn { color: var(--rc-faint); cursor: pointer; flex: 0 0 auto; }
+.rc-head .rc-head-btn:hover { color: var(--rc-soft); }
 .rc-sess { position: relative; flex: 0 0 auto; }
 .rc-sess-menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 200px; max-width: 280px;
+  /* 배치는 Popover 포지셔너가 맡는다(body 포털). 포털 밖이라 .rc-root 의 글꼴을 못 물려받아 직접 준다 */
+  min-width: 200px; max-width: 280px; font: 14px/1.6 var(--rc-sans);
   background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
   box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); padding: 4px; max-height: 320px; overflow-y: auto;
 }
@@ -98,9 +97,9 @@
 .rc-sess-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-sess-time { flex: 0 0 auto; font-size: 11px; color: var(--rc-faint); font-variant-numeric: tabular-nums; }
 .rc-sess-new {
-  display: block; width: 100%; text-align: left; border: none; cursor: pointer;
+  width: 100%; justify-content: flex-start; text-align: left; cursor: pointer; height: auto;
   margin-top: 2px; padding: 7px 9px; font-size: 12.5px; font-weight: 600;
-  color: var(--rc-accent-strong); background: transparent; border-top: 1px solid var(--rc-line);
+  color: var(--rc-accent-strong); border-top: 1px solid var(--rc-line);
   border-radius: 0 0 7px 7px;
 }
 .rc-sess-new:hover { background: var(--rc-accent-soft); }
@@ -113,24 +112,16 @@
 .rc-sess-item:focus-within .rc-sess-acts { display: inline-flex; }
 .rc-sess-item:hover .rc-sess-time,
 .rc-sess-item:focus-within .rc-sess-time { display: none; } /* 시간 자리를 액션이 대체 — 행 폭 유지 */
-.rc-sess-act {
-  border: none; background: transparent; cursor: pointer; color: var(--rc-faint);
-  padding: 3px; line-height: 0; border-radius: 5px; font-size: 11.5px;
-}
-.rc-sess-act:hover { background: var(--rc-hover); color: var(--rc-soft); }
-.rc-sess-act:disabled { opacity: .6; cursor: default; }
+/* 행 액션은 shadcn Button(ghost) — 색만 */
+.rc-sess-act { cursor: pointer; color: var(--rc-faint); }
+.rc-sess-act:hover { color: var(--rc-soft); }
 .rc-sess-danger { color: var(--rc-danger, #dc2626); font-weight: 600; line-height: 1.2; }
 .rc-sess-danger:hover { background: rgba(220, 38, 38, 0.08); color: var(--rc-danger, #dc2626); }
 
 /* 이름 편집 행 — 인라인 input(Enter=저장, Esc=취소) */
 .rc-sess-edit { cursor: default; }
-.rc-sess-input {
-  flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12.5px; color: var(--rc-ink);
-  border: 1px solid var(--rc-accent); border-radius: 6px; padding: 4px 7px; background: var(--rc-bg);
-  outline: none;
-}
+.rc-sess-input { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
 .rc-sess-confirm { cursor: default; }
-.rc-sess-confirm .rc-sess-act { line-height: 1.2; }
 
 /* ── 계정 메뉴: 신원 칩 + 로그아웃 (위젯 헤더 단일 소유 — 전 인스턴스 뷰 공통) ──── */
 .rc-acct-id {
@@ -138,8 +129,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-bottom: 1px solid var(--rc-line); margin-bottom: 2px;
 }
-.rc-acct-out { color: var(--rc-ink); }
-.rc-acct-out:disabled { opacity: .6; cursor: default; }
+.rc-acct-out { color: var(--rc-ink); height: auto; }
 
 /* ── running status — 턴 내내 살아있는 내레이션 한 줄 ────────────────────── */
 .rc-running { display: inline-flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 12.5px; color: var(--rc-soft); }
@@ -179,9 +169,8 @@
 /* 과거 스크롤 중 최신으로 — 하단 중앙 플로팅 원형(레퍼런스) */
 .rc-jump {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 10;
-  width: 34px; height: 34px; border: 0; border-radius: 50%;
+  width: 34px; height: 34px; border-radius: 50%;
   background: var(--rc-ink); color: #fff; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   animation: rc-rise 0.18s ease-out;
 }
@@ -434,28 +423,11 @@
 .rc-ask-opt-desc { font-size: 12px; color: var(--rc-soft); line-height: 1.4; }
 /* 자유입력(직접 입력) 행 — 네이티브 "Other" 등가. 옵션 목록 아래 상시 노출 */
 .rc-ask-free { display: flex; gap: 6px; align-items: stretch; }
-.rc-ask-free-in {
-  flex: 1 1 auto; min-width: 0; padding: 7px 11px; border: 1px solid var(--rc-line);
-  border-radius: 10px; background: var(--rc-bg); color: var(--rc-ink);
-  font: 13px var(--rc-sans); transition: border-color 0.12s ease, background 0.12s ease;
-}
-.rc-ask-free-in:focus { outline: none; border-color: var(--rc-accent); }
-.rc-ask-free-in:disabled { opacity: 0.6; cursor: default; }
+/* 자유 입력줄은 shadcn Input/Button — 배치와 "선택됨" 상태색만 */
+.rc-ask-free-in { flex: 1 1 auto; min-width: 0; height: 32px; }
 .rc-ask-free.on .rc-ask-free-in { border-color: var(--rc-accent); background: var(--rc-accent-soft); }
-.rc-ask-free-go {
-  flex: 0 0 auto; padding: 0 14px; border: 1px solid var(--rc-line); border-radius: 10px;
-  background: var(--rc-bg); color: var(--rc-accent-strong); font: 600 12.5px var(--rc-sans);
-  cursor: pointer; transition: border-color 0.12s ease, background 0.12s ease;
-}
-.rc-ask-free-go:hover:not(:disabled) { border-color: var(--rc-accent); background: var(--rc-accent-soft); }
-.rc-ask-free-go:disabled { opacity: 0.5; cursor: default; }
+.rc-ask-free-go { flex: 0 0 auto; }
 .rc-ask-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
-.rc-ask-send {
-  padding: 6px 14px; border: 0; border-radius: 8px; background: var(--rc-accent);
-  color: #fff; font: 600 12.5px var(--rc-sans); cursor: pointer;
-}
-.rc-ask-send:hover:not(:disabled) { background: var(--rc-accent-strong); }
-.rc-ask-send:disabled { background: var(--rc-line); color: var(--rc-faint); cursor: default; }
 .rc-ask-hint { font-size: 11.5px; color: var(--rc-faint); }
 .rc-ask-hint.done { color: var(--rc-ok); font-weight: 600; }
 .rc-ask-hint.err { color: var(--rc-err); }
@@ -528,11 +500,7 @@
 
 .rc-model { position: relative; display: inline-flex; align-items: center; color: var(--rc-faint); }
 /* 모델 버튼 — 도구 줄 오른쪽의 글자 버튼(레퍼런스의 "Auto"). 테두리 없이 이름과 꺾쇠만 */
-.rc-model-btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px;
-  background: none; border: 0; border-radius: 8px; cursor: pointer; color: inherit;
-}
-.rc-model-btn:hover { background: var(--rc-hover); }
+.rc-model-btn { gap: 6px; padding: 5px 6px; height: auto; cursor: pointer; color: inherit; }
 .rc-model-ic { flex: none; opacity: 0.75; }
 .rc-model-lb { display: inline-flex; align-items: center; font: 12.5px/1 var(--rc-sans); color: var(--rc-faint); white-space: nowrap; }
 .rc-model-val { color: var(--rc-ink); font-weight: 600; }
@@ -593,7 +561,7 @@
   padding: 5px 8px; border-radius: 999px; background: var(--rc-accent-soft); outline: none;
 }
 .rc-effort-track:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 35%, transparent); }
-.rc-effort-step { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 0; border: none; background: none; cursor: pointer; }
+.rc-effort-step { width: 14px; height: 14px; padding: 0; cursor: pointer; }
 .rc-effort-dot {
   width: 5px; height: 5px; border-radius: 50%; background: var(--rc-line);
   transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
@@ -653,11 +621,8 @@
 
 /* 카드 아래 줄의 컨텍스트 칩들 — [● 인스턴스] [/ 라우트에이전트] */
 .rc-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; margin-bottom: 2px; cursor: default; }
-.rc-chip {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 4px 10px; border: 1px solid var(--rc-line); border-radius: 999px;
-  font: 12px/1 var(--rc-sans); color: var(--rc-ink); background: var(--rc-bg);
-}
+/* 칩은 shadcn Badge(secondary) — 룩은 변형이, 여기선 간격·폭과 자식 규칙만 */
+.rc-chip { gap: 6px; max-width: 100%; }
 .rc-chip .rc-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-ok); flex: 0 0 auto; }
 .rc-chip .rc-chip-slash { opacity: 0.5; font-weight: 600; flex: 0 0 auto; color: var(--rc-accent); }
 .rc-chip .rc-chip-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -665,8 +630,7 @@
    자리·같은 카드) — 칩이 입력 카드 아래 줄로 내려온 뒤(2026-08-26) 컴포저 폭짜리 드롭다운은 어색했다. */
 .rc-chip-wrap { position: relative; display: inline-flex; max-width: 100%; }
 .rc-chip-part { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.rc-chip-btn { cursor: pointer; gap: 8px; font: 12px/1 var(--rc-sans); }
-.rc-chip-btn:hover { background: var(--rc-hover); }
+.rc-chip-btn { cursor: pointer; gap: 8px; }
 .rc-chip-caret { opacity: 0.45; flex: 0 0 auto; font-size: 10px; }
 .rc-target-pick {
   position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
@@ -676,8 +640,8 @@
 .rc-target-pick .rc-pick-item { white-space: normal; }
 .rc-target-pick .rc-target-note { padding: 6px 10px; color: var(--rc-faint); font-size: 11px; line-height: 1.5; }
 /* [+] 대상 추가 — 칩과 같은 알약이되 정사각(아이콘 자리). 교체(▾)와 시각적으로 분리한다. */
-.rc-chip-add { cursor: pointer; padding: 4px 9px; font: 13px/1 var(--rc-sans); color: var(--rc-faint); }
-.rc-chip-add:hover { background: var(--rc-hover); color: var(--rc-ink); }
+.rc-chip-add { cursor: pointer; padding: 0 8px; color: var(--rc-faint); }
+.rc-chip-add:hover { color: var(--rc-ink); }
 /* 섹션 구분 — "여기가 바뀐다"(위)와 "저기로 간다"(아래)를 눈으로 가른다. */
 .rc-target-sec {
   margin-top: 4px; padding: 7px 10px 4px; border-top: 1px solid var(--rc-line);
@@ -686,11 +650,7 @@
 .rc-target-out { opacity: 0.6; }
 .rc-target-opt .rc-target-box { font-size: 12px; opacity: 0.7; }
 .rc-target-opt.on { background: var(--rc-accent-soft); }
-.rc-target-apply {
-  margin-top: 2px; width: 100%; border: 0; border-radius: 8px; cursor: pointer;
-  padding: 8px 10px; font: 600 12px/1.3 var(--rc-sans); color: #fff; background: var(--rc-accent);
-}
-.rc-target-apply:disabled { cursor: default; opacity: 0.45; }
+.rc-target-apply { margin-top: 2px; width: 100%; cursor: pointer; }
 .rc-chip .rc-agent-ic { width: 15px; height: 15px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
 
 /* queued messages */
@@ -702,8 +662,7 @@
 }
 .rc-queued-ic { color: var(--rc-accent); font-weight: 600; flex: 0 0 auto; }
 .rc-queued-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
-.rc-queued-x { flex: 0 0 auto; border: 0; background: none; cursor: pointer; color: var(--rc-faint); font-size: 15px; line-height: 1; padding: 0 2px; }
-.rc-queued-x:hover { color: var(--rc-ink); }
+.rc-queued-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-faint); font-size: 15px; }
 
 .rc-input {
   flex: 1 1 auto; resize: none; border: 0; border-radius: 0; width: 100%;
@@ -717,25 +676,14 @@
 .rc-ph path { fill: currentColor; stroke: none; }
 /* 선(stroke) 아이콘들도 같은 이유로 못 박는다 */
 .rc-pick-check, .rc-pick-arrow, .rc-model-chev, .rc-pick-foot-ic { fill: none; stroke: currentColor; }
-.rc-send, .rc-cancel {
-  flex: 0 0 auto; width: 30px; height: 30px; border: 0; border-radius: 50%;
-  background: var(--rc-accent); color: #fff; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.12s ease;
-}
-.rc-send:hover, .rc-cancel:hover { background: var(--rc-accent-strong); }
-.rc-send:disabled { opacity: 0.3; cursor: default; background: var(--rc-accent); }
+/* 전송·중지는 shadcn Button(default·icon-sm) — 원형과 크기만. 중지의 회색은 의도한 룩이라 남긴다 */
+.rc-send, .rc-cancel { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; }
 .rc-cancel { background: #a9b0b7; }
 .rc-cancel:hover { background: #8f979f; }
 
 /* attach button */
 .rc-file-input { display: none; }
-.rc-attach {
-  flex: 0 0 auto; width: 28px; height: 28px; border: 0; border-radius: 8px;
-  background: none; color: var(--rc-soft); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.rc-attach:hover { background: var(--rc-hover); color: var(--rc-ink); }
+.rc-attach { flex: 0 0 auto; width: 28px; height: 28px; color: var(--rc-soft); cursor: pointer; }
 
 /* staged attachment chips */
 .rc-atts { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -752,8 +700,7 @@
 .rc-att-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 .rc-att-nm { font: 12px/1.2 var(--rc-sans); color: var(--rc-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-att-sz { font: 11px/1 var(--rc-sans); color: var(--rc-faint); }
-.rc-att-x { flex: 0 0 auto; border: 0; background: none; cursor: pointer; color: var(--rc-faint); font-size: 15px; line-height: 1; padding: 0 2px; }
-.rc-att-x:hover { color: var(--rc-ink); }
+.rc-att-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-faint); font-size: 15px; }
 
 /* 첨부 거절/실패 인라인 배너 — sandbox 에서 alert 가 무음 증발하는 자리의 대체 */
 .rc-att-error {
@@ -762,7 +709,7 @@
   background: #fdf1f0; color: #b3352b;
 }
 .rc-att-error-tx { flex: 1; min-width: 0; font: 12px/1.4 var(--rc-sans); word-break: break-all; }
-.rc-att-error-x { flex: 0 0 auto; border: 0; background: none; cursor: pointer; color: #b3352b; font-size: 15px; line-height: 1; padding: 0 2px; }
+.rc-att-error-x { flex: 0 0 auto; cursor: pointer; color: #b3352b; font-size: 15px; }
 
 /* drag-and-drop overlay */
 .rc-drop {
@@ -922,11 +869,7 @@
   padding: 0 12px; height: 100%;
 }
 .rc-desk-add:hover { background: var(--rc-hover); color: var(--rc-ink); }
-.rc-desk-viewtoggle {
-  display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 0; cursor: pointer;
-  background: none; color: var(--rc-faint); font: 600 11.5px var(--rc-sans); padding: 0 12px;
-}
-.rc-desk-viewtoggle:hover { color: var(--rc-soft); background: var(--rc-hover); }
+/* 화면 토글은 shadcn Button(ghost) — 여기엔 켜짐 강조색과 아래 휴대폰 폭 숨김만 남는다. */
 .rc-desk-viewtoggle.on { color: var(--rc-accent-strong); }
 /* 피커 드롭다운 — 대화함 메뉴 룩. position 은 인라인 fixed(트리거 rect 기준)가 덮는다
    — 탭 바 overflow 클리핑을 탈출하려면 fixed 여야 한다(절대 fallback 은 잔존). */
@@ -953,11 +896,6 @@
 .rc-desk-body.dragging iframe { pointer-events: none; }
 .rc-desk-body.dragging .rc-desk-resizer::after { background: var(--rc-accent); width: 2px; }
 .rc-desk-empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--rc-soft); position: relative; }
-.rc-desk-add-big {
-  border: 1px solid var(--rc-line); background: var(--rc-bg); color: var(--rc-accent-strong);
-  font: 600 13px var(--rc-sans); padding: 9px 16px; border-radius: 9px; cursor: pointer;
-}
-.rc-desk-add-big:hover { background: var(--rc-accent-soft); border-color: var(--rc-accent); }
 /* ── 휴대폰 폭 — desk 우측 뷰 패널은 공간이 없어 접고 그 토글도 함께 숨긴다.
    전송/취소/첨부 버튼은 터치 타깃 기준(≥40px)까지 살짝 키운다. ── */
 @media (max-width: 720px) {
@@ -991,18 +929,8 @@
 .rc-log { overflow-x: hidden; }
 
 /* ── 공용 탭 셸(ChatTabs — 도킹 + /desk) 헤더 컨트롤 ─────────────────────── */
-/* 탭 바 우측 아이콘 버튼: 보관함 · 새대화 · (dock)접기 — rc-desk-add 와 같은 톤, 아이콘 크기만 */
-.rc-tabs-inbox, .rc-tabs-new, .rc-tabs-collapse {
-  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  border: 0; background: none; color: var(--rc-soft); cursor: pointer; padding: 0 11px; height: 100%;
-}
-.rc-tabs-inbox:hover, .rc-tabs-new:hover, .rc-tabs-collapse:hover { background: var(--rc-hover); color: var(--rc-ink); }
-.rc-tabs-new { color: var(--rc-accent-strong); }
-/* 탭 이름 인라인 편집(더블클릭) — 탭 텍스트 자리를 그대로 차지 */
-.rc-tab-rename {
-  min-width: 80px; max-width: 160px; border: 1px solid var(--rc-accent); border-radius: 5px;
-  background: var(--rc-bg); color: var(--rc-ink); font: 12.5px var(--rc-sans); padding: 1px 5px; outline: none;
-}
+/* 탭 바 우측 아이콘 버튼(보관함·새대화·접기)과 탭 이름 인라인 편집 input 은 shadcn Button/Input
+   + 유틸리티(ChatTabs.tsx BAR_BTN) — 여기 규칙 없음. */
 /* row2 브레드크럼 — 활성 대화 이름("칩 자리" 유지), 더블클릭 rename */
 .rc-tabs-crumb {
   flex: 0 0 auto; display: flex; align-items: center; min-height: 30px; padding: 3px 14px;
@@ -1013,10 +941,6 @@
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rc-tabs-crumb-name:hover { background: var(--rc-hover); }
-.rc-crumb-rename {
-  flex: 1 1 auto; min-width: 0; border: 1px solid var(--rc-accent); border-radius: 6px;
-  background: var(--rc-bg); color: var(--rc-ink); font: 600 13px var(--rc-sans); padding: 3px 7px; outline: none;
-}
 /* 도킹 변형 — 탭 바가 좁아 화면 토글은 숨고(뷰는 이미 옆), 탭 최대폭 축소 */
 .rc-tabs-dock .rc-desk-tab { max-width: 200px; }
 
@@ -1027,26 +951,14 @@
   background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
   box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); display: flex; flex-direction: column;
 }
-.rc-tab-menu-item {
-  display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
-  font: 13px var(--rc-sans); color: var(--rc-ink); padding: 6px 10px; border-radius: 6px;
-}
-.rc-tab-menu-item:hover:not(:disabled) { background: var(--rc-hover); }
-.rc-tab-menu-item:disabled { color: var(--rc-faint); cursor: default; }
+/* 메뉴 항목은 shadcn Button(ghost·sm) — 컨테이너(위치·그림자)와 구분선만 여기. */
 .rc-tab-menu-sep { height: 1px; background: var(--rc-line); margin: 4px 6px; }
 /* 채팅 열 — 그룹 헤드행·크럼행·panes 행을 세로로 쌓는 좌측 열(desk 뷰와 나란).
    세 행이 같은 splitPct 인라인 폭을 공유해 그룹 경계가 픽셀 정렬된다. */
 .rc-chat-area { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; }
 /* 그룹 헤드 — [‹][탭 스트립][›] 한 묶음. 폭은 인라인(flex-basis %)이 정한다. */
 .rc-tab-ghead { display: flex; align-items: stretch; min-width: 0; }
-/* overflow 좌우 이동 화살표 — 넘칠 때만 나타난다(TabStrip 이 ResizeObserver 로 판정) */
-.rc-tab-arrow {
-  flex: 0 0 auto; width: 24px; border: 0; background: none; color: var(--rc-soft);
-  cursor: pointer; font-size: 17px; line-height: 1; padding: 0 0 3px;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.rc-tab-arrow:hover:not(:disabled) { background: var(--rc-hover); color: var(--rc-ink); }
-.rc-tab-arrow:disabled { color: var(--rc-line); cursor: default; }
+/* overflow 좌우 이동 화살표(‹ ›)는 shadcn Button(ghost·icon-xs) — 넘칠 때만 TabStrip 이 그린다. */
 /* 분할 시 비포커스 그룹의 활성 탭 — teal 대신 옅은 밑줄(어느 그룹이 입력 대상인지 구분) */
 .rc-tabs-split .rc-tab-ghead:not(.focus) .rc-desk-tab.on { box-shadow: inset 0 -2px 0 var(--rc-faint); font-weight: 500; }
 /* 그룹 경계 정렬 스페이서(헤드·크럼 행) — 본문 스플리터(6px)와 같은 자리에 헤어라인 */
@@ -1063,11 +975,9 @@
 /* ── 사용자 메시지 첨부 — 가로 칩 행 + 클릭 라이트박스 ────────────────────── */
 .rc-att-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .rc-att-open {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 240px;
-  padding: 3px 9px 3px 4px; border: 1px solid var(--rc-line); border-radius: 8px;
-  background: var(--rc-bg); color: var(--rc-ink); font: 12px var(--rc-sans); cursor: zoom-in;
+  gap: 6px; max-width: 240px; height: auto; padding: 3px 9px 3px 4px;
+  font: 12px var(--rc-sans); cursor: zoom-in;
 }
-.rc-att-open:hover { background: var(--rc-hover); border-color: var(--rc-faint); }
 /* 전역 .rc-bubble img(260px 썸네일 규칙)보다 뒤에 선언 — 칩 썸네일은 22px 고정 */
 .rc-att-open img { width: 22px; height: 22px; max-width: none; max-height: none; border-radius: 5px; object-fit: cover; display: block; }
 .rc-att-open-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1084,9 +994,8 @@
 }
 .rc-lightbox-x {
   position: absolute; top: 14px; right: 14px; width: 36px; height: 36px;
-  display: flex; align-items: center; justify-content: center;
-  border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.16); color: #fff;
-  font-size: 22px; line-height: 1; cursor: pointer;
+  border-radius: 999px; background: rgba(255, 255, 255, 0.16); color: #fff;
+  font-size: 22px; cursor: pointer;
 }
 .rc-lightbox-x:hover { background: rgba(255, 255, 255, 0.3); }
 .rc-lightbox-name {
@@ -1095,12 +1004,9 @@
 }
 
 /* 위임 카드 — 그 위임의 대화를 여는 문 */
-.rc-author-act { margin-top: 8px; align-self: flex-start; border: 1px solid var(--rc-line, #e5e5e5); background: var(--rc-bg, #fff); color: var(--rc-accent-strong, #171717); border-radius: 7px; padding: 4px 10px; font: 600 11.5px var(--rc-sans, -apple-system, sans-serif); cursor: pointer; }
-.rc-author-act:hover { background: var(--rc-hover, #eef0f2); }
-.rc-author-act:disabled { opacity: .6; cursor: default; }
+.rc-author-act { margin-top: 8px; align-self: flex-start; cursor: pointer; }
 
 /* 빈 시작 화면의 예시 문장 — 누르면 입력칸에 들어간다 */
 .rc-empty-ex { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 12px; }
-.rc-empty-exb { border: 1px solid var(--rc-line, #e5e5e5); background: var(--rc-bg, #fff); border-radius: 999px; padding: 5px 11px; font: 12.5px inherit; color: var(--rc-soft, #5c6570); cursor: pointer; }
-.rc-empty-exb:hover { border-color: var(--rc-accent, #262626); color: var(--rc-accent-strong, #171717); }
-.rc-empty-more { padding: 5px 9px; color: var(--rc-faint, #8a939c); }
+/* 예시 칩은 shadcn Button(outline·xs·rounded-full) — 새로고침 칩의 옅은 색만 */
+.rc-empty-more { color: var(--rc-faint, #8a939c); }

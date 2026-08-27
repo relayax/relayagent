@@ -30,6 +30,8 @@ export async function loadModule(relSrc) {
     logLevel: "silent",
     // chat.css 의 url("/assets/…") — 기판이 서빙하는 절대 경로. chat-build.mjs 와 같은 취급
     external: ["/assets/*"],
+    // css 는 테스트가 보지 않는다(tw.css 는 postcss 없이는 못 굽는다)
+    loader: { ".css": "empty" },
   });
   return import(pathToFileURL(outfile).href + "?t=" + Date.now());
 }

@@ -1,0 +1,67 @@
+/* tw.css — 위젯의 Tailwind 입구. 위젯은 남의 페이지에 끼워 넣는 조각이라 preflight(전역 리셋)는
+   싣지 않는다 — theme 와 utilities 만. 유틸리티는 클래스에만 붙으니 호스트 페이지로 새지 않는다.
+   shadcn 토큰(--background 등)은 :root 에 둔다 — base-ui 팝오버·툴팁이 body 로 포탈되므로
+   .rc-root 안에 가두면 그 조각들이 값을 잃는다. 값은 프리셋 b1Z5aAfsu(neutral · radius small). */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@source "./";
+@source "../components";
+
+/* preflight 대신 — shadcn 요소(data-slot)에만 브라우저 기본값을 지운다. 호스트 페이지의 다른
+   button/input 에는 손대지 않는다. base 레이어라 유틸리티(variant 의 bg-*)가 이긴다 */
+@layer base {
+  button[data-slot], [data-slot="button"], [data-slot="badge"] { background-color: transparent; border: 0 solid; padding: 0; margin: 0; font: inherit; color: inherit; line-height: inherit; }
+  [data-slot="input"], [data-slot="textarea"] { border: 1px solid; font: inherit; color: inherit; margin: 0; }
+  [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="tooltip-content"] { font: 14px/1.6 var(--font-sans); border: 1px solid; }
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.45rem;
+}
+
+@theme inline {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", Roboto, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}

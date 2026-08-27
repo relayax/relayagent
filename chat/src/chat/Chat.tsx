@@ -35,6 +35,12 @@ import { loadInbox, loadInstances, type NavInstance } from "./runtime";
 import { threadFamily, siblingThread, displayBinding, paramTargets, withTargets, targetCandidates } from "./routematch";
 import { STEER_TOOL } from "./envelope-reducer";
 import { broadcastLogout, installAuthWatch } from "../auth-sync";
+// shadcn 프리미티브(base-ui) — 버튼·배지·입력·팝오버. 룩은 Tailwind 변형이 칠하고, 배치가 필요한
+// 자리는 기존 rc-* 클래스를 함께 단다(chat.css 는 레이어 밖이라 배치 규칙이 항상 이긴다).
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 function resultText(result: unknown): string {
   if (result == null) return "";
@@ -438,21 +444,21 @@ function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
             })}
           </div>
           <div className={"rc-ask-free" + (!instant && (text[qi] ?? "").trim() && (sel[qi] ?? []).includes((text[qi] ?? "").trim()) ? " on" : "")}>
-            <input type="text" className="rc-ask-free-in" placeholder="또는 직접 입력…"
+            <Input type="text" className="rc-ask-free-in" placeholder="또는 직접 입력…"
                    value={text[qi] ?? ""} disabled={!waiting}
                    onChange={(e) => setText((prev) => ({ ...prev, [qi]: e.target.value }))}
                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); freeSubmit(qi, q); } }} />
-            <button type="button" className="rc-ask-free-go" disabled={!waiting || !(text[qi] ?? "").trim()}
-                    onClick={() => freeSubmit(qi, q)}>{instant ? "전달" : "입력"}</button>
+            <Button type="button" variant="outline" size="sm" className="rc-ask-free-go" disabled={!waiting || !(text[qi] ?? "").trim()}
+                    onClick={() => freeSubmit(qi, q)}>{instant ? "전달" : "입력"}</Button>
           </div>
         </div>
       ))}
       <div className="rc-ask-foot">
         {waiting && instant && <span className="rc-ask-hint">선택하면 바로 전달돼요</span>}
         {waiting && !instant && (
-          <button type="button" className="rc-ask-send" onClick={sendMulti} disabled={!allAnswered}>
+          <Button type="button" size="sm" onClick={sendMulti} disabled={!allAnswered}>
             답변 보내기{allAnswered ? "" : ` (${answered}/${questions.length})`}
-          </button>
+          </Button>
         )}
         {sent && !done && <span className="rc-ask-hint">답변 전송됨 — 이어서 진행 중…</span>}
         {done && <span className="rc-ask-hint done">✓ 답변 완료</span>}
@@ -726,15 +732,13 @@ function relTime(iso: string): string {
 function InboxMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch?: (c: string) => void }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<InboxRow[] | null>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
+  // 바깥 클릭·Escape 닫기는 Popover 가 맡는다 — 여기선 열릴 때 목록만 읽는다.
   useEffect(() => {
     if (!open) return;
     let alive = true;
     setRows(null);
     loadInbox(ctx).then((r) => { if (alive) setRows(r); });
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    return () => { alive = false; document.removeEventListener("pointerdown", onDown); };
+    return () => { alive = false; };
   }, [open, ctx.instanceId, ctx.principal]);
   const label = (r: InboxRow) => {
     if (r.title) return r.title;
@@ -753,15 +757,16 @@ function InboxMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch?: (c: string) =>
     if (ctx.onRetarget) ctx.onRetarget(r.instance, r.conversation_id);
   };
   return (
-    <div className="rc-sess" ref={boxRef}>
-      <button type="button" className="rc-head-btn" onClick={() => setOpen((o) => !o)}
+    <Popover open={open} onOpenChange={setOpen}>
+    <div className="rc-sess">
+      <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" className="rc-head-btn" />}
               aria-haspopup="menu" aria-expanded={open} aria-label="대화함" title="대화함 — 내 모든 에이전트 대화">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 6h14l2 7v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5z" />
         </svg>
-      </button>
+      </PopoverTrigger>
       {open && (
-        <div className="rc-sess-menu rc-inbox" role="menu">
+        <PopoverContent align="end" side="bottom" sideOffset={6} className="rc-sess-menu rc-inbox block w-auto gap-0" role="menu">
           {rows === null ? (
             <div className="rc-sess-note">불러오는 중…</div>
           ) : rows.length === 0 ? (
@@ -782,9 +787,10 @@ function InboxMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch?: (c: string) =>
               );
             })
           )}
-        </div>
+        </PopoverContent>
       )}
     </div>
+    </Popover>
   );
 }
 
@@ -795,7 +801,6 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
   const [confirming, setConfirming] = useState<string | null>(null); // 삭제 확인 중인 대화 id
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
   const refresh = () => loadConversations(ctx).then(setInfo);
   useEffect(() => {
@@ -803,9 +808,8 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
     let alive = true;
     setEditing(null); setConfirming(null); setErr(null);
     loadConversations(ctx).then((i) => { if (alive) setInfo(i); });
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    return () => { alive = false; document.removeEventListener("pointerdown", onDown); };
+    // 바깥 클릭·Escape 닫기는 Popover 가 맡는다.
+    return () => { alive = false; };
   }, [open, ctx.instanceId, ctx.principal]);
   useEffect(() => { if (editing) editRef.current?.select(); }, [editing]);
 
@@ -865,15 +869,16 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
   };
 
   return (
-    <div className="rc-sess" ref={boxRef}>
-      <button type="button" className="rc-head-btn" onClick={() => setOpen((o) => !o)}
+    <Popover open={open} onOpenChange={setOpen}>
+    <div className="rc-sess">
+      <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" className="rc-head-btn" />}
               aria-haspopup="menu" aria-expanded={open} aria-label="대화 목록" title="대화 목록 · 새 대화">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M4 5h16M4 12h16M4 19h10" />
         </svg>
-      </button>
+      </PopoverTrigger>
       {open && (
-        <div className="rc-sess-menu" role="menu">
+        <PopoverContent align="end" side="bottom" sideOffset={6} className="rc-sess-menu block w-auto gap-0" role="menu">
           {info === null ? (
             <div className="rc-sess-note">불러오는 중…</div>
           ) : (
@@ -883,9 +888,9 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                 if (editing === id) {
                   return (
                     <div key={id} className="rc-sess-item rc-sess-edit">
-                      <input
+                      <Input
                         ref={editRef}
-                        className="rc-sess-input"
+                        className="rc-sess-input h-7 px-2 text-xs"
                         defaultValue={c.title || ""}
                         placeholder={label({ ...c, title: undefined })}
                         maxLength={120}
@@ -895,12 +900,12 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                           if (e.key === "Escape") { e.preventDefault(); setEditing(null); }
                         }}
                       />
-                      <button type="button" className="rc-sess-act" title="저장" aria-label="이름 저장" disabled={busy}
+                      <Button type="button" variant="ghost" size="icon-xs" className="rc-sess-act" title="저장" aria-label="이름 저장" disabled={busy}
                               onClick={() => { const v = editRef.current?.value ?? ""; void saveRename(c, v); }}>
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <path d="M2.5 8.5l3.5 3.5 7.5-8" />
                         </svg>
-                      </button>
+                      </Button>
                     </div>
                   );
                 }
@@ -908,9 +913,9 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                   return (
                     <div key={id} className="rc-sess-item rc-sess-confirm">
                       <span className="rc-sess-name">"{label(c)}" 삭제?</span>
-                      <button type="button" className="rc-sess-act rc-sess-danger" disabled={busy}
-                              onClick={() => void doDelete(c)}>{busy ? "삭제 중…" : "삭제"}</button>
-                      <button type="button" className="rc-sess-act" disabled={busy} onClick={() => setConfirming(null)}>취소</button>
+                      <Button type="button" variant="ghost" size="xs" className="rc-sess-act rc-sess-danger" disabled={busy}
+                              onClick={() => void doDelete(c)}>{busy ? "삭제 중…" : "삭제"}</Button>
+                      <Button type="button" variant="ghost" size="xs" className="rc-sess-act" disabled={busy} onClick={() => setConfirming(null)}>취소</Button>
                     </div>
                   );
                 }
@@ -925,19 +930,19 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                     <span className="rc-sess-name">{label(c)}</span>
                     {c.last_started_at && <span className="rc-sess-time">{relTime(c.last_started_at)}</span>}
                     <span className="rc-sess-acts">
-                      <button type="button" className="rc-sess-act" title="이름 바꾸기" aria-label="이름 바꾸기"
+                      <Button type="button" variant="ghost" size="icon-xs" className="rc-sess-act" title="이름 바꾸기" aria-label="이름 바꾸기"
                               onClick={(e) => { e.stopPropagation(); setConfirming(null); setErr(null); setEditing(id); }}>
                         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <path d="M11.3 2.3a1.6 1.6 0 012.4 2.4L5.5 12.9l-3 .6.6-3z" />
                         </svg>
-                      </button>
+                      </Button>
                       {id !== rows.seed && (
-                        <button type="button" className="rc-sess-act" title="대화 삭제" aria-label="대화 삭제"
+                        <Button type="button" variant="ghost" size="icon-xs" className="rc-sess-act" title="대화 삭제" aria-label="대화 삭제"
                                 onClick={(e) => { e.stopPropagation(); setEditing(null); setErr(null); setConfirming(id); }}>
                           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M2.5 4.5h11M6.5 2.5h3M5 4.5l.5 9h5l.5-9M6.8 7v4M9.2 7v4" />
                           </svg>
-                        </button>
+                        </Button>
                       )}
                     </span>
                   </div>
@@ -945,7 +950,7 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
               })}
               {err && <div className="rc-sess-note rc-sess-err">{err}</div>}
               {canBranch ? (
-                <button type="button" className="rc-sess-new"
+                <Button type="button" variant="ghost" size="sm" className="rc-sess-new"
                         onClick={() => {
                           setOpen(false);
                           // 로컬 드래프트 좌표 — 서버 세션은 첫 발화 직전 session.create 가
@@ -954,15 +959,16 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                           onSwitch(next);
                         }}>
                   ＋ 새 대화
-                </button>
+                </Button>
               ) : (
                 <div className="rc-sess-note">이 앱은 단일 대화입니다</div>
               )}
             </>
           )}
-        </div>
+        </PopoverContent>
       )}
     </div>
+    </Popover>
   );
 }
 
@@ -989,14 +995,12 @@ function AccountMenu({ ctx }: { ctx: RelayCtx }) {
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<{ email?: string; id?: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     let alive = true;
     fetch("/api/me").then((r) => (r.ok ? r.json() : null)).then((m) => { if (alive) setMe(m || {}); }).catch(() => { if (alive) setMe({}); });
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    return () => { alive = false; document.removeEventListener("pointerdown", onDown); };
+    // 바깥 클릭·Escape 닫기는 Popover 가 맡는다.
+    return () => { alive = false; };
   }, [open]);
 
   const who = me?.email || (ctx.principal && ctx.principal !== "local" ? ctx.principal : "") || me?.id || "로그인됨";
@@ -1018,25 +1022,27 @@ function AccountMenu({ ctx }: { ctx: RelayCtx }) {
   };
 
   return (
-    <div className="rc-sess" ref={boxRef}>
-      <button type="button" className="rc-head-btn" onClick={() => setOpen((o) => !o)}
+    <Popover open={open} onOpenChange={setOpen}>
+    <div className="rc-sess">
+      <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" className="rc-head-btn" />}
               aria-haspopup="menu" aria-expanded={open} aria-label="계정" title="계정 · 로그아웃">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M12 12a4 4 0 100-8 4 4 0 000 8zM5 20c0-3.3 3.1-6 7-6s7 2.7 7 6" />
         </svg>
-      </button>
+      </PopoverTrigger>
       {open && (
-        <div className="rc-sess-menu" role="menu">
+        <PopoverContent align="end" side="bottom" sideOffset={6} className="rc-sess-menu block w-auto gap-0" role="menu">
           <div className="rc-acct-id" title={who}>{who}</div>
-          <button type="button" className="rc-sess-item rc-acct-out" onClick={logout} disabled={busy}>
+          <Button type="button" variant="ghost" size="sm" className="rc-sess-item rc-acct-out" onClick={logout} disabled={busy}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
             </svg>
             <span className="rc-sess-name">{busy ? "로그아웃 중…" : "로그아웃"}</span>
-          </button>
-        </div>
+          </Button>
+        </PopoverContent>
       )}
     </div>
+    </Popover>
   );
 }
 
@@ -1057,9 +1063,9 @@ function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boolean; onS
           대화함으로 대상을 바꿔도 ctx 가 정본이라 칩이 따라온다. */}
       {/* 칩에 ● 를 넣지 않는다 — 라이브 상태점(HeadDot)이 바로 왼쪽에 있어 중복. */}
       <span className="rc-head-target" title={ctx.instanceId + " · " + ctx.conversationId}>
-        <span className="rc-chip"><span className="rc-chip-tx">{ctx.instanceId || ctx.title || "agent"}</span></span>
+        <Badge variant="secondary" className="rc-chip"><span className="rc-chip-tx">{ctx.instanceId || ctx.title || "agent"}</span></Badge>
         {bind.agent && (
-          <span className="rc-chip"><span className="rc-chip-slash" aria-hidden>/</span><span className="rc-chip-tx">{bind.agent}{bind.param ? ":" + bind.param : ""}</span></span>
+          <Badge variant="secondary" className="rc-chip"><span className="rc-chip-slash" aria-hidden>/</span><span className="rc-chip-tx">{bind.agent}{bind.param ? ":" + bind.param : ""}</span></Badge>
         )}
       </span>
       <span className="rc-head-sp" />
@@ -1068,12 +1074,12 @@ function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boolean; onS
       {/* 신원을 주입한 기판만 계정 표면이 있다(§2-5) — 무신원 기판에서 죽은 메뉴를 그리지 않는다. */}
       {ctx.principal && ctx.principal !== "local" && <AccountMenu ctx={ctx} />}
       {ctx.onClose && (
-        <button type="button" className="rc-head-btn" onClick={ctx.onClose} aria-label="채팅 닫기" title="닫기">
+        <Button type="button" variant="ghost" size="icon-xs" className="rc-head-btn" onClick={ctx.onClose} aria-label="채팅 닫기" title="닫기">
           {/* X — "패널을 닫는다"를 직관적으로(구 chevron 은 '접기'로 읽히지 않았다). */}
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           </svg>
-        </button>
+        </Button>
       )}
     </header>
   );
@@ -1188,12 +1194,12 @@ function AuthorRequestCard({ text, time, origin }: { text: string; time: string;
     <MessagePrimitive.Root className="rc-msg rc-author">
       <div className="rc-author-card" title={origin + " 에서 착지한 저작 요청 — 산출물은 그래프 델타(패키지 diff + Edge 신청 + publish)"}>
         <div className="rc-author-head">
-          <span className="rc-chip"><span className="rc-chip-dot" aria-hidden /><span className="rc-chip-tx">{origin}</span></span>
+          <Badge variant="secondary" className="rc-chip"><span className="rc-chip-dot" aria-hidden /><span className="rc-chip-tx">{origin}</span></Badge>
           <span className="rc-author-badge">에서 온 저작 요청</span>
           {time ? <span className="rc-wake-time">· {time}</span> : null}
         </div>
         <div className="rc-author-body">{body}</div>
-        {nameM ? <div className="rc-author-meta"><span className="rc-chip"><span className="rc-chip-slash" aria-hidden>#</span><span className="rc-chip-tx">{nameM[1].trim()}</span></span></div> : null}
+        {nameM ? <div className="rc-author-meta"><Badge variant="secondary" className="rc-chip"><span className="rc-chip-slash" aria-hidden>#</span><span className="rc-chip-tx">{nameM[1].trim()}</span></Badge></div> : null}
       </div>
     </MessagePrimitive.Root>
   );
@@ -1247,13 +1253,13 @@ function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time:
     <MessagePrimitive.Root className="rc-msg rc-author">
       <div className="rc-author-card" title={`${inst} 오케스트레이터가 서브에이전트 ${agent} 에게 자동 전달한 지시 · 사용자가 직접 입력한 메시지가 아닙니다`}>
         <div className="rc-author-head">
-          <span className="rc-chip"><AgentIcon slug={inst} /><span className="rc-chip-tx">{agent}</span></span>
+          <Badge variant="secondary" className="rc-chip"><AgentIcon slug={inst} /><span className="rc-chip-tx">{agent}</span></Badge>
           <span className="rc-author-badge">서브에이전트 위임</span>
           {time ? <span className="rc-wake-time">· {time}</span> : null}
         </div>
         {body ? <div className="rc-author-body">{body}</div> : null}
         {ctx.instanceId ? (
-          <button type="button" className="rc-author-act" disabled={seeking}
+          <Button type="button" variant="outline" size="xs" className="rc-author-act" disabled={seeking}
             title="이 위임이 진행되는 대화를 탭으로 엽니다 — 보고와 질문이 거기 뜹니다"
             onClick={async () => {
               setSeeking(true);
@@ -1262,7 +1268,7 @@ function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time:
               if (!ok) alert("이 위임의 대화를 아직 찾지 못했습니다 — 잠시 뒤 다시 눌러 주세요");
             }}>
             {seeking ? "찾는 중…" : "이 작업의 대화 열기"}
-          </button>
+          </Button>
         ) : null}
       </div>
     </MessagePrimitive.Root>
@@ -1280,7 +1286,7 @@ function A2ARequestCard({ text, time, origin, mission }: { text: string; time: s
     <MessagePrimitive.Root className="rc-msg rc-author">
       <div className="rc-author-card" title={`${origin} 에이전트가 보낸 요청${mission ? ` — ${mission} 미션` : ""}${reason ? `\n왜: ${reason}` : ""}\n· 사용자가 직접 입력한 메시지가 아닙니다`}>
         <div className="rc-author-head">
-          <span className="rc-chip"><AgentIcon slug={origin} /><span className="rc-chip-tx">{origin}</span></span>
+          <Badge variant="secondary" className="rc-chip"><AgentIcon slug={origin} /><span className="rc-chip-tx">{origin}</span></Badge>
           <span className="rc-author-badge">에이전트 요청{mission ? ` · ${mission}` : ""}</span>
           {time ? <span className="rc-wake-time">· {time}</span> : null}
         </div>
@@ -1303,7 +1309,7 @@ function SkillInvokeCard({ text, time }: { text: string; time: string }) {
     <MessagePrimitive.Root className="rc-msg rc-author">
       <div className="rc-author-card" title="스킬 호출 — 빌더가 이 스킬의 저작 지식으로 스캐폴드합니다">
         <div className="rc-author-head">
-          <span className="rc-chip"><span className="rc-chip-slash" aria-hidden>✦</span><span className="rc-chip-tx">{name}</span></span>
+          <Badge variant="secondary" className="rc-chip"><span className="rc-chip-slash" aria-hidden>✦</span><span className="rc-chip-tx">{name}</span></Badge>
           <span className="rc-author-badge">스킬로 시작</span>
           {time ? <span className="rc-wake-time">· {time}</span> : null}
         </div>
@@ -1320,12 +1326,12 @@ type UserImagePart = { type: "image"; image: string; filename?: string };
 function AttOpenChip({ part, onOpen }: { part: UserImagePart; onOpen: () => void }) {
   const [dim, setDim] = useState("");
   return (
-    <button type="button" className="rc-att-open" title={(part.filename || "이미지") + " — 클릭해서 크게 보기"} onClick={onOpen}>
+    <Button type="button" variant="outline" size="sm" className="rc-att-open" title={(part.filename || "이미지") + " — 클릭해서 크게 보기"} onClick={onOpen}>
       <img src={part.image} alt="" aria-hidden
            onLoad={(e) => { const im = e.currentTarget; if (im.naturalWidth) setDim(im.naturalWidth + "×" + im.naturalHeight); }} />
       <span className="rc-att-open-name">{part.filename || "image"}</span>
       {dim && <span className="rc-att-open-dim">{dim}</span>}
-    </button>
+    </Button>
   );
 }
 
@@ -1338,7 +1344,7 @@ function ImageLightbox({ src, name, onClose }: { src: string; name?: string; onC
   }, [onClose]);
   return createPortal(
     <div className="rc-lightbox" role="dialog" aria-modal="true" aria-label={name || "이미지 크게 보기"} onClick={onClose}>
-      <button type="button" className="rc-lightbox-x" aria-label="닫기" onClick={onClose}>×</button>
+      <Button type="button" variant="ghost" size="icon-sm" className="rc-lightbox-x" aria-label="닫기" onClick={onClose}>×</Button>
       <img className="rc-lightbox-img" src={src} alt={name || ""} onClick={(e) => e.stopPropagation()} />
       {name && <div className="rc-lightbox-name">{name}</div>}
     </div>,
@@ -1503,26 +1509,27 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
     <div className="rc-chips">
       {derived.length > 0 && (target ? (
         <span className="rc-chip-wrap" ref={wrapRef}>
-          <button type="button" className="rc-chip rc-chip-btn" title={label + " — 클릭해서 대상 바꾸기"}
+          {/* 칩 버튼 — Badge 와 같은 높이(h-5)로 맞춰 정적 칩과 한 줄에 선다 */}
+          <Button type="button" variant="secondary" size="xs" className="rc-chip rc-chip-btn h-5 rounded-full px-2 text-xs" title={label + " — 클릭해서 대상 바꾸기"}
                   aria-haspopup="listbox" aria-expanded={picking} onClick={() => { setAdding(false); setPicking((v) => !v); }}>
             {chipBody}
             <span className="rc-chip-caret" aria-hidden>▾</span>
-          </button>
+          </Button>
           {picking && <TargetPicker ctx={ctx} target={target} onSend={onSend} onClose={() => setPicking(false)} />}
           {hasTargetAxis && (
-            <button type="button" className="rc-chip rc-chip-add" title="작업 대상 추가 — 이 대화에서 함께 볼 워크벤치"
-                    aria-haspopup="listbox" aria-expanded={adding} onClick={() => { setPicking(false); setAdding((v) => !v); }}>+</button>
+            <Button type="button" variant="secondary" size="xs" className="rc-chip rc-chip-add h-5 rounded-full text-xs" title="작업 대상 추가 — 이 대화에서 함께 볼 워크벤치"
+                    aria-haspopup="listbox" aria-expanded={adding} onClick={() => { setPicking(false); setAdding((v) => !v); }}>+</Button>
           )}
           {adding && <TargetAddPicker ctx={ctx} target={target} onSend={onSend} onClose={() => setAdding(false)} />}
         </span>
       ) : (
-        <span className="rc-chip" title={label}>{chipBody}</span>
+        <Badge variant="secondary" className="rc-chip" title={label}>{chipBody}</Badge>
       ))}
       {host.map((c, i) => (
-        <span className="rc-chip" key={"h" + i} title={c.text}>
+        <Badge variant="secondary" className="rc-chip" key={"h" + i} title={c.text}>
           <span className="rc-chip-slash" aria-hidden>/</span>
           <span className="rc-chip-tx">{c.text}</span>
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -1675,10 +1682,10 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
               </span>
             </button>
           ))}
-          <button type="button" className="rc-target-apply" disabled={!picked.length}
+          <Button type="button" size="sm" className="rc-target-apply" disabled={!picked.length}
                   onPointerDown={(e) => { e.preventDefault(); apply(); }}>
             {picked.length ? picked.join(", ") + " 함께 보기" : "대상을 고르세요"}
-          </button>
+          </Button>
         </>
       )}
     </div>
@@ -1744,11 +1751,11 @@ function EffortRow() {
         {EFFORT_LEVELS.map((lv, i) => {
           const on = i === shownIdx;
           return (
-            <button type="button" key={lv} className="rc-effort-step"
+            <Button type="button" variant="ghost" size="icon-xs" key={lv} className="rc-effort-step hover:bg-transparent"
               onClick={() => set(effort === lv ? "" : lv)}
               aria-label={EFFORT_LABELS[lv] || lv} title={EFFORT_LABELS[lv] || lv}>
               <span className={"rc-effort-dot" + (i <= shownIdx ? " lit" : "") + (on ? " on" : "") + (on && isDefault ? " ghost" : "")} />
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -1945,7 +1952,7 @@ function ModelPicker() {
   return (
     <div className={"rc-model" + (loaded ? "" : " rc-model-loading")} ref={boxRef}
          title="AI 모델 — 이 대화에만 적용, 다음 응답부터. '기본'은 인스턴스 바인딩(없으면 CLI 기본)을 따릅니다.">
-      <button type="button" className="rc-model-btn" onClick={() => setOpen((o) => !o)}
+      <Button type="button" variant="ghost" size="xs" className="rc-model-btn hover:text-inherit" onClick={() => setOpen((o) => !o)}
               aria-haspopup="listbox" aria-expanded={open}>
         <span className="rc-model-lb">
           <span className={"rc-model-val" + (model ? "" : " ghost")}>{shown}</span>
@@ -1954,7 +1961,7 @@ function ModelPicker() {
           {!err && hErr && <span className="rc-save-err">전환 실패</span>}
           {!err && !hErr && unknownId && <span className="rc-save-err">목록에 없는 id</span>}
         </span>
-      </button>
+      </Button>
       {open && (
         <div className={"rc-pick" + (stack ? " stack" : "")}>
           <div className="rc-pick-card">
@@ -2632,7 +2639,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
             <div className="rc-queued" role="status" key={i}>
               <span className="rc-queued-ic" aria-hidden>↑</span>
               <span className="rc-queued-tx">전송 대기 중 · {q.text.replace(/\n/g, " ")}{q.atts.length ? ` · 📎${q.atts.length}` : ""}</span>
-              <button type="button" className="rc-queued-x" aria-label="대기 취소" onClick={() => removeQueued(i)}>×</button>
+              <Button type="button" variant="ghost" size="icon-xs" className="rc-queued-x" aria-label="대기 취소" onClick={() => removeQueued(i)}>×</Button>
             </div>
           ))}
         </div>
@@ -2640,7 +2647,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
       {attError && (
         <div className="rc-att-error" role="alert">
           <span className="rc-att-error-tx">{attError}</span>
-          <button type="button" className="rc-att-error-x" aria-label="닫기" onClick={() => setAttError(null)}>×</button>
+          <Button type="button" variant="ghost" size="icon-xs" className="rc-att-error-x" aria-label="닫기" onClick={() => setAttError(null)}>×</Button>
         </div>
       )}
       {slashOpen && (
@@ -2702,7 +2709,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
                     {a.uploading ? `업로드 ${a.progress ?? 0}%` : fmtSize(a.size)}
                   </span>
                 </span>
-                <button type="button" className="rc-att-x" aria-label="첨부 제거" onClick={() => removeAtt(a.id)}>×</button>
+                <Button type="button" variant="ghost" size="icon-xs" className="rc-att-x" aria-label="첨부 제거" onClick={() => removeAtt(a.id)}>×</Button>
               </div>
             ))}
           </div>
@@ -2731,9 +2738,9 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
             className="rc-file-input"
             onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ""; }}
           />
-          <button type="button" className="rc-attach" aria-label="파일 첨부" title="파일 첨부" onClick={() => fileRef.current?.click()}>
+          <Button type="button" variant="ghost" size="icon-sm" className="rc-attach" aria-label="파일 첨부" title="파일 첨부" onClick={() => fileRef.current?.click()}>
             <PhIcon d={PH.plus} size={16} />
-          </button>
+          </Button>
           <span style={{ flex: 1 }} />
           {ctxUsed > 0 && (
             <span className={"rc-ctx-wrap" + (ctxArmed ? " rc-armed" : "")}>
@@ -2766,14 +2773,14 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
           )}
           <ModelPicker />
           {running ? (
-            <button type="button" className="rc-cancel" aria-label="중지" onClick={() => rt.cancelRun()}>
+            <Button type="button" size="icon-sm" className="rc-cancel" aria-label="중지" onClick={() => rt.cancelRun()}>
               <PhIcon d={PH.stop} size={13} />
-            </button>
+            </Button>
           ) : (
-            <button type="button" className="rc-send" aria-label="전송"
+            <Button type="button" size="icon-sm" className="rc-send" aria-label="전송"
               disabled={(!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)}
               title={atts.some((a) => a.uploading) ? "파일 업로드 중…" : undefined}
-              onClick={submit}><PhIcon d={PH.arrowUp} size={16} /></button>
+              onClick={submit}><PhIcon d={PH.arrowUp} size={16} /></Button>
           )}
         </div>
       </div>
@@ -2966,11 +2973,11 @@ function EmptyStarter({ ctx }: { ctx: RelayCtx }) {
       {examples.length ? (
         <div className="rc-empty-ex">
           {examples.map((e) => (
-            <button key={e.label} type="button" className="rc-empty-exb" title={e.text} onClick={() => prefill(e.text)}>{e.label}</button>
+            <Button key={e.label} type="button" variant="outline" size="xs" className="rounded-full" title={e.text} onClick={() => prefill(e.text)}>{e.label}</Button>
           ))}
           {creating && (
-            <button type="button" className="rc-empty-exb rc-empty-more" aria-label="다른 예시" title="다른 예시"
-              onClick={() => setPage((p) => p + 1)}>↻</button>
+            <Button type="button" variant="outline" size="icon-xs" className="rc-empty-more rounded-full" aria-label="다른 예시" title="다른 예시"
+              onClick={() => setPage((p) => p + 1)}>↻</Button>
           )}
         </div>
       ) : null}
@@ -3014,7 +3021,7 @@ function JumpToBottom({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }
   }, [rootRef]);
   if (!show) return null;
   return (
-    <button type="button" className="rc-jump" aria-label="맨 아래로"
+    <Button type="button" size="icon-sm" className="rc-jump" aria-label="맨 아래로"
             onClick={() => {
               const log = rootRef.current?.querySelector(".rc-log") as HTMLElement | null;
               log?.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
@@ -3022,7 +3029,7 @@ function JumpToBottom({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M6 9l6 6 6-6" />
       </svg>
-    </button>
+    </Button>
   );
 }
 

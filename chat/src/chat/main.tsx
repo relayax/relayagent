@@ -25,6 +25,7 @@ import { ChatApp } from "./Chat";
 import { Desk } from "./Desk";
 import { ChatTabs, type OpenReq } from "./ChatTabs";
 import { getCtx, injectedCoords, type RelayCtx } from "./runtime";
+import "./tw.css";
 import "./chat.css";
 
 const errStyle = "padding:16px;color:#c0392b;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word";

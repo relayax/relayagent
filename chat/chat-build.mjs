@@ -5,6 +5,8 @@
 // file: 소비자(view 빌드)에 전파되지 않고, node_modules 가 하나라 react 이중화 축이 없다.
 // Output → dist/chat-app.js + dist/chat-app.css (gitignored build artifacts).
 import * as esbuild from "esbuild";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
 import { copyFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -35,6 +37,18 @@ const fixDetachedThis = {
   },
 };
 
+// Tailwind — tw.css(@import "tailwindcss/…") 만 postcss 로 굽는다. chat.css 는 손으로 쓴 CSS 그대로.
+const tailwindCss = {
+  name: "tailwind",
+  setup(build) {
+    build.onLoad({ filter: /\/tw\.css$/ }, async (args) => {
+      const src = await readFile(args.path, "utf8");
+      const out = await postcss([tailwind()]).process(src, { from: args.path });
+      return { contents: out.css, loader: "css", resolveDir: dirname(args.path) };
+    });
+  },
+};
+
 await esbuild.build({
   entryPoints: [resolve(__dirname, "src/chat/main.tsx")],
   bundle: true,
@@ -50,7 +64,7 @@ await esbuild.build({
   loader: { ".css": "css" },
   // css 의 url("/assets/…") 는 기판이 서빙하는 절대 경로다 — 번들에 넣지 않는다
   external: ["/assets/*"],
-  plugins: [fixDetachedThis],
+  plugins: [tailwindCss, fixDetachedThis],
   logLevel: "info",
 });
 
