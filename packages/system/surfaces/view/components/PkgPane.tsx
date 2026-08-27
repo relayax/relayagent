@@ -204,11 +204,10 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
 
   return (
     <details className="ap-advanced pkg-live">
-      <summary>실행 현황 — 채널·스케줄·프로세스가 지금 떠 있는지</summary>
+      <summary>지금 돌아가고 있나요?</summary>
       {decls.triggers.length ? (
         <div className="rc-card pad">
-          <h3>스케줄</h3>
-          <p className="hint">이 패키지가 스스로 도는 시각 — 매니페스트 triggers 선언 그대로</p>
+          <h3>정해진 시간에 하는 일</h3>
           {decls.triggers.map((t) => (
             <div className="row" key={t.id}>
               <b className="grow">{t.id}</b>
@@ -221,18 +220,18 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
 
       {decls.channels.length ? (
         <div className="rc-card pad">
-          <h3>채널 (외부 대화 수신)</h3>
+          <h3>연결된 메신저</h3>
           {decls.channels.map((c) => {
             const st = chans?.find((x) => x.name === c.name);
             const chip: { variant: "secondary" | "outline" | "destructive"; label: string } = !st
               ? { variant: "outline", label: "확인 중" }
               : !st.hasCred
-                ? { variant: "outline", label: "자격 없음" }
+                ? { variant: "outline", label: "로그인 필요" }
                 : st.lastError
                   ? { variant: "destructive", label: "오류" }
                   : st.running
                     ? { variant: "secondary", label: "연결됨" }
-                    : { variant: "outline", label: "저장됨" };
+                    : { variant: "outline", label: "연결 안 됨" };
             return (
               <div className="row" key={c.name}>
                 <b className="grow">{c.name}</b>
@@ -246,13 +245,13 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
 
       {decls.services.length ? (
         <div className="rc-card pad">
-          <h3>몸 (이 패키지가 띄우는 프로세스)</h3>
+          <h3>같이 켜지는 프로그램</h3>
           {decls.services.map((s) => (
             <div className="row" key={s.name}>
               <b className="grow">{s.name}</b>
               <Badge variant="outline">{s.dockerfile ? "container" : s.dir ? "dir" : "process"}</Badge>
               <Badge variant={running.includes(`${pkg.name}/${s.name}`) ? "secondary" : "outline"}>
-                {running.includes(`${pkg.name}/${s.name}`) ? "도는 중" : "멈춤"}
+                {running.includes(`${pkg.name}/${s.name}`) ? "켜짐" : "꺼짐"}
               </Badge>
             </div>
           ))}
@@ -261,13 +260,13 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
 
       {svcs?.length ? (
         <div className="rc-card pad">
-          <h3>연결한 문 (밖으로 나가는 서비스)</h3>
+          <h3>연결한 외부 서비스</h3>
           {svcs.map((s) => (
             <div className="row" key={s.name}>
               <b className="grow">{s.name}</b>
               <span className="mono soft ellipsis">{s.url}</span>
               <Badge variant={s.kind === "none" || s.hasCred ? "secondary" : "outline"}>
-                {s.kind === "none" ? "자격 불요" : s.hasCred ? "연결됨" : "자격 없음"}
+                {s.kind === "none" ? "로그인 없이 씀" : s.hasCred ? "연결됨" : "로그인 필요"}
               </Badge>
             </div>
           ))}
