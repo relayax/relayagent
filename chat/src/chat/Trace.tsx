@@ -116,6 +116,7 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
     : part.args && Object.keys(part.args).length ? JSON.stringify(part.args, null, 2) : "";
   const hasDetail = !!argDisplay || done;
   const live = running && !done;
+  const liveTick = useLiveTick(live);
   const err = !!part.isError;
   return (
     <Collapsible open={open} onOpenChange={setOpen} disabled={!hasDetail}
@@ -129,6 +130,11 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
           {meta.target && <span> · {meta.target}</span>}
         </MarkerContent>
         {done && meta.summary && <span className={cn("min-w-0 shrink truncate text-xs", err ? "text-[var(--rc-err)]" : "text-muted-foreground")}>· {meta.summary}</span>}
+        {live && (liveTick.elapsed >= 3 || liveTick.tick) ? (
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
+            {liveTick.elapsed >= 3 ? <span>{liveTick.elapsed}s</span> : null}{liveTick.tick}
+          </span>
+        ) : null}
         {hasDetail && <Caret open={open} />}
       </Marker>
       <CollapsibleContent className="rc-step-body">
@@ -248,12 +254,9 @@ export function HistorySkeleton() {
   );
 }
 
-/** Live running status — 턴 내내 살아있는 내레이션(원칙 1: 죽은 침묵 금지).
- *  콘텐츠가 오기 전엔 스폰 스테이지(전달 중 → 연결하는 중 → 연결됨·생각 중 — system
- *  init 프레임이 onTurnPhase 로 전환), 온 뒤엔 마지막 실행 스텝의 활동 라벨. 3초부터 경과 표시. */
-export function RunningStatus() {
-  const running = useMessage((m) => m.status?.type === "running");
-  const content = useMessage((m) => m.content as readonly AnyPart[]);
+/** 살아있음 신호 — 경과 초·연결 여부·토큰 티커. 실행 중인 단계 줄(StepRow)과 상태 줄(RunningStatus)이
+ *  같은 것을 두 번 보이지 않도록 한 곳에서 잰다(피드백 2026-08-27: 같은 문장·스피너가 둘). */
+function useLiveTick(active: boolean): { elapsed: number; connected: boolean; tick: React.ReactNode } {
   const [connected, setConnected] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   // 라이브 토큰 티커 — 업로드 단계 ↑(스텝 입력·캐시 포함), 생성 중 ↓(출력 누적). 마지막으로
@@ -261,29 +264,13 @@ export function RunningStatus() {
   const [usage, setUsage] = useState<TurnUsageLive | null>(null);
   const startRef = useRef(0);
   useEffect(() => {
-    if (!running) return;
+    if (!active) return;
     if (!startRef.current) startRef.current = Date.now();
     const iv = window.setInterval(() => setElapsed(Math.round((Date.now() - startRef.current) / 1000)), 1000);
     const off = onTurnPhase((phase) => { if (phase === "connected") setConnected(true); });
     const offUsage = onTurnUsage(setUsage);
     return () => { window.clearInterval(iv); off(); offUsage(); };
-  }, [running]);
-  if (!running) return null;
-  let label: string;
-  if (content.length === 0) {
-    label = elapsed < 1 ? "전달 중…" : connected ? "연결됨 · 생각 중…" : "연결하는 중…";
-  } else {
-    const last = content[content.length - 1];
-    if (last?.type === "tool-call" && last.result === undefined && !last.isError) {
-      const m = stepMeta(last.toolName, last.args, undefined, undefined, last.label);
-      label = m.target ? `${m.label} · ${m.target}` : `${m.label} 중…`;
-    } else if (last?.type === "reasoning") {
-      label = "생각 중…";
-    } else {
-      label = "응답 중…";
-    }
-  }
-  const suffix = elapsed >= 3 ? ` · ${elapsed}s` : "";
+  }, [active]);
   const tick = usage
     ? (usage.dir === "up" && usage.inTok > 0
         ? <span className="rc-running-tok up" aria-label="입력 토큰">↑ {fmtTok(usage.inTok)}</span>
@@ -291,6 +278,31 @@ export function RunningStatus() {
           ? <span className="rc-running-tok" aria-label="출력 토큰">↓ {fmtTok(usage.outTok)}</span>
           : null)
     : null;
+  return { elapsed, connected, tick };
+}
+
+/** Live running status — 턴 내내 살아있는 내레이션(원칙 1: 죽은 침묵 금지).
+ *  콘텐츠가 오기 전엔 스폰 스테이지(전달 중 → 연결하는 중 → 연결됨·생각 중 — system
+ *  init 프레임이 onTurnPhase 로 전환), 온 뒤엔 마지막 실행 스텝의 활동 라벨. 3초부터 경과 표시. */
+export function RunningStatus() {
+  const running = useMessage((m) => m.status?.type === "running");
+  const content = useMessage((m) => m.content as readonly AnyPart[]);
+  const { elapsed, connected, tick } = useLiveTick(running);
+  if (!running) return null;
+  let label: string;
+  if (content.length === 0) {
+    label = elapsed < 1 ? "전달 중…" : connected ? "연결됨 · 생각 중…" : "연결하는 중…";
+  } else {
+    const last = content[content.length - 1];
+    if (last?.type === "tool-call" && last.result === undefined && !last.isError) {
+      return null; // 실행 중인 단계 줄이 이미 보인다 — 같은 문장을 두 번 쓰지 않는다
+    } else if (last?.type === "reasoning") {
+      label = "생각 중…";
+    } else {
+      label = "응답 중…";
+    }
+  }
+  const suffix = elapsed >= 3 ? ` · ${elapsed}s` : "";
   return (
     <Marker role="status" aria-label="응답 생성 중" className="w-auto px-0.5 py-1 text-[12.5px] text-foreground/70">
       <MarkerIcon><Busy /></MarkerIcon>
