@@ -5,7 +5,8 @@ import path from "node:path";
 import { logLine, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
 
-import { MIME, json, streamFile } from "../http.ts";
+import { MIME, json, streamFile, streamFileRevalidated } from "../http.ts";
+import { jail } from "./dirs.ts";
 import { injectShell } from "./shell.ts";
 
 export interface BuildResult {
@@ -362,6 +363,32 @@ export function componentImportsFor(ledger: Ledger, consumer: string): Record<st
 // ── 서빙 ────────────────────────────────────────────────────────────────────
 // 빌드와 한 파일인 이유: 접두사 판정 술어(assetsAtDaemonRoot)를 굽는 자리와 내는 자리가
 // 같이 봐야 한다. 갈라두면 두 판정이 어긋나고, 그 어긋남이 실사고 2건의 형태였다.
+
+/**
+ * 작업 폴더의 파일 하나 — 패키지 자기 화면이 자기 산출물(구운 카드·로고)을 그리는 읽기전용 문.
+ * GET /pkg/<설치이름>/workspace/<경로>.
+ *
+ * 동사가 본문을 JSON 에 실어 나르는 길은 파일 하나가 수백 KB 인 순간 목록이 통째로 무거워진다
+ * (실측: 사진 박힌 카드). 결재 축은 아니다 — 화면도 폴더도 같은 패키지의 것이라 선언이 없다.
+ * 대신 감금은 dir 문과 같은 벌(dirs.ts jail)을 지난다: 상대경로만·`..` 등반·심링크 탈출을 한
+ * 판정으로 거부한다. 점으로 시작하는 조각과 폴더는 내지 않는다 — 목록도 숨은 파일도 이 문의
+ * 일이 아니다. 응답은 재검증형(http.ts streamFileRevalidated): 같은 주소에 덮어쓰이는 산출물이
+ * 옛 판으로 남던 것이 이 문이 생긴 이유의 절반이다.
+ */
+export function serveWorkspaceFile(root: string, rel: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  let target: string;
+  try {
+    target = jail(root, rel);
+  } catch (e) {
+    return void json(res, 403, { error: e instanceof Error ? e.message : String(e) });
+  }
+  if (path.relative(root, target).split(path.sep).some((seg) => seg.startsWith("."))) {
+    return void json(res, 404, { error: "숨은 파일은 내지 않습니다" });
+  }
+  const st = fs.statSync(target, { throwIfNoEntry: false });
+  if (!st || !st.isFile()) return void json(res, 404, { error: "없는 파일" });
+  streamFileRevalidated(target, st, req, res);
+}
 
 export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.ServerResponse): void {
   const rec = ledger.packages[pkg];

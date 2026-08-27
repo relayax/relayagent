@@ -32,6 +32,14 @@ A verb stands on one folder: `ctx.workspace`, the package's workspace (`~/Relay/
 re-pointable per package in the ledger). It is the session's cwd and where work output belongs, and
 it is created on first access.
 
+The package's own screen reads that ground over HTTP: `GET /pkg/<install>/workspace/<path>` serves
+one file from the workspace, read-only — jailed by the same judgment as a `dir` door (relative paths
+only, no `..`, no symlink escape), dot-files and directories refused, revalidated on every request
+(`ETag`/`Last-Modified` under `no-cache`) so a file overwritten in place is never served stale. It
+exists because a verb returning file bodies inside JSON makes a list of rendered images weigh
+megabytes. It is not a grant and declares nothing: the view and the workspace belong to the same
+package.
+
 A `dir` service is for the folders **outside** that ground, and the split is between *standing* and
 *calling*: the workspace is where the agent stands (it is the cwd, and the harness's native file
 tools simply reach it), while a `dir` is something it calls. A session never learns a `dir`'s path —
@@ -62,7 +70,7 @@ does not have throws with a message naming the other:
 | Declared form | `ctx.service(name)` |
 |---|---|
 | `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). `fetch` throws. |
-| `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block (same per-call resolution, same rotation). The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
+| `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block — `<auth.scheme> <token>`, `Bearer` unless declared otherwise (Unsplash's `Client-ID`, for instance); same per-call resolution, same rotation. The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
 | `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. `fetch` throws. |
 | `dir` | A file door the substrate stands up itself: `call("list"\|"read"\|"write"\|"remove", args)`, dispatched in-process (no network hop). Paths in the arguments are relative to the folder and nothing else — an absolute path, a `..` climb, and a symlink pointing outward are all refused by one judgment. `fetch` throws. Until 2026-08-25 this row read *a folder is not a door* and returned the caller to `ctx.dir(name)`; once folders stood up as session tools, that exception had no ground left, and removing it is what makes the sentence above — one accessor for every form — true without an asterisk. The credential and identity axes are absent here on purpose: nothing goes out. |
 

@@ -37,11 +37,11 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch,以及可选的 `greeting`——空对话的第一句话,它属于说话的一方,而不属于任何一道门。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体——声明了智能体的包必须确定一个着陆点(用该标记,或用与包同名的智能体),否则安装拒绝。会话立于人格之上,因此 `agents[]` 之外的名字永远打不开一个回合。直接对话无需声明:有智能体而没有 `view`,基座就在 `/pkg/<名称>/view/` 免费立起整屏对话。`dirs` 是该智能体可打开的 `dir` 服务名称——workspace 之外的文件夹以工具而非路径抵达会话。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
 | Services | 四种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点)、`api`(远程 REST 基址)、`dir`(由基座立为一道门的文件夹)。凭证只挂在向外走的两种(`url`、`api`)上。`dir` 以名字抵达,而非路径——动词用 `ctx.service(<名称>).call("list"|"read"|"write"|"remove", …)`,会话看到的是其智能体在 `agents[].dirs` 中声明的文件夹所对应的 `dir__<名称>__*` 工具。声明的路径是本地默认绑定,安装批准可以替换它,组织基座则把同一个名字解析为自己的卷坐标。 |
-| Connector | 无躯体连接器——动词调用外部 REST API 的包。以 `api` 服务声明 REST 基址及其 `auth` 形态,凭证存放在 vault 的 `<包>/<服务>` 坐标下。由基座在每次调用时附加,动词从不经手凭证,也无法越出所声明的基址。 |
+| Connector | 无躯体连接器——动词调用外部 REST API 的包。以 `api` 服务声明 REST 基址及其 `auth` 形态,凭证存放在 vault 的 `<包>/<服务>` 坐标下。由基座在每次调用时附加,动词从不经手凭证,也无法越出所声明的基址。`auth.scheme` 指定 `Authorization` 的前缀(例如 Unsplash 的 `Client-ID`)——未声明即为 `Bearer`。 |
 | Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。`delivery: <频道>:<会话键>` 让该回合在对应会话的 slot 中运行,并把回复经频道适配器发出。 |
 | Missions | 包向其他包提供的问答能力。 |
 | Edges | 对其他包的 tools、mission 或 components 的依赖声明。声明是申请,激活靠授权——components 在安装解析该 edge 时记录授权,执行点则是基座注入消费方界面的 import map。 |
-| Workspace | 包的文件夹授权:会话的 cwd,在安装时确定(默认 `~/Relay/<名称>`)并记入台账。 |
+| Workspace | 包的文件夹授权:会话的 cwd,在安装时确定(默认 `~/Relay/<名称>`)并记入台账。自己的 view 通过 `GET /pkg/<名称>/workspace/<路径>` 读取——只读,与 `dir` 门相同的隔离,每次请求都重新验证。 |
 | Grants | 记入台账的授权。授权永远不能超过声明。 |
 
 ## 快速开始
