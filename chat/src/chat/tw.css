@@ -2,21 +2,17 @@
    싣지 않는다 — theme 와 utilities 만. 유틸리티는 클래스에만 붙으니 호스트 페이지로 새지 않는다.
    shadcn 토큰(--background 등)은 :root 에 둔다 — base-ui 팝오버·툴팁이 body 로 포탈되므로
    .rc-root 안에 가두면 그 조각들이 값을 잃는다. 값은 프리셋 b1Z5aAfsu(neutral · radius small). */
-@layer theme, base, components, utilities;
+/* 레이어를 쓰지 않는다 — 위젯은 남의 문서에 끼워지고, 호스트의 레이어 없는 원소 규칙(textarea{border…})은
+   @layer 안의 유틸리티를 항상 이긴다(실사고: 패키지 뷰 안에서 입력창에 테두리가 두 겹). 레이어 밖에 두면
+   같은 특이성끼리 순서로 겨루고, 유틸리티(클래스)가 호스트의 원소 규칙을 이긴다 */
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+@import "./reset.css";
+@import "tailwindcss/utilities.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @source "./";
 @source "../components";
 
-/* preflight 대신 — shadcn 요소(data-slot)에만 브라우저 기본값을 지운다. 호스트 페이지의 다른
-   button/input 에는 손대지 않는다. base 레이어라 유틸리티(variant 의 bg-*)가 이긴다 */
-@layer base {
-  button[data-slot], [data-slot="button"], [data-slot="badge"] { background-color: transparent; border: 0 solid; padding: 0; margin: 0; font: inherit; color: inherit; line-height: inherit; }
-  [data-slot="input"], [data-slot="textarea"] { border: 1px solid; font: inherit; color: inherit; margin: 0; }
-  [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="tooltip-content"] { font: 14px/1.6 var(--font-sans); border: 1px solid; }
-}
 
 :root {
   --background: oklch(1 0 0);

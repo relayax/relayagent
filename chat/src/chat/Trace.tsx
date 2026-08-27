@@ -249,7 +249,7 @@ export function HistorySkeleton() {
 }
 
 /** Live running status — 턴 내내 살아있는 내레이션(원칙 1: 죽은 침묵 금지).
- *  콘텐츠가 오기 전엔 스폰 스테이지(전달 중 → 에이전트 깨우는 중 → 연결됨·생각 중 — system
+ *  콘텐츠가 오기 전엔 스폰 스테이지(전달 중 → 연결하는 중 → 연결됨·생각 중 — system
  *  init 프레임이 onTurnPhase 로 전환), 온 뒤엔 마지막 실행 스텝의 활동 라벨. 3초부터 경과 표시. */
 export function RunningStatus() {
   const running = useMessage((m) => m.status?.type === "running");
@@ -271,7 +271,7 @@ export function RunningStatus() {
   if (!running) return null;
   let label: string;
   if (content.length === 0) {
-    label = elapsed < 1 ? "전달 중…" : connected ? "연결됨 · 생각 중…" : "에이전트 깨우는 중…";
+    label = elapsed < 1 ? "전달 중…" : connected ? "연결됨 · 생각 중…" : "연결하는 중…";
   } else {
     const last = content[content.length - 1];
     if (last?.type === "tool-call" && last.result === undefined && !last.isError) {

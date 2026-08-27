@@ -23,6 +23,7 @@ import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { ChatApp } from "./Chat";
 import { Desk } from "./Desk";
+import { Home } from "./Home";
 import { ChatTabs, type OpenReq } from "./ChatTabs";
 import { getCtx, injectedCoords, type RelayCtx } from "./runtime";
 import "./tw.css";
@@ -62,6 +63,18 @@ function render(host: HTMLElement, ctxOverrides?: Partial<RelayCtx>) {
 }
 
 function boot() {
+  // 홈(기판 "/" 문서 — 앱 런처). 런처를 그린 뒤 autoFloat 로 오른쪽 대화 패널도 세운다 —
+  // 홈의 "시작"이 쏘는 relay:chat-open 의 착지가 그 패널이다.
+  const hm = document.getElementById("relay-home");
+  if (hm) {
+    try {
+      createRoot(hm).render(<ErrorBoundary><Home /></ErrorBoundary>);
+    } catch (e: any) {
+      hm.innerHTML = `<pre style="${errStyle}">홈 부팅 오류:\n${String(e?.stack || e).replace(/</g, "&lt;")}</pre>`;
+    }
+    autoFloat();
+    return;
+  }
   // 멀티 에이전트 데스크(기판 /desk 문서 — 탭 셸). #relay-desk 우선.
   const ws = document.getElementById("relay-desk");
   if (ws) {
