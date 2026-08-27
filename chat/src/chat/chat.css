@@ -45,7 +45,6 @@
 @keyframes rc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes rc-slide { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @keyframes rc-spin { to { transform: rotate(360deg); } }
-@keyframes rc-shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 @keyframes rc-blink { 0%, 45% { opacity: 1; } 50%, 100% { opacity: 0; } }
 @keyframes rc-pulse { 0%, 100% { transform: scale(1); opacity: 0.9; } 50% { transform: scale(1.55); opacity: 0.35; } }
 
@@ -81,12 +80,6 @@
 .rc-head .rc-head-btn { color: var(--rc-faint); cursor: pointer; flex: 0 0 auto; }
 .rc-head .rc-head-btn:hover { color: var(--rc-soft); }
 .rc-sess { position: relative; flex: 0 0 auto; }
-.rc-sess-menu {
-  /* 배치는 Popover 포지셔너가 맡는다(body 포털). 포털 밖이라 .rc-root 의 글꼴을 못 물려받아 직접 준다 */
-  min-width: 200px; max-width: 280px; font: 14px/1.6 var(--rc-sans);
-  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); padding: 4px; max-height: 320px; overflow-y: auto;
-}
 .rc-sess-item {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   border: none; background: transparent; cursor: pointer; border-radius: 7px;
@@ -123,16 +116,8 @@
 .rc-sess-input { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
 .rc-sess-confirm { cursor: default; }
 
-/* ── 계정 메뉴: 신원 칩 + 로그아웃 (위젯 헤더 단일 소유 — 전 인스턴스 뷰 공통) ──── */
-.rc-acct-id {
-  padding: 8px 9px 7px; font-size: 11.5px; color: var(--rc-faint);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border-bottom: 1px solid var(--rc-line); margin-bottom: 2px;
-}
-.rc-acct-out { color: var(--rc-ink); height: auto; }
 
 /* ── running status — 턴 내내 살아있는 내레이션 한 줄 ────────────────────── */
-.rc-running { display: inline-flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 12.5px; color: var(--rc-soft); }
 .rc-running-tx { font-weight: 500; animation: rc-running-shimmer 1.6s ease-in-out infinite; font-variant-numeric: tabular-nums; }
 /* 라이브 토큰 티커 — 생성 중 ↓(teal), 업로드 단계 ↑(회색). 숫자 폭 고정으로 떨림 방지 */
 .rc-running-tok {
@@ -140,20 +125,9 @@
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .rc-running-tok.up { color: var(--rc-faint); }
-.rc-running-dots { display: inline-flex; gap: 4px; }
-.rc-running-dots span {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--rc-accent);
-  animation: rc-dots-blink 1.4s ease-in-out infinite both;
-}
-.rc-running-dots span:nth-child(2) { animation-delay: 0.18s; }
-.rc-running-dots span:nth-child(3) { animation-delay: 0.36s; }
 @keyframes rc-running-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-@keyframes rc-dots-blink { 0%, 70%, 100% { opacity: 0.25; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-3px); } }
 
 /* ── 히스토리 로딩 스켈레톤 ──────────────────────────────────────────────── */
-.rc-skl-wrap { display: flex; flex-direction: column; gap: 12px; padding: 22px 18px; }
-.rc-skl { height: 12px; border-radius: 6px; background: var(--rc-line); animation: rc-shimmer 1.6s ease-in-out infinite; }
-.rc-skl.w40 { width: 40%; } .rc-skl.w55 { width: 55%; } .rc-skl.w70 { width: 70%; } .rc-skl.w85 { width: 85%; }
 
 /* ── message log / viewport ──────────────────────────────────────────────── */
 .rc-logwrap { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -166,24 +140,10 @@
 .rc-log::-webkit-scrollbar { width: 10px; }
 .rc-log::-webkit-scrollbar-thumb { background: #dfe2e6; border-radius: 6px; border: 3px solid var(--rc-bg); }
 
-/* 과거 스크롤 중 최신으로 — 하단 중앙 플로팅 원형(레퍼런스) */
-.rc-jump {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 10;
-  width: 34px; height: 34px; border-radius: 50%;
-  background: var(--rc-ink); color: #fff; cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  animation: rc-rise 0.18s ease-out;
-}
-.rc-jump:hover { background: #000; }
 
 /* ── 빈 시작 화면 + 스타터 칩 ────────────────────────────────────────────── */
-.rc-empty {
-  margin: auto; text-align: center; color: var(--rc-faint); font-size: 14px;
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-}
 .rc-empty-ic { font-size: 24px; color: var(--rc-accent); opacity: 0.75; }
 .rc-empty-t { font-size: 14px; font-weight: 500; color: var(--rc-soft); }
-.rc-empty-h { font-size: 12.5px; line-height: 1.55; color: var(--rc-faint); max-width: 300px; }
 .rc-starter { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 2px; max-width: 340px; }
 .rc-starter-chip {
   border: 1px solid var(--rc-line); background: var(--rc-bg); border-radius: 999px;
@@ -195,31 +155,6 @@
 /* ── messages ────────────────────────────────────────────────────────────── */
 .rc-msg { display: flex; flex-direction: column; gap: 8px; max-width: 100%; animation: rc-rise 0.18s ease-out; }
 .rc-user { align-items: flex-end; }
-/* 최근 user 메시지 1개만 상단 붙박이 헤더(Claude Code 방식) — AnchorController가 .is-pinned 부여. */
-.rc-user.is-pinned {
-  position: sticky; top: 0; z-index: 2;
-  background: var(--rc-bg);
-  padding-top: 2px; padding-bottom: 6px;
-}
-.rc-user.is-pinned .rc-bubble { max-height: 28vh; overflow-y: auto; }
-.rc-user.is-pinned::before {
-  content: ""; position: absolute; left: 0; right: 0;
-  bottom: 100%; height: 22px; background: var(--rc-bg);
-}
-/* 고정 헤더 아래로 지나가는 내용의 절단면을 소프트 페이드로 — 흰 바탕 위에선 안 보이고,
-   내용이 밑으로 스크롤될 때만 자연스러운 가림막이 된다(하드 슬라이스=버그처럼 보이던 것 보정). */
-.rc-user.is-pinned::after {
-  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 20px;
-  background: linear-gradient(to bottom, var(--rc-bg) 0%, rgba(255, 255, 255, 0) 100%);
-  pointer-events: none;
-}
-.rc-user .rc-row { display: flex; align-items: flex-end; gap: 8px; max-width: 86%; }
-.rc-user .rc-time { flex: 0 0 auto; font-size: 11px; color: var(--rc-faint); white-space: nowrap; padding-bottom: 3px; }
-.rc-user .rc-bubble {
-  background: var(--rc-ground); padding: 4px 12px; border-radius: 14px 14px 4px 14px;
-  max-width: 100%; white-space: pre-wrap; word-break: break-word; line-height: 1.35;
-}
-.rc-assistant { gap: 10px; }
 /* wake 재진입 칩 — 주입 프롬프트(기계 자기지시)를 말풍선 대신 시스템 이벤트로 표시 */
 .rc-wake { align-items: center; }
 .rc-wake-chip {
@@ -230,11 +165,10 @@
 }
 .rc-wake-time { opacity: .8; }
 /* 첨부 이미지는 썸네일 크기로 */
-.rc-log img, .rc-bubble img, .rc-msg img, .rc-md img {
+.rc-log img, .rc-msg img, .rc-md img {
   max-width: 260px; max-height: 280px; width: auto; height: auto;
   border-radius: 8px; object-fit: contain; display: block;
 }
-.rc-jump svg { max-width: none; }
 
 /* ── markdown 본문 — 산문은 잉크(스텝의 옅음과 대비) ─────────────────────── */
 .rc-md { white-space: normal; word-break: break-word; color: var(--rc-ink); }
@@ -270,15 +204,6 @@
 .rc-meta span + span::before { content: "·"; margin-right: 10px; color: var(--rc-line); }
 
 /* ── 턴 종료 상태 칩 — 완료 / 중지됨 / 오류 / 미완료(끊김) ───────────────── */
-.rc-turn-status { display: inline-flex; align-items: center; gap: 6px; padding-top: 3px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.rc-turn-status .rc-ts-ic { font-size: 11px; line-height: 1; }
-.rc-turn-status.ok { color: var(--rc-faint); }
-.rc-turn-status.ok .rc-ts-ic { color: #4a9d5b; font-weight: 700; }
-.rc-turn-status.cancel { color: var(--rc-soft); }
-.rc-turn-status.cancel .rc-ts-ic { color: var(--rc-soft); font-size: 9px; }
-.rc-turn-status.error, .rc-turn-status.error .rc-ts-ic { color: #d65745; }
-.rc-turn-status.cut, .rc-turn-status.cut .rc-ts-ic { color: #c9a44a; }
-.rc-turn-status.cut .rc-ts-lb, .rc-turn-status.error .rc-ts-lb { font-weight: 500; }
 /* 실행 모델 배지 — 이 턴이 실제로 돈 모델(툴팁 = 원본 id·effort) */
 .rc-ts-model {
   padding: 1px 6px; border: 1px solid var(--rc-line); border-radius: 999px;
@@ -286,32 +211,12 @@
 }
 
 /* ── 스텝 타임라인 (레퍼런스: 보더리스, 아이콘 + 커넥터 + 옅은 라벨) ─────── */
-.rc-trace { display: flex; flex-direction: column; gap: 2px; }
-.rc-steps { display: flex; flex-direction: column; }
-.rc-step { position: relative; animation: rc-slide 0.18s ease-out; }
+.rc-step { position: relative; }
 /* 연속 스텝 사이 좌측 아이콘 축의 세로 헤어라인 커넥터 */
 .rc-step + .rc-step::before {
   content: ""; position: absolute; left: 10px; top: -5px; width: 1px; height: 10px;
   background: var(--rc-line);
 }
-.rc-step-h {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 5px 4px 5px 2px; border: 0; background: none; cursor: pointer;
-  font: inherit; color: inherit; text-align: left; border-radius: 7px;
-}
-.rc-step-h:hover { background: var(--rc-hover); }
-.rc-step-ic {
-  width: 16px; height: 16px; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; color: var(--rc-faint);
-}
-.rc-step-lb { font-size: 12.5px; color: var(--rc-faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-step-lb.live { color: var(--rc-soft); font-weight: 500; }
-.rc-step-tg { color: inherit; }
-.rc-step-sum { flex: 0 1 auto; font-size: 12px; color: var(--rc-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-step-caret { margin-left: auto; flex: 0 0 auto; font-size: 11px; color: var(--rc-faint); opacity: 0; transition: opacity 0.12s ease; }
-.rc-step-h:hover .rc-step-caret, .rc-step.open .rc-step-caret { opacity: 0.8; }
-.rc-step.err .rc-step-ic, .rc-step.err .rc-step-lb, .rc-step.err .rc-step-sum { color: var(--rc-err); }
 /* 스텝 펼침 상세 — 원시 도구명 + args/result */
 .rc-step-body {
   margin: 2px 6px 8px 25px; padding-left: 10px; border-left: 2px solid var(--rc-line);
@@ -335,131 +240,7 @@
   word-break: break-word; animation: rc-rise 0.18s ease-out;
 }
 
-/* 완료 타임라인 요약 행 — "✓ 작업 N개 · 12.3s" 클릭 토글 */
-.rc-trace-sum {
-  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
-  border: 0; background: none; cursor: pointer; border-radius: 7px;
-  padding: 4px 8px 4px 2px; font: 12.5px var(--rc-sans); color: var(--rc-faint);
-  animation: rc-rise 0.18s ease-out; font-variant-numeric: tabular-nums;
-}
-.rc-trace-sum:hover { background: var(--rc-hover); color: var(--rc-soft); }
-.rc-trace-sum .rc-step-caret { margin-left: 2px; opacity: 0.7; }
-.rc-trace-check {
-  width: 16px; height: 16px; flex: 0 0 auto; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--rc-ok-bg); color: var(--rc-ok); font-size: 10px; font-weight: 700;
-}
-
-/* ── TodoWrite 플랜 카드 (프로토타입 Stepper 이식) ───────────────────────── */
-.rc-plan {
-  border: 1px solid var(--rc-line); border-radius: var(--rc-radius); background: var(--rc-bg);
-  padding: 10px 13px; display: flex; flex-direction: column; gap: 6px; max-width: 520px;
-  animation: rc-rise 0.18s ease-out;
-}
-.rc-plan-h { display: flex; align-items: center; gap: 8px; margin-bottom: 1px; }
-.rc-plan-t { font-size: 12px; font-weight: 650; color: var(--rc-ink); }
-.rc-plan-n { font-size: 11px; color: var(--rc-faint); background: var(--rc-ground); border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
-.rc-plan-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rc-soft); animation: rc-slide 0.18s ease-out; }
-.rc-plan-ic { width: 16px; flex: 0 0 auto; display: inline-flex; justify-content: center; color: var(--rc-faint); font-size: 11px; }
-.rc-plan-ic.done { color: var(--rc-ok); font-weight: 700; }
-.rc-plan-ic.run { color: var(--rc-accent); font-size: 8px; }
-.rc-plan-row.done .rc-plan-tx { color: var(--rc-faint); }
-.rc-plan-row.run .rc-plan-tx { color: var(--rc-ink); font-weight: 500; }
-.rc-plan-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ── 얹기 표시 (턴이 도는 중에 사용자가 더한 말 — client-protocol §5.1-16-a) ────
-   말풍선이 아니라 흐름 안의 표시다: 새 턴의 시작이 아니라 이 턴에 얹힌 말이고, 화면이
-   그 차이를 지우면 사용자는 자기 말이 다음 턴으로 밀렸다고 읽는다. 왼쪽 세로선이
-   "여기서부터 방향이 바뀌었다"를 도구 카드들 사이에서 눈에 걸리게 한다. */
-.rc-steer {
-  display: flex; align-items: baseline; gap: 8px;
-  margin: 2px 0; padding: 7px 12px; max-width: 520px;
-  border-left: 2px solid var(--rc-accent); border-radius: 0 10px 10px 0;
-  background: var(--rc-ground); font-size: 13px; line-height: 1.5; color: var(--rc-ink);
-  animation: rc-rise 0.18s ease-out;
-}
-.rc-steer-ic { color: var(--rc-accent); font-weight: 600; flex: 0 0 auto; }
-.rc-steer-tx { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-/* ── AskUserQuestion 질문 카드 (mid-turn 사용자 결정 — can_use_tool 회송) ─── */
-.rc-ask {
-  border: 1px solid var(--rc-line); border-radius: var(--rc-radius); background: var(--rc-bg);
-  padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; max-width: 520px;
-  animation: rc-rise 0.18s ease-out;
-}
-.rc-ask.live { border-color: color-mix(in srgb, var(--rc-accent) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 8%, transparent); }
-/* 다중 질문 탭 스트립 — 한 번에 한 질문만 펼쳐 카드 높이를 접는다 */
-.rc-ask-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--rc-line); padding-bottom: 10px; }
-.rc-ask-tab {
-  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
-  border: 1px solid var(--rc-line); border-radius: 999px; background: var(--rc-bg);
-  cursor: pointer; font: 600 11.5px var(--rc-sans); color: var(--rc-soft);
-  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
-}
-.rc-ask-tab:hover { border-color: color-mix(in srgb, var(--rc-accent) 50%, transparent); }
-.rc-ask-tab.sel { border-color: var(--rc-accent); background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
-.rc-ask-tab.done { color: var(--rc-ink); }
-.rc-ask-tab-lb { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-ask-tab-dot { color: var(--rc-ok); font-weight: 700; }
-.rc-ask-q { display: flex; flex-direction: column; gap: 8px; }
-.rc-ask-q[hidden] { display: none; } /* 비활성 탭은 접되 마운트 유지(선택 보존) */
-.rc-ask-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.rc-ask-chip {
-  flex: 0 0 auto; padding: 2px 9px; border-radius: 999px; background: var(--rc-accent-soft);
-  color: var(--rc-accent-strong); font-size: 11px; font-weight: 650;
-}
-.rc-ask-tx { font-size: 13.5px; font-weight: 600; color: var(--rc-ink); line-height: 1.45; }
-.rc-ask-opts { display: flex; flex-direction: column; gap: 6px; }
-.rc-ask-opt {
-  display: flex; flex-direction: column; gap: 2px; text-align: left;
-  padding: 8px 12px; border: 1px solid var(--rc-line); border-radius: 10px;
-  background: var(--rc-bg); cursor: pointer; font: inherit;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-.rc-ask-opt:hover:not(:disabled) { border-color: color-mix(in srgb, var(--rc-accent) 50%, transparent); background: var(--rc-accent-soft); }
-.rc-ask-opt.on { border-color: var(--rc-accent); background: var(--rc-accent-soft); }
-.rc-ask-opt:disabled { cursor: default; opacity: 0.65; }
-.rc-ask-opt-lb { font-size: 13px; font-weight: 600; color: var(--rc-ink); }
-.rc-ask-opt-desc { font-size: 12px; color: var(--rc-soft); line-height: 1.4; }
-/* 자유입력(직접 입력) 행 — 네이티브 "Other" 등가. 옵션 목록 아래 상시 노출 */
-.rc-ask-free { display: flex; gap: 6px; align-items: stretch; }
-/* 자유 입력줄은 shadcn Input/Button — 배치와 "선택됨" 상태색만 */
-.rc-ask-free-in { flex: 1 1 auto; min-width: 0; height: 32px; }
-.rc-ask-free.on .rc-ask-free-in { border-color: var(--rc-accent); background: var(--rc-accent-soft); }
-.rc-ask-free-go { flex: 0 0 auto; }
-.rc-ask-foot { display: flex; align-items: center; gap: 8px; min-height: 18px; }
-.rc-ask-hint { font-size: 11.5px; color: var(--rc-faint); }
-.rc-ask-hint.done { color: var(--rc-ok); font-weight: 600; }
-.rc-ask-hint.err { color: var(--rc-err); }
-/* script_ask(논블로킹 ChoiceCard) 전용 보완 — 카드/옵션 골격은 위 rc-ask 공용을 재사용 */
-.rc-ask-pending { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rc-faint); }
-.rc-ask-opt-check { color: var(--rc-accent); font-weight: 700; }
-.rc-ask-opt.on:disabled { opacity: 1; } /* 답한 뒤에도 선택 칩은 또렷하게 */
-
-/* ── 파일 카드(deliver_file) — 에이전트가 건넨 파일의 다운로드 행 ─────────── */
-.rc-file {
-  border: 1px solid var(--rc-line); border-radius: var(--rc-radius); background: var(--rc-bg);
-  padding: 8px; display: flex; flex-direction: column; gap: 4px; max-width: 420px;
-  animation: rc-rise 0.18s ease-out;
-}
-.rc-file.pending {
-  flex-direction: row; align-items: center; gap: 8px;
-  padding: 10px 14px; font-size: 12.5px; color: var(--rc-faint);
-}
-.rc-file.err { padding: 10px 14px; font-size: 12.5px; color: var(--rc-err); flex-direction: row; gap: 6px; }
-.rc-file-row {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-  border-radius: 10px; text-decoration: none; cursor: pointer;
-  transition: background 0.12s ease;
-}
-.rc-file-row:hover { background: var(--rc-accent-soft); }
-.rc-file-ic { flex: 0 0 auto; font-size: 16px; }
-.rc-file-name {
-  flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--rc-ink);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.rc-file-size { flex: 0 0 auto; font-size: 11.5px; color: var(--rc-faint); }
-.rc-file-dl { flex: 0 0 auto; color: var(--rc-accent); font-weight: 700; }
+/* 얹기 표시·질문 카드(SteerCard·AskCard·ChoiceCard)는 shadcn Marker/Questionnaire — Ask.tsx 에 유틸리티로 산다. */
 
 /* ── composer ────────────────────────────────────────────────────────────── */
 /* 컴포저 — 구분선·바탕 띠 없음. 모든 도구가 입력 카드 하나에 들어왔으니(2026-08-26) 카드가 로그 위에
@@ -469,42 +250,14 @@
   flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px;
   padding: 6px 14px 14px; background: transparent;
 }
-/* 입력 카드 — 글칸과 도구 줄이 한 테두리 안에 산다(입력은 테두리 없음, 카드가 포커스 링을 진다).
-   옅은 테두리 하나로 선다(그림자 없음 — 2026-08-26 피드백). 포커스는 링만 더한다. */
-.rc-box {
-  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px;
-  border: 1px solid var(--rc-line); border-radius: 16px; background: var(--rc-bg);
-  cursor: text;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
-}
-.rc-box:focus-within { border-color: var(--rc-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 12%, transparent); }
-.rc-box-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; row-gap: 6px; cursor: default; }
+/* 입력 카드는 shadcn InputGroup(Composer.tsx) — 테두리·포커스 링·줄 배치는 유틸리티가 진다.
+   슬래시/@ 목록은 Popover+Command, 모델은 DropdownMenu — body 포털이라 여기 자리 규칙이 없다. */
+/* 포털된 팝오버·메뉴의 포지셔너(z-50)를 도킹 패널(.rc-float-dock, z 2147483000 — main.tsx) 위로.
+   포지셔너는 ui 컴포넌트가 클래스를 고정해 파일 쪽에서 못 올리므로 :has 로 그 상자를 집는다. */
+div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-content"]), div:has(> [data-slot="dropdown-menu-sub-content"]) { z-index: 2147483001; }
 
-/* slash-command picker */
-.rc-slash {
-  position: absolute; left: 14px; right: 14px; bottom: calc(100% - 6px);
-  max-height: 260px; overflow-y: auto; z-index: 20;
-  background: var(--rc-bg); border: 1px solid var(--rc-line);
-  border-radius: var(--rc-radius); box-shadow: 0 8px 28px rgba(15, 18, 20, 0.12);
-  padding: 4px; display: flex; flex-direction: column; gap: 1px;
-}
-.rc-slash-item {
-  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
-  border: 0; background: none; cursor: pointer; font: inherit; color: var(--rc-ink);
-  padding: 7px 10px; border-radius: 8px;
-}
-.rc-slash-item.sel { background: var(--rc-hover); }
-.rc-slash-nm { font-size: 13px; font-weight: 600; font-family: var(--rc-mono); color: var(--rc-accent); }
-.rc-slash-desc { font-size: 12px; color: var(--rc-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-
+/* 모델 버튼의 자리 — 진행 중 턴 안내(.rc-model-notice)가 이 상자를 기준으로 뜬다 */
 .rc-model { position: relative; display: inline-flex; align-items: center; color: var(--rc-faint); }
-/* 모델 버튼 — 도구 줄 오른쪽의 글자 버튼(레퍼런스의 "Auto"). 테두리 없이 이름과 꺾쇠만 */
-.rc-model-btn { gap: 6px; padding: 5px 6px; height: auto; cursor: pointer; color: inherit; }
-.rc-model-ic { flex: none; opacity: 0.75; }
-.rc-model-lb { display: inline-flex; align-items: center; font: 12.5px/1 var(--rc-sans); color: var(--rc-faint); white-space: nowrap; }
-.rc-model-val { color: var(--rc-ink); font-weight: 600; }
-.rc-model-val.ghost { color: var(--rc-soft); font-weight: 500; }
 .rc-save-err { margin-left: 5px; color: var(--rc-err); font-weight: 600; }
 .rc-model-menu {
   position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; min-width: 150px;
@@ -519,62 +272,8 @@
 .rc-model-item:hover { background: var(--rc-hover); }
 .rc-model-item.on { font-weight: 600; background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
 .rc-model-loading { opacity: 0.5; pointer-events: none; }
-.rc-model-chev { flex: none; margin-left: 4px; opacity: 0.6; vertical-align: -1px; }
-/* 한 버튼 안의 메뉴 — 카드(머리·공급자 줄·Effort 바닥줄) + 호버한 공급자의 모델 서브 카드 */
-.rc-pick {
-  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30;
-  display: flex; align-items: flex-end; gap: 6px;
-}
-.rc-pick-card {
-  min-width: 232px; padding: 6px; border: 1px solid var(--rc-line); border-radius: 12px;
-  background: var(--rc-bg); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.14);
-}
-.rc-pick-sub-card { min-width: 200px; }
-/* 오른쪽에 자리가 없으면 서브 카드를 위로 — 도크 폭에선 두 카드가 나란히 서지 못한다 */
-.rc-pick.stack { flex-direction: column-reverse; align-items: stretch; }
-.rc-pick-list { display: flex; flex-direction: column; gap: 1px; }
-.rc-pick-item {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  text-align: left; padding: 7px 10px; background: none; border: 0; border-radius: 8px; cursor: pointer;
-  color: var(--rc-ink); white-space: nowrap;
-}
-.rc-pick-item:hover, .rc-pick-item.hov { background: var(--rc-hover); }
-.rc-pick-item.on { background: var(--rc-accent-soft); }
-.rc-pick-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.rc-pick-main { font: 500 12.5px/1.25 var(--rc-sans); }
-.rc-pick-item.on .rc-pick-main { font-weight: 600; }
-.rc-pick-sub { font: 11px/1.3 var(--rc-sans); color: var(--rc-faint); }
+/* 체크 아이콘(Trace.CheckIcon) — 공용 */
 .rc-pick-check { flex: none; color: var(--rc-accent-strong); }
-.rc-pick-arrow { flex: none; opacity: 0.4; }
-.rc-pick-note { padding: 6px 10px 8px; font: 11px/1.4 var(--rc-sans); color: var(--rc-soft); white-space: nowrap; }
-/* 바닥줄 — Effort (레벨) + 점 슬라이더. 위 목록과 실선 하나로 나뉜다 */
-.rc-pick-foot {
-  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 9px 10px 4px;
-  border-top: 1px solid var(--rc-line); color: var(--rc-faint);
-}
-.rc-pick-foot-ic { flex: none; opacity: 0.8; }
-.rc-pick-foot-lb { font: 500 12.5px/1 var(--rc-sans); color: var(--rc-ink); white-space: nowrap; }
-.rc-pick-foot-val { color: var(--rc-soft); font-weight: 500; }
-.rc-pick-foot-val.ghost { color: var(--rc-faint); }
-.rc-effort-track {
-  display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
-  padding: 5px 8px; border-radius: 999px; background: var(--rc-accent-soft); outline: none;
-}
-.rc-effort-track:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 35%, transparent); }
-.rc-effort-step { width: 14px; height: 14px; padding: 0; cursor: pointer; }
-.rc-effort-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--rc-line);
-  transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
-}
-.rc-effort-dot.lit { background: var(--rc-accent); opacity: 0.55; }
-.rc-effort-step:hover .rc-effort-dot { transform: scale(1.25); opacity: 1; }
-.rc-effort-dot.on {   /* 명시 선택 — 꽉 찬 노브 */
-  width: 10px; height: 10px; opacity: 1; background: var(--rc-accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-.rc-effort-dot.on.ghost {   /* 기본값 상속 — 빈 노브 */
-  background: var(--rc-bg); border: 2px solid var(--rc-accent);
-}
 /* 진행 중 턴 안내 — 전환 시 "진행 중인 응답은 <실제 모델>로 완료됩니다" (6초 자동 소멸) */
 .rc-model-notice {
   position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 29;
@@ -626,43 +325,7 @@
 .rc-chip .rc-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-ok); flex: 0 0 auto; }
 .rc-chip .rc-chip-slash { opacity: 0.5; font-weight: 600; flex: 0 0 auto; color: var(--rc-accent); }
 .rc-chip .rc-chip-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 대상 칩(조작 가능) — 클릭하면 대상 피커. 피커는 **칩에 붙는 카드**다(모델 메뉴 .rc-pick 과 같은
-   자리·같은 카드) — 칩이 입력 카드 아래 줄로 내려온 뒤(2026-08-26) 컴포저 폭짜리 드롭다운은 어색했다. */
-.rc-chip-wrap { position: relative; display: inline-flex; max-width: 100%; }
-.rc-chip-part { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.rc-chip-btn { cursor: pointer; gap: 8px; }
-.rc-chip-caret { opacity: 0.45; flex: 0 0 auto; font-size: 10px; }
-.rc-target-pick {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
-  width: max-content; min-width: 240px; max-width: min(340px, calc(100vw - 40px));
-  max-height: 300px; overflow-y: auto;
-}
-.rc-target-pick .rc-pick-item { white-space: normal; }
-.rc-target-pick .rc-target-note { padding: 6px 10px; color: var(--rc-faint); font-size: 11px; line-height: 1.5; }
-/* [+] 대상 추가 — 칩과 같은 알약이되 정사각(아이콘 자리). 교체(▾)와 시각적으로 분리한다. */
-.rc-chip-add { cursor: pointer; padding: 0 8px; color: var(--rc-faint); }
-.rc-chip-add:hover { color: var(--rc-ink); }
-/* 섹션 구분 — "여기가 바뀐다"(위)와 "저기로 간다"(아래)를 눈으로 가른다. */
-.rc-target-sec {
-  margin-top: 4px; padding: 7px 10px 4px; border-top: 1px solid var(--rc-line);
-  color: var(--rc-faint); font-size: 11px; line-height: 1.4;
-}
-.rc-target-out { opacity: 0.6; }
-.rc-target-opt .rc-target-box { font-size: 12px; opacity: 0.7; }
-.rc-target-opt.on { background: var(--rc-accent-soft); }
-.rc-target-apply { margin-top: 2px; width: 100%; cursor: pointer; }
-.rc-chip .rc-agent-ic { width: 15px; height: 15px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
-
-/* queued messages */
-.rc-queued-list { display: flex; flex-direction: column; gap: 6px; }
-.rc-queued {
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-  border: 1px dashed var(--rc-line); border-radius: 10px; background: var(--rc-ground);
-  font-size: 12px; color: var(--rc-soft);
-}
-.rc-queued-ic { color: var(--rc-accent); font-weight: 600; flex: 0 0 auto; }
-.rc-queued-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
-.rc-queued-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-faint); font-size: 15px; }
+/* 대상 피커([▾]·[+])는 Popover+Item, 대기열은 Item 목록 — Composer.tsx 의 유틸리티가 진다 */
 
 .rc-input {
   flex: 1 1 auto; resize: none; border: 0; border-radius: 0; width: 100%;
@@ -674,33 +337,9 @@
 /* Phosphor 인라인 아이콘 — 호스트 전역 svg 리셋에 지지 않게 채움·선·크기를 클래스로 고정 */
 .rc-ph { display: block; flex: none; fill: currentColor; stroke: none; }
 .rc-ph path { fill: currentColor; stroke: none; }
-/* 선(stroke) 아이콘들도 같은 이유로 못 박는다 */
-.rc-pick-check, .rc-pick-arrow, .rc-model-chev, .rc-pick-foot-ic { fill: none; stroke: currentColor; }
-/* 전송·중지는 shadcn Button(default·icon-sm) — 원형과 크기만. 중지의 회색은 의도한 룩이라 남긴다 */
-.rc-send, .rc-cancel { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; }
-.rc-cancel { background: #a9b0b7; }
-.rc-cancel:hover { background: #8f979f; }
-
-/* attach button */
-.rc-file-input { display: none; }
-.rc-attach { flex: 0 0 auto; width: 28px; height: 28px; color: var(--rc-soft); cursor: pointer; }
-
-/* staged attachment chips */
-.rc-atts { display: flex; flex-wrap: wrap; gap: 6px; }
-.rc-att {
-  display: inline-flex; align-items: center; gap: 8px; max-width: 240px;
-  padding: 5px 8px 5px 6px; border: 1px solid var(--rc-line); border-radius: 10px; background: var(--rc-ground);
-}
-.rc-att-thumb { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; display: block; }
-.rc-att-ic {
-  width: 28px; height: 28px; border-radius: 6px; flex: 0 0 auto;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--rc-bg); border: 1px solid var(--rc-line); color: var(--rc-soft); font-size: 13px;
-}
-.rc-att-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
-.rc-att-nm { font: 12px/1.2 var(--rc-sans); color: var(--rc-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-att-sz { font: 11px/1 var(--rc-sans); color: var(--rc-faint); }
-.rc-att-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-faint); font-size: 15px; }
+/* 선(stroke) 아이콘도 같은 이유로 못 박는다 */
+.rc-pick-check { fill: none; stroke: currentColor; }
+/* 전송·중지·첨부 버튼과 첨부 칩(Attachment)은 shadcn 유틸리티 — Composer.tsx */
 
 /* 첨부 거절/실패 인라인 배너 — sandbox 에서 alert 가 무음 증발하는 자리의 대체 */
 .rc-att-error {
@@ -717,18 +356,13 @@
   border: 2px dashed var(--rc-accent); background: color-mix(in srgb, var(--rc-accent) 5%, transparent);
   display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
-.rc-drop-in { display: inline-flex; align-items: center; gap: 8px; font: 13px/1 var(--rc-sans); font-weight: 600; color: var(--rc-accent-strong); }
-.rc-drop-ic { font-size: 15px; }
 
 /* ── reduced motion — 모든 장식 모션 무력화 ─────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .rc-msg, .rc-step, .rc-plan, .rc-plan-row, .rc-trace-sum, .rc-jump { animation: none; }
+  .rc-msg { animation: none; }
   .rc-head .rc-dot.rc-dot-run { animation: none; }
   .rc-running-tx { animation: none; }
-  .rc-running-dots span { animation: rc-dots-fade 1.4s ease-in-out infinite both; }
   .rc-md.rc-streaming > :last-child::after { animation: none; }
-  .rc-skl { animation: none; opacity: 0.7; }
-  @keyframes rc-dots-fade { 0%, 70%, 100% { opacity: 0.3; } 35% { opacity: 1; } }
 }
 
 /* ── 다중 대화 탭 스트립(인트라넷) ───────────────────────────────────────── */
@@ -782,7 +416,6 @@
 .rc-strip-sep { height: 1px; background: var(--rc-line); margin: 4px 6px; }
 
 /* ── 대화함(전 인스턴스) — rc-sess-menu 재사용 + 출처 칩 ── */
-.rc-sess-menu.rc-inbox { min-width: 280px; max-height: 46vh; overflow: auto; }
 .rc-inbox-src {
   flex-shrink: 0; font-size: 10px; font-weight: 650; line-height: 1.6;
   padding: 0 6px; border-radius: 9999px; max-width: 96px;
@@ -793,24 +426,6 @@
 /* ── 헤더 대상 칩(지금 누구와 말하는가) ── */
 .rc-head-target { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; }
 .rc-head-target .rc-chip { max-width: 160px; }
-
-/* ── 지도 착지 저작 요청 카드(스케줄 칩과 같은 결 — 기계용 보일러플레이트 숨김) ── */
-.rc-msg.rc-author { display: flex; justify-content: flex-end; }
-.rc-author-card {
-  max-width: 86%; border: 1px solid var(--rc-line, #e5e2da); border-radius: 12px;
-  background: var(--rc-panel, #fafaf8); padding: 10px 12px;
-}
-.rc-author-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-.rc-author-badge {
-  font-size: 11px; font-weight: 650; letter-spacing: .01em;
-  color: var(--rc-accent, #262626);
-}
-.rc-author-why {
-  font-size: 12px; line-height: 1.5; color: var(--rc-accent, #262626);
-  margin-bottom: 6px; word-break: break-word;
-}
-.rc-author-body { font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.rc-author-meta { margin-top: 7px; display: flex; gap: 6px; }
 
 /* ── 멀티 에이전트 데스크 (Desk.tsx — 탭 셸 + 3상태 뱃지 + 우측 뷰 split) ─── */
 .rc-ws { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--rc-bg); color: var(--rc-ink); font: 14px/1.6 var(--rc-sans); }
@@ -858,12 +473,9 @@
 .rc-desk-tab:hover .rc-desk-close { display: block; background: var(--rc-hover); box-shadow: -10px 0 8px -2px var(--rc-hover); }
 .rc-desk-tab.on .rc-desk-close { display: block; background: var(--rc-bg); box-shadow: -10px 0 8px -2px var(--rc-bg); }
 .rc-desk-close:hover { color: var(--rc-ink); }
-/* 뱃지 3상태: run=teal 펄스 점 · ask=앰버 칩(질문 대기) · done=emerald ✓(완료·안읽음) */
+/* 뱃지: run=teal 펄스 점(여기) · ask/done 은 shadcn Badge(ChatTabs.tsx) */
 .rc-desk-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
 .rc-desk-badge.run { width: 8px; height: 8px; border-radius: 50%; background: var(--rc-accent); animation: rc-pulse 1.5s ease-in-out infinite; }
-.rc-desk-badge.ask { font-size: 11px; line-height: 1; }
-.rc-desk-badge.done { font-size: 11px; font-weight: 800; color: var(--rc-ok); }
-.rc-desk-add-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
 .rc-desk-add {
   border: 0; background: none; color: var(--rc-soft); cursor: pointer; font-size: 18px; line-height: 1;
   padding: 0 12px; height: 100%;
@@ -871,16 +483,8 @@
 .rc-desk-add:hover { background: var(--rc-hover); color: var(--rc-ink); }
 /* 화면 토글은 shadcn Button(ghost) — 여기엔 켜짐 강조색과 아래 휴대폰 폭 숨김만 남는다. */
 .rc-desk-viewtoggle.on { color: var(--rc-accent-strong); }
-/* 피커 드롭다운 — 대화함 메뉴 룩. position 은 인라인 fixed(트리거 rect 기준)가 덮는다
-   — 탭 바 overflow 클리핑을 탈출하려면 fixed 여야 한다(절대 fallback 은 잔존). */
-.rc-desk-picker {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 2147483003; min-width: 240px; max-width: 320px;
-  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); padding: 4px; max-height: 60vh; overflow-y: auto;
-}
-.rc-desk-picker .rc-sess-item { width: 100%; }
-.rc-desk-picker .rc-sess-item:disabled { opacity: .55; cursor: default; }
-/* 본문 = 좌 채팅 페인(들) + 드래그 구분선 + 우 뷰 split(폭은 인라인 flex-basis %) */
+/* 보관함 피커는 shadcn Popover + Item(ChatTabs.tsx InboxPicker) — 여기엔 룰이 없다. */
+/* 본문 =좌 채팅 페인(들) + 드래그 구분선 + 우 뷰 split(폭은 인라인 flex-basis %) */
 .rc-desk-body { display: flex; flex: 1 1 auto; min-height: 0; }
 .rc-desk-panes { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; }
 .rc-desk-pane { flex-direction: column; height: 100%; min-height: 0; }
@@ -946,13 +550,7 @@
 
 /* ── 탭 DnD 순서 이동 · 우클릭 메뉴 · 채팅 2분할(탭 그룹) ─────────────────── */
 .rc-desk-tab.drag { opacity: .45; }
-.rc-tab-menu {
-  position: fixed; z-index: 2147483003; min-width: 176px; padding: 4px;
-  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); display: flex; flex-direction: column;
-}
-/* 메뉴 항목은 shadcn Button(ghost·sm) — 컨테이너(위치·그림자)와 구분선만 여기. */
-.rc-tab-menu-sep { height: 1px; background: var(--rc-line); margin: 4px 6px; }
+/* 탭 우클릭 메뉴는 shadcn ContextMenu(ChatTabs.tsx) — 여기엔 룰이 없다. */
 /* 채팅 열 — 그룹 헤드행·크럼행·panes 행을 세로로 쌓는 좌측 열(desk 뷰와 나란).
    세 행이 같은 splitPct 인라인 폭을 공유해 그룹 경계가 픽셀 정렬된다. */
 .rc-chat-area { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; }
@@ -973,40 +571,6 @@
 .rc-tabs-crumbs .rc-tabs-crumb { border-bottom: 0; flex: 1 1 0; min-width: 0; }
 
 /* ── 사용자 메시지 첨부 — 가로 칩 행 + 클릭 라이트박스 ────────────────────── */
-.rc-att-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.rc-att-open {
-  gap: 6px; max-width: 240px; height: auto; padding: 3px 9px 3px 4px;
-  font: 12px var(--rc-sans); cursor: zoom-in;
-}
-/* 전역 .rc-bubble img(260px 썸네일 규칙)보다 뒤에 선언 — 칩 썸네일은 22px 고정 */
-.rc-att-open img { width: 22px; height: 22px; max-width: none; max-height: none; border-radius: 5px; object-fit: cover; display: block; }
-.rc-att-open-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-att-open-dim { color: var(--rc-faint); white-space: nowrap; }
-.rc-lightbox {
-  position: fixed; inset: 0; z-index: 2147483004; cursor: zoom-out;
-  background: rgba(13, 16, 20, 0.8);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  padding: 28px;
-}
-.rc-lightbox-img {
-  max-width: min(1400px, 94vw); max-height: 86vh; width: auto; height: auto; cursor: default;
-  border-radius: 10px; background: #fff; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
-}
-.rc-lightbox-x {
-  position: absolute; top: 14px; right: 14px; width: 36px; height: 36px;
-  border-radius: 999px; background: rgba(255, 255, 255, 0.16); color: #fff;
-  font-size: 22px; cursor: pointer;
-}
-.rc-lightbox-x:hover { background: rgba(255, 255, 255, 0.3); }
-.rc-lightbox-name {
-  color: rgba(255, 255, 255, 0.85); font: 12px var(--rc-sans);
-  max-width: 90vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 
-/* 위임 카드 — 그 위임의 대화를 여는 문 */
-.rc-author-act { margin-top: 8px; align-self: flex-start; cursor: pointer; }
-
-/* 빈 시작 화면의 예시 문장 — 누르면 입력칸에 들어간다 */
-.rc-empty-ex { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 12px; }
 /* 예시 칩은 shadcn Button(outline·xs·rounded-full) — 새로고침 칩의 옅은 색만 */
 .rc-empty-more { color: var(--rc-faint, #8a939c); }
