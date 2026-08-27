@@ -175,6 +175,15 @@ export class EnvelopeReducer {
     return p;
   }
 
+  /** 답이 아직 안 온 마지막 질문 카드의 자리 — 앵커 없는 ask 가 앉을 곳. */
+  private openAskPos(): number | undefined {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i];
+      if (p.type === "tool-call" && p.toolName === ASK_TOOL && p.result === undefined && !p.isError) return i;
+    }
+    return undefined;
+  }
+
   push(raw: EnvelopeEvent | null | undefined): void {
     if (!raw || typeof raw !== "object") return;
     const ev = raw as Record<string, unknown>;
@@ -211,7 +220,12 @@ export class EnvelopeReducer {
     this.turnId = str(ev.turn) || this.turnId;
     // 의미적 종결은 reply/error 가 이미 찍었다 — 수명주기는 프레이밍만 담당한다
     // (client-protocol §6-36). 둘 다 없이 settled 만 온 턴에서만 ok 로 판정을 메운다.
-    if (!this.meta.ended) this.meta.ended = ev.ok === false ? "error" : "ok";
+    if (!this.meta.ended) {
+      this.meta.ended = ev.ok === false ? "error" : "ok";
+      // error 이벤트 없이 ok:false 로만 닫힌 턴 — 서버가 합성한 종결(데몬이 죽은 턴의 장부
+      // 재생 등)이라 사유가 없다. 화면이 "오류로 중단됨"만 말하고 끝나지 않게 원인을 남긴다.
+      if (ev.ok === false && !this.meta.error) this.meta.error = "서버가 응답을 끝내지 못했어요. 서버가 재시작됐거나 연결이 끊긴 것 같아요.";
+    }
     this.stampDuration(typeof ev.t === "number" ? ev.t : 0);
   }
 
@@ -286,13 +300,19 @@ export class EnvelopeReducer {
    * (harness-protocol §Events) 설명이 긴 질문은 잘린 JSON 으로 도착해 파싱이 깨지고 선택지가
    * 통째로 사라진다. 이 이벤트의 questions 는 온전하다.
    *
-   * 앵커 없는 봉투(구 어댑터·다른 하네스)는 종전대로 자기 id 로 카드를 연다 — additive 규율.
+   * 앵커가 없으면(구 어댑터) **열려 있는 질문 카드**에 붙는다. 앵커 없는 봉투를 종전대로
+   * 흘려 보내던 판정은 2026-08-27 에 뒤집혔다: 어댑터 사본은 패키지가 만들어질 때 한 번
+   * 복사되고 다시 갱신되지 않으므로(supply/draft.ts openDraft — dst 가 있으면 건너뛴다),
+   * 이미 만들어진 패키지에서는 앵커 없는 봉투가 예외가 아니라 정상이고 유령 카드가 그대로
+   * 재현된다. 대기 질문은 한 번에 하나뿐이라(어댑터가 두 번째를 거절한다) '답 없는 마지막
+   * AskUserQuestion 카드'는 이 질문 하나로 확정된다 — 짐작이 아니라 계약이다.
    */
   private ask(ev: Record<string, unknown>): void {
     const id = str(ev.id);
     if (!id) return;
     const anchor = str(ev.tool);
-    const pos = anchor ? this.toolPos[anchor] : undefined;
+    let pos = anchor ? this.toolPos[anchor] : undefined;
+    if (pos == null) pos = this.openAskPos();
     const card = pos != null ? (this.parts[pos] as ToolPart) : this.tool(id, ASK_TOOL);
     const questions: AskQuestion[] = Array.isArray(ev.questions) ? (ev.questions as AskQuestion[]) : [];
     card.args = { questions };

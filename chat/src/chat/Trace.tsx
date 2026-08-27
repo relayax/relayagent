@@ -4,8 +4,8 @@
  * 타임라인 행은 shadcn Marker(아이콘 + 내용) 로, 펼침은 Collapsible 로, 진행 중은 Spinner 로 표현한다.
  */
 import { useEffect, useRef, useState } from "react";
-import { useMessage, ThreadPrimitive } from "@assistant-ui/react";
-import { CheckIcon as LCheck, XIcon, ChevronRightIcon, ChevronDownIcon, CircleIcon, CircleDotIcon, SquareIcon, TriangleAlertIcon } from "lucide-react";
+import { useMessage, ThreadPrimitive, ActionBarPrimitive } from "@assistant-ui/react";
+import { CheckIcon as LCheck, XIcon, ChevronRightIcon, ChevronDownIcon, CircleIcon, CircleDotIcon, SquareIcon, TriangleAlertIcon, RotateCcwIcon } from "lucide-react";
 import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
@@ -62,10 +62,11 @@ function Busy({ className }: { className?: string }) {
   return <Spinner role={undefined} aria-label={undefined} aria-hidden className={cn("text-[var(--rc-accent)]", className)} />;
 }
 
-/** 펼침 카랫 — 트리거 안에서만 쓰고, hover·펼침 상태에서만 드러난다(터치는 chat.css 가 상시 노출). */
+/** 펼침 카랫 — 늘 옅게 보이고 hover 에서 진해진다. 예전엔 hover 전까지 완전히 숨어(opacity-0)
+ *  이 줄을 누를 수 있다는 사실이 화면에 없었다(피드백 2026-08-27: 누를 수 있는 것은 티가 나야). */
 function Caret({ open }: { open: boolean }) {
   return (
-    <span className="rc-step-caret ml-auto shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/marker:opacity-80 group-data-[panel-open]/marker:opacity-80" aria-hidden>
+    <span className="rc-step-caret shrink-0 text-muted-foreground opacity-45 transition-opacity group-hover/marker:opacity-90 group-data-[panel-open]/marker:opacity-90" aria-hidden>
       {open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
     </span>
   );
@@ -122,20 +123,20 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
     <Collapsible open={open} onOpenChange={setOpen} disabled={!hasDetail}
       className={cn("rc-step motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-200", err && "err")}>
       <Marker render={<CollapsibleTrigger />} className={ROW}>
-        <MarkerIcon className={cn("inline-flex items-center justify-center text-xs", err ? "text-[var(--rc-err)]" : "text-muted-foreground")}>
+        <MarkerIcon className={cn("rc-step-ic inline-flex items-center justify-center text-xs", err ? "text-[var(--rc-err)]" : done ? "text-muted-foreground/70" : "text-muted-foreground")}>
           {live ? <Busy /> : err ? <XIcon /> : done ? <LCheck /> : meta.icon}
         </MarkerIcon>
-        <MarkerContent className={cn("truncate", live ? "font-medium text-foreground/70" : err ? "text-[var(--rc-err)]" : "text-muted-foreground")}>
-          {meta.label}
-          {meta.target && <span> · {meta.target}</span>}
+        <MarkerContent className={cn("flex min-w-0 items-baseline gap-1.5 truncate", live ? "text-foreground/80" : "text-foreground/60")}>
+          {meta.target
+            ? <><span className="max-w-[45%] shrink-0 truncate text-[11px] text-muted-foreground/80">{meta.label}</span><span className="truncate">{meta.target}</span></>
+            : <span className="truncate">{meta.label}</span>}
         </MarkerContent>
-        {done && meta.summary && <span className={cn("min-w-0 shrink truncate text-xs", err ? "text-[var(--rc-err)]" : "text-muted-foreground")}>· {meta.summary}</span>}
-        {live && (liveTick.elapsed >= 3 || liveTick.tick) ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
-            {liveTick.elapsed >= 3 ? <span>{liveTick.elapsed}s</span> : null}{liveTick.tick}
-          </span>
-        ) : null}
-        {hasDetail && <Caret open={open} />}
+        <span className="ml-auto flex min-w-0 max-w-[45%] shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/80">
+          {done && meta.summary && <span className={cn("min-w-0 truncate", err && "text-[var(--rc-err)]")}>{meta.summary}</span>}
+          {live && liveTick.elapsed >= 3 ? <span>{liveTick.elapsed}s</span> : null}
+          {live ? liveTick.tick : null}
+          {hasDetail && <Caret open={open} />}
+        </span>
       </Marker>
       <CollapsibleContent className="rc-step-body">
         <div className="rc-step-raw">{part.toolName}</div>
@@ -154,7 +155,7 @@ export function ThoughtRow({ text, live }: { text: string; live: boolean }) {
     <Collapsible open={open} onOpenChange={setOpen}
       className="rc-step rc-think motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-200">
       <Marker render={<CollapsibleTrigger />} className={ROW}>
-        <MarkerIcon className="inline-flex items-center justify-center text-muted-foreground">
+        <MarkerIcon className="rc-step-ic inline-flex items-center justify-center text-muted-foreground">
           {live ? <Busy /> : <CircleIcon className="size-2 fill-current" />}
         </MarkerIcon>
         <MarkerContent className={cn("truncate italic", live ? "font-medium text-foreground/70" : "text-muted-foreground")}>
@@ -169,33 +170,35 @@ export function ThoughtRow({ text, live }: { text: string; live: boolean }) {
 }
 
 /** 스텝 타임라인 — 실행 중엔 펼쳐져 스텝이 흘러내리고, 턴이 끝나면 "✓ 작업 N개 · Ns" 한
- *  행으로 자동 접힘(히스토리 replay 는 접힌 채 시작). 접힘/펼침 토글. */
-export function TraceTimeline({ steps, running, durationMs }: { steps: AnyPart[]; running: boolean; durationMs?: number }) {
-  const [collapsed, setCollapsed] = useState(!running);
-  const wasRunning = useRef(running);
-  useEffect(() => {
-    if (wasRunning.current && !running) setCollapsed(true);
-    wasRunning.current = running;
-  }, [running]);
-  const tools = steps.filter((s) => s.type === "tool-call").length;
-  const label = tools > 0 ? `작업 ${tools}개` : "생각 정리";
+ *  행으로 접힘(히스토리 replay 는 접힌 채 시작).
+ *
+ *  접힘 상태는 이 컴포넌트가 아니라 **메시지가** 소유한다(AssistantMessage). 한 턴의 스텝은
+ *  글(text 파트)을 만날 때마다 묶음이 갈리는데(parts.groupParts), 묶음마다 제 개수를 말하는
+ *  요약 칩이 서면 "작업 1개"가 접혀 있고 그 아래에 작업 두 개가 또 보인다 — 숫자가 틀린 것처럼
+ *  읽힌다(2026-08-27 피드백). 그래서 요약 칩은 턴에 하나(첫 묶음 자리 · 개수는 턴 전체)이고,
+ *  그 칩이 턴의 모든 묶음을 함께 여닫는다. */
+export function TraceTimeline({ steps, running, turnRunning, durationMs, open, onOpenChange, showSummary, count }: {
+  steps: AnyPart[]; running: boolean; turnRunning: boolean; durationMs?: number;
+  open: boolean; onOpenChange: (open: boolean) => void; showSummary: boolean; count: number;
+}) {
+  const label = count > 0 ? `작업 ${count}개` : "생각 정리";
   const dur = typeof durationMs === "number" && durationMs >= 100 ? ` · ${(durationMs / 1000).toFixed(1)}s` : "";
-  // 요약 행 — 마커를 버튼으로. 완료 체크는 초록 원 안에.
-  const summary = (open: boolean) => (
-    <Marker render={<button type="button" />} onClick={() => setCollapsed(open)}
+  // 요약 행 — 마커를 버튼으로. 체크는 중립 회색(상태별 채움색 없음 — 컬러 원칙).
+  const summary = () => (
+    <Marker render={<button type="button" />} onClick={() => onOpenChange(!open)}
       className="w-auto cursor-pointer self-start rounded-md py-1 pr-2 pl-0.5 text-[12.5px] tabular-nums hover:bg-muted hover:text-foreground/70 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
-      <MarkerIcon className="inline-flex items-center justify-center rounded-full bg-[var(--rc-ok-bg)] text-[var(--rc-ok)]">
-        <LCheck className="size-2.5" strokeWidth={3} />
+      <MarkerIcon className="inline-flex items-center justify-center text-muted-foreground">
+        <LCheck className="size-3" strokeWidth={2.5} />
       </MarkerIcon>
       <MarkerContent>{label}{dur}</MarkerContent>
-      <span className="shrink-0 opacity-70" aria-hidden>{open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}</span>
+      <span className="shrink-0 opacity-60" aria-hidden>{open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}</span>
     </Marker>
   );
-  if (collapsed) return summary(false);
+  if (!open) return showSummary ? summary() : null;
   return (
     <div className="flex flex-col gap-0.5">
-      {!running && summary(true)}
-      <div className="flex flex-col">
+      {showSummary && !turnRunning && summary()}
+      <div className="rc-steps flex flex-col">
         {steps.map((s, i) =>
           s.type === "reasoning"
             ? <ThoughtRow key={i} text={s.text || ""} live={running && i === steps.length - 1} />
@@ -211,11 +214,12 @@ export function PlanCard({ todos, active }: { todos: any[] | null; active: boole
   const list = Array.isArray(todos) ? todos : [];
   const doneN = list.filter((t) => t?.status === "completed").length;
   const row = (key: React.Key, icon: React.ReactNode, text: string, tone: "done" | "run" | "todo") => (
-    <Item key={key} size="xs" className="flex-nowrap px-0 py-0.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-200">
+    <Item key={key} size="xs" className="flex-nowrap items-start px-0 py-0.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-200">
       <ItemMedia variant="icon" className={cn("w-4", tone === "done" ? "text-[var(--rc-ok)]" : tone === "run" ? "text-[var(--rc-accent)]" : "text-muted-foreground")}>{icon}</ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle className={cn("w-full text-[12.5px]", tone === "done" ? "font-normal text-muted-foreground" : tone === "run" ? "font-medium text-foreground" : "font-normal text-foreground/70")}>
-          <span className="truncate">{text}</span>
+        {/* 줄바꿈 허용 — 한 줄 말줄임(line-clamp-1)은 좁은 패널에서 항목 뒷부분을 통째로 숨겼다(피드백 2026-08-27). */}
+        <ItemTitle className={cn("w-full line-clamp-none whitespace-normal break-words text-[12.5px] leading-[1.4]", tone === "done" ? "font-normal text-muted-foreground" : tone === "run" ? "font-medium text-foreground" : "font-normal text-foreground/70")}>
+          <span>{text}</span>
         </ItemTitle>
       </ItemContent>
     </Item>
@@ -302,12 +306,16 @@ export function RunningStatus() {
       label = "응답 중…";
     }
   }
-  const suffix = elapsed >= 3 ? ` · ${elapsed}s` : "";
+  const suffix = elapsed >= 3 ? `${elapsed}s` : "";
   return (
-    <Marker role="status" aria-label="응답 생성 중" className="w-auto px-0.5 py-1 text-[12.5px] text-foreground/70">
-      <MarkerIcon><Busy /></MarkerIcon>
-      <MarkerContent className="rc-running-tx">{label}{suffix}</MarkerContent>
-      {tick}
+    <Marker role="status" aria-label="응답 생성 중" className="w-full px-1 py-1.5 text-[12.5px] text-foreground/80">
+      <MarkerIcon className="inline-flex items-center justify-center"><Busy /></MarkerIcon>
+      <MarkerContent className="rc-running-tx truncate">{label}</MarkerContent>
+      {(suffix || tick) && (
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/80">
+          {suffix ? <span>{suffix}</span> : null}{tick}
+        </span>
+      )}
     </Marker>
   );
 }
@@ -352,21 +360,33 @@ export function TurnStatusChip() {
   // 중요도가 낮다는 피드백(2026-08-27). 칩은 문제가 있을 때(중지·오류·끊김)만 뜬다.
   if (kind === "ok") return null;
   const icon = kind === "cancel" ? <SquareIcon className="size-2.5! fill-current" /> : <TriangleAlertIcon />;
+  // 오류 사유(본문 텍스트)가 따로 있으면 칩은 짧게, 없으면 칩이 사유 문장을 겸한다.
   const label =
     kind === "cancel" ? "중지됨"
-    : kind === "error" ? "오류로 중단됨"
+    : kind === "error" ? (hasContent ? "오류로 중단됨" : "응답을 만들지 못했어요")
     : "응답이 끊겼어요";
-  const title = "메시지를 다시 보내면 이어서 진행해요.";
   const tone = kind === "cancel" ? "text-foreground/70"
     : kind === "error" ? "text-[#d65745] font-medium"
     : "text-[#c9a44a] font-medium";
+  // 실패·끊김에는 바로 다시 보낼 길을 붙인다 — 같은 메시지를 새 가지로 재실행한다(assistant-ui reload).
+  // 스레드가 실행 중이거나 마지막 메시지가 아니면 프리미티브가 스스로 비활성화한다.
+  const retry = kind !== "cancel";
   return (
-    <Badge variant="ghost" role="status" title={title}
-      className={cn("h-auto min-h-5 gap-1.5 whitespace-normal px-0 pt-1 pb-0 text-[11.5px] font-normal tabular-nums hover:bg-transparent hover:text-current", tone)}>
-      {icon}
-      <span>{label}</span>
-      
-    </Badge>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1" role="status">
+      <Badge variant="ghost"
+        className={cn("h-auto min-h-5 gap-1.5 whitespace-normal px-0 py-0 text-[11.5px] font-normal tabular-nums hover:bg-transparent hover:text-current", tone)}>
+        {icon}
+        <span>{label}</span>
+      </Badge>
+      {retry ? (
+        <ActionBarPrimitive.Reload
+          className="rc-retry inline-flex h-6 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
+          title="같은 메시지를 다시 보내요">
+          <RotateCcwIcon className="size-3" />
+          다시 시도
+        </ActionBarPrimitive.Reload>
+      ) : null}
+    </div>
   );
 }
 

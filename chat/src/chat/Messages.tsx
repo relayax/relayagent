@@ -2,7 +2,7 @@
  * Messages.tsx — 메시지 한 건의 렌더: 사용자 말풍선(UserMessage)과 그 변종 카드(저작 요청·에이전트 요청·
  * 서브에이전트 위임·스킬 호출·시스템 칩), 어시스턴트 메시지(AssistantMessage — 파트 그룹을 카드로 배치).
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMessage, MessagePrimitive } from "@assistant-ui/react";
 import type { TurnMeta } from "./runtime";
 import { iconUrlForInstance } from "./runtime";
@@ -270,7 +270,19 @@ export function AssistantMessage() {
   // 이 턴에 무대에 앉은 산출물 — 실황은 봉투 file 이벤트, 재생은 이력의 files 가 채운다
   const stageFiles = useMessage((m) => (m.metadata?.custom as TurnMeta | undefined)?.files);
   const groups = useMemo(() => groupParts(content), [content]);
-  const lastTrace = groups.reduce((acc, g, i) => (g.kind === "trace" ? i : acc), -1);
+  // 스텝 묶음의 접힘은 **턴 하나**의 상태다 — 글이 끼어들어 묶음이 갈려도 요약 칩은 하나,
+  // 개수도 턴 전체의 작업 수다(묶음마다 제 개수를 말하면 "작업 1개" 아래에 작업 둘이 보인다).
+  const firstTrace = groups.findIndex((g) => g.kind === "trace");
+  const toolCount = groups.reduce((n, g) => g.kind === "trace" ? n + g.steps.filter((s) => s.type === "tool-call").length : n, 0);
+  // 실행 중엔 늘 펼쳐 흘려 보이고(요약 칩도 그때는 뜨지 않는다), 끝나면 접는다.
+  // 히스토리 리플레이(처음부터 running=false)는 접힌 채 시작.
+  const [traceOpen, setTraceOpen] = useState(running);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) setTraceOpen(false);
+    wasRunning.current = running;
+  }, [running]);
+  const stepsOpen = running || traceOpen;
   // 어시스턴트 산문은 말풍선 없이(상자 없는 모습 유지) — MessageContent(gap-2.5)가 파트 간 간격을 잡는다
   return (
     <MessagePrimitive.Root asChild className="rc-msg">
@@ -285,8 +297,10 @@ export function AssistantMessage() {
             if (g.kind === "choice") return <ChoiceCard key={i} part={g.part} />;
             if (g.kind === "files") return <FileCard key={i} part={g.part} />;
             return (
-              <TraceTimeline key={i} steps={g.steps} running={running && isLast}
-                             durationMs={i === lastTrace ? durationMs : undefined} />
+              <TraceTimeline key={i} steps={g.steps} running={running && isLast} turnRunning={running}
+                             open={stepsOpen} onOpenChange={setTraceOpen}
+                             showSummary={i === firstTrace} count={toolCount}
+                             durationMs={i === firstTrace ? durationMs : undefined} />
             );
           })}
           {stageFiles?.length ? <StageFiles paths={stageFiles} /> : null}
