@@ -13,7 +13,7 @@ import { AskCard, SteerCard, ChoiceCard } from "./Ask";
 import { FileCard, StageFiles, AttOpenChip, ImageLightbox, NullImagePart, type UserImagePart } from "./Files";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
+import { Message, MessageContent } from "@/components/ui/message";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -237,7 +237,7 @@ export function UserMessage() {
     );
   }
   // rc-user 는 chat.css 의 등장 애니메이션·썸네일 규칙이 참조하는 이름 — 유지한다(상단 sticky 는 MessageScroller 가 대신한다).
-  // 말풍선은 shadcn Bubble(secondary), 시각은 말풍선 아래 MessageFooter.
+  // 말풍선은 shadcn Bubble(secondary). 보낸 시각은 보이지 않는다(피드백 2026-08-27: 중요도 낮음).
   return (
     <MessagePrimitive.Root asChild className="rc-msg rc-user">
       <Message align="end">
@@ -252,7 +252,6 @@ export function UserMessage() {
               <MessagePrimitive.Parts components={{ Image: NullImagePart }} />
             </BubbleContent>
           </Bubble>
-          {time ? <MessageFooter className="text-[10.5px] font-normal text-muted-foreground/70">{time}</MessageFooter> : null}
         </MessageContent>
         {lightbox && <ImageLightbox src={lightbox.image} name={lightbox.filename} onClose={() => setLightbox(null)} />}
       </Message>

@@ -135,7 +135,7 @@
    애니메이션돼 스트리밍 중 출렁임을 만든다. 앵커/jump 점프만 scrollTo({behavior:'smooth'}) 명시. */
 .rc-log {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 18px;
+  padding: 18px 16px 0; display: flex; flex-direction: column; gap: 18px;
 }
 .rc-log::-webkit-scrollbar { width: 10px; }
 .rc-log::-webkit-scrollbar-thumb { background: #dfe2e6; border-radius: 6px; border: 3px solid var(--rc-bg); }
@@ -245,6 +245,9 @@
 /* ── composer ────────────────────────────────────────────────────────────── */
 /* 컴포저 — 구분선·바탕 띠 없음. 모든 도구가 입력 카드 하나에 들어왔으니(2026-08-26) 카드가 로그 위에
    떠 있으면 된다: 띠와 선은 카드 밖에 도구가 흩어져 있던 때의 것. */
+/* 대화와 입력창 사이 숨 쉴 자리. 내용물 상자는 스크롤 상자(flex 열)의 자식이라 기본 flex-shrink 로 상자
+   높이에 눌리고 메시지가 그 밖으로 넘친다 — 그러면 padding 이 자식 밖으로 밀려 안 보인다. 눌리지 않게 고정 */
+.rc-log > [data-slot="message-scroller-content"] { flex-shrink: 0; padding-bottom: 28px; }
 .rc-composer {
   position: relative;
   flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px;
