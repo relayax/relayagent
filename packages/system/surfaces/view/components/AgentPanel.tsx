@@ -104,7 +104,12 @@ export interface AgentPanelProps {
   /** 엔진 칩 — 켜면 붙이고 끄면 뺀다. 도는 동안 busy */
   onEngine: (template: string) => void;
   engineBusy?: boolean;
+  /** 줄 옆 실행 상태 — 채널(연결됨·로그인 필요)·서비스(켜짐·꺼짐). null 이면 칩 없음 */
+  status?: ItemStatus;
 }
+
+/** 항목 줄 옆 칩 — on 이면 살아 있다는 뜻(색 없이 글자 무게만 다르다) */
+export type ItemStatus = (sec: string, id: string) => { label: string; on?: boolean; title?: string } | null;
 
 /** 섹션마다 [＋ 추가] 가 내놓는 종류 — 팔레트의 레시피를 문법 좌표(yaml)로 고른다 */
 function creatablesFor(sec: string): Creatable[] {
@@ -178,7 +183,7 @@ function loadFold(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy }: AgentPanelProps) {
+export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy, status }: AgentPanelProps) {
   const [tab, setTab] = useState<"agent" | "settings">("agent");
   // 접힌 섹션 — 기능처럼 항목이 많으면 목록이 길어진다. 제목을 누르면 접히고, 선택은 기억한다
   const [fold, setFold] = useState<Set<string>>(() => (typeof window === "undefined" ? new Set() : loadFold()));
@@ -248,11 +253,13 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
       {slot(s.sec, null)}
       {folded ? null : items.map((it) => {
         const d = display(s.sec, it, row);
+        const st = status?.(s.sec, it.id) ?? null;
         return (
           <div key={it.id}>
             <button type="button" className="ap-item" aria-expanded={isOpen(s.sec, it.id)} onClick={() => toggle(s.sec, it.id)}>
               <span className="ap-item-t">{d.title}</span>
               {d.sub ? <span className="ap-item-s">{d.sub}</span> : null}
+              {st ? <span className={`ap-item-st${st.on ? " on" : ""}`} title={st.title}>{st.label}</span> : null}
               <Chevron />
             </button>
             {slot(s.sec, it.id)}

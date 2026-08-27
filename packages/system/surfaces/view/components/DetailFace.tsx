@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import AgentPanel from "@/components/AgentPanel";
+import AgentPanel, { type ItemStatus } from "@/components/AgentPanel";
 import DraftActions from "@/components/DraftActions";
 import DraftConsole from "@/components/DraftConsole";
 import EditorPanel from "@/components/EditorPanel";
@@ -38,7 +38,7 @@ export default function DetailFace({
   onTitle,
   actionsSlot,
   editorSlot,
-  tail,
+  liveStatus,
 }: {
   pkg: Pkg;
   reg: Registry;
@@ -53,8 +53,8 @@ export default function DetailFace({
   actionsSlot: HTMLElement | null;
   /** 파일 에디터가 설 자리(가운데 칸). null 이면 가운데 칸이 없어 왼쪽 칸 전체가 에디터가 된다 */
   editorSlot: HTMLElement | null;
-  /** 설명서 맨 아래에 붙는 것 — 상주 현황(PkgPane). 고급 아래, 같은 스크롤 안 */
-  tail?: React.ReactNode;
+  /** 줄 옆 실행 상태 칩(연결됨·켜짐) — PkgPane 이 실상을 안다 */
+  liveStatus?: ItemStatus;
 }) {
   // 설치 안 된 초안 — 장부에 없어 콘솔이 합성한 Pkg (workspace 가 빈 것으로 안다)
   const ghost = pkg.workspace === "";
@@ -315,6 +315,7 @@ export default function DetailFace({
           onAsk={ask}
           onEngine={toggleEngine}
           engineBusy={engineBusy}
+          status={liveStatus}
         >
           {editing && view.sec && draft.ctx ? (
             <>
@@ -342,7 +343,6 @@ export default function DetailFace({
           />
         ) : null}
 
-        {tail}
       </div>
     </>
   );
