@@ -22,6 +22,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, hasSteer, steerTurn, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
   loadHarnessVariants,
+  loadHarnessName,
   loadModelOptionsFor,
   setHarnessAndModel,
   hasEffort,
@@ -1784,8 +1785,14 @@ function ModelPicker() {
   // 전환은 성공했는데 그 하네스가 준비되지 않은 경우(도구 미설치·설치 파손·미로그인).
   // 다음 턴이 실패할 때까지 침묵하지 않는다 — 처방은 어댑터 setup 이 이미 문장으로 준다.
   const [notReady, setNotReady] = useState("");
+  // 변형이 하나뿐(capability 미선언)이면 variants 가 비고 active 도 null — 그때는 harness.info 의
+  // 이름으로 트리거를 채운다. "기본"만으로는 무엇으로 도는지 모른다는 피드백의 연장.
+  const [soloName, setSoloName] = useState<string | null>(null);
   const loadVariants = useCallback(() => {
-    void loadHarnessVariants().then((r) => { setActive(r.active); setVariants(r.variants); });
+    void loadHarnessVariants().then((r) => {
+      setActive(r.active); setVariants(r.variants);
+      if (r.variants.length === 0) void loadHarnessName().then(setSoloName);
+    });
   }, []);
   useEffect(() => { loadVariants(); }, [loadVariants]);
 
@@ -1795,7 +1802,8 @@ function ModelPicker() {
   const [open, setOpen] = useState(false);
   // 오른쪽 단(모델 목록)은 공급자 줄에 호버·포커스해야 편다(피드백 2026-08-26: 열자마자 다 보이면 시끄럽다)
   const [hover, setHover] = useState<string | null>(null);
-  // 서브 카드 자리 — 오른쪽에 두 카드가 설 폭이 없으면(도크 폭 ~380px) 위로 쌓는다. 열 때 한 번 잰다.
+  // 서브 카드 자리 — 메뉴는 트리거 오른쪽 끝에 맞춰 왼쪽으로 펼쳐진다. 왼쪽에 두 카드가 설 폭이
+  // 없으면(도크 폭 ~380px) 위로 쌓는다. 열 때 한 번 잰다.
   const [stack, setStack] = useState(false);
   // 공급자별 카탈로그 — undefined = 아직 안 물음, null = 미도달
   const [byVariant, setByVariant] = useState<Record<string, ModelOption[] | null>>({});
@@ -1828,8 +1836,11 @@ function ModelPicker() {
   }, [open]);
   useEffect(() => {
     if (!open) { setHover(null); return; }
+    // 폭은 화면이 아니라 컴포저(도크 패널) 기준이다 — 패널은 overflow hidden 이라 화면에 자리가
+    // 있어도 패널 왼쪽 밖으로 나간 카드는 잘린다(실사고: 도크에서 공급자 카드가 반쯤 잘림).
     const r = boxRef.current?.getBoundingClientRect();
-    setStack(!!r && window.innerWidth - r.left < 470);
+    const host = boxRef.current?.closest(".rc-composer")?.getBoundingClientRect();
+    setStack(!!r && r.right - (host?.left ?? 0) < 470);
   }, [open]);
   // 호버한 공급자의 카탈로그를 한 번만 묻는다(runtime 이 변형별로 캐시한다)
   useEffect(() => {
@@ -1891,7 +1902,8 @@ function ModelPicker() {
   const twoPane = variants.length >= 2;
   // 바깥(트리거)엔 오버라이드가 있으면 그 모델, 없으면 하네스 한 단어("Claude").
   // 변형 미선언 기판은 실효 모델(알면) — 그때만 "기본".
-  const shown = model ? labelOf(model) : active ? harnessShortOf(active) : (effDefault ? labelOf(effDefault) : "기본");
+  const harnessName = active ?? soloName;
+  const shown = model ? labelOf(model) : harnessName ? harnessShortOf(harnessName) : (effDefault ? labelOf(effDefault) : "기본");
 
   /** 한 공급자의 모델 목록 단. own = 활성 하네스(오버라이드 축) / 아니면 전환 축 */
   const rowsFor = (p: { name: string; provider?: string } | null) => {
@@ -1935,9 +1947,6 @@ function ModelPicker() {
          title="AI 모델 — 이 대화에만 적용, 다음 응답부터. '기본'은 인스턴스 바인딩(없으면 CLI 기본)을 따릅니다.">
       <button type="button" className="rc-model-btn" onClick={() => setOpen((o) => !o)}
               aria-haspopup="listbox" aria-expanded={open}>
-        <svg className="rc-model-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 9h6v6H9z" />
-        </svg>
         <span className="rc-model-lb">
           <span className={"rc-model-val" + (model ? "" : " ghost")}>{shown}</span>
           <svg className="rc-model-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9l6 6 6-6" /></svg>
@@ -1996,8 +2005,10 @@ const PH = {
   plus: "M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z",
 };
 function PhIcon({ d, size }: { d: string; size: number }) {
+  // 크기·채움을 속성이 아니라 inline style + .rc-ph 로 못 박는다 — 호스트 페이지(패키지 뷰)의 전역
+  // `svg{...}` 리셋(fill:none·stroke·width)이 속성값을 이기면 채움 아이콘이 점처럼 보인다(실사고).
   return (
-    <svg width={size} height={size} viewBox="0 0 256 256" fill="currentColor" aria-hidden><path d={d} /></svg>
+    <svg className="rc-ph" style={{ width: size, height: size }} viewBox="0 0 256 256" aria-hidden><path d={d} /></svg>
   );
 }
 
@@ -2676,6 +2687,8 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
       )}
       {/* 입력 카드 — 위는 글, 아래 줄은 왼쪽(+ 첨부 · 모델)·오른쪽(컨텍스트 · 전송). 카드 빈자리를 눌러도 입력으로 */}
       <div className="rc-box" onClick={(e) => { if (e.target === e.currentTarget) taRef.current?.focus(); }}>
+        {/* 에이전트(대상) 칩 — 카드 맨 위(레퍼런스: 맥락 칩 → 글 → 도구 줄). 피커는 칩에 붙는 카드 */}
+        <ContextChips onSend={sendOrQueue} />
         {atts.length > 0 && (
           <div className="rc-atts">
             {atts.map((a) => (
@@ -2721,9 +2734,6 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
           <button type="button" className="rc-attach" aria-label="파일 첨부" title="파일 첨부" onClick={() => fileRef.current?.click()}>
             <PhIcon d={PH.plus} size={16} />
           </button>
-          {/* 에이전트(대상) 칩 — 카드 아래 줄, + 와 모델 사이. 드롭다운은 컴포저 폭 기준(.rc-slash) */}
-          <ContextChips onSend={sendOrQueue} />
-          <ModelPicker />
           <span style={{ flex: 1 }} />
           {ctxUsed > 0 && (
             <span className={"rc-ctx-wrap" + (ctxArmed ? " rc-armed" : "")}>
@@ -2754,6 +2764,7 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
               </span>
             </span>
           )}
+          <ModelPicker />
           {running ? (
             <button type="button" className="rc-cancel" aria-label="중지" onClick={() => rt.cancelRun()}>
               <PhIcon d={PH.stop} size={13} />

@@ -892,6 +892,18 @@ export async function loadHarnessVariants(): Promise<{ active: string | null; va
   return { active: v?.active ?? null, variants: Array.isArray(v?.variants) ? v.variants : [] };
 }
 
+/** 변형 미선언(단일 하네스) 기판의 하네스 이름 — capability harness-info 뒤. 피커 트리거가 "기본"
+ *  대신 무엇으로 도는지 한 단어("Claude")를 보이는 데 쓴다. null = 모름. */
+export async function loadHarnessName(): Promise<string | null> {
+  const g = getCtx();
+  const base = baseOf(g);
+  const root = rootOf(g);
+  if (!(await capsFor(base, root)).has("harness-info")) return null;
+  const r = await transportFor(base, root).harness.info();
+  if (isError(r)) return null;
+  return r.value?.name || null;
+}
+
 /** 변형 전환. 기판이 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 호출부가 모델 표시를
  *  다시 읽어야 한다. 미선언 이름은 기판이 400 으로 거부한다. */
 export async function setHarnessVariant(
