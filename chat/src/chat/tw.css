@@ -4,7 +4,9 @@
    .rc-root 안에 가두면 그 조각들이 값을 잃는다. 값은 프리셋 b1Z5aAfsu(neutral · radius small). */
 /* 레이어를 쓰지 않는다 — 위젯은 남의 문서에 끼워지고, 호스트의 레이어 없는 원소 규칙(textarea{border…})은
    @layer 안의 유틸리티를 항상 이긴다(실사고: 패키지 뷰 안에서 입력창에 테두리가 두 겹). 레이어 밖에 두면
-   같은 특이성끼리 순서로 겨루고, 유틸리티(클래스)가 호스트의 원소 규칙을 이긴다 */
+   같은 특이성끼리 순서로 겨루고, 유틸리티(클래스)가 호스트의 원소 규칙을 이긴다.
+   대신 여기서 나는 모든 규칙은 빌드가 `:where(.rc-tw)` 자손으로 가둔다(chat-build.mjs) — 레이어 밖
+   유틸리티가 호스트(콘솔)의 같은 이름 클래스까지 덮어 호스트의 sm:·hover: 변형을 죽였다 */
 @import "tailwindcss/theme.css" layer(theme);
 @import "./reset.css";
 @import "tailwindcss/utilities.css";

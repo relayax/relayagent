@@ -37,13 +37,34 @@ const fixDetachedThis = {
   },
 };
 
+// 위젯 조각 밖으로 새지 않게 — tw.css 가 낳는 모든 규칙을 `:where(.rc-tw)` 자손으로 가둔다.
+// 위젯은 남의 문서(콘솔·패키지 뷰, 대개 그쪽도 Tailwind)에 끼워지고, 유틸리티는 레이어 밖에
+// 있어(tw.css 머리 주석) 호스트의 @layer 유틸리티를 무조건 이긴다. 같은 이름의 클래스가 양쪽에
+// 있으면 호스트의 변형(sm:·hover:·focus-visible:)이 위젯의 기본형(.max-w-[…]·.bg-transparent)에
+// 진다 — 실사고(2026-08-27): 콘솔 다이얼로그가 sm:max-w 를 잃고 뷰포트 전폭, 고스트 버튼 hover 무효.
+// :where 는 명시도 0 이라 (0,1,0) 그대로 — 호스트 원소 규칙은 여전히 이기고, 호스트 원소에는
+// 아예 닿지 않는다. .rc-tw 는 main.tsx 가 마운트 호스트에, ui/* 가 base-ui Portal 에 단다.
+// 가두지 않는 것: :root(토큰), *(--tw-* 변수 기본값), @keyframes·@font-face·@property.
+const SCOPE = ":where(.rc-tw)";
+const scopeToWidget = {
+  postcssPlugin: "relay-scope-to-widget",
+  Rule(rule) {
+    if (rule.parent?.type === "atrule" && /keyframes$/.test(rule.parent.name)) return;
+    rule.selectors = rule.selectors.map((s) => {
+      if (/^(:root|html|body|\*|:before|:after|::)/.test(s)) return s;
+      if (s.startsWith(SCOPE)) return s;
+      return `${SCOPE} ${s}`;
+    });
+  },
+};
+
 // Tailwind — tw.css(@import "tailwindcss/…") 만 postcss 로 굽는다. chat.css 는 손으로 쓴 CSS 그대로.
 const tailwindCss = {
   name: "tailwind",
   setup(build) {
     build.onLoad({ filter: /\/tw\.css$/ }, async (args) => {
       const src = await readFile(args.path, "utf8");
-      const out = await postcss([tailwind()]).process(src, { from: args.path });
+      const out = await postcss([tailwind(), scopeToWidget]).process(src, { from: args.path });
       return { contents: out.css, loader: "css", resolveDir: dirname(args.path) };
     });
   },

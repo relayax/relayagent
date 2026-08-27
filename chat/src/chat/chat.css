@@ -258,6 +258,9 @@
 /* 포털된 팝오버·메뉴의 포지셔너(z-50)를 도킹 패널(.rc-float-dock, z 2147483000 — main.tsx) 위로.
    포지셔너는 ui 컴포넌트가 클래스를 고정해 파일 쪽에서 못 올리므로 :has 로 그 상자를 집는다. */
 div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-content"]), div:has(> [data-slot="dropdown-menu-sub-content"]) { z-index: 2147483001; }
+/* 다이얼로그(z-50)도 같은 이유로 — 콘솔·위젯 어느 쪽이 띄우든 모달은 도킹 패널 위에 서야 한다.
+   실사고(2026-08-27): 스튜디오 '이전 판으로' 가 패널 뒤로 잘렸다. 배경막도 함께 올려 패널까지 가린다 */
+[data-slot="dialog-overlay"], [data-slot="dialog-content"] { z-index: 2147483001; }
 
 /* 모델 버튼의 자리 — 진행 중 턴 안내(.rc-model-notice)가 이 상자를 기준으로 뜬다 */
 .rc-model { position: relative; display: inline-flex; align-items: center; color: var(--rc-faint); }

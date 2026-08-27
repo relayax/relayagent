@@ -52,8 +52,15 @@ function showError(label: string, detail: string) {
 window.addEventListener("error", (e) => showError("스크립트 오류", String((e as ErrorEvent).message || e) + "\n" + ((e as ErrorEvent).filename || "")));
 window.addEventListener("unhandledrejection", (e) => showError("Promise 거부", String((e as PromiseRejectionEvent).reason)));
 
+/** 위젯 Tailwind 의 울타리 — tw.css 규칙은 .rc-tw 자손에만 닿는다(chat-build.mjs). 모든 마운트
+ *  호스트가 여기를 지난다(포털은 ui/* 가 단다). 호스트가 준 원소에 클래스 하나를 보태는 것뿐이다. */
+function scoped<T extends HTMLElement>(host: T): T {
+  host.classList.add("rc-tw");
+  return host;
+}
+
 function render(host: HTMLElement, ctxOverrides?: Partial<RelayCtx>) {
-  const root = createRoot(host);
+  const root = createRoot(scoped(host));
   root.render(
     <ErrorBoundary>
       <ChatApp ctxOverrides={ctxOverrides} />
@@ -68,7 +75,7 @@ function boot() {
   const hm = document.getElementById("relay-home");
   if (hm) {
     try {
-      createRoot(hm).render(<ErrorBoundary><Home /></ErrorBoundary>);
+      createRoot(scoped(hm)).render(<ErrorBoundary><Home /></ErrorBoundary>);
     } catch (e: any) {
       hm.innerHTML = `<pre style="${errStyle}">홈 부팅 오류:\n${String(e?.stack || e).replace(/</g, "&lt;")}</pre>`;
     }
@@ -79,7 +86,7 @@ function boot() {
   const ws = document.getElementById("relay-desk");
   if (ws) {
     try {
-      createRoot(ws).render(<ErrorBoundary><Desk /></ErrorBoundary>);
+      createRoot(scoped(ws)).render(<ErrorBoundary><Desk /></ErrorBoundary>);
     } catch (e: any) {
       ws.innerHTML = `<pre style="${errStyle}">데스크 부팅 오류:\n${String(e?.stack || e).replace(/</g, "&lt;")}</pre>`;
     }
@@ -359,7 +366,7 @@ export function mountTabs(el: HTMLElement, opts: RelayTabsMountOptions = {}) {
   const initial: OpenReq | undefined = opts.instanceId
     ? { instanceId: opts.instanceId, conversationId: opts.conversation, title: opts.title }
     : undefined;
-  const root = createRoot(el);
+  const root = createRoot(scoped(el));
   root.render(
     <ErrorBoundary>
       <ChatTabs
