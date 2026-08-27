@@ -260,7 +260,6 @@ var collapsed = false;
 try { collapsed = localStorage.getItem(KEY) === "1"; } catch (e) {}
 if (window.matchMedia("(max-width: 900px)").matches) collapsed = true;
 
-var FACE_KO = { view: "화면", chat: "대화", live: "상주", parts: "부품" };
 var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
   store: '<path d="M3 5.5h10l-.7 7a1 1 0 0 1-1 .9H4.7a1 1 0 0 1-1-.9zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/>',
@@ -472,7 +471,7 @@ function renderSide(nav, err){
         on: it.pkg === here,
         dot: it.resident,
         letter: !it.icon,
-        title: it.pkg + (it.ring0 ? " · ring-0" : "") + " — " + FACE_KO[it.face]
+        title: it.pkg + (it.ring0 ? " · ring-0" : "")
       }));
       if (it.pkg === here && !effective && !it.ring0 && it.href !== it.detail) {
         var ed = document.createElement("a");
