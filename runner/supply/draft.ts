@@ -370,18 +370,33 @@ export function discardDraft(name: string): { removed: string } {
   return { removed: name };
 }
 
-export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean }[] {
+export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean; empty: boolean }[] {
   const root = packagesPath();
   if (!fs.existsSync(root)) return [];
   return fs
     .readdirSync(root, { withFileTypes: true })
     .filter((e) => e.isDirectory() && SLUG.test(e.name))
-    .map((e) => ({
-      name: e.name,
-      version: manifestVersion(path.join(root, e.name)),
-      changes: changes(path.join(root, e.name)).length,
-      installed: !!ledger.packages[e.name],
-    }));
+    .map((e) => {
+      const droot = path.join(root, e.name);
+      const n = changes(droot).length;
+      return {
+        name: e.name,
+        version: manifestVersion(droot),
+        changes: n,
+        installed: !!ledger.packages[e.name],
+        // 빈 초안 = 이름만 짓고 만 것: 기록하지 않은 변경이 없고 이력이 "draft open" 한 줄뿐.
+        // 홈이 카드 대신 한 줄로 접고 바로 버릴 수 있게 한다(2026-08-27). changes 0 만으로는
+        // 첫 판을 기록해 둔 초안(내용 있음)과 구분이 안 됐다
+        empty: n === 0 && isScaffoldOnly(droot),
+      };
+    });
+}
+
+function isScaffoldOnly(droot: string): boolean {
+  const r = git(droot, "log", "--format=%s", "-n", "2");
+  if (!r.ok) return false;
+  const lines = r.out.split("\n").filter(Boolean);
+  return lines.length === 1 && lines[0].startsWith("draft open");
 }
 
 /** 기록(커밋) 이력 — 최근 것부터. 화면의 [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록이다.

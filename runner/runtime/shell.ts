@@ -66,6 +66,8 @@ export interface DraftEntry {
   version: string | null;
   changes: number;
   installed: boolean;
+  /** 이름만 짓고 만 초안(변경 0 · 이력 "draft open" 뿐) — 홈이 카드 대신 한 줄로 접는다 */
+  empty: boolean;
 }
 
 export interface ShellNav {
@@ -76,7 +78,7 @@ export interface ShellNav {
   /** 스튜디오 시작 화면 — 만드는 중인 초안 목록이 여기 있다 */
   /** 발행 전 초안 — 장부에 없어 카드로는 서지 않지만, 어느 화면에도 없으면 만들다 만 것이 잃은
    *  것처럼 보인다. href 는 그 초안을 여는 스튜디오 주소(마운트 문법은 기판이 조립한다) */
-  drafts: { name: string; version: string | null; changes: number; href: string }[];
+  drafts: { name: string; version: string | null; changes: number; empty: boolean; href: string }[];
   /** 스토어 웹 주소 — 이 기판에 스토어 연결이 켜져 있을 때만. OSS 기본(연결 없음)은 null 이라
    *  항목 자체가 그려지지 않는다 — "마켓의 문은 여는 쪽이 연다"는 중립 설계가 사이드바에도 그대로 선다 */
   store: string | null;
@@ -208,7 +210,7 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
   const store = STORE_INDEX_URL ? STORE_INDEX_URL.replace(/\/index\.json$/, "/") : null;
   const pending = drafts
     .filter((d) => !d.installed)
-    .map(({ name, version, changes }) => ({ name, version, changes, href: consoleHref(ledger, `?p=${encodeURIComponent(name)}&face=detail`) }));
+    .map(({ name, version, changes, empty }) => ({ name, version, changes, empty, href: consoleHref(ledger, `?p=${encodeURIComponent(name)}&face=detail`) }));
   return {
     items,
     home: "/",
@@ -221,9 +223,21 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
 
 /** 문서 말미에 스크립트 한 줄. </body> 부재(손저작 단일 HTML)면 append — injectPortalBar 와 같은 관례 */
 const SHELL_TAG = `<script src="/shell.js" defer></script>`;
+/** 첫 페인트 전에 자리부터 잡는 선주입 — <head> 맨 앞. 본체(shell.js)는 문서 끝에서 defer 로 도니
+ *  그것만으로는 페이지를 옮길 때마다 본문이 전체 폭으로 먼저 그려졌다가 사이드바 폭만큼 밀렸다
+ *  (margin 전이가 매번 재생되어 화면이 들썩였다, 2026-08-27). 여기서 사람의 접힘 선호를 읽어
+ *  --relay-side 를 먼저 선언하고, 사이드바가 설 자리를 같은 색 띠로 미리 칠한다. iframe 안이면
+ *  본체와 같은 판단으로 아무것도 하지 않는다(html.rlys-top 없이는 어느 규칙도 안 붙는다) */
+const SHELL_PRE = `<script>(function(){try{if(self!==top)return}catch(e){return}var c=false;try{c=localStorage.getItem("relay-shell-collapsed")==="1"}catch(e){}if(matchMedia("(max-width: 900px)").matches)c=true;var d=document.documentElement;d.className+=" rlys-top";d.style.setProperty("--relay-side",(c?56:248)+"px")})()</script><style>html.rlys-top body{margin-left:var(--relay-side)}html.rlys-top::before{content:"";position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);background:#fafafa;border-right:1px solid #e5e5e5;z-index:2147482989}@media print{html.rlys-top::before{display:none}}</style>`;
 export function injectShell(html: string): string {
   const i = html.lastIndexOf("</body>");
-  return i >= 0 ? html.slice(0, i) + SHELL_TAG + html.slice(i) : html + SHELL_TAG;
+  let out = i >= 0 ? html.slice(0, i) + SHELL_TAG + html.slice(i) : html + SHELL_TAG;
+  const h = out.search(/<head[^>]*>/i);
+  if (h >= 0) {
+    const end = out.indexOf(">", h) + 1;
+    out = out.slice(0, end) + SHELL_PRE + out.slice(end);
+  }
+  return out;
 }
 
 /**
@@ -264,6 +278,7 @@ var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
   store: '<path d="M3 5.5h10l-.7 7a1 1 0 0 1-1 .9H4.7a1 1 0 0 1-1-.9zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
+  dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
   edit: '<path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M10 4l2 2"/>',
   draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
@@ -282,7 +297,8 @@ var css = [
 '@font-face{font-family:"Pretendard Variable";font-weight:45 920;font-style:normal;font-display:swap;src:url("/assets/pretendard.woff2") format("woff2-variations")}',
 ':root{--relay-side:' + (collapsed ? RAIL : W) + 'px;--relay-accent:#262626;--relay-accent-deep:#171717;--relay-accent-soft:rgba(0,0,0,.06)}',
 '#rlys.hid{display:none}',
-'body{margin-left:var(--relay-side);transition:margin-left .16s ease}',
+// 전이는 문서가 선 뒤에만 — 첫 페인트에서 0→폭으로 미끄러지는 일이 없도록(선주입이 값을 먼저 놓지만, 손저작 단일 HTML 처럼 <head> 가 없는 문서도 있다)
+'body{margin-left:var(--relay-side)}html.rlys-ready body{transition:margin-left .16s ease}',
 '#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fafafa;border-right:1px solid #e5e5e5;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
 '#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
@@ -291,14 +307,23 @@ var css = [
 '#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
 '#rlys .hd .fold:hover{background:#f0f0f0;color:#5c6570}',
+// 새로 만들기 — 헤더의 아이콘 버튼(접기 옆). 목록 속 한 행으로 두면 채우든 테두리든 혼자 튀어 어색했다(2026-08-27)
+'#rlys .hd .mk{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#1a1a1a;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
+'#rlys .hd .mk:hover{background:#f0f0f0}',
+'#rlys .hd .mk svg{width:15px;height:15px}',
+'#rlys .hd .mk+.fold{margin-left:0}',
+// + 메뉴 — 작은 팝오버. 사이드바(루트·헤더)가 overflow:hidden 이라 body 에 fixed 로 띄운다. 포커스만 옮기면 홈에서는 "아무 일도 없는" 것으로 보였고,
+// 불러오기는 홈의 옅은 링크 줄에서 못 찾았다(2026-08-27). 누르면 뭔가 열리고, 갈 곳이 글자로 보인다
+'#rlys-mn{position:fixed;z-index:2147482991;background:#fff;border:1px solid #e3e6ea;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.08);padding:4px;display:flex;flex-direction:column;gap:1px;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif}',
+'#rlys-mn a{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;color:#1a1a1a;text-decoration:none;font-weight:500;white-space:nowrap}',
+'#rlys-mn a:hover{background:#f0f0f0}',
+'#rlys-mn a svg{width:14px;height:14px;flex:none;color:#5c6570}',
+'#rlys-mn a small{display:block;font-weight:400;color:#98a1aa;font-size:11px}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
 '#rlys .lb{font-size:11px;font-weight:700;color:#98a1aa;text-transform:uppercase;letter-spacing:.04em;padding:12px 10px 6px;white-space:nowrap}',
 '#rlys .gp{display:flex;flex-direction:column;gap:1px}',
 '#rlys .pk{overflow-y:auto;overflow-x:hidden;min-height:0;flex:0 1 auto}',
 '#rlys .sp{flex:1 1 auto;min-height:8px}',
-'#rlys .it.mk{background:#262626;color:#fff;font-weight:600;margin:4px 0 12px}',
-'#rlys .it.mk:hover{background:#171717}',
-'#rlys .it.mk .ic{color:#fff}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
 '#rlys .it:hover{background:#f0f0f0}',
 '#rlys .it.on{background:var(--relay-accent-soft);color:var(--relay-accent-deep);font-weight:600}',
@@ -309,6 +334,7 @@ var css = [
 '#rlys .it .ic.ltr{background:#ebebeb;font:700 11px inherit;color:#5c6570}',
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
+'#rlys .it .dt.edt{background:#2563eb}',
 '#rlys .rw{position:relative;display:flex;align-items:center}',
 // 손보기 연필 — 지금 열린 앱의 줄에만 늘 보인다. 호버도 메뉴도 없다(그 줄은 이미 와 있으니 잘못 눌러 이동할 일이 없다)
 '#rlys .rw .ed{position:absolute;right:6px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--relay-accent-deep);text-decoration:none}',
@@ -322,7 +348,8 @@ var css = [
 '#rlys.cl .nm,#rlys.cl .lb,#rlys.cl .hd span,#rlys.cl .em,#rlys.cl .er{display:none}',
 '#rlys.cl a.it,#rlys.cl button.it{justify-content:center;padding:7px 0;position:relative}',
 '#rlys.cl .hd{padding:10px 0 12px;justify-content:center}',
-'#rlys.cl .hd .fold{margin:0}',
+'#rlys.cl .hd{flex-direction:column;gap:4px}',
+'#rlys.cl .hd .fold,#rlys.cl .hd .mk{margin:0}',
 '#rlys.cl .hd .mark{display:none}',
 '#rlys.cl .it .dt{position:absolute;right:6px;bottom:6px}',
 // ── 홈(런처) — 본체는 위젯 번들(chat/src/chat/Home.tsx)이 그린다. 여기는 치수 계약 한 줄뿐 ──
@@ -332,6 +359,10 @@ var css = [
 var style = document.createElement("style");
 style.textContent = css;
 document.head.appendChild(style);
+
+// 선주입(SHELL_PRE)의 값을 본체가 잇는다. 전이는 두 프레임 뒤부터 — 지금 붙이면 선주입이 없던 문서에서 첫 배치가 미끄러진다
+document.documentElement.className += " rlys-top";
+requestAnimationFrame(function(){ requestAnimationFrame(function(){ document.documentElement.className += " rlys-ready"; }); });
 
 var el = document.createElement("nav");
 el.id = "rlys";
@@ -362,7 +393,10 @@ window.addEventListener("relay:shell-fold", function(ev){
 
 // 지금 어느 패키지에 서 있는가 — 좌표는 기판이 주입한다(§2-6). 콘솔 위에서는 그 페이지가
 // 보고 있는 패키지(?p=)가 곧 현재 항목이다
+// 홈은 어느 패키지 위에도 서 있지 않다 — 홈 문서의 __RELAY_CONTEXT.instanceId 는 위젯의 API 좌표(콘솔)일 뿐이라
+// 그걸 현재 항목으로 읽으면 홈과 Relay 줄이 같이 켜진다
 function current(){
+  if (onHome()) return "";
   try {
     var p = new URLSearchParams(location.search).get("p");
     if (p) return p;
@@ -383,7 +417,8 @@ function item(href, iconHtml, label, opts){
     '<span class="nm">' + esc(label) + '</span>' +
     // 얼굴(화면·대화…) 글리프는 두지 않는다 — 오른쪽 끝의 작은 아이콘은 버튼으로 읽히는데 눌러도 아무 일이 없다.
     // 종류는 title 과 홈 카드의 칩이 말한다
-    (opts.dot ? '<span class="dt" title="도는 중"></span>' : "");
+    // 수정 중(적용 안 한 변경)은 파란 점 — 홈 카드의 "수정 중" 칩과 같은 상태인데 사이드바에선 안 보였다(2026-08-27)
+    (opts.dot ? '<span class="dt" title="도는 중"></span>' : opts.edit ? '<span class="dt edt" title="수정 중 — 적용 안 한 변경이 있습니다"></span>' : "");
   return a;
 }
 
@@ -412,6 +447,44 @@ function renderSide(nav, err){
   hd.innerHTML = brand && (brand.logo || brand.name)
     ? (brand.logo ? '<img src="' + esc(brand.logo) + '" alt="">' : '') + '<span>' + esc(brand.name || "Relay") + '</span>'
     : MARK;
+  // 새로 만들기 = 홈의 입력 상자로. 빈 채팅창을 띄우면 "뭘 쓰라는 건지"가 없다 — 상자는
+  // 질문("무엇을 만들까요?")·예시·무슨 일이 일어나는지를 같이 말한다. 대화는 거기서 이어진다
+  var mk = document.createElement("button");
+  mk.type = "button";
+  mk.className = "mk";
+  mk.title = "새로 만들기 — 채팅으로 시작하거나 파일을 불러옵니다";
+  mk.setAttribute("aria-label", "새로 만들기");
+  mk.innerHTML = svg(ICONS.plus);
+  mk.setAttribute("aria-haspopup", "menu");
+  mk.onclick = function(ev){
+    ev.stopPropagation();
+    var open = document.getElementById("rlys-mn");
+    if (open) { open.remove(); return; }
+    var mn = document.createElement("div");
+    mn.id = "rlys-mn";
+    mn.setAttribute("role", "menu");
+    function row(href, icon, label, sub, onclick){
+      var a = document.createElement("a");
+      a.href = href; a.setAttribute("role", "menuitem");
+      a.innerHTML = svg(icon) + '<span>' + esc(label) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>';
+      if (onclick) a.onclick = function(e){ e.preventDefault(); mn.remove(); onclick(); };
+      return a;
+    }
+    // 채팅으로 시작 — 홈의 입력 상자. 홈이면 포커스만, 아니면 /#new
+    mn.appendChild(row("/#new", ICONS.home, "채팅으로 시작하기", "만들고 싶은 것을 말로 설명", function(){
+      if (home) { try { window.dispatchEvent(new CustomEvent("relay:home-ask")); } catch (e) {} }
+      else location.href = "/#new";
+    }));
+    mn.appendChild(row(nav && nav.importer ? nav.importer : "/store/import", ICONS.dl, "파일 불러오기", "받은 에이전트 파일(.relay)"));
+    var r = mk.getBoundingClientRect();
+    if (effective) { mn.style.left = (r.right + 8) + "px"; mn.style.top = r.top + "px"; mn.style.minWidth = "200px"; }
+    else { mn.style.left = "8px"; mn.style.top = (r.bottom + 6) + "px"; mn.style.width = (W - 16) + "px"; }
+    document.body.appendChild(mn);
+    var close = function(e){ if (!mn.contains(e.target)) { mn.remove(); document.removeEventListener("click", close); document.removeEventListener("keydown", esc_); } };
+    var esc_ = function(e){ if (e.key === "Escape") close({ target: document.body }); };
+    setTimeout(function(){ document.addEventListener("click", close); document.addEventListener("keydown", esc_); }, 0);
+  };
+  hd.appendChild(mk);
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";
@@ -424,19 +497,6 @@ function renderSide(nav, err){
   var top = document.createElement("div");
   top.className = "gp";
   top.appendChild(item(nav ? nav.home : "/", svg(ICONS.home), "홈", { on: onHome(), title: "홈 — 만들고 손보는 곳" }));
-  // 새로 만들기 = 홈의 입력 상자로. 빈 채팅창을 띄우면 "뭘 쓰라는 건지"가 없다 — 상자는
-  // 질문("무엇을 만들까요?")·예시·무슨 일이 일어나는지를 같이 말한다. 대화는 거기서 이어진다.
-  // 이 화면에서 제일 중요한 행동이라 목록 위, 채워진 버튼이다
-  var mk = document.createElement("button");
-  mk.type = "button";
-  mk.className = "it mk";
-  mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
-  mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
-  mk.onclick = function(){
-    if (home) { try { window.dispatchEvent(new CustomEvent("relay:home-ask")); } catch (e) {} }
-    else location.href = "/#new";
-  };
-  top.appendChild(mk);
   // 스토어 — 이 기판에 스토어 연결이 켜져 있을 때만 서버가 주소를 싣는다 (OSS 기본은 없음)
   if (nav && nav.store) {
     top.appendChild(item(nav.store, svg(ICONS.store), "스토어", { title: "스토어 — 에이전트 마켓플레이스" }));
@@ -451,6 +511,11 @@ function renderSide(nav, err){
   }
 
   if (nav) {
+    // 홈·스토어(문)와 설치된 에이전트(목록)를 라벨 하나로 가른다 — 라벨 없이는 같은 줄로 읽혔다(2026-08-27)
+    var lb = document.createElement("div");
+    lb.className = "lb";
+    lb.textContent = "에이전트";
+    el.appendChild(lb);
     var pk = document.createElement("div");
     pk.className = "gp pk";
     if (!nav.items.length) {
@@ -470,6 +535,7 @@ function renderSide(nav, err){
       rw.appendChild(item(it.href, ic, it.label, {
         on: it.pkg === here,
         dot: it.resident,
+        edit: it.editing,
         letter: !it.icon,
         title: it.pkg + (it.ring0 ? " · ring-0" : "")
       }));
@@ -496,10 +562,13 @@ function renderSide(nav, err){
 // 홈 본체(입력 상자·카드·사용 안내)는 위젯 번들 Home.tsx 가 #relay-home 에 그린다(2026-08-27 이전엔 여기).
 // 사이드바는 그 문서에서도 이 스크립트가 그린다 — 크롬은 React 번들에 의존하지 않는다.
 
+// 지난 응답을 탭에 기억해 두고 다음 문서에서는 그걸로 먼저 그린다 — 페이지를 옮길 때마다 목록이 비었다가
+// 채워지며 툭 튀던 것을 없앤다. 새 응답이 오면 바로 덮으므로 낡은 상태는 한 왕복 동안만 보인다
+var NAVKEY = "relay-shell-nav";
 function loadNav(){
   fetch("/shell/nav", { cache: "no-store" })
     .then(function(r){ return r.ok ? r.json() : r.json().then(function(d){ throw new Error(d && d.error || ("HTTP " + r.status)); }); })
-    .then(function(nav){ renderSide(nav, null); })
+    .then(function(nav){ try { sessionStorage.setItem(NAVKEY, JSON.stringify(nav)); } catch (e) {} renderSide(nav, null); })
     .catch(function(e){
       // 사이드바는 편의 크롬이라 문서를 죽이지 않는다. 다만 침묵하지도 않는다 —
       // 홈은 그 목록이 곧 내용이므로 실패가 화면의 본문이 된다
@@ -508,7 +577,9 @@ function loadNav(){
     });
 }
 
-renderSide(null, null);
+var cached = null;
+try { cached = JSON.parse(sessionStorage.getItem(NAVKEY) || "null"); } catch (e) {}
+renderSide(cached && cached.items ? cached : null, null);
 loadNav();
 // 목록은 한 번 읽고 끝이 아니다 — 같은 문서에서 대화가 발행을 끝내거나(relay:turn settled),
 // 스튜디오가 적용·버리기를 마치거나(relay:nav-refresh), 다른 탭에 갔다 돌아오면 다시 읽는다.
