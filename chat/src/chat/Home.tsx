@@ -31,13 +31,13 @@ const ASK_EVENT = "relay:home-ask";
 const GUIDE_KEY = "relay-guide-v2";
 const GUIDE: ReadonlyArray<{ t: string; b: React.ReactNode }> = [
   { t: "Relay에 오신 것을 환영합니다",
-    b: <>Relay는 AI 에이전트를 <b>앱처럼 설치해서 쓰는</b> 내 컴퓨터 속 작업 공간입니다. 설치된 앱은 <b>왼쪽 사이드바</b>에서 골라 쓰고, 이 홈에서는 <b>새로 만들거나 손볼 것</b>을 봅니다.</> },
+    b: <>Relay는 AI 에이전트를 <b>앱처럼 설치해서 쓰는</b> 내 컴퓨터 속 작업 공간입니다. 설치된 에이전트는 <b>왼쪽 사이드바</b>에서 골라 쓰고, 이 홈에서는 <b>새로 만들거나 손볼 것</b>을 봅니다.</> },
   { t: "만들기는 말로 시작합니다",
     b: <>홈 위의 입력창에 원하는 것을 적어 보세요. 예를 들어 <b>"근태관리 도우미 만들어줘"</b>. 빌더가 <b>설계부터 적용까지</b> 진행하고, 그 대화가 오른쪽에 열려 과정과 질문을 볼 수 있습니다.</> },
   { t: "손으로 고치려면 상세 화면",
-    b: <>사이드바에서 앱을 고르고 <b>[상세]</b>를 누르면 그 앱이 무엇을 하는지 한 장으로 보입니다. <b>줄을 누르면 그 자리에서</b> 고치고 결과를 미리 보며, <b>[적용]</b>을 눌러야 실제로 돌아가는 판이 바뀝니다.</> },
+    b: <>사이드바에서 에이전트를 고르고 <b>[상세]</b>를 누르면 무엇을 하는지 한 장으로 보입니다. <b>줄을 누르면 그 자리에서</b> 고치고 결과를 미리 보며, <b>[적용]</b>을 눌러야 실제로 바뀝니다.</> },
   { t: "안전장치가 기본입니다",
-    b: <>비밀번호와 토큰은 <b>금고에만 저장</b>되고, 에이전트는 <b>허락한 폴더만</b> 봅니다. 앱끼리 연결할 때도 <b>내 승인이 있어야</b> 켜집니다. 이 안내는 설정 화면의 [안내]로 다시 볼 수 있습니다.</> },
+    b: <>비밀번호와 토큰은 <b>안전하게 따로 저장</b>되고, 에이전트는 <b>허락한 폴더만</b> 봅니다. 에이전트끼리 연결할 때도 <b>내 승인이 있어야</b> 켜집니다. 이 안내는 설정 화면의 [안내]로 다시 볼 수 있습니다.</> },
 ];
 
 function useNav(): { nav: ShellNav | null; err: string | null } {
@@ -45,7 +45,7 @@ function useNav(): { nav: ShellNav | null; err: string | null } {
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(() => {
     fetchNav().then((n) => { setNav(n); setErr(null); })
-      .catch((e) => { setErr("설치 목록을 읽지 못했습니다: " + String(e?.message || e)); });
+      .catch((e) => { setErr("설치 목록을 읽지 못했어요: " + String(e?.message || e)); });
   }, []);
   useEffect(() => {
     load();
@@ -70,7 +70,7 @@ export function Home() {
       {nav ? <Ask nav={nav} /> : null}
       {err ? (
         <Empty className="mx-5 my-4 rounded-xl border border-border bg-background">
-          <EmptyHeader><EmptyTitle>설치 목록을 읽지 못했습니다</EmptyTitle><EmptyDescription>{err}</EmptyDescription></EmptyHeader>
+          <EmptyHeader><EmptyTitle>설치 목록을 읽지 못했어요</EmptyTitle><EmptyDescription>{err}</EmptyDescription></EmptyHeader>
         </Empty>
       ) : nav ? <Progress nav={nav} /> : null}
       <Guide />
@@ -123,12 +123,12 @@ function Ask({ nav }: { nav: ShellNav }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
           maxLength={2000}
           rows={2}
-          placeholder="만들고 싶은 비서를 적어 주세요."
+          placeholder="만들고 싶은 에이전트를 적어 주세요"
           aria-label="만들 것을 말로 설명"
           className="min-h-[58px] resize-none border-0 bg-transparent px-0.5 py-0 text-[14.5px] leading-[1.55] shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-[14.5px]"
         />
         <div className="flex items-center justify-between gap-2">
-          <p className="m-0 text-xs text-muted-foreground">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p>
+          <p className="m-0 text-xs text-muted-foreground">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열려요.</p>
           {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스·"수정 중" 칩 셋뿐. 나머지는 neutral */}
           <Button type="submit" size="sm" className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
         </div>
@@ -150,7 +150,7 @@ function Ask({ nav }: { nav: ShellNav }) {
           <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Download className="size-4" /></ItemMedia>
           <ItemContent className="flex-row items-center gap-2.5">
             <ItemTitle className="text-[13.5px]">불러오기</ItemTitle>
-            <ItemDescription className="text-xs">누군가에게 받은 에이전트 파일을 엽니다</ItemDescription>
+            <ItemDescription className="text-xs">받은 에이전트 파일을 열어요</ItemDescription>
           </ItemContent>
           <ChevronRight className="size-4 text-muted-foreground" />
         </Item>
@@ -159,7 +159,7 @@ function Ask({ nav }: { nav: ShellNav }) {
             <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Store className="size-4" /></ItemMedia>
             <ItemContent className="flex-row items-center gap-2.5">
               <ItemTitle className="text-[13.5px]">스토어에서 담기</ItemTitle>
-              <ItemDescription className="text-xs">만들어진 에이전트를 골라 설치합니다</ItemDescription>
+              <ItemDescription className="text-xs">만들어진 에이전트를 골라 설치해요</ItemDescription>
             </ItemContent>
             <ChevronRight className="size-4 text-muted-foreground" />
           </Item>
@@ -174,7 +174,7 @@ function Progress({ nav }: { nav: ShellNav }) {
   if (isEmptyNav(nav)) {
     return (
       <Empty className="mx-5 my-4 rounded-xl border border-border bg-background">
-        <EmptyHeader><EmptyTitle>아직 설치된 에이전트가 없습니다</EmptyTitle><EmptyDescription>위 상자에 만들고 싶은 것을 적어 시작하세요.</EmptyDescription></EmptyHeader>
+        <EmptyHeader><EmptyTitle>아직 설치된 에이전트가 없어요</EmptyTitle><EmptyDescription>위 입력칸에 만들고 싶은 것을 적어 시작하세요</EmptyDescription></EmptyHeader>
       </Empty>
     );
   }
@@ -186,7 +186,7 @@ function Progress({ nav }: { nav: ShellNav }) {
       {ups && nav.library ? (
         // 새 판 요약 배너 — 개수만 말한다. 실행은 각 카드의 버튼(설치 동의 관문이 판마다 선다)
         <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3.5 py-2 text-xs">
-          ⬆ <b className="font-semibold">새 판이 나온 에이전트 {ups}개</b> — 카드의 업데이트 버튼으로 받으세요
+          <b className="font-semibold">업데이트 {ups}개</b> · 카드에서 받을 수 있어요
           <span className="flex-1" />
           <a href={nav.library} className="font-semibold text-blue-700 underline underline-offset-3">내 서재 열기</a>
         </div>
@@ -194,7 +194,7 @@ function Progress({ nav }: { nav: ShellNav }) {
       {any ? (
         <h3 className="mx-auto mt-2 mb-0 max-w-[1240px] px-5 text-xs font-bold tracking-wide text-muted-foreground">진행 중</h3>
       ) : (
-        <p className="mx-auto my-5 max-w-[620px] px-5 text-center text-[13px] text-muted-foreground">진행 중인 것이 없습니다 — 앱은 왼쪽 목록에서 골라 쓰세요.</p>
+        <p className="mx-auto my-5 max-w-[620px] px-5 text-center text-[13px] text-muted-foreground">진행 중인 것이 없어요. 에이전트는 왼쪽 목록에서 골라 쓰세요.</p>
       )}
       <div className="grid gap-3 px-5 py-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))" }}>
         {todo.map((it) => <ItemCard key={it.pkg} it={it} library={nav.library} />)}

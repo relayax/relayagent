@@ -100,7 +100,7 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
           <Popover open={picking} onOpenChange={(o) => { setPicking(o); if (o) setAdding(false); }}>
             {/* 칩 버튼 — Badge 와 같은 높이(h-5)로 맞춰 정적 칩과 한 줄에 선다 */}
             <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-5 max-w-full cursor-pointer gap-2 rounded-full px-2 text-xs" />}
-                            title={label + " — 클릭해서 대상 바꾸기"} aria-haspopup="listbox">
+                            title={label + " · 눌러서 대상 바꾸기"} aria-haspopup="listbox">
               {chipBody}
               <ChevronDownIcon className="size-3! opacity-45" aria-hidden />
             </PopoverTrigger>
@@ -114,7 +114,7 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
             <Popover open={adding} onOpenChange={(o) => { setAdding(o); if (o) setPicking(false); }}>
               {/* [+] 대상 추가 — 칩과 같은 알약이되 정사각(아이콘 자리). 교체(▾)와 시각적으로 분리한다. */}
               <PopoverTrigger render={<Button type="button" variant="secondary" size="xs" className="rc-chip h-5 cursor-pointer rounded-full px-2 text-xs text-muted-foreground hover:text-foreground" />}
-                              title="작업 대상 추가 — 이 대화에서 함께 볼 워크벤치" aria-haspopup="listbox">
+                              title="작업 대상 추가 · 이 대화에서 함께 볼 화면" aria-haspopup="listbox">
                 <PlusIcon className="size-3!" aria-hidden />
               </PopoverTrigger>
               {adding && (
@@ -179,7 +179,7 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
     items.push({
       key: "page",
       name: label(pageConv),
-      desc: "지금 보고 있는 화면의 대상으로 맞춥니다",
+      desc: "지금 보고 있는 화면을 대상으로",
       run: () => target.retarget(pageConv, empty),
     });
   }
@@ -199,10 +199,10 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
   return (
     <div className="flex flex-col gap-px" role="listbox" aria-label="대화 대상 바꾸기">
       <PickNote>
-        {empty ? "빈 대화라 이 자리에서 대상만 바뀝니다" : "말이 오간 대화는 그대로 두고 그 대상의 대화로 이동합니다"}
+        {empty ? "빈 대화라 이 자리에서 대상만 바뀌어요" : "이 대화는 그대로 두고 그 대상의 대화로 이동해요"}
       </PickNote>
       {items.length === 0 ? (
-        <PickNote>이 에이전트 안에서 바꿀 수 있는 다른 대상이 없습니다</PickNote>
+        <PickNote>이 에이전트 안에 바꿀 수 있는 다른 대상이 없어요</PickNote>
       ) : items.map((it) => (
         <Item key={it.key} render={<button type="button" />} role="option" aria-selected={false} size="xs" className={pickItemCls}
               onClick={() => { it.run(); onClose(); }}>
@@ -215,7 +215,7 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
       {insts.length > 0 && (
         <>
           {/* 섹션 구분 — "여기가 바뀐다"(위)와 "저기로 간다"(아래)를 눈으로 가른다. */}
-          <div className="mt-1 border-t border-border px-2.5 pt-2 pb-1 text-[11px] leading-snug text-muted-foreground">다른 에이전트 — 새 탭으로 열립니다</div>
+          <div className="mt-1 border-t border-border px-2.5 pt-2 pb-1 text-[11px] leading-snug text-muted-foreground">다른 에이전트 · 새 탭으로 열려요</div>
           {insts.map((i) => (
             <Item key={i.id} render={<button type="button" />} role="option" aria-selected={false} size="xs" className={pickItemCls}
                   onClick={() => { target.openInstance(i.id); onClose(); }}>
@@ -262,7 +262,7 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
   const apply = () => {
     if (!picked.length) return;
     if (empty) target.retarget(withTargets(cur.agent, [...curTargets, ...picked]), true);
-    else onSend("[작업 대상 추가] " + picked.join(", ") + " — 이 대화에서 함께 다뤄 주세요.");
+    else onSend("[작업 대상 추가] " + picked.join(", ") + " 도 이 대화에서 함께 봐 줘.");
     onClose();
   };
 
@@ -270,12 +270,12 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
     <div className="flex flex-col gap-px" role="listbox" aria-label="작업 대상 추가" aria-multiselectable>
       <PickNote>
         {"지금 대상: " + (curTargets.length ? curTargets.join(", ") : "없음")}
-        {empty ? " · 빈 대화라 이 자리에서 더해집니다" : " · 대화는 그대로 두고 대상만 더합니다"}
+        {empty ? " · 빈 대화라 이 자리에서 더해져요" : " · 대화는 그대로 두고 대상만 더해요"}
       </PickNote>
       {rows === null ? (
         <PickNote>불러오는 중…</PickNote>
       ) : candidates.length === 0 ? (
-        <PickNote>더할 수 있는 대상이 없습니다 — 그 워크벤치를 한 번 열어 보면 여기 목록에 잡힙니다</PickNote>
+        <PickNote>더할 수 있는 대상이 없어요. 그 화면을 한 번 열어 보면 여기 목록에 나와요</PickNote>
       ) : (
         <>
           {candidates.map((t) => {
@@ -348,7 +348,7 @@ function EffortRow() {
 
   return (
     <div className={"mt-1 flex flex-col gap-1.5 border-t border-border px-2 pt-2 pb-1" + (loaded ? "" : " rc-model-loading")}
-         title="추론 강도 — 이 대화에만 적용, 다음 응답부터. 단을 눌러 설정 · 눌린 단을 다시 누르면 기본값. 점선 밑줄이 이 대화가 기본으로 실행되는 레벨입니다.">
+         title="추론 강도. 이 대화에만, 다음 응답부터 적용돼요. 눌린 단을 다시 누르면 기본값으로 돌아가요. 점선 밑줄이 이 대화의 기본 레벨이에요.">
       <span className="flex items-center gap-1.5 text-xs font-medium text-foreground whitespace-nowrap">
         <SlidersHorizontalIcon className="size-3.5 opacity-80" aria-hidden />
         Effort <span className={isDefault ? "font-normal text-muted-foreground" : "text-muted-foreground"}>({label})</span>
@@ -500,7 +500,7 @@ function ModelPicker() {
     return (
       <DropdownMenuRadioGroup value={value} onValueChange={(v) => pick(v === DEFAULT_ROW ? "" : String(v))} aria-label="모델">
         {list === undefined && <PickNote>모델 목록을 읽는 중…</PickNote>}
-        {list === null && <PickNote>모델 목록을 받지 못했습니다 — 고르면 이 공급자로 바꿉니다</PickNote>}
+        {list === null && <PickNote>모델 목록을 받지 못했어요. 고르면 이 공급자로 바꿔요</PickNote>}
         {list !== undefined && (
           <DropdownMenuRadioItem value={DEFAULT_ROW} closeOnClick className="rounded-lg">
             <span className="flex min-w-0 flex-col gap-0.5">
@@ -523,7 +523,7 @@ function ModelPicker() {
 
   return (
     <div className={"rc-model" + (loaded ? "" : " rc-model-loading")}
-         title="AI 모델 — 이 대화에만 적용, 다음 응답부터. '기본'은 인스턴스 바인딩(없으면 CLI 기본)을 따릅니다.">
+         title="AI 모델. 이 대화에만, 다음 응답부터 적용돼요. '기본'은 이 에이전트에 정해진 모델을 써요.">
       <DropdownMenu open={open} onOpenChange={setOpen}>
         {/* 모델 버튼 — 도구 줄 오른쪽의 글자 버튼(레퍼런스의 "Auto"). 테두리 없이 이름과 꺾쇠만 */}
         <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="xs" className="h-auto cursor-pointer gap-1 px-1.5 py-1 text-[12.5px] text-muted-foreground hover:text-inherit" />}>
@@ -924,7 +924,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
     const incoming = arr.reduce((s, f) => s + f.size, 0);
     const limit = attTotalLimitRef.current;
     if (current + incoming > limit) {
-      setAttError(`첨부 용량이 너무 큽니다 (합계 최대 ${fmtSize(limit)}). 일부 파일을 빼주세요.`);
+      setAttError(`첨부 용량이 너무 커요 (합계 최대 ${fmtSize(limit)}). 일부 파일을 빼 주세요.`);
       return;
     }
 
@@ -1004,7 +1004,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
     // 사이드밴드 업로드가 진행 중이면 보내지 않는다 — 참조(path) 없는 첨부가 실리면
     // 그 파일만 조용히 빠진 턴이 된다(무음 유실 금지).
     if (atts.some((a) => a.uploading)) {
-      setAttError("파일 업로드가 끝나면 전송할 수 있습니다.");
+      setAttError("파일 업로드가 끝나면 보낼 수 있어요.");
       return;
     }
     // 빌트인 인터셉트(/clear·/effort·/model) — 턴 없이 제어평면에서 끝난다. 턴 실행 중에도
@@ -1016,7 +1016,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
       void executeBuiltin(ctx, builtin.name, builtin.arg).then(showNotice);
       return;
     }
-    const promptText = t || "첨부한 파일을 확인해주세요.";
+    const promptText = t || "첨부한 파일을 봐 줘.";
     const sendAtts = atts;
     setText("");
     setAtts([]);
@@ -1166,10 +1166,10 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
             ref={taRef}
             className="rc-input"
             placeholder={running
-              ? "응답 중… 잠시만 기다려주세요"
+              ? "응답이 끝나면 보내요"
               : agents.length > 0
-              ? "여기에 메시지를 입력하세요 — @로 에이전트 지정"
-              : "여기에 메시지를 입력하세요"}
+              ? "메시지를 입력하세요 · @로 에이전트 지정"
+              : "메시지를 입력하세요"}
             // 터치 기기는 autoFocus 시 패널이 열리자마자 키보드가 화면 절반을 덮는다 — 데스크톱만.
             autoFocus={typeof window === "undefined" || !window.matchMedia("(hover: none)").matches}
             rows={1}
@@ -1209,7 +1209,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
                     if (running || queueRef.current.length) { queueRef.current.push({ text: "/compact", atts: [] }); syncQueued(); }
                     else sendNow("/compact", []);
                   }}
-                  aria-label={`컨텍스트 ${fmtTok(ctxUsed)}/${fmtTok(ctxWindow)} (${ctxPct}%) — 클릭하면 압축`}>
+                  aria-label={`기억 사용량 ${fmtTok(ctxUsed)}/${fmtTok(ctxWindow)} (${ctxPct}%) · 누르면 줄여요`}>
                   <span className="rc-ctx-ring" style={{ ["--rc-ctx-pct" as any]: `${ctxPct}%` }} aria-hidden />
                   <span className="rc-ctx-lb">{ctxPct}%</span>
                 </button>
@@ -1227,7 +1227,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
                 <SquareIcon className="size-3 fill-current" />
               </Button>
             ) : (
-              <Button type="button" size="icon-sm" className="size-[30px] cursor-pointer rounded-full" aria-label="전송"
+              <Button type="button" size="icon-sm" className="size-[30px] cursor-pointer rounded-full" aria-label="보내기"
                 disabled={(!text.trim() && atts.length === 0) || uploading}
                 title={uploading ? "파일 업로드 중…" : undefined}
                 onClick={submit}><ArrowUpIcon strokeWidth={2.5} /></Button>
@@ -1244,7 +1244,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
                        onValueChange={(v) => { const i = slashMatches.findIndex((c) => c.name === v); if (i >= 0) setSlashSel(i); }}
                        className="rounded-xl! bg-transparent p-1" onMouseDown={(e) => e.preventDefault()}>
                 <CommandList aria-label="슬래시 커맨드" className="max-h-56">
-                  <CommandEmpty className="py-3 text-xs text-muted-foreground">맞는 커맨드가 없습니다</CommandEmpty>
+                  <CommandEmpty className="py-3 text-xs text-muted-foreground">맞는 커맨드가 없어요</CommandEmpty>
                   {slashMatches.map((c) => (
                     <CommandItem key={c.name} value={c.name} onSelect={() => acceptCommand(c)}
                                  className="flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 [&>svg:last-child]:hidden">
@@ -1259,7 +1259,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
                        onValueChange={(v) => { const i = atMatches.findIndex((a) => a.name === v); if (i >= 0) setAtSel(i); }}
                        className="rounded-xl! bg-transparent p-1" onMouseDown={(e) => e.preventDefault()}>
                 <CommandList aria-label="에이전트 지정" className="max-h-56">
-                  <CommandEmpty className="py-3 text-xs text-muted-foreground">맞는 에이전트가 없습니다</CommandEmpty>
+                  <CommandEmpty className="py-3 text-xs text-muted-foreground">맞는 에이전트가 없어요</CommandEmpty>
                   {atMatches.map((a) => (
                     <CommandItem key={a.name} value={a.name} onSelect={() => acceptAgent(a)}
                                  className="flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 [&>svg:last-child]:hidden">
@@ -1267,7 +1267,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
                       <span className="w-full truncate text-xs text-muted-foreground">
                         {displayBinding(ctx.conversationId).agent === a.name
                           ? "현재 대화의 에이전트"
-                          : (a.default ? "기본 에이전트 · " : "") + "이 에이전트와 새 대화를 시작합니다"}
+                          : (a.default ? "기본 에이전트 · " : "") + "이 에이전트와 새 대화를 시작해요"}
                       </span>
                     </CommandItem>
                   ))}

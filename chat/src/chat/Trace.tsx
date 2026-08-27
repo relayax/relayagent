@@ -282,7 +282,7 @@ function useLiveTick(active: boolean): { elapsed: number; connected: boolean; ti
 }
 
 /** Live running status — 턴 내내 살아있는 내레이션(원칙 1: 죽은 침묵 금지).
- *  콘텐츠가 오기 전엔 스폰 스테이지(전달 중 → 연결하는 중 → 연결됨·생각 중 — system
+ *  콘텐츠가 오기 전엔 스폰 스테이지(보내는 중 → 연결하는 중 → 연결됨·생각 중 — system
  *  init 프레임이 onTurnPhase 로 전환), 온 뒤엔 마지막 실행 스텝의 활동 라벨. 3초부터 경과 표시. */
 export function RunningStatus() {
   const running = useMessage((m) => m.status?.type === "running");
@@ -291,7 +291,7 @@ export function RunningStatus() {
   if (!running) return null;
   let label: string;
   if (content.length === 0) {
-    label = elapsed < 1 ? "전달 중…" : connected ? "연결됨 · 생각 중…" : "연결하는 중…";
+    label = elapsed < 1 ? "보내는 중…" : connected ? "연결됨 · 생각 중…" : "연결하는 중…";
   } else {
     const last = content[content.length - 1];
     if (last?.type === "tool-call" && last.result === undefined && !last.isError) {
@@ -355,8 +355,8 @@ export function TurnStatusChip() {
   const label =
     kind === "cancel" ? "중지됨"
     : kind === "error" ? "오류로 중단됨"
-    : "미완료 — 응답이 끊겼거나 중단됐어요";
-  const title = "이어서 진행하려면 이 대화에 메시지를 다시 보내세요 — 에이전트가 직전 작업 맥락을 이어받습니다.";
+    : "응답이 끊겼어요";
+  const title = "메시지를 다시 보내면 이어서 진행해요.";
   const tone = kind === "cancel" ? "text-foreground/70"
     : kind === "error" ? "text-[#d65745] font-medium"
     : "text-[#c9a44a] font-medium";

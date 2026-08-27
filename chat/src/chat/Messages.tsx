@@ -136,10 +136,11 @@ function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time:
   const body = text.slice(marker.length).replace(/^\n/, "").trim();
   const ctx = useRelayCtx();
   const [seeking, setSeeking] = useState(false);
+  const [notFound, setNotFound] = useState(false);
   return (
     <TurnCard title={`${inst} 오케스트레이터가 서브에이전트 ${agent} 에게 자동 전달한 지시 · 사용자가 직접 입력한 메시지가 아닙니다`}>
       <CardHeader>
-        <TurnCardHead time={time} label="서브에이전트 위임"
+        <TurnCardHead time={time} label="맡긴 작업"
           chip={<Badge variant="secondary" className="rc-chip"><AgentIcon slug={inst} /><span className="rc-chip-tx">{agent}</span></Badge>} />
       </CardHeader>
       {body ? <TurnCardBody text={body} /> : null}
@@ -147,15 +148,16 @@ function SubAgentDispatchCard({ text, time, inst, agent }: { text: string; time:
         <CardFooter>
           {/* 위임 카드 — 그 위임의 대화를 여는 문 */}
           <Button type="button" variant="outline" size="xs" disabled={seeking}
-            title="이 위임이 진행되는 대화를 탭으로 엽니다 — 보고와 질문이 거기 뜹니다"
+            title="이 작업이 진행되는 대화를 탭으로 열어요. 보고와 질문이 거기에 떠요"
             onClick={async () => {
-              setSeeking(true);
+              setSeeking(true); setNotFound(false);
               const ok = await openDispatchConversation(ctx.instanceId, ctx.principal, agent, "");
               setSeeking(false);
-              if (!ok) alert("이 위임의 대화를 아직 찾지 못했습니다 — 잠시 뒤 다시 눌러 주세요");
+              if (!ok) setNotFound(true);
             }}>
             {seeking ? "찾는 중…" : "이 작업의 대화 열기"}
           </Button>
+          {notFound && <span className="text-xs text-destructive">아직 대화를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요</span>}
         </CardFooter>
       ) : null}
     </TurnCard>
@@ -225,11 +227,11 @@ export function UserMessage() {
     // 라벨·서브에이전트 slug)을 화면에 내지 않는다. 성패만 남긴다
     const delivered = head0.startsWith("📬 위임 완료");
     const head = delivered
-      ? `📬 맡긴 작업이 끝났습니다${/\(실패\)\s*$/.test(head0) ? " — 실패" : /\(중단\)\s*$/.test(head0) ? " — 중단됨" : ""}`
+      ? `맡긴 작업이 끝났어요${/\(실패\)\s*$/.test(head0) ? " · 실패" : /\(중단\)\s*$/.test(head0) ? " · 중단됨" : ""}`
       : head0;
     return (
       <MessagePrimitive.Root className="rc-msg rc-wake">
-        <div className="rc-wake-chip" title={delivered ? "다른 대화에서 맡긴 작업의 결과가 이 대화로 배달됐습니다 — 아래 답이 그 결과입니다" : "예약된 시각에 에이전트가 스스로 깨어난 턴입니다"}>
+        <div className="rc-wake-chip" title={delivered ? "다른 대화에서 맡긴 작업의 결과가 이 대화로 왔어요. 아래 답이 그 결과예요" : "예약된 시각에 에이전트가 스스로 시작한 응답이에요"}>
           {head}
           {time ? <span className="rc-wake-time"> · {time}</span> : null}
         </div>

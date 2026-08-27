@@ -70,7 +70,7 @@ function InboxMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch?: (c: string) =>
     <Popover open={open} onOpenChange={setOpen}>
     <div className="rc-sess">
       <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" className="rc-head-btn" />}
-              aria-haspopup="menu" aria-expanded={open} aria-label="대화함" title="대화함 — 내 모든 에이전트 대화">
+              aria-haspopup="menu" aria-expanded={open} aria-label="대화 목록" title="대화 목록 · 모든 에이전트의 대화">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 6h14l2 7v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5z" />
         </svg>
@@ -80,7 +80,7 @@ function InboxMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch?: (c: string) =>
           {rows === null ? (
             <ItemDescription className="px-2 py-2 text-xs">불러오는 중…</ItemDescription>
           ) : rows.length === 0 ? (
-            <ItemDescription className="px-2 py-2 text-xs">대화가 없습니다</ItemDescription>
+            <ItemDescription className="px-2 py-2 text-xs">대화가 없어요</ItemDescription>
           ) : (
             <ScrollArea className={LIST_SCROLL}>
               <ItemGroup role="presentation" className="gap-0.5">
@@ -154,7 +154,7 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
     if (c.title) return c.title;
     if (c.conversation_id === rows.seed) return "기본 대화";
     const suffix = c.conversation_id.slice(c.conversation_id.lastIndexOf(c.conversation_id.includes("~") ? "~" : "-") + 1);
-    return "대화 " + suffix.slice(0, 6);
+    return "이름 없는 대화";
   };
 
   const saveRename = async (c: ConversationRow, value: string) => {
@@ -288,7 +288,7 @@ function SessionMenu({ ctx, onSwitch }: { ctx: RelayCtx; onSwitch: (c: string) =
                   ＋ 새 대화
                 </Button>
               ) : (
-                <ItemDescription className="px-2 py-2 text-xs">이 앱은 단일 대화입니다</ItemDescription>
+                <ItemDescription className="px-2 py-2 text-xs">이 에이전트는 대화가 하나뿐이에요</ItemDescription>
               )}
             </>
           )}

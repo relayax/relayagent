@@ -371,8 +371,8 @@ function isLlmNetworkError(text: string): boolean {
 
 function llmAuthGuide(): string {
   return (
-    "🔑 **Claude 자격이 만료되었거나 연결되어 있지 않습니다**\n\n" +
-    "하네스 자격을 다시 연결한 뒤 보내주세요 — 연결 방법은 이 기판의 콘솔(또는 `relay login`)이 안내합니다."
+    "**Claude 로그인이 끊겼어요**\n\n" +
+    "콘솔(또는 `relay login`)에서 다시 로그인한 뒤 보내 주세요."
   );
 }
 
@@ -381,19 +381,18 @@ function llmAuthGuide(): string {
 // 마운트별 동선(/connect 딥링크 등)은 그 기판의 콘솔이 안내한다(§2-6 마운트 문법 비조립).
 function llmNetworkGuide(): string {
   return (
-    "🔌 **LLM API 에 연결하지 못했습니다**\n\n" +
-    "기판이 API 에 닿지 못해 응답을 만들지 못했어요 — 자격이 연결되어 있지 않거나 만료됐을 수 있고, " +
-    "서버의 외부 네트워크(egress) 문제일 수도 있습니다. 연결 상태를 확인한 뒤 다시 보내주세요."
+    "**AI 서비스에 연결하지 못했어요**\n\n" +
+    "로그인이 끊겼거나 서버의 외부 네트워크에 문제가 있을 수 있어요. 연결 상태를 확인한 뒤 다시 보내 주세요."
   );
 }
 
 // friendlyTurnError — 배너에 실을 사람말. 벌거벗은 기계 코드가 그대로 채팅에 노출되지 않게
 // 계약 소유 코드(client-protocol §5.0-10)는 문장으로, 미등록 E_ 코드는 괄호 보존 문구로 감싼다.
 const TURN_ERROR_TEXT: Record<string, string> = {
-  E_DISCONNECTED: "연결이 잠시 끊겼어요 — 진행 중이던 턴은 서버에서 계속 실행됩니다. 잠시 후 대화를 다시 열어 확인해 주세요.",
-  E_NETWORK: "서버와 통신하지 못했어요 — 네트워크 상태를 확인하고 다시 시도해 주세요.",
-  E_NO_TURN: "진행 중인 턴을 찾지 못했어요 — 대화를 다시 불러온 뒤 시도해 주세요.",
-  E_PROTOCOL: "이 화면과 서버의 클라이언트 계약 세대가 달라요 — 새로고침으로 최신 화면을 받아주세요.",
+  E_DISCONNECTED: "연결이 잠시 끊겼어요. 진행 중이던 응답은 서버에서 계속 만들어져요. 잠시 후 대화를 다시 열어 확인해 주세요.",
+  E_NETWORK: "서버와 통신하지 못했어요. 네트워크 상태를 확인하고 다시 시도해 주세요.",
+  E_NO_TURN: "진행 중인 응답을 찾지 못했어요. 대화를 다시 불러온 뒤 시도해 주세요.",
+  E_PROTOCOL: "화면이 오래됐어요. 새로고침해 주세요.",
 };
 function friendlyTurnError(text: string): string {
   const t = (text || "").trim();
@@ -1007,10 +1006,10 @@ export type SlashCommand = { name: string; description: string; kind: string };
 //   client-intercept(/clear·/effort·/model) = composer 가 전송 전 가로채 계약 동사로 끝냄(턴 0).
 //   pass-through(/compact) = 프롬프트 그대로 턴으로 전달 — 하네스가 커맨드로 실행.
 export const BUILTIN_COMMANDS: SlashCommand[] = [
-  { name: "clear", description: "새 세션 시작 — 에이전트 컨텍스트 초기화(채팅 히스토리는 유지)", kind: "builtin" },
-  { name: "compact", description: "세션 컨텍스트 압축 — 대화를 이어가며 토큰 사용량을 줄임", kind: "builtin" },
-  { name: "effort", description: "추론 강도 오버라이드 — /effort low|medium|high|xhigh|max|default", kind: "builtin" },
-  { name: "model", description: "모델 오버라이드 — /model fable|opus|sonnet|haiku|<model-id>|default", kind: "builtin" },
+  { name: "clear", description: "에이전트 기억 비우기 (대화 기록은 남아요)", kind: "builtin" },
+  { name: "compact", description: "기억 줄이기 · 대화를 이어가며 토큰 사용량을 줄여요", kind: "builtin" },
+  { name: "effort", description: "추론 강도 바꾸기 · /effort low|medium|high|xhigh|max|default", kind: "builtin" },
+  { name: "model", description: "모델 바꾸기 · /model fable|opus|sonnet|haiku|<model-id>|default", kind: "builtin" },
 ];
 
 // /model 별칭 폴백 — 카탈로그 로드 전(또는 미도달)용 정적 매핑. 로드 후엔 resolveModelAlias
@@ -1045,18 +1044,18 @@ export async function executeBuiltin(ctx: RelayCtx, name: string, arg: string): 
   if (name === "clear") {
     // session.reset(§5.3-23) — 이력은 두고 하네스 대화 포인터만 끊는다.
     const sid = wireSessionOf(ctx);
-    if (sid == null) return "✓ 새 세션을 시작합니다 — 아직 시작 전인 대화라 초기화할 컨텍스트가 없어요";
+    if (sid == null) return "✓ 아직 시작 전인 대화라 비울 기억이 없어요";
     const r = await wireOf(ctx).session.reset(sid);
     return !isError(r)
-      ? "✓ 새 세션을 시작합니다 — 다음 메시지부터 컨텍스트가 초기화됩니다 (채팅 기록은 유지)"
-      : "세션 초기화 실패 — 서버 연결을 확인하세요";
+      ? "✓ 다음 메시지부터 기억을 비우고 시작해요 (대화 기록은 남아요)"
+      : "기억을 비우지 못했어요. 서버 연결을 확인해 주세요";
   }
   if (name === "effort") {
     const v = arg.toLowerCase();
     if (v === "") return "사용법: /effort low|medium|high|xhigh|max|default";
     const val = v === "default" || v === "clear" ? "" : v;
     if (val !== "" && !(EFFORT_LEVELS as readonly string[]).includes(val)) {
-      return `알 수 없는 레벨 "${arg}" — low|medium|high|xhigh|max|default 중 하나를 쓰세요`;
+      return `알 수 없는 레벨 "${arg}". low|medium|high|xhigh|max|default 중 하나를 쓰세요`;
     }
     const ok = await setEffort(ctx, val);
     notifyOverridesChanged();
@@ -1072,7 +1071,7 @@ export async function executeBuiltin(ctx: RelayCtx, name: string, arg: string): 
     if (!val) return "✓ Model → 기본값";
     // 저장은 됐지만 하네스가 모르는 id — 다음 턴이 실패한다(§5.5-30). 성공으로 접지 않는다.
     return r.known === false
-      ? `✓ Model → ${val} (저장됨) · ⚠ 이 하네스의 목록에 없는 id 라 다음 턴이 실패할 수 있습니다`
+      ? `✓ Model → ${val} (저장됨) · 목록에 없는 id 라 다음 응답이 실패할 수 있어요`
       : `✓ Model → ${val} (다음 응답부터)`;
   }
   return "";
@@ -1144,8 +1143,8 @@ function substrateTool(toolName: string): { icon: string; label: string } | null
   const rest = seg.slice(1);
   switch (seg[0]) {
     case "dir": return { icon: "▤", label: `${DIR_OP_LABEL[rest[1] ?? ""] ?? "폴더"} · ${rest[0]}` };
-    case "edge": return { icon: "⇄", label: `빌린 동사 · ${rest.join(" · ")}` };
-    case "a2a": return { icon: "❖", label: `위임 · ${rest.join(" · ")}` };
+    case "edge": return { icon: "⇄", label: `다른 에이전트 기능 · ${rest.join(" · ")}` };
+    case "a2a": return { icon: "❖", label: `맡긴 작업 · ${rest.join(" · ")}` };
     case "mcp": return { icon: "⚙", label: rest.join(" · ") };
     default: return null;
   }
@@ -1506,7 +1505,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       drive()
         .then((e) => { outcome.error = e; })
         .catch((e: any) => {
-          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || "턴 실행 실패") };
+          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || "응답을 만들지 못했어요") };
         })
         .finally(() => { finished = true; _liveTurns.delete(ctx.conversationId); wake(); });
 
@@ -1533,7 +1532,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         // 다음 턴이 이어간다 → '압축 완료'로 봉합.
         if (isCompactPrompt(prompt) && cutClass) {
           meta.custom.ended = "ok";
-          if (parts.length === 0) parts.push({ type: "text", text: "🗜️ 컨텍스트를 압축했어요 — 이어서 대화하세요." });
+          if (parts.length === 0) parts.push({ type: "text", text: "기억을 줄였어요. 이어서 대화하세요." });
           yield { content: parts, status: { type: "complete", reason: "stop" }, metadata: meta };
           return;
         }
@@ -1545,7 +1544,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       }
       if (!driveError && meta.custom.ended === "error") {
         // 봉투 error 이벤트로 종결된 턴 — 사유는 리듀서가 meta.error 에 보관했다.
-        const raw = (reducer.meta as { error?: string }).error || "턴 실행 실패";
+        const raw = (reducer.meta as { error?: string }).error || "응답을 만들지 못했어요";
         const base = friendlyTurnError(String(raw).replace(/^turn failed:\s*ERROR:\s*/i, "").trim());
         // 자격(401) → 연결(refused) 순으로 분류한다. 여기는 실패 확정 경로라 오탐이 없다.
         const guide = isLlmAuthError(raw) ? llmAuthGuide() : isLlmNetworkError(raw) ? llmNetworkGuide() : "";

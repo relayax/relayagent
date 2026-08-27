@@ -161,7 +161,7 @@ function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
   if (!id || threadFamily(id) === "main") return "기본 대화";
   const sep = id.includes("~") ? "~" : "-";
   const suffix = id.slice(id.lastIndexOf(sep) + 1);
-  return "대화 " + suffix.slice(0, 6);
+  return "이름 없는 대화";
 }
 
 /** 자동 제목을 덮어써도 되는 placeholder 인가 — 서버의 진짜 제목은 보존한다.
@@ -170,7 +170,7 @@ function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
 function isPlaceholderTitle(title: string): boolean {
   if (!title) return true;
   if (title === "새 대화" || title === "기본 대화") return true;
-  return /^대화 /.test(title);
+  return title === "이름 없는 대화";
 }
 
 function relTime(iso?: string): string {
@@ -280,8 +280,8 @@ function InboxPicker({
           ) : rows.length === 0 ? (
             <Empty className="gap-1 p-4">
               <EmptyHeader className="gap-1">
-                <EmptyTitle className="text-[13px]">열 수 있는 에이전트가 없습니다</EmptyTitle>
-                <EmptyDescription className="text-[11.5px]">에이전트를 설치하면 여기에 나타납니다</EmptyDescription>
+                <EmptyTitle className="text-[13px]">열 수 있는 에이전트가 없어요</EmptyTitle>
+                <EmptyDescription className="text-[11.5px]">에이전트를 설치하면 여기에 보여요</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -487,7 +487,7 @@ function TabStrip({
               <ContextMenuTrigger render={
                 <div role="tab" aria-selected={t.key === activeKey}
                      className={"rc-desk-tab" + (t.key === activeKey ? " on" : "") + (t.key === dragTab ? " drag" : "") + (t.preview ? " rc-preview" : "")}
-                     title={t.instanceId + " · " + t.conversationId + (t.preview ? "\n미리보기 — 말을 걸면 탭으로 고정됩니다" : "")}
+                     title={t.instanceId + " · " + t.conversationId + (t.preview ? "\n미리보기 · 메시지를 보내면 탭으로 남아요" : "")}
                      draggable={editingKey !== t.key}
                      onDragStart={(e) => onTabDragStart(e, t.key)}
                      onDragOver={(e) => onTabDragOver(e, t.key)}
@@ -1101,7 +1101,7 @@ export function ChatTabs({
         : ([{
             label: "오른쪽으로 분할", run: () => moveToGroup(key, 1), disabled: tabs.length < 2,
             // disabled 만으로는 "왜 안 되는지"가 안 보인다 — hover 툴팁으로 조건을 말해준다.
-            title: tabs.length < 2 ? "대화 탭이 두 개 이상 열려 있어야 분할할 수 있어요" : undefined,
+            title: tabs.length < 2 ? "대화 탭이 두 개 이상 열려 있어야 나눌 수 있어요" : undefined,
           }] as TabMenuItem[])),
     ];
   };
@@ -1140,7 +1140,7 @@ export function ChatTabs({
   const actions = (
     <div className="rc-tabs-actions">
       {picker(
-        <Button type="button" variant="ghost" size="icon-sm" className={BAR_BTN} aria-label="보관함 — 전 에이전트 대화" title="보관함 — 내 모든 에이전트 대화">
+        <Button type="button" variant="ghost" size="icon-sm" className={BAR_BTN} aria-label="대화 목록" title="대화 목록 · 모든 에이전트의 대화">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 6h14l2 7v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5z" />
           </svg>
@@ -1154,7 +1154,7 @@ export function ChatTabs({
       {variant === "desk" && viewTab && viewSrc && (
         // rc-desk-viewtoggle 유지 — 휴대폰 폭 숨김(@media) 과 .on 강조색은 chat.css 소유.
         <Button type="button" variant="ghost" size="xs" className={cn(BAR_BTN, "rc-desk-viewtoggle gap-[5px] px-3 text-[11.5px] font-semibold text-[var(--rc-faint)]", showView && "on")}
-                aria-pressed={showView} title="에이전트 화면(뷰) 보기 — 오른쪽에 표시" onClick={() => setShowView((v) => !v)}>
+                aria-pressed={showView} title="에이전트 화면을 오른쪽에 보기" onClick={() => setShowView((v) => !v)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M13 4v16" />
           </svg>
@@ -1193,7 +1193,7 @@ export function ChatTabs({
             <div className="rc-empty-t">에이전트를 열어 시작하세요</div>
             {picker(
               <Button type="button" variant="outline" className="font-semibold text-[var(--rc-accent-strong)] hover:border-[var(--rc-accent)] hover:bg-[var(--rc-accent-soft)]">
-                보관함에서 열기
+                대화 목록에서 열기
               </Button>,
             )}
           </div>

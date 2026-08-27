@@ -140,9 +140,9 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
           );
         })}
         <div className={foot}>
-          {sent && !done && <span>답변 전송됨 — 이어서 진행 중…</span>}
+          {sent && !done && <span>답변을 보냈어요 · 이어서 진행 중…</span>}
           {done && <span className="font-semibold text-primary">✓ 답변 완료</span>}
-          {!sent && !done && <span>이 질문은 더 이상 답할 수 없어요</span>}
+          {!sent && !done && <span>답변 기한이 지났어요</span>}
         </div>
       </div>
     );
@@ -207,7 +207,7 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
                 </QuestionnaireChoice>
               ))}
             </QuestionnaireChoices>
-            <QuestionnaireError className="text-xs">답을 하나 골라 주세요.</QuestionnaireError>
+            <QuestionnaireError className="text-xs">답을 하나 골라 주세요</QuestionnaireError>
             {/* 자유 입력줄 — Questionnaire 의 답 추적 밖(plain Input). Enter 는 폼 제출이 아니라 "입력". */}
             <div className="flex items-stretch gap-1.5">
               <Input type="text" className="h-8 min-w-0 flex-1" placeholder="또는 직접 입력…" aria-label="직접 입력"
@@ -215,15 +215,15 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
                      onChange={(e) => setText((prev) => ({ ...prev, [qi]: e.target.value }))}
                      onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); freeSubmit(qi, q); } }} />
               <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={!waiting || !draft}
-                      onClick={() => freeSubmit(qi, q)}>{instant ? "전달" : "입력"}</Button>
+                      onClick={() => freeSubmit(qi, q)}>{instant ? "보내기" : "입력"}</Button>
             </div>
           </QuestionnaireItem>
         );
       })}
       {instant ? (
         <div className={foot}>
-          <span>선택하면 바로 전달돼요</span>
-          {failed && <span className="text-destructive">회송 실패 — 다시 선택해 주세요</span>}
+          <span>선택하면 바로 보내요</span>
+          {failed && <span className="text-destructive">답을 보내지 못했어요 · 다시 골라 주세요</span>}
         </div>
       ) : (
         <>
@@ -234,7 +234,7 @@ export function AskCard({ part, active }: { part: AnyPart; active: boolean }) {
               답변 보내기{allAnswered ? "" : ` (${answered}/${questions.length})`}
             </QuestionnaireSubmit>
           </QuestionnaireActions>
-          {failed && <div className={foot}><span className="text-destructive">회송 실패 — 다시 선택해 주세요</span></div>}
+          {failed && <div className={foot}><span className="text-destructive">답을 보내지 못했어요 · 다시 골라 주세요</span></div>}
         </>
       )}
     </Questionnaire>
@@ -333,7 +333,7 @@ export function ChoiceCard({ part }: { part: AnyPart }) {
           })}
         </QuestionnaireChoices>
       </QuestionnaireItem>
-      {!disabled && <div className={foot}><span>선택하면 메시지로 전송돼요</span></div>}
+      {!disabled && <div className={foot}><span>선택하면 바로 보내요</span></div>}
     </Questionnaire>
   );
 }

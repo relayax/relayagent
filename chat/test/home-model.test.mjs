@@ -23,8 +23,8 @@ test("examplesAt — 묶음이 끝에서 처음으로 돌고 음수도 안전", 
 test("문구 — 아바타 글자·초안 한 줄·빈 상태", () => {
   assert.equal(m.initialOf("  relay"), "R");
   assert.equal(m.initialOf(""), "?");
-  assert.equal(m.draftLine(0), "아직 발행하지 않은 초안");
-  assert.equal(m.draftLine(4), "아직 발행하지 않은 초안 — 바뀐 파일 4개");
+  assert.equal(m.draftLine(0), "아직 발행하지 않은 수정본");
+  assert.equal(m.draftLine(4), "아직 발행하지 않은 수정본 · 바뀐 파일 4개");
   assert.equal(m.isEmptyNav({ items: [], drafts: [] }), true);
   assert.equal(m.isEmptyNav({ items: [], drafts: [{ name: "a", version: null, changes: 0, href: "/" }] }), false);
 });
