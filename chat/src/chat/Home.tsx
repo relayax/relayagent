@@ -7,20 +7,19 @@
  * 의존시키지 않는다. 문구·동선은 종전과 같다:
  *   · 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 relay:chat-open {send}
  *     로 콘솔 에이전트의 대화에 보내지고(같은 번들의 autoFloat 가 착지), 빌더 위임이 시작되면
- *     위젯이 그 탭을 연다. 별도의 "패키지 만들기" 버튼은 없다 — 불러오기·스토어는 상자 아래
- *     한 줄씩이라 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
+ *     위젯이 그 탭을 연다. 별도의 "패키지 만들기" 버튼은 없다 — 불러오기·스토어는 예시 칩 아래
+ *     옅은 글자 링크 한 줄이라 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
  *   · 진행 중 카드 — 지금 신경 쓸 것(수정 중·새 판·오류·초안)만. 판정은 home-model.ts.
  *   · 사용 안내 — 첫 방문에 한 번, 이후엔 ?guide=1(콘솔 설정의 [안내]).
  * 사이드바의 [새로 만들기]는 relay:home-ask 를 쏘고, 다른 문서에서는 /#new 로 온다.
  * 목록은 relay:turn(settled)·relay:nav-refresh·탭 복귀마다 다시 읽는다 — 사이드바와 같은 조건.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronRight, Download, FileText, Pencil, RefreshCw, Store } from "lucide-react";
+import { Download, FileText, Pencil, RefreshCw, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -145,26 +144,21 @@ function Ask({ nav }: { nav: ShellNav }) {
           <RefreshCw />
         </Button>
       </div>
-      <ItemGroup className="mt-3.5 border-t border-border">
-        <Item render={<a href={nav.importer} />} size="sm" className="rounded-none border-b border-border border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
-          <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Download className="size-4" /></ItemMedia>
-          <ItemContent className="flex-row items-center gap-2.5">
-            <ItemTitle className="text-[13.5px]">불러오기</ItemTitle>
-            <ItemDescription className="text-xs">받은 에이전트 파일을 열어요</ItemDescription>
-          </ItemContent>
-          <ChevronRight className="size-4 text-muted-foreground" />
-        </Item>
+      {/* 불러오기·스토어는 보조 동선 — 버튼·목록 행이 아니라 예시 칩 아래의 옅은 글자 링크 한 줄.
+          테두리가 있는 행은 입력 상자와 "진행 중" 사이에 낀 표 조각처럼 보였다(2026-08-27). */}
+      <p className="m-0 mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+        <a href={nav.importer} className="inline-flex items-center gap-1 text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">
+          <Download className="size-3.5" />받은 에이전트 파일 불러오기
+        </a>
         {nav.store ? (
-          <Item render={<a href={nav.store} />} size="sm" className="rounded-none border-b border-border border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
-            <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Store className="size-4" /></ItemMedia>
-            <ItemContent className="flex-row items-center gap-2.5">
-              <ItemTitle className="text-[13.5px]">스토어에서 담기</ItemTitle>
-              <ItemDescription className="text-xs">만들어진 에이전트를 골라 설치해요</ItemDescription>
-            </ItemContent>
-            <ChevronRight className="size-4 text-muted-foreground" />
-          </Item>
+          <>
+            <span aria-hidden="true">·</span>
+            <a href={nav.store} className="inline-flex items-center gap-1 text-inherit no-underline hover:text-foreground hover:underline underline-offset-3">
+              <Store className="size-3.5" />스토어에서 골라 설치
+            </a>
+          </>
         ) : null}
-      </ItemGroup>
+      </p>
     </section>
   );
 }
