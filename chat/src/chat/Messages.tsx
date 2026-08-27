@@ -252,7 +252,7 @@ export function UserMessage() {
               <MessagePrimitive.Parts components={{ Image: NullImagePart }} />
             </BubbleContent>
           </Bubble>
-          {time ? <MessageFooter className="font-normal">{time}</MessageFooter> : null}
+          {time ? <MessageFooter className="text-[10.5px] font-normal text-muted-foreground/70">{time}</MessageFooter> : null}
         </MessageContent>
         {lightbox && <ImageLightbox src={lightbox.image} name={lightbox.filename} onClose={() => setLightbox(null)} />}
       </Message>

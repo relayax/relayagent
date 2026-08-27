@@ -1,12 +1,14 @@
 /* reset.css — preflight 대신. shadcn 요소(data-slot)에만 브라우저 기본값을 지운다 — 호스트 페이지의 다른
-   button/input 에는 손대지 않는다. tw.css 가 유틸리티보다 먼저 @import 하므로(같은 특이성) 유틸리티가 이긴다 */
-button[data-slot], [data-slot="button"], [data-slot="badge"] { background-color: transparent; border: 0 solid; padding: 0; margin: 0; font: inherit; color: inherit; line-height: inherit; }
-[data-slot="input"], [data-slot="textarea"], [data-slot="input-group-control"] { border: 1px solid; font: inherit; color: inherit; margin: 0; background: transparent; box-shadow: none; }
-[data-slot="input-group-control"] { border: 0; resize: none; }
+   button/input 에는 손대지 않는다. 유틸리티(클래스, 0,1,0)가 이기려면 여기가 그보다 낮아야 한다 — 원소+속성
+   (button[data-slot] = 0,1,1)은 순서와 무관하게 클래스를 이겨 기본 Button 의 bg-primary 가 사라졌다(실측: 홈의
+   [시작]·안내의 [다음]이 투명). :where() 로 명시도 0. :focus 되받기 줄만 일부러 (0,2,0)로 남긴다 */
+:where(button[data-slot], [data-slot="button"], [data-slot="badge"]) { background-color: transparent; border: 0 solid; padding: 0; margin: 0; font: inherit; color: inherit; line-height: inherit; }
+:where([data-slot="input"], [data-slot="textarea"], [data-slot="input-group-control"]) { border: 1px solid; font: inherit; color: inherit; margin: 0; background: transparent; box-shadow: none; }
+:where([data-slot="input-group-control"]) { border: 0; resize: none; }
 /* 호스트의 textarea:focus{outline…}(0,1,1)는 .outline-none(0,1,0)을 이긴다 — 속성+가상클래스(0,2,0)로 되받는다 */
 [data-slot="input"]:focus, [data-slot="textarea"]:focus, [data-slot="input-group-control"]:focus, button[data-slot]:focus { outline: none; }
-button[data-slot]:disabled { opacity: 1; }
-[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"] { font: 14px/1.6 var(--font-sans); border: 1px solid; }
+:where(button[data-slot]:disabled) { opacity: 1; }
+:where([data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"]) { font: 14px/1.6 var(--font-sans); border: 1px solid; }
 [data-slot="item-description"], [data-slot="empty-description"], [data-slot="card-description"] { margin: 0; }
 /* 말풍선·마커·설명 안의 문단 — 브라우저 기본 p 여백(14px)이 한 줄 말풍선을 두 배로 키운다 */
 [data-slot="bubble-content"] p, [data-slot="marker-content"] p, [data-slot="questionnaire-description"] p { margin: 0; }

@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemSeparator, ItemTitle } from "@/components/ui/item";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -69,7 +69,7 @@ export function Home() {
     <div className="rc-home min-h-screen text-sm leading-relaxed text-foreground" style={{ fontFamily: "var(--rc-sans)" }}>
       {nav ? <Ask nav={nav} /> : null}
       {err ? (
-        <Empty className="mx-5 my-4 rounded-xl border bg-background">
+        <Empty className="mx-5 my-4 rounded-xl border border-border bg-background">
           <EmptyHeader><EmptyTitle>설치 목록을 읽지 못했습니다</EmptyTitle><EmptyDescription>{err}</EmptyDescription></EmptyHeader>
         </Empty>
       ) : nav ? <Progress nav={nav} /> : null}
@@ -113,7 +113,7 @@ function Ask({ nav }: { nav: ShellNav }) {
     <section className="mx-auto max-w-[620px] px-5 pt-14 pb-7">
       <h2 className="m-0 mb-4 text-center text-[22px] font-bold tracking-tight">무엇을 만들까요?</h2>
       <form
-        className="flex flex-col gap-2.5 rounded-xl border bg-background px-3.5 pt-3.5 pb-2.5 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30"
+        className="flex flex-col gap-2.5 rounded-xl border border-border bg-background px-3.5 pt-3.5 pb-2.5 shadow-xs transition-[box-shadow,border-color] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30"
         onSubmit={(e) => { e.preventDefault(); submit(); }}
       >
         <Textarea
@@ -144,8 +144,8 @@ function Ask({ nav }: { nav: ShellNav }) {
           <RefreshCw />
         </Button>
       </div>
-      <ItemGroup className="mt-3.5 border-t">
-        <Item render={<a href={nav.importer} />} size="sm" className="rounded-none border-b border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
+      <ItemGroup className="mt-3.5 border-t border-border">
+        <Item render={<a href={nav.importer} />} size="sm" className="rounded-none border-b border-border border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
           <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Download className="size-4" /></ItemMedia>
           <ItemContent className="flex-row items-center gap-2.5">
             <ItemTitle className="text-[13.5px]">불러오기</ItemTitle>
@@ -154,7 +154,7 @@ function Ask({ nav }: { nav: ShellNav }) {
           <ChevronRight className="size-4 text-muted-foreground" />
         </Item>
         {nav.store ? (
-          <Item render={<a href={nav.store} />} size="sm" className="rounded-none border-b border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
+          <Item render={<a href={nav.store} />} size="sm" className="rounded-none border-b border-border border-x-0 px-1.5 no-underline text-inherit hover:bg-muted">
             <ItemMedia variant="icon" className="size-auto border-0 bg-transparent text-muted-foreground"><Store className="size-4" /></ItemMedia>
             <ItemContent className="flex-row items-center gap-2.5">
               <ItemTitle className="text-[13.5px]">스토어에서 담기</ItemTitle>
@@ -164,7 +164,6 @@ function Ask({ nav }: { nav: ShellNav }) {
           </Item>
         ) : null}
       </ItemGroup>
-      <ItemSeparator className="hidden" />
     </section>
   );
 }
@@ -173,7 +172,7 @@ function Ask({ nav }: { nav: ShellNav }) {
 function Progress({ nav }: { nav: ShellNav }) {
   if (isEmptyNav(nav)) {
     return (
-      <Empty className="mx-5 my-4 rounded-xl border bg-background">
+      <Empty className="mx-5 my-4 rounded-xl border border-border bg-background">
         <EmptyHeader><EmptyTitle>아직 설치된 에이전트가 없습니다</EmptyTitle><EmptyDescription>위 상자에 만들고 싶은 것을 적어 시작하세요.</EmptyDescription></EmptyHeader>
       </Empty>
     );
@@ -204,7 +203,8 @@ function Progress({ nav }: { nav: ShellNav }) {
   );
 }
 
-const cardClass = "gap-2.5 rounded-xl px-4 py-3.5 shadow-none hover:border-primary [--card-spacing:0px]";
+// preflight 가 없어 border 색은 매번 명시한다(border-border) — 기본값 currentColor 는 검정 테두리가 된다
+const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-none ring-0 hover:border-primary [--card-spacing:0px]";
 const chip = "rounded-md px-1.5 py-0 text-[11px] font-semibold";
 
 function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {

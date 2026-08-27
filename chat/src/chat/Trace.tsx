@@ -336,35 +336,24 @@ export function TurnStatusChip() {
   }
   // 완료 프레임도 내용도 없는 빈 자리표시엔 칩을 달지 않는다(잡음 방지).
   if (kind === "cut" && !hasContent) return null;
-  const dur = typeof meta?.durationMs === "number" ? ` · ${(meta!.durationMs! / 1000).toFixed(1)}s` : "";
-  const out = meta?.usage?.output_tokens ?? 0;
-  const icon = kind === "ok" ? <LCheck className="text-[var(--rc-ok)]" strokeWidth={3} />
-    : kind === "cancel" ? <SquareIcon className="size-2.5! fill-current" />
-    : <TriangleAlertIcon />;
+  // 정상 종료는 칩을 달지 않는다 — 답이 끝난 것은 답 자체가 말한다. "완료·모델명·토큰"은 읽는 사람에게
+  // 중요도가 낮다는 피드백(2026-08-27). 칩은 문제가 있을 때(중지·오류·끊김)만 뜬다.
+  if (kind === "ok") return null;
+  const icon = kind === "cancel" ? <SquareIcon className="size-2.5! fill-current" /> : <TriangleAlertIcon />;
   const label =
-    kind === "ok" ? `완료${dur}${out ? ` · ↓ ${out.toLocaleString()} tokens` : ""}`
-    : kind === "cancel" ? "중지됨"
+    kind === "cancel" ? "중지됨"
     : kind === "error" ? "오류로 중단됨"
     : "미완료 — 응답이 끊겼거나 중단됐어요";
-  const title = kind === "ok" ? undefined
-    : "이어서 진행하려면 이 대화에 메시지를 다시 보내세요 — 에이전트가 직전 작업 맥락을 이어받습니다.";
-  const tone = kind === "ok" ? "text-muted-foreground"
-    : kind === "cancel" ? "text-foreground/70"
+  const title = "이어서 진행하려면 이 대화에 메시지를 다시 보내세요 — 에이전트가 직전 작업 맥락을 이어받습니다.";
+  const tone = kind === "cancel" ? "text-foreground/70"
     : kind === "error" ? "text-[#d65745] font-medium"
     : "text-[#c9a44a] font-medium";
-  // 실행 모델 배지 — 이 턴이 실제로 돈 모델(init 프레임 → 리플레이 turn row 폴백). 피커를
-  // 중간에 바꿔도 "이 응답이 어느 모델이었는지"를 메시지에서 직접 확인하는 근거.
-  const modelBadge = meta?.model ? (
-    <span className="rc-ts-model" title={`${meta.model}${meta.effort ? ` · effort ${meta.effort}` : ""}`}>
-      {modelLabelOf(meta.model)}
-    </span>
-  ) : null;
   return (
     <Badge variant="ghost" role="status" title={title}
       className={cn("h-auto min-h-5 gap-1.5 whitespace-normal px-0 pt-1 pb-0 text-[11.5px] font-normal tabular-nums hover:bg-transparent hover:text-current", tone)}>
       {icon}
       <span>{label}</span>
-      {modelBadge}
+      
     </Badge>
   );
 }
