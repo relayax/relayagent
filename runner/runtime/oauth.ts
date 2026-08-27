@@ -175,7 +175,9 @@ export async function oauthHeader(authority: Authority, pkg: string, service: st
 export async function serviceAuthHeader(authority: Authority, pkg: string, service: string, auth: AuthDecl | undefined): Promise<string | undefined> {
   if (auth?.kind === "token") {
     const c = await authority.credential(credKey(pkg, service));
-    return c ? `Bearer ${c}` : undefined;
+    // 접두는 선언이 정한다(auth.scheme, 미선언 = Bearer). Client-ID 류 API 는 이 한 단어가 갈리면
+    // 자격이 있어도 401 인데, 동사는 자격을 쥐지 않으므로 조립할 자리가 여기뿐이다
+    return c ? `${auth.scheme?.trim() || "Bearer"} ${c}` : undefined;
   }
   if (auth?.kind === "oauth") return (await oauthHeader(authority, pkg, service)) ?? undefined;
   return undefined;

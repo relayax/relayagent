@@ -107,6 +107,8 @@ services:
     api: https://api.shipping.example.com
     auth:
       kind: token
+      # Authorization 접두는 미선언이면 Bearer 다. Client-ID 처럼 다른 접두를 요구하는 API 는
+      # scheme: Client-ID 로 선언한다 — 동사는 자격을 쥐지 않으므로 조립은 여기서만 정해진다
       help:
         url: "https://api.shipping.example.com/settings/tokens"
         note: "본인 계정으로 API 토큰을 발급해 붙여넣으세요."

@@ -737,6 +737,17 @@ $defs:
           env:
             type: string
             pattern: '^[A-Z][A-Z0-9_]*$'
+          scheme:
+            description: |
+              Authorization 헤더의 접두 — 미선언 = Bearer. 기판이 요청마다 `<scheme> <토큰>` 으로
+              조립한다(api 형 fetch 와 auth.verify 왕복이 같은 조립을 지난다). Unsplash 의
+              Client-ID 처럼 Bearer 가 아닌 접두를 요구하는 REST API 를 위한 자리다: 동사는
+              자격을 손에 쥐지 않으므로(verb-contract) 이 조립을 패키지 코드가 대신할 길이 없고,
+              접두를 문법이 모르면 그 API 는 이 기판에서 영영 열리지 않는다. services[].auth 의
+              token 형에만 있다 — oauth 번들은 RFC 6750 이 Bearer 를 정하고, harness llm.auth 는
+              헤더가 아니라 env 로 나간다
+            type: string
+            pattern: '^[A-Za-z][A-Za-z0-9-]*$'
           service:
             description: org 기판 자격 브로커의 서비스 키 (예 google-drive) — 브로커 없는 기판은 무시
             type: string

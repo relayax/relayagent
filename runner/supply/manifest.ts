@@ -96,6 +96,8 @@ export type ServiceDecl =
 export interface AuthDecl {
   kind: "none" | "token" | "oauth";
   env?: string;
+  /** token 형의 Authorization 접두 — 미선언 = Bearer. services[].auth 에서만 뜻이 있다(oauth 는 RFC 가 Bearer 를 정하고 llm 자격은 env 로 나간다) */
+  scheme?: string;
   help?: { url?: string; note?: string };
   verify?: { url: string; headers?: Record<string, string> };
   client?: string;
@@ -161,12 +163,19 @@ export function validCron(expr: string): boolean {
   });
 }
 
-/** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다 */
-function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[]): void {
+/** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다.
+ *  where 는 어휘가 갈리는 유일한 축이다: scheme 은 헤더 조립의 말이라 헤더로 나가는 서비스 자격에만 뜻이 있다 */
+function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], where: "service" | "llm" = "service"): void {
   if (!a) return;
   if (!["none", "token", "oauth"].includes(a.kind)) {
     issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
     return;
+  }
+  if (a.scheme != null) {
+    // 소비자 없는 선언은 통과시키지 않는다 — 통과하면 "Client-ID 로 나간다" 가 광고가 된다
+    if (where !== "service") issues.push(`${label}.scheme: services[].auth 에서만 — llm 자격은 헤더가 아니라 env 로 나갑니다`);
+    else if (a.kind !== "token") issues.push(`${label}.scheme: token 형에서만(oauth 는 RFC 6750 이 Bearer 를 정합니다): ${a.kind}`);
+    else if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(a.scheme)) issues.push(`${label}.scheme 형식 위반(헤더 접두 한 단어, 예 Bearer·Client-ID): ${a.scheme}`);
   }
   if (a.env != null && !/^[A-Z][A-Z0-9_]*$/.test(a.env)) {
     // kind 를 가리지 않는다 — oauth 변형도 무인 기판이 자격을 댈 env 이름을 선언할 수 있다
@@ -368,7 +377,7 @@ export function judge(m: Manifest, pkgPath?: string): void {
     }
     if (v.llm) {
       if (!SLUG.test(v.llm.provider ?? "")) issues.push(`harness.variants[${v.name}].llm.provider 형식 위반: ${v.llm.provider}`);
-      judgeAuth(v.llm.auth, `harness.variants[${v.name}].llm.auth`, issues);
+      judgeAuth(v.llm.auth, `harness.variants[${v.name}].llm.auth`, issues, "llm");
       if (v.llm.icon) mustExist(v.llm.icon, `harness.variants[${v.name}].llm.icon`);
     }
   }
