@@ -1,21 +1,82 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --rc-bg: #ffffff;
-  --rc-ink: #16181b;
-  --rc-soft: #5c6570;
-  --rc-faint: #98a1aa;
-  --rc-line: #e6e9ec;
-  --rc-line-soft: #eef0f2;
-  --rc-ground: #f5f6f7;
-  --rc-hover: #eef0f2;
-  --rc-accent: #0f766e;
-  --rc-accent-strong: #115e59;
-  --rc-accent-soft: rgba(13, 148, 136, 0.1);
+  /* --rc-* 는 세 표면(콘솔·채팅 위젯·사이드바)이 공유하는 이름. 값은 아래 shadcn 프리셋
+     토큰(neutral · radius small)의 별칭 — 프리셋을 바꾸면 여기가 따라간다.
+     body 에도 거는 이유: 레이아웃이 뒤에 싣는 채팅 위젯 CSS 가 :root 에 같은 이름을 선언하므로,
+     콘솔 문서 안에서는 body 의 값이 이겨야 위젯까지 한 룩이 된다(아래 body 블록) */
+  --rc-bg: var(--background);
+  --rc-ink: var(--foreground);
+  --rc-soft: var(--muted-foreground);
+  --rc-faint: oklch(0.708 0 0);
+  --rc-line: var(--border);
+  --rc-line-soft: oklch(0.955 0 0);
+  --rc-ground: oklch(0.985 0 0);
+  --rc-hover: var(--accent);
+  --rc-accent: var(--primary);
+  --rc-accent-strong: var(--foreground);
+  --rc-accent-soft: var(--accent);
   --rc-ok: #059669;
-  --rc-err: #c0392b;
+  --rc-err: var(--destructive);
   --rc-err-bg: #fdf2f1;
-  --rc-radius: 12px;
+  --rc-radius: var(--radius);
   --rc-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --rc-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Pretendard", Roboto, sans-serif;
+  --rc-sans: var(--font-sans), "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", Roboto, sans-serif;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --radius: 0.45rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+body {
+  --rc-bg: var(--background);
+  --rc-ink: var(--foreground);
+  --rc-soft: var(--muted-foreground);
+  --rc-faint: oklch(0.708 0 0);
+  --rc-line: var(--border);
+  --rc-line-soft: oklch(0.955 0 0);
+  --rc-ground: oklch(0.985 0 0);
+  --rc-hover: var(--accent);
+  --rc-accent: var(--primary);
+  --rc-accent-strong: var(--foreground);
+  --rc-accent-soft: var(--accent);
+  --rc-ok: #059669;
+  --rc-err: var(--destructive);
+  --rc-err-bg: #fdf2f1;
+  --rc-radius: var(--radius);
+  --rc-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --rc-sans: var(--font-sans), "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", Roboto, sans-serif;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--rc-ground); color: var(--rc-ink); font: 14px/1.6 var(--rc-sans); -webkit-font-smoothing: antialiased; }
@@ -33,9 +94,11 @@ body { margin: 0; background: var(--rc-ground); color: var(--rc-ink); font: 14px
 .rc-chip { display: inline-block; font-size: 11px; font-weight: 600; color: var(--rc-accent-strong); background: var(--rc-accent-soft); border-radius: 6px; padding: 1px 7px; }
 .rc-chip.gray { color: var(--rc-soft); background: var(--rc-line-soft); }
 .rc-label { font-size: 11px; font-weight: 700; color: var(--rc-faint); text-transform: uppercase; letter-spacing: 0.04em; }
-input, select, textarea { font: 13px var(--rc-sans); color: var(--rc-ink); border: 1px solid var(--rc-line); border-radius: 8px; padding: 7px 10px; background: var(--rc-bg); outline: none; }
-input:focus, select:focus, textarea:focus { border-color: var(--rc-accent); }
-textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
+/* 네이티브 select 만 — input/textarea 는 shadcn Input/Textarea 가 스타일을 가진다 */
+@layer base {
+  select { font: 13px var(--rc-sans); color: var(--rc-ink); border: 1px solid var(--rc-line); border-radius: var(--radius); padding: 7px 10px; background: var(--rc-bg); outline: none; }
+  select:focus { border-color: var(--ring); }
+}
 
 /* ── 콘솔 패키지의 화면 ────────────────────────────────────────────────────
    좌측 사이드바는 여기 없다 — 기판이 모든 view 문서에 주입하는 전역 크롬이고, 이 문서는
@@ -140,7 +203,7 @@ textarea { font-family: var(--rc-mono); font-size: 12px; resize: vertical; }
 .pkg-col.stage { flex: 1; background: var(--rc-ground); position: relative; }
 /* 왼쪽 칸과 가운데 사이 경계 — 끌어서 폭 조절 */
 .pkg-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 5; }
-.pkg-grip:hover { background: rgba(13,148,136,.2); }
+.pkg-grip:hover { background: color-mix(in srgb, var(--rc-accent) 20%, transparent); }
 body.rc-resizing { cursor: col-resize; user-select: none; }
 body.rc-resizing iframe { pointer-events: none; }
 .pkg-cols.no-view .pkg-col.side { flex: 1; border-right: none; }
@@ -383,9 +446,9 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
   padding: 0 7px; font-size: 9.5px; font-weight: 600; line-height: 1.7; color: var(--rc-faint);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
 }
-.gx-elabel:hover { z-index: 5; border-color: rgba(13, 148, 136, 0.5); color: var(--rc-ink); }
-.gx-elabel.ok { border-color: rgba(5, 150, 105, 0.4); color: var(--rc-ok); }
-.gx-elabel.a2a { border-style: dashed; border-color: rgba(13, 148, 136, 0.4); color: var(--rc-accent); }
+.gx-elabel:hover { z-index: 5; border-color: color-mix(in srgb, var(--rc-accent) 50%, transparent); color: var(--rc-ink); }
+.gx-elabel.ok { border-color: color-mix(in srgb, var(--rc-ok) 40%, transparent); color: var(--rc-ok); }
+.gx-elabel.a2a { border-style: dashed; border-color: color-mix(in srgb, var(--rc-accent) 40%, transparent); color: var(--rc-accent); }
 
 .gx-node {
   position: absolute; left: 0; top: 0; z-index: 1; width: 200px; min-height: 96px;
@@ -397,8 +460,8 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
   transition: border-color 120ms ease, box-shadow 120ms ease, opacity 260ms ease;
 }
 .gx-node:hover { z-index: 3; box-shadow: 0 2px 6px rgb(0 0 0 / 0.06); }
-.gx-node.sel { z-index: 3; border-color: var(--rc-accent); box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.15), 0 2px 6px rgb(0 0 0 / 0.06); }
-.gx-node.hot { border-color: var(--rc-accent); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.18); }
+.gx-node.sel { z-index: 3; border-color: var(--rc-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 15%, transparent), 0 2px 6px rgb(0 0 0 / 0.06); }
+.gx-node.hot { border-color: var(--rc-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 18%, transparent); }
 .gx-node.bad { border-color: var(--rc-err); }
 
 .gx-head { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -418,7 +481,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-stores { margin-top: 3px; display: flex; flex-direction: column; gap: 2px; }
 .gx-store {
   display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap;
-  border: 1px solid rgba(5, 150, 105, 0.3); border-radius: 6px; background: rgba(5, 150, 105, 0.06);
+  border: 1px solid color-mix(in srgb, var(--rc-ok) 30%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--rc-ok) 6%, transparent);
   padding: 2px 6px; font-size: 10px; font-weight: 600; color: var(--rc-ok);
 }
 .gx-store b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
@@ -438,7 +501,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-port::before { content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 2px; transform: translate(-50%, -50%); border-radius: 1px; background: currentColor; }
 .gx-port::after { content: ""; position: absolute; left: 50%; top: 50%; width: 2px; height: 9px; transform: translate(-50%, -50%); border-radius: 1px; background: currentColor; }
 .gx-node:hover .gx-port { opacity: 1; }
-.gx-port:hover { opacity: 1; transform: translateY(-50%) scale(1.18); box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.15), 0 2px 7px rgb(0 0 0 / 0.34); }
+.gx-port:hover { opacity: 1; transform: translateY(-50%) scale(1.18); box-shadow: 0 0 0 4px color-mix(in srgb, var(--rc-accent) 15%, transparent), 0 2px 7px rgb(0 0 0 / 0.34); }
 
 .gx-lane { position: absolute; left: 0; right: 0; z-index: 2; text-align: center; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--rc-faint); }
 .gx-lane::before, .gx-lane::after { content: ""; display: inline-block; width: 110px; height: 1px; background: var(--rc-line); margin: 0 12px; vertical-align: middle; }
@@ -454,23 +517,15 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
   box-shadow: 0 2px 4px rgb(0 0 0 / 0.06);
 }
 .gx-zoom button { height: 28px; min-width: 30px; padding: 0 6px; font-size: 14px; line-height: 1; color: var(--rc-faint); background: transparent; border: 0; cursor: pointer; transition: background 120ms, color 120ms; }
-.gx-zoom button:hover:enabled { background: rgba(13, 148, 136, 0.08); color: var(--rc-ink); }
+.gx-zoom button:hover:enabled { background: color-mix(in srgb, var(--rc-accent) 8%, transparent); color: var(--rc-ink); }
 .gx-zoom button:disabled { cursor: default; opacity: 0.35; }
 .gx-zoom .pct { min-width: 48px; border-left: 1px solid var(--rc-line); border-right: 1px solid var(--rc-line); font-family: var(--rc-mono); font-size: 11px; }
 
-.gx-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.35); }
-.gx-modal { width: 28rem; max-width: calc(100vw - 40px); max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 12px; padding: 24px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.18); }
-.gx-modal h3 { margin: 0; font-size: 14px; }
-.gx-mbody { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 0; }
-.gx-field { display: flex; flex-direction: column; gap: 6px; }
-.gx-field > span { font-size: 12px; font-weight: 600; color: var(--rc-faint); }
 .gx-seg { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .gx-seg button { height: 28px; padding: 0 12px; font-size: 12px; font-weight: 600; border-radius: 6px; border: 1px solid var(--rc-line); background: var(--rc-ground); color: var(--rc-ink); cursor: pointer; }
 .gx-seg button:hover { background: var(--rc-hover); }
 .gx-seg button.on { background: var(--rc-accent); border-color: var(--rc-accent); color: #fff; }
 .gx-hint { font-size: 12px; color: var(--rc-faint); }
-.gx-err { font-size: 12.5px; color: var(--rc-err); white-space: pre-wrap; }
-.gx-mfoot { display: flex; justify-content: flex-end; gap: 8px; }
 .gx-setup-ok { color: var(--rc-ok); }
 
 /* 카드 상단 테두리 필 — 좌 LLM/하네스, 우 채널 배지 */
@@ -482,7 +537,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
   padding: 1px 6px; font-size: 9.5px; font-weight: 600; line-height: 1.6; color: var(--rc-faint);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); cursor: pointer;
 }
-.gx-pill:hover { border-color: rgba(13, 148, 136, 0.5); color: var(--rc-ink); }
+.gx-pill:hover { border-color: color-mix(in srgb, var(--rc-accent) 50%, transparent); color: var(--rc-ink); }
 .gx-pill.llm { left: 8px; }
 .gx-pill.llm img { width: 11px; height: 11px; border-radius: 3px; object-fit: contain; flex: 0 0 auto; }
 .gx-pill-tx { overflow: hidden; text-overflow: ellipsis; }
@@ -527,7 +582,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 /* 스튜디오 툴바의 묶음 구분 — 성질이 다른 버튼 사이에만 선다.
    되돌리기·초기화가 자주 누르는 버튼과 붙어 있으면 언젠가 잘못 눌린다 */
 .st-div { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--rc-line); flex: none; }
-
 
 /* ── 결과면 (Preview) ─────────────────────────────────────────────────────
    모양은 재료가 정한다. 여섯 갈래가 한 골격을 공유한다: 머리(무엇을 보고 있는가) ·
@@ -590,7 +644,6 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .pv-out { margin: 0; padding: 11px 12px; background: var(--rc-bg); border: 1px solid var(--rc-line-soft); border-radius: 8px; font: 12px/1.62 var(--rc-mono); white-space: pre-wrap; word-break: break-word; min-height: 76px; max-height: 240px; overflow: auto; }
 .pv-out.err { color: var(--rc-err); background: var(--rc-err-bg); border-color: transparent; }
 .pv-receipt { font-size: 11.5px; color: var(--rc-faint); display: inline-flex; align-items: center; gap: 6px; }
-
 
 /* ── 팔레트 — 만들 수 있는 것의 표면 ──────────────────────────────────────
    왼쪽 패널 안에 두면 overflow:auto 에 잘리므로 st-body 기준으로 띄운다.
@@ -687,3 +740,92 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .ap-engine-l { font-size: 13px; }
 .ap-engine .st-picks { gap: 5px; }
 .ap-engine .st-pick { padding: 2px 9px; font: 12px var(--rc-sans); }
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

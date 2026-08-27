@@ -1,5 +1,7 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { Draft, Nav } from "@/lib/useDraft";
 import { fixTargetOf } from "@/lib/verdict";
 
@@ -12,11 +14,9 @@ export default function DraftConsole({ draft, nav }: { draft: Draft; nav: Nav })
         <span className="rc-label">콘솔</span>
         {issues != null ? (
           issues.length ? (
-            <span className="rc-chip" style={{ color: "var(--rc-err)", background: "var(--rc-err-bg)" }}>
-              판정 {issues.length}건
-            </span>
+            <Badge variant="destructive">판정 {issues.length}건</Badge>
           ) : (
-            <span className="rc-chip">검사 통과</span>
+            <Badge variant="secondary">검사 통과</Badge>
           )
         ) : null}
         {!consoleOpen && log[0] ? <span className={`st-last ${log[0].kind}`}>{log[0].text}</span> : null}
@@ -35,13 +35,13 @@ export default function DraftConsole({ draft, nav }: { draft: Draft; nav: Nav })
                   <div key={x} className="st-issue err">
                     <span>- {text}</span>
                     {go ? (
-                      <button className="rc-btn" onClick={() => nav({ sec: go.sec, item: go.item, file: null })}>
+                      <Button variant="outline" size="xs" className="flex-none" onClick={() => nav({ sec: go.sec, item: go.item, file: null })}>
                         {go.label}
-                      </button>
+                      </Button>
                     ) : v?.line != null && effFile !== "relay.yaml" ? (
-                      <button className="rc-btn" onClick={() => nav({ sec: null, item: null, file: "relay.yaml" })}>
+                      <Button variant="outline" size="xs" className="flex-none" onClick={() => nav({ sec: null, item: null, file: "relay.yaml" })}>
                         relay.yaml {v.line}행 보기
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 );

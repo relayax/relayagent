@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CommitDialog, DiscardDialog, PublishDialog, PublishedDialog, ReleasesDialog } from "@/components/StudioDialogs";
+import { Button } from "@/components/ui/button";
 import { notifyNav, type Draft } from "@/lib/useDraft";
 
 type Dialog = null | "commit" | "publish" | "releases" | "discard";
@@ -36,22 +37,22 @@ export default function DraftActions({
     <>
       {/* 패널 수정은 여기 [적용]으로 반영한다 — 폼은 눌러볼 수 있으므로 바로 적용하지 않는다.
           채팅 수정은 빌더가 바로 적용하므로 이 버튼을 거치지 않는다(그때는 changedCount 0). */}
-      <button
-        className="rc-btn accent"
+      <Button
+        size="sm"
         title={changedCount ? "패널에서 고친 것을 지금 도는 판으로 반영합니다" : "패널에서 고친 것이 없습니다"}
         disabled={!changedCount && !!status?.installed}
         onClick={() => setDialog("publish")}
       >
         적용{changedCount ? ` (${changedCount})` : ""}
-      </button>
+      </Button>
       {/* 되돌리기 — 방금 적용한 것이 마음에 안 들 때 이전 판으로. 채팅이 바로 적용하는 흐름의 안전망 */}
-      <button className="rc-btn" title="예전에 적용했던 판으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
+      <Button variant="outline" size="sm" title="예전에 적용했던 판으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
         되돌리기
-      </button>
+      </Button>
       <span className="st-more">
-        <button className="rc-btn" title="더 보기" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
+        <Button variant="outline" size="icon-sm" title="더 보기" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
           ⋯
-        </button>
+        </Button>
         {more ? (
           <div className="st-menu" role="menu" onMouseLeave={() => setMore(false)}>
             {item("되돌리기", `⌘Z — 쌓인 판 ${draft.undoDepth}`, () => draft.stepHistory("undo"), { disabled: !draft.undoDepth })}

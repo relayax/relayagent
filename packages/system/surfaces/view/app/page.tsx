@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ChatNudge from "@/components/ChatNudge"; // 말풍선
+import { Button } from "@/components/ui/button";
 import PkgPane from "@/components/PkgPane";
 import SettingsPane from "@/components/SettingsPane";
 import { edgesData, fetchRegistry, fetchResidency, fetchShellNav, type ShellNav } from "@/lib/api";
@@ -130,7 +131,7 @@ function Console() {
             <div className="pane-body">
               <div className="rc-card pad">
                 <p className="hint">장부에 이 이름의 설치가 없습니다. 제거되었거나 주소가 낡았습니다.</p>
-                <div className="detail-foot"><a className="rc-btn" href="/">홈으로</a></div>
+                <div className="detail-foot"><Button variant="outline" size="sm" nativeButton={false} render={<a href="/" />}>홈으로</Button></div>
               </div>
             </div>
           </section>

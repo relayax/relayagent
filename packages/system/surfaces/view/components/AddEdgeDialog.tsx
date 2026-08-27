@@ -7,6 +7,9 @@
 import { useMemo, useState } from "react";
 import { approveGrant, resolveProvider } from "@/lib/api";
 import type { Registry } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
 export interface EdgePrefill {
   consumer?: string;
@@ -81,26 +84,28 @@ export default function AddEdgeDialog({
   ));
 
   return (
-    <div className="gx-overlay" onClick={onClose}>
-      <div className="gx-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>프로그램 연결하기</h3>
-        <div className="gx-mbody">
-          <label className="gx-field">
-            <span>도움을 받는 쪽</span>
-            <select value={consumer} onChange={(e) => { setConsumer(e.target.value); setPick(""); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>프로그램 연결하기</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edge-consumer">도움을 받는 쪽</Label>
+            <select id="edge-consumer" value={consumer} onChange={(e) => { setConsumer(e.target.value); setPick(""); }}>
               <option value="">프로그램 선택</option>
               {options}
             </select>
-          </label>
-          <label className="gx-field">
-            <span>도움을 주는 쪽</span>
-            <select value={provider} onChange={(e) => { setProvider(e.target.value); setPick(""); }}>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edge-provider">도움을 주는 쪽</Label>
+            <select id="edge-provider" value={provider} onChange={(e) => { setProvider(e.target.value); setPick(""); }}>
               <option value="">프로그램 선택</option>
               {options}
             </select>
-          </label>
-          <div className="gx-field">
-            <span>연결 방식</span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>연결 방식</Label>
             <div className="gx-seg">
               <button className={transport === "mcp" ? "on" : ""} onClick={() => { setTransport("mcp"); setPick(""); }}>
                 도구 빌려 쓰기
@@ -110,10 +115,10 @@ export default function AddEdgeDialog({
               </button>
             </div>
           </div>
-          <div className="gx-field">
-            <span>{transport === "a2a" ? "맡길 일" : "빌릴 도구"}</span>
+          <div className="flex flex-col gap-1.5">
+            <Label>{transport === "a2a" ? "맡길 일" : "빌릴 도구"}</Label>
             {!consumer || !provider ? (
-              <div className="gx-hint">양쪽 프로그램을 먼저 선택해 주세요.</div>
+              <p className="text-xs text-muted-foreground">양쪽 프로그램을 먼저 선택해 주세요.</p>
             ) : transport === "a2a" ? (
               a2aDecls.length ? (
                 <div className="lv">
@@ -131,10 +136,10 @@ export default function AddEdgeDialog({
                   ))}
                 </div>
               ) : (
-                <div className="gx-hint">
+                <p className="text-xs text-muted-foreground">
                   {consumerName}가 {providerName}에게 일을 맡기겠다고 아직 신청하지 않았습니다.
                   신청이 없으면 승인할 것도 없어요. 패키지 만들기에서 이 연결을 먼저 신청해 주세요.
-                </div>
+                </p>
               )
             ) : mcpDecls.length ? (
               <div className="lv">
@@ -152,22 +157,22 @@ export default function AddEdgeDialog({
                 })}
               </div>
             ) : (
-              <div className="gx-hint">
+              <p className="text-xs text-muted-foreground">
                 {consumerName}가 {providerName}의 도구를 쓰겠다고 아직 신청하지 않았습니다.
                 신청이 없으면 승인할 것도 없어요. 패키지 만들기에서 이 연결을 먼저 신청해 주세요.
-              </div>
+              </p>
             )}
           </div>
-          {err ? <div className="gx-err">{err}</div> : null}
-          <div className="gx-hint">연결을 누르면 바로 이어지고, 지도에 선으로 표시됩니다. 해제는 카드 상세 화면에서 할 수 있습니다.</div>
+          {err ? <p className="text-sm text-destructive">{err}</p> : null}
+          <p className="text-xs text-muted-foreground">연결을 누르면 바로 이어지고, 지도에 선으로 표시됩니다. 해제는 카드 상세 화면에서 할 수 있습니다.</p>
         </div>
-        <div className="gx-mfoot">
-          <button className="rc-btn" onClick={onClose}>취소</button>
-          <button className="rc-btn accent" disabled={busy} onClick={() => void submit()}>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>취소</Button>
+          <Button size="sm" disabled={busy} onClick={() => void submit()}>
             {busy ? "..." : "연결"}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

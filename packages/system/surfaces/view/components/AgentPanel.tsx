@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
 import { CREATABLES, blocked, type Creatable } from "@/lib/create";
 import type { Row } from "@/lib/describe";
 import { cronToKorean } from "@/lib/describe";
@@ -164,9 +165,9 @@ function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; 
   );
   return (
     <div className="ap-addwrap">
-      <button type="button" className={label ? "ap-add chip" : "ap-add"} ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`}>
+      <Button type="button" variant="outline" size="xs" className="flex-none hover:border-primary hover:text-foreground" ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`}>
         ＋ {label ?? "추가"}
-      </button>
+      </Button>
       {open && typeof document !== "undefined" ? createPortal(list, document.body) : null}
     </div>
   );

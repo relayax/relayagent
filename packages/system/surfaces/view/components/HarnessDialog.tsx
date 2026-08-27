@@ -8,6 +8,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { connectHarness, getHarness, loginHarness, harnessModels, setHarnessActive, setModel, type HarnessVariantView } from "@/lib/api";
 import type { Pkg } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function HarnessDialog({
   pkg,
@@ -119,12 +123,14 @@ export default function HarnessDialog({
   const loginCmd = `relay login ${pkg.name}`;
 
   return (
-    <div className="gx-overlay" onClick={onClose}>
-      <div className="gx-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>AI 엔진 · {pkg.manifest?.display_name ?? pkg.name}</h3>
-        <div className="gx-mbody">
-          <div className="gx-field">
-            <span>이 에이전트를 움직이는 AI 프로그램</span>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>AI 엔진 · {pkg.manifest?.display_name ?? pkg.name}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label>이 에이전트를 움직이는 AI 프로그램</Label>
             {variants.length ? (
               <div className={`lv${busy ? " busy" : ""}`}>
                 {variants.map((v) => (
@@ -143,14 +149,14 @@ export default function HarnessDialog({
                 ))}
               </div>
             ) : (
-              <div className="gx-hint">이 프로그램에는 선택할 AI 엔진이 없습니다.</div>
+              <p className="text-xs text-muted-foreground">이 프로그램에는 선택할 AI 엔진이 없습니다.</p>
             )}
             {activeV && activeV.ready === false ? (
-              <div className="gx-field">
-                {activeV.note ? <div className="gx-err">{activeV.note}</div> : null}
+              <div className="flex flex-col gap-1.5">
+                {activeV.note ? <p className="text-sm text-destructive">{activeV.note}</p> : null}
                 {activeV.reason === "no-tool" ? null : activeV.auth === "token" ? (
                   <div className="lv-in">
-                    <input
+                    <Input
                       type="password"
                       placeholder={`${activeV.provider ?? ""} API 토큰 붙여넣기 (안전한 금고에 저장됩니다)`}
                       value={token}
@@ -159,42 +165,43 @@ export default function HarnessDialog({
                         if (e.key === "Enter" && token.trim()) void connectToken();
                       }}
                     />
-                    <button className="rc-btn" disabled={busy || !token.trim()} onClick={() => void connectToken()}>
+                    <Button variant="outline" size="sm" disabled={busy || !token.trim()} onClick={() => void connectToken()}>
                       연결
-                    </button>
+                    </Button>
                   </div>
                 ) : activeV.login ? (
                   // 대화형 로그인: 인증은 터미널(TTY)이 소유하지만 그 창을 여는 것은 기판이 한다
                   <div className="lv-in">
-                    <button className="rc-btn accent" disabled={busy} onClick={() => void doLogin()}>
+                    <Button size="sm" disabled={busy} onClick={() => void doLogin()}>
                       로그인
-                    </button>
-                    <button
-                      className="rc-btn"
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
                         void navigator.clipboard?.writeText(loginCmd);
                         setNote(`복사됨: ${loginCmd}`);
                       }}
                     >
                       명령 복사
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
               </div>
             ) : null}
             {activeV && activeV.ready === true ? (
               // 준비됐다고 자격이 잠기면 안 된다 — 계정 전환·토큰 교체는 상시 열려 있어야 한다
-              <div className="gx-field">
+              <div className="flex flex-col gap-1.5">
                 {activeV.login ? (
                   <div className="lv-in">
-                    <button className="rc-btn" disabled={busy} onClick={() => void doLogin(true)}>
+                    <Button variant="outline" size="sm" disabled={busy} onClick={() => void doLogin(true)}>
                       계정 전환
-                    </button>
-                    <span className="gx-hint" style={{ alignSelf: "center" }}>다른 계정으로 다시 로그인합니다</span>
+                    </Button>
+                    <span className="text-xs text-muted-foreground self-center">다른 계정으로 다시 로그인합니다</span>
                   </div>
                 ) : activeV.auth === "token" ? (
                   <div className="lv-in">
-                    <input
+                    <Input
                       type="password"
                       placeholder={`${activeV.provider ?? "provider"} 토큰 교체`}
                       value={token}
@@ -203,20 +210,20 @@ export default function HarnessDialog({
                         if (e.key === "Enter" && token.trim()) void connectToken();
                       }}
                     />
-                    <button className="rc-btn" disabled={busy || !token.trim()} onClick={() => void connectToken()}>
+                    <Button variant="outline" size="sm" disabled={busy || !token.trim()} onClick={() => void connectToken()}>
                       교체
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
               </div>
             ) : null}
-            <button className="rc-btn" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void load()}>
+            <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={() => void load()}>
               다시 점검
-            </button>
+            </Button>
           </div>
 
-          <div className="gx-field">
-            <span>모델</span>
+          <div className="flex flex-col gap-1.5">
+            <Label>모델</Label>
             {(() => {
               const llmIcon = variants.find((v) => v.name === active)?.llm_icon ?? null;
               const mic = llmIcon ? <span className="lv-ic"><img src={asset(llmIcon)} alt="" /></span> : null;
@@ -251,7 +258,7 @@ export default function HarnessDialog({
               ) : null}
               {freeOpen ? (
                 <div className="lv-in">
-                  <input
+                  <Input
                     autoFocus
                     placeholder="모델 ID 직접 입력"
                     value={free}
@@ -261,9 +268,9 @@ export default function HarnessDialog({
                       if (e.key === "Escape") setFreeOpen(false);
                     }}
                   />
-                  <button className="rc-btn" disabled={busy || !free.trim()} onClick={() => void applyModel(free.trim())}>
+                  <Button variant="outline" size="sm" disabled={busy || !free.trim()} onClick={() => void applyModel(free.trim())}>
                     적용
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="lv-row lv-add" onClick={() => setFreeOpen(true)}>
@@ -275,13 +282,13 @@ export default function HarnessDialog({
             })()}
           </div>
 
-          {note ? <div className="gx-hint">{note}</div> : null}
-          {err ? <div className="gx-err">{err}</div> : null}
+          {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
+          {err ? <p className="text-sm text-destructive">{err}</p> : null}
         </div>
-        <div className="gx-mfoot">
-          <button className="rc-btn" onClick={onClose}>닫기</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>닫기</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

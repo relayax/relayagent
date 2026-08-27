@@ -5,7 +5,7 @@
 // file: 소비자(view 빌드)에 전파되지 않고, node_modules 가 하나라 react 이중화 축이 없다.
 // Output → dist/chat-app.js + dist/chat-app.css (gitignored build artifacts).
 import * as esbuild from "esbuild";
-import { readFile } from "node:fs/promises";
+import { copyFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -52,4 +52,11 @@ await esbuild.build({
   logLevel: "info",
 });
 
-console.log(`✓ relay-chat built (${dev ? "dev" : "prod"}) → dist/chat-app.js + dist/chat-app.css`);
+// 글꼴 — 콘솔(next/font/local)·사이드바(@font-face)·위젯이 같은 Pretendard 를 쓴다. 기판이
+// /assets/pretendard.woff2 로 서빙하므로 여기서 dist 로 복사한다(인트라넷·오프라인에서도 뜬다)
+await copyFile(
+  resolve(__dirname, "node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2"),
+  resolve(__dirname, "dist/pretendard.woff2"),
+);
+
+console.log(`✓ relay-chat built (${dev ? "dev" : "prod"}) → dist/chat-app.js + dist/chat-app.css + dist/pretendard.woff2`);

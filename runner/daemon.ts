@@ -343,8 +343,8 @@ export function createApi(
 
       // 기판 소유 클라이언트 자산(채팅 위젯 번들). 패키지 view 가 아니라 기판이 서빙한다 —
       // 위젯은 하네스와의 연결지점이라 구현이 기판과 함께 움직여야 하기 때문.
-      // 번들은 릴리스 컷이 굽는다(chat/ chat-build.mjs → dist) — js 와 css 두 갈래다
-      const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css))$/);
+      // 번들은 릴리스 컷이 굽는다(chat/ chat-build.mjs → dist) — js · css · 글꼴(woff2) 세 갈래다
+      const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css|woff2))$/);
       if (asset && req.method === "GET") {
         const file = path.join(ASSETS_DIR, asset[1]);
         if (!fs.existsSync(file)) {

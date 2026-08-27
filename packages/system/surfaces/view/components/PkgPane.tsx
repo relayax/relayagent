@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentScope } from "@relay/chat";
 import DetailFace from "@/components/DetailFace";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { channelStatus, serviceStatus, type ChannelStatusView, type ServiceStatusView, type ShellItem } from "@/lib/api";
 import { landingAgent, residentDecls } from "@/lib/faces";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
@@ -124,7 +127,7 @@ export default function PkgPane({
     <section className="pane pkg">
       <header className="pane-head">
         {/* 사이드바가 숨는 화면이라 나가는 문은 여기 하나다 — 셸 홈은 기판 주소라 <a> */}
-        <a className="rc-btn back" href="/" title="홈으로">←</a>
+        <Button variant="ghost" size="icon-sm" className="back" nativeButton={false} render={<a href="/" title="홈으로" />}>←</Button>
         {item?.icon ? <img className="p-ic" src={item.icon} alt="" /> : <span className="p-ic ltr">{(pkg.name[0] ?? "?").toUpperCase()}</span>}
         <h2>{m?.display_name ?? title?.display ?? pkg.name}</h2>
         <span className="meta mono">
@@ -136,13 +139,15 @@ export default function PkgPane({
         <span ref={setSlot} className="pane-actions" />
         <div className="right">
           {tabs.length > 1 ? (
-            <div className="seg" role="group" aria-label="탭 전환">
-              {tabs.map((t) => (
-                <button key={t} type="button" aria-pressed={tab === t} onClick={() => onFace(t)}>
-                  {TAB_LABEL[t]}
-                </button>
-              ))}
-            </div>
+            <Tabs value={tab} onValueChange={(v) => onFace(v as Tab)}>
+              <TabsList aria-label="탭 전환">
+                {tabs.map((t) => (
+                  <TabsTrigger key={t} value={t}>
+                    {TAB_LABEL[t]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
           ) : null}
         </div>
       </header>
@@ -228,7 +233,7 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
             <div className="row" key={t.id}>
               <b className="grow">{t.id}</b>
               <span className="mono soft">{t.when.cron ? `${t.when.cron}${t.when.tz ? ` · ${t.when.tz}` : ""}` : t.when.event ?? "—"}</span>
-              <span className="rc-chip gray">{t.then.script ? `script: ${t.then.script}` : t.then.agent ? `agent: ${t.then.agent}` : "—"}</span>
+              <Badge variant="outline">{t.then.script ? `script: ${t.then.script}` : t.then.agent ? `agent: ${t.then.agent}` : "—"}</Badge>
             </div>
           ))}
         </div>
@@ -239,20 +244,20 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
           <h3>채널 (외부 대화 수신)</h3>
           {decls.channels.map((c) => {
             const st = chans?.find((x) => x.name === c.name);
-            const chip = !st
-              ? { cls: "rc-chip gray", label: "확인 중" }
+            const chip: { variant: "secondary" | "outline" | "destructive"; label: string } = !st
+              ? { variant: "outline", label: "확인 중" }
               : !st.hasCred
-                ? { cls: "rc-chip gray", label: "자격 없음" }
+                ? { variant: "outline", label: "자격 없음" }
                 : st.lastError
-                  ? { cls: "rc-chip err", label: "오류" }
+                  ? { variant: "destructive", label: "오류" }
                   : st.running
-                    ? { cls: "rc-chip", label: "연결됨" }
-                    : { cls: "rc-chip gray", label: "저장됨" };
+                    ? { variant: "secondary", label: "연결됨" }
+                    : { variant: "outline", label: "저장됨" };
             return (
               <div className="row" key={c.name}>
                 <b className="grow">{c.name}</b>
                 {st?.lastError ? <span className="mono soft ellipsis" title={st.lastError}>{st.lastError}</span> : null}
-                <span className={chip.cls}>{chip.label}</span>
+                <Badge variant={chip.variant}>{chip.label}</Badge>
               </div>
             );
           })}
@@ -265,10 +270,10 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
           {decls.services.map((s) => (
             <div className="row" key={s.name}>
               <b className="grow">{s.name}</b>
-              <span className="rc-chip gray">{s.dockerfile ? "container" : s.dir ? "dir" : "process"}</span>
-              <span className={running.includes(`${pkg.name}/${s.name}`) ? "rc-chip" : "rc-chip gray"}>
+              <Badge variant="outline">{s.dockerfile ? "container" : s.dir ? "dir" : "process"}</Badge>
+              <Badge variant={running.includes(`${pkg.name}/${s.name}`) ? "secondary" : "outline"}>
                 {running.includes(`${pkg.name}/${s.name}`) ? "도는 중" : "멈춤"}
-              </span>
+              </Badge>
             </div>
           ))}
         </div>
@@ -281,9 +286,9 @@ function LiveFace({ pkg, running }: { pkg: Pkg; running: string[] }) {
             <div className="row" key={s.name}>
               <b className="grow">{s.name}</b>
               <span className="mono soft ellipsis">{s.url}</span>
-              <span className={s.kind === "none" || s.hasCred ? "rc-chip" : "rc-chip gray"}>
+              <Badge variant={s.kind === "none" || s.hasCred ? "secondary" : "outline"}>
                 {s.kind === "none" ? "자격 불요" : s.hasCred ? "연결됨" : "자격 없음"}
-              </span>
+              </Badge>
             </div>
           ))}
         </div>

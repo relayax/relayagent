@@ -7,6 +7,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { channelStatus, connectChannel, verifyChannel, restartChannel, type ChannelStatusView, type CredentialDecl } from "@/lib/api";
 import type { Pkg } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 /** 3-상태 점 — 자격 없음(○) / 저장됨·미검증·죽음(●) / 연결됨(●). 색이 상태의 축이다 */
 function statusOf(c: ChannelStatusView): { dot: string; color: string; text: string } {
@@ -138,13 +143,15 @@ export default function ChannelDialog({
   }
 
   return (
-    <div className="gx-overlay" onClick={onClose}>
-      <div className="gx-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>채널 · {pkg.manifest?.display_name ?? pkg.name}</h3>
-        <div className="gx-mbody">
-          {err ? <div className="gx-err">{err}</div> : null}
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>채널 · {pkg.manifest?.display_name ?? pkg.name}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          {err ? <p className="text-sm text-destructive">{err}</p> : null}
           {channels.length === 0 ? (
-            <div className="gx-hint">이 패키지에는 선언된 채널이 없습니다.</div>
+            <p className="text-xs text-muted-foreground">이 패키지에는 선언된 채널이 없습니다.</p>
           ) : (
             <div className={`lv${busy ? " busy" : ""}`}>
               {channels.map((c) => {
@@ -164,25 +171,26 @@ export default function ChannelDialog({
                         {c.credential ? (
                           <>
                             {c.credential.fields.map((f) => (
-                              <label key={f.key ?? "_"} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                                <span style={{ font: "11px var(--rc-ui)", color: "var(--rc-faint)" }}>
+                              <div key={f.key ?? "_"} className="flex flex-col gap-1.5">
+                                <Label htmlFor={`ch-${c.name}-${f.key ?? "_"}`} className="text-xs text-muted-foreground">
                                   {f.label}
-                                  {f.required ? <span style={{ color: "var(--rc-err)" }}> *</span> : null}
-                                  {f.list ? <span style={{ color: "var(--rc-faint)" }}> · 쉼표로 구분</span> : null}
-                                </span>
-                                <input
+                                  {f.required ? <span className="text-destructive"> *</span> : null}
+                                  {f.list ? <span className="text-muted-foreground"> · 쉼표로 구분</span> : null}
+                                </Label>
+                                <Input
+                                  id={`ch-${c.name}-${f.key ?? "_"}`}
                                   type={f.secret ? "password" : "text"}
                                   autoComplete="off"
                                   spellCheck={false}
                                   placeholder={f.placeholder}
                                   value={valOf(c.name, f.key ?? "")}
                                   onChange={(e) => setVal(c.name, f.key ?? "", e.target.value)}
-                                  style={{ width: "100%", font: "12px var(--rc-mono)" }}
+                                  className="font-mono text-xs"
                                 />
-                              </label>
+                              </div>
                             ))}
                             {c.credential.help ? (
-                              <div className="gx-hint" style={{ font: "11px var(--rc-ui)" }}>
+                              <p className="text-xs text-muted-foreground">
                                 {c.credential.help.note}
                                 {c.credential.help.url ? (
                                   <>
@@ -192,30 +200,30 @@ export default function ChannelDialog({
                                     </a>
                                   </>
                                 ) : null}
-                              </div>
+                              </p>
                             ) : null}
                           </>
                         ) : (
-                          <textarea
+                          <Textarea
                             rows={3}
                             placeholder="자격 붙여넣기 — 이 어댑터는 자격 형태를 선언하지 않았습니다(어댑터 문서를 따르세요)"
                             value={cred}
                             onChange={(e) => setCred(e.target.value)}
-                            style={{ width: "100%", font: "12px var(--rc-mono)", resize: "vertical" }}
+                            className="font-mono text-xs resize-y"
                           />
                         )}
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button className="rc-btn accent" disabled={busy || !ready(c)} onClick={() => void connect(c)}>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button size="sm" disabled={busy || !ready(c)} onClick={() => void connect(c)}>
                             연결 (저장·검증·재기동)
-                          </button>
-                          <button className="rc-btn" disabled={busy || !c.hasCred} onClick={() => void verify(c.name)} title="저장된 자격이 실제로 먹히는지 확인">
+                          </Button>
+                          <Button variant="outline" size="sm" disabled={busy || !c.hasCred} onClick={() => void verify(c.name)} title="저장된 자격이 실제로 먹히는지 확인">
                             검증
-                          </button>
-                          <button className="rc-btn" disabled={busy || !c.hasCred} onClick={() => void restart(c.name)}>
+                          </Button>
+                          <Button variant="outline" size="sm" disabled={busy || !c.hasCred} onClick={() => void restart(c.name)}>
                             재기동
-                          </button>
+                          </Button>
                         </div>
-                        {c.lastError ? <div className="gx-err">{c.lastError}</div> : null}
+                        {c.lastError ? <p className="text-sm text-destructive">{c.lastError}</p> : null}
                       </div>
                     ) : null}
                   </div>
@@ -223,11 +231,11 @@ export default function ChannelDialog({
               })}
             </div>
           )}
-          <button className="rc-btn" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void load()}>
+          <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={() => void load()}>
             다시 점검
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

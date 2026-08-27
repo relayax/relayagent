@@ -8,6 +8,7 @@ import DraftConsole from "@/components/DraftConsole";
 import EditorPanel from "@/components/EditorPanel";
 import Palette from "@/components/Palette";
 import SectionView from "@/components/SectionView";
+import { Button } from "@/components/ui/button";
 import { approveGrant, callScript, removePkg } from "@/lib/api";
 import { describe, scriptNamesFromFiles, scriptNamesFromTree } from "@/lib/describe";
 import { creatable, type Creatable } from "@/lib/create";
@@ -180,18 +181,19 @@ export default function DetailFace({
   const links = !ghost ? (
     <>
       {draft.status?.installed ? (
-        <a className="rc-btn" style={{ textDecoration: "none" }} href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다">
+        <Button variant="outline" size="sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다" />}>
           돌아가는 판 열기 ↗
-        </a>
+        </Button>
       ) : null}
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
         type="button"
         title={`${pkg.workspace} 폴더를 파일 탐색기로 엽니다`}
         onClick={() => { void fetch(`/pkg/${encodeURIComponent(pkg.name)}/workspace/open`, { method: "POST" }).catch(() => {}); }}
       >
         데이터 폴더 열기
-      </button>
+      </Button>
     </>
   ) : null;
   const foot = !ghost ? (
@@ -201,13 +203,13 @@ export default function DetailFace({
                 <span className="warn-text">
                   {users.length ? `${users.map((e) => label(e.consumer)).join(", ")} 이(가) 함께 멈춥니다.` : "되돌릴 수 없습니다."}
                 </span>
-                <button className="rc-btn" type="button" onClick={() => setConfirming(false)} disabled={busy}>취소</button>
-                <button className="rc-btn danger" type="button" onClick={() => void remove()} disabled={busy}>
+                <Button variant="outline" size="sm" type="button" onClick={() => setConfirming(false)} disabled={busy}>취소</Button>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" type="button" onClick={() => void remove()} disabled={busy}>
                   {busy ? "제거 중…" : "정말 제거"}
-                </button>
+                </Button>
               </>
             ) : (
-              <button className="rc-btn danger" type="button" onClick={() => setConfirming(true)} title="설치를 지웁니다 — 돌아가는 판과 데이터 폴더가 함께 사라집니다">이 패키지 제거</button>
+              <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" type="button" onClick={() => setConfirming(true)} title="설치를 지웁니다 — 돌아가는 판과 데이터 폴더가 함께 사라집니다">이 패키지 제거</Button>
             )}
           </div>
   ) : null;
@@ -244,12 +246,12 @@ export default function DetailFace({
           </>
         ) : (
           <>
-            <button className="rc-btn accent" onClick={() => void draft.open()} title="고칠 수 있는 사본을 엽니다 — 적용하기 전에는 돌아가는 판이 바뀌지 않습니다">
+            <Button size="sm" onClick={() => void draft.open()} title="고칠 수 있는 사본을 엽니다 — 적용하기 전에는 돌아가는 판이 바뀌지 않습니다">
               고치기
-            </button>
-            <a className="rc-btn" href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다" style={{ textDecoration: "none" }}>
+            </Button>
+            <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다" />}>
               ↗
-            </a>
+            </Button>
           </>
         ),
         actionsSlot,
@@ -289,9 +291,9 @@ export default function DetailFace({
           // 미결재 연결은 설명이 아니라 결재다 — 목록 위에 승인 버튼
           <div className="ap-pending">
             {pending.map((e, i) => (
-              <button key={`p-${e.ref}-${i}`} type="button" className="rc-btn" onClick={() => void approve(e)}>
+              <Button key={`p-${e.ref}-${i}`} type="button" variant="outline" size="sm" onClick={() => void approve(e)}>
                 {label(e.provider!)} 연결 승인
-              </button>
+              </Button>
             ))}
           </div>
         ) : null}

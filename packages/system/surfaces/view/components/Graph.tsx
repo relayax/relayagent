@@ -10,6 +10,7 @@ import AddEdgeDialog, { type EdgePrefill } from "@/components/AddEdgeDialog";
 import HarnessDialog from "@/components/HarnessDialog";
 import ChannelDialog from "@/components/ChannelDialog";
 import ServiceDialog from "@/components/ServiceDialog";
+import { Button } from "@/components/ui/button";
 import { isOutward, type EdgeView, type Pkg, type Registry } from "@/lib/types";
 
 const W = 1180;
@@ -344,9 +345,10 @@ export default function Graph({
           {reg.packages.length} 패키지 · Edge {reg.grants.length}
         </span>
         <span className="gx-sp" />
-        <button className="rc-btn" onClick={() => setDialog({})}>+ 연결</button>
-        <button
-          className="rc-btn"
+        <Button variant="outline" size="sm" onClick={() => setDialog({})}>+ 연결</Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => {
             setSaved({});
             localStorage.removeItem(LAYOUT_KEY);
@@ -354,7 +356,7 @@ export default function Graph({
           }}
         >
           자동 배치
-        </button>
+        </Button>
       </div>
       <div className="gx-view" ref={viewRef} onPointerDown={bgDown} data-lod={lodFar ? "far" : "near"}>
         <div

@@ -18,15 +18,22 @@ import {
   type Release,
 } from "@/lib/studio";
 import type { Manifest } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function Overlay({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="gx-overlay" onClick={onClose}>
-      <div className="gx-modal" style={{ width: "34rem" }} onClick={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-[34rem] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
         {children}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -73,15 +80,15 @@ export function CommitDialog({
 
   return (
     <Overlay title="기록" onClose={onClose}>
-      <div className="gx-mbody">
-        <div className="gx-field">
-          <span>지금까지 고친 것 {changedCount}건을 한 지점으로 남깁니다</span>
-          <input autoFocus value={msg} placeholder={changedCount ? "무엇을 바꿨는지 한 줄 (비우면 시각으로 채웁니다)" : "기록할 변경이 없습니다"} disabled={!changedCount} onChange={(e) => setMsg(e.target.value)} />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="commit-msg">지금까지 고친 것 {changedCount}건을 한 지점으로 남깁니다</Label>
+          <Input id="commit-msg" autoFocus value={msg} placeholder={changedCount ? "무엇을 바꿨는지 한 줄 (비우면 시각으로 채웁니다)" : "기록할 변경이 없습니다"} disabled={!changedCount} onChange={(e) => setMsg(e.target.value)} />
         </div>
-        <div className="gx-field">
-          <span>이전 지점 — 파일을 그 모습으로 되돌립니다 (이력은 남고, 되돌린 것은 새 변경이 됩니다)</span>
+        <div className="flex flex-col gap-1.5">
+          <Label>이전 지점 — 파일을 그 모습으로 되돌립니다 (이력은 남고, 되돌린 것은 새 변경이 됩니다)</Label>
           {commits == null ? (
-            <div className="gx-hint">불러오는 중…</div>
+            <p className="text-xs text-muted-foreground">불러오는 중…</p>
           ) : commits.length ? (
             <div className="st-hist">
               {commits.map((c, i) => (
@@ -89,10 +96,12 @@ export function CommitDialog({
                   <span className="msg" title={c.hash}>{c.message || "(메시지 없음)"}</span>
                   <span className="when">{when(c.time)}</span>
                   {i === 0 && !changedCount ? (
-                    <span className="rc-chip">지금</span>
+                    <Badge variant="secondary">지금</Badge>
                   ) : arming === c.hash ? (
-                    <button
-                      className="rc-btn danger"
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive border-destructive/30 hover:bg-destructive/10"
                       disabled={busy}
                       onClick={async () => {
                         setBusy(true);
@@ -108,27 +117,27 @@ export function CommitDialog({
                       }}
                     >
                       {changedCount ? `되돌리기 (기록 안 한 ${changedCount}건 사라짐)` : "되돌리기"}
-                    </button>
+                    </Button>
                   ) : (
-                    <button className="rc-btn" disabled={busy} onClick={() => setArming(c.hash)}>
+                    <Button variant="outline" size="sm" disabled={busy} onClick={() => setArming(c.hash)}>
                       이 지점으로
-                    </button>
+                    </Button>
                   )}
                 </div>
               ))}
             </div>
           ) : (
-            <div className="gx-hint">아직 남긴 지점이 없습니다 — 기록할 때마다 여기 쌓입니다</div>
+            <p className="text-xs text-muted-foreground">아직 남긴 지점이 없습니다 — 기록할 때마다 여기 쌓입니다</p>
           )}
         </div>
-        {err ? <div className="gx-err">{err}</div> : null}
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
       </div>
-      <div className="gx-mfoot">
-        <button className="rc-btn" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onClose}>
           닫기
-        </button>
-        <button
-          className="rc-btn accent"
+        </Button>
+        <Button
+          size="sm"
           disabled={busy || !changedCount}
           onClick={async () => {
             setBusy(true);
@@ -146,8 +155,8 @@ export function CommitDialog({
           }}
         >
           기록
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -168,14 +177,14 @@ function HarnessReadiness({ pkg, installed, manifest }: { pkg: string; installed
     };
   }, [pkg, installed]);
   if (!wanted.length) return null;
-  if (failed) return <div className="gx-hint">실행 도구 상태를 확인하지 못했습니다</div>;
-  if (rows == null) return <div className="gx-hint">실행 도구 확인 중…</div>;
+  if (failed) return <p className="text-xs text-muted-foreground">실행 도구 상태를 확인하지 못했습니다</p>;
+  if (rows == null) return <p className="text-xs text-muted-foreground">실행 도구 확인 중…</p>;
   const hit = wanted.map((n) => rows.find((r) => r.name === n) ?? null);
   const anyReady = hit.some((r) => r?.ready);
   return (
-    <div className="gx-field">
-      <span>실행 도구 — 이 앱의 대화를 움직이는 AI 프로그램</span>
-      <div className={anyReady ? "gx-hint gx-setup-ok" : "gx-err"}>
+    <div className="flex flex-col gap-1.5">
+      <Label>실행 도구 — 이 앱의 대화를 움직이는 AI 프로그램</Label>
+      <div className={anyReady ? "text-xs gx-setup-ok" : "text-sm text-destructive whitespace-pre-wrap"}>
         {wanted.map((n, i) => {
           const r = hit[i];
           const state = !r ? "알 수 없음" : r.ready ? `준비됨${r.account?.email ? ` · ${r.account.email}` : ""}` : `준비 안 됨${r.note ? ` — ${r.note}` : ""}`;
@@ -203,8 +212,8 @@ function FirstInstallBill({ pkg, manifest }: { pkg: string; manifest: Manifest |
   const outward = services.filter((s) => s.url || s.api);
   const bins = manifest?.requires?.binaries ?? [];
   return (
-    <div className="gx-field">
-      <span>처음 적용 — 이 앱이 쓰게 되는 것</span>
+    <div className="flex flex-col gap-1.5">
+      <Label>처음 적용 — 이 앱이 쓰게 되는 것</Label>
       <div className="st-changes">
         <div>작업 폴더: ~/Relay/{pkg} (기본값 · 대화가 이 폴더 위에서 돕니다)</div>
         {dirs.map((s) => (
@@ -263,20 +272,20 @@ export function PublishDialog({
 
   return (
     <Overlay title={`적용: ${manifest?.display_name ?? pkg}`} onClose={onClose}>
-      <div className="gx-mbody">
-        {!ready && !err ? <div className="gx-hint">검사와 변경 내역을 모으는 중…</div> : null}
+      <div className="flex flex-col gap-3">
+        {!ready && !err ? <p className="text-xs text-muted-foreground">검사와 변경 내역을 모으는 중…</p> : null}
         {issues?.length ? (
-          <div className="gx-field">
-            <span>검사에 걸렸습니다 — 고쳐야 적용할 수 있습니다</span>
-            <div className="gx-err">{issues.map((i) => "- " + i).join("\n")}</div>
+          <div className="flex flex-col gap-1.5">
+            <Label>검사에 걸렸습니다 — 고쳐야 적용할 수 있습니다</Label>
+            <p className="text-sm text-destructive whitespace-pre-wrap">{issues.map((i) => "- " + i).join("\n")}</p>
           </div>
         ) : null}
-        {ready && ok ? <div className="gx-hint gx-setup-ok">검사 통과</div> : null}
+        {ready && ok ? <p className="text-xs gx-setup-ok">검사 통과</p> : null}
         {!installed ? <FirstInstallBill pkg={pkg} manifest={manifest} /> : null}
         <HarnessReadiness pkg={pkg} installed={installed} manifest={manifest} />
         {changes ? (
-          <div className="gx-field">
-            <span>기록하지 않은 변경 {changes.length}건 {changes.length ? "(적용할 때 함께 기록됩니다)" : ""}</span>
+          <div className="flex flex-col gap-1.5">
+            <Label>기록하지 않은 변경 {changes.length}건 {changes.length ? "(적용할 때 함께 기록됩니다)" : ""}</Label>
             {changes.length ? (
               <div className="st-changes">
                 {changes.map((c) => (
@@ -287,25 +296,25 @@ export function PublishDialog({
               </div>
             ) : null}
             {diff ? (
-              <button className="rc-btn" style={{ alignSelf: "flex-start" }} onClick={() => setShowDiff(!showDiff)}>
+              <Button variant="outline" size="sm" className="self-start" onClick={() => setShowDiff(!showDiff)}>
                 {showDiff ? "바뀐 내용 접기" : "바뀐 내용 보기"}
-              </button>
+              </Button>
             ) : null}
             {showDiff ? <pre className="st-diff">{diff}</pre> : null}
           </div>
         ) : null}
-        <div className="gx-field">
-          <span>버전 (비우면 자동 — 지금 {draftVersion ?? "?"}, 이전 판이 있으면 끝자리를 올립니다)</span>
-          <input value={version} placeholder="자동" onChange={(e) => setVersion(e.target.value)} />
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="publish-version">버전 (비우면 자동 — 지금 {draftVersion ?? "?"}, 이전 판이 있으면 끝자리를 올립니다)</Label>
+          <Input id="publish-version" value={version} placeholder="자동" onChange={(e) => setVersion(e.target.value)} />
         </div>
-        {err ? <div className="gx-err">{err}</div> : null}
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
       </div>
-      <div className="gx-mfoot">
-        <button className="rc-btn" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onClose}>
           취소
-        </button>
-        <button
-          className="rc-btn accent"
+        </Button>
+        <Button
+          size="sm"
           disabled={!ok || busy}
           onClick={async () => {
             setBusy(true);
@@ -322,8 +331,8 @@ export function PublishDialog({
           }}
         >
           {busy ? "적용 중…" : "적용"}
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -346,7 +355,7 @@ export function PublishedDialog({
   const setupLine = outcome.setup ? outcome.setup.out.split("\n")[0] : null;
   return (
     <Overlay title="적용됨" onClose={onClose}>
-      <div className="gx-mbody">
+      <div className="flex flex-col gap-3">
         <div className="st-done">
           <div className="big">
             {display} v{outcome.version} 이(가) 돌아갑니다{outcome.fresh ? " — 홈과 사이드바에 카드가 생겼습니다" : ""}
@@ -358,14 +367,18 @@ export function PublishedDialog({
           ))}
         </div>
       </div>
-      <div className="gx-mfoot">
-        <button className="rc-btn" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onClose}>
           계속 고치기
-        </button>
-        <a className="rc-btn accent" style={{ textDecoration: "none" }} href={`/pkg/${encodeURIComponent(pkg)}/view/`} target="_blank" rel="noreferrer">
+        </Button>
+        <Button
+          size="sm"
+          nativeButton={false}
+          render={<a className="no-underline" href={`/pkg/${encodeURIComponent(pkg)}/view/`} target="_blank" rel="noreferrer" />}
+        >
           열기
-        </a>
-      </div>
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -386,21 +399,22 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
 
   return (
     <Overlay title="이전 판으로" onClose={onClose}>
-      <div className="gx-mbody">
-        <div className="gx-hint">실제로 돌아가는 판을 예전에 적용했던 판으로 바꿉니다. 스튜디오에서 고치던 내용은 그대로 남습니다.</div>
+      <div className="flex flex-col gap-3">
+        <p className="text-xs text-muted-foreground">실제로 돌아가는 판을 예전에 적용했던 판으로 바꿉니다. 스튜디오에서 고치던 내용은 그대로 남습니다.</p>
         {releases ? (
           <div className="lv">
             {releases.map((r) => (
               <div key={r.version} className="lv-row" style={{ cursor: "default" }}>
                 <span className="lv-tx">
                   <span className="lv-t">
-                    v{r.version} {r.live ? <span className="rc-chip">지금 돌아가는 판</span> : null}
+                    v{r.version} {r.live ? <Badge variant="secondary">지금 돌아가는 판</Badge> : null}
                   </span>
                   <span className="lv-s">{new Date(r.time).toLocaleString()}</span>
                 </span>
                 {!r.live ? (
-                  <button
-                    className="rc-btn"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={busy != null}
                     onClick={async () => {
                       setBusy(r.version);
@@ -417,22 +431,22 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
                     }}
                   >
                     {busy === r.version ? "바꾸는 중…" : "이 판으로"}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ))}
             {!releases.length ? <div className="empty">아직 이전 판이 없습니다 — 적용할 때마다 여기 쌓입니다</div> : null}
           </div>
         ) : (
-          <div className="gx-hint">불러오는 중…</div>
+          <p className="text-xs text-muted-foreground">불러오는 중…</p>
         )}
-        {err ? <div className="gx-err">{err}</div> : null}
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
       </div>
-      <div className="gx-mfoot">
-        <button className="rc-btn" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onClose}>
           닫기
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -442,22 +456,23 @@ export function DiscardDialog({ pkg, installed, onDone, onClose }: { pkg: string
   const [err, setErr] = useState<string | null>(null);
   return (
     <Overlay title="작업 사본 버리기 — 되돌릴 수 없습니다" onClose={onClose}>
-      <div className="gx-mbody">
-        <div className="gx-hint">
+      <div className="flex flex-col gap-3">
+        <p className="text-xs text-muted-foreground">
           <b>{pkg} 에서 고치던 내용과 그 이력이 모두 지워집니다. 복구할 수 없습니다.</b>
           {installed
             ? " 지금 돌아가는 판은 그대로 남습니다 — 다시 열면 그 판의 사본으로 새로 시작합니다."
             : " 이 패키지는 아직 한 번도 적용된 적이 없어, 작업한 것 전부가 사라집니다."}
-        </div>
-        {err ? <div className="gx-err">{err}</div> : null}
+        </p>
+        {err ? <p className="text-sm text-destructive">{err}</p> : null}
       </div>
-      <div className="gx-mfoot">
-        <button className="rc-btn" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onClose}>
           취소
-        </button>
-        <button
-          className="rc-btn"
-          style={{ color: "var(--rc-err)", borderColor: "var(--rc-err)" }}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive border-destructive/30 hover:bg-destructive/10"
           disabled={busy}
           onClick={async () => {
             setBusy(true);
@@ -472,8 +487,8 @@ export function DiscardDialog({ pkg, installed, onDone, onClose }: { pkg: string
           }}
         >
           버리기
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
