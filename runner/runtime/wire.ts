@@ -313,6 +313,98 @@ function activeTurn(pkg: string, session: string): TurnRecord | null {
   return sessionQueues.get(sessionKey(pkg, session))?.[0] ?? null;
 }
 
+// ── 관찰 다중화(§5.2-20-a, capability observe) — 세션 여러 개의 턴 이벤트를 SSE 한 줄기로 ──
+// 브라우저의 HTTP/1.1 origin 커넥션 예산(6)이 관찰 SSE 에 잠식되는 것을 막는다: 탭 셸은 pane 마다
+// 자기 세션을 관찰하므로 세션 수만큼 커넥션이 열렸다(§5.2 예산 조항의 실사고). 관찰자 하나 =
+// 커넥션 하나, 구독 세션은 POST 로 늘리고 줄인다. 줄기의 이벤트 줄에는 turn·session 이 덧붙는다.
+// 세션 구독은 §5.1-14 attach 와 같은 골격이다 — 관찰 창(진행·대기 턴)의 장부를 재생하고 라이브를
+// 잇는다. 구독 뒤에 서는 턴(개설·입양)은 observe/turn 으로 알리고 같은 줄기에 싣는다.
+
+const OBSERVER_ID_RE = /^[A-Za-z0-9-]{1,80}$/;
+
+interface Observer {
+  id: string;
+  pkg: string;
+  sse: Sse;
+  sessions: Set<string>;
+  /** 이 관찰자가 턴에 꽂은 싱크 — 구독을 걷거나 줄기가 닫힐 때 함께 걷는다 */
+  sinks: Map<TurnRecord, TurnSink>;
+}
+const observers = new Map<string, Observer>(); // `${pkg}/${id}` → 열린 줄기
+const sessionObservers = new Map<string, Set<Observer>>(); // sessionKey → 구독 중 관찰자
+
+function observerKey(pkg: string, id: string): string {
+  return pkg + "/" + id;
+}
+
+/** 이벤트 줄에 좌표를 덧붙인다 — 한 줄기에 여러 턴이 흐르므로 소비자가 나눌 열쇠다. 장부 줄은
+ *  검증된 JSON 객체라 첫 중괄호 뒤에 끼워 넣는다(파싱·재직렬화 없이). 수명주기 turn 이벤트가
+ *  이미 든 turn·session 은 같은 값이라 중복 키가 뜻을 바꾸지 않는다. */
+function tagLine(line: string, turn: string, session: string): string {
+  const head = JSON.stringify({ turn, session });
+  if (line.length > 2 && line.startsWith("{")) return head.slice(0, -1) + "," + line.slice(1);
+  return head;
+}
+
+function observerSink(obs: Observer, t: TurnRecord): void {
+  if (obs.sinks.has(t)) return;
+  const sink: TurnSink = {
+    write: (line) => obs.sse.send(tagLine(line, t.id, t.session)),
+    end: () => { obs.sinks.delete(t); }, // 턴 종결은 settled 줄이 말한다 — 줄기는 닫지 않는다
+  };
+  obs.sinks.set(t, sink);
+  t.sinks.add(sink);
+}
+
+/** 세션 구독 — 관찰 창의 턴 목록을 알리고, 각 턴의 장부 재생 + 라이브. 재생→구독 사이에 await 가
+ *  없어야 한다(동기 한 틱 안이라 이벤트가 새지 않는다). */
+function observeSession(obs: Observer, session: string): void {
+  obs.sessions.add(session);
+  const key = sessionKey(obs.pkg, session);
+  const set = sessionObservers.get(key) ?? new Set<Observer>();
+  set.add(obs);
+  sessionObservers.set(key, set);
+  const q = sessionQueues.get(key) ?? [];
+  obs.sse.send(JSON.stringify({ t: Date.now(), event: "observe", status: "session", session, turns: q.map((t) => t.id) }));
+  for (const t of q) {
+    for (const line of ledgerLines(t.file)) obs.sse.send(tagLine(line, t.id, session));
+    if (t.status !== "settled") observerSink(obs, t);
+  }
+}
+
+function unobserveSession(obs: Observer, session: string): void {
+  obs.sessions.delete(session);
+  const key = sessionKey(obs.pkg, session);
+  const set = sessionObservers.get(key);
+  if (set) {
+    set.delete(obs);
+    if (!set.size) sessionObservers.delete(key);
+  }
+  for (const [t, sink] of [...obs.sinks]) {
+    if (t.session !== session) continue;
+    t.sinks.delete(sink);
+    obs.sinks.delete(t);
+  }
+}
+
+/** 구독 중인 세션에 턴이 새로 서면(개설·입양) 알리고 싱크를 꽂는다. 장부는 비었거나 첫 줄뿐이지만
+ *  같은 골격으로 재생한다 — 입양 턴은 첫 이벤트가 개설 알림보다 먼저 적힐 수 있다. */
+function announceTurn(t: TurnRecord): void {
+  const set = sessionObservers.get(sessionKey(t.pkg, t.session));
+  if (!set) return;
+  for (const obs of set) {
+    obs.sse.send(JSON.stringify({ t: Date.now(), event: "observe", status: "turn", session: t.session, turn: t.id }));
+    for (const line of ledgerLines(t.file)) obs.sse.send(tagLine(line, t.id, t.session));
+    observerSink(obs, t);
+  }
+}
+
+function closeObserver(obs: Observer): void {
+  const key = observerKey(obs.pkg, obs.id);
+  if (observers.get(key) === obs) observers.delete(key);
+  for (const s of [...obs.sessions]) unobserveSession(obs, s);
+}
+
 /** 라이브 중계 + 상태 — 봉투 이벤트는 번역 없이 그대로 나른다(§6-35 데몬=파이프).
  *  기록하지 않는다: 세션이 이미 같은 줄을 장부에 썼다(harness.ts appendEvent). */
 function relayTurnEvent(t: TurnRecord, ev: EnvelopeEvent): void {
@@ -381,6 +473,7 @@ export function adoptSessionTurn(pkg: string, slot: string, turn: { id: string; 
   const q = sessionQueues.get(key) ?? [];
   q.push(t);
   sessionQueues.set(key, q);
+  announceTurn(t); // 관찰 줄기에는 개설 줄보다 먼저 알린다 — 그 줄이 싱크를 지나게
   appendTurnEvent(t, { event: "turn", status: "started", turn: t.id, session: slot });
 }
 
@@ -526,6 +619,7 @@ function enqueueTurn(deps: ClientWireDeps, io: ClientWireIO, pkg: string, sessio
   const q = sessionQueues.get(key) ?? [];
   q.push(t);
   sessionQueues.set(key, q);
+  announceTurn(t); // 구독 중인 관찰 줄기에 이 턴이 선다(§5.2-20-a)
   // 같은 세션의 진행 중 턴 뒤에 도착순으로 직렬화한다(§5.1-12) — 클라이언트 큐는 은퇴
   const chain = (sessionChains.get(key) ?? Promise.resolve()).then(() => runTurn(deps, io, t, body));
   sessionChains.set(key, chain.catch(() => { /* runTurn 은 던지지 않는다 — 사슬 보존 그물 */ }));
@@ -820,7 +914,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       requirePkg(deps.getLedger(), pkg);
       // enumerate: /registry 재포장으로 구현(§5.6-32) · upload-progress: 업로드가 전 구간
       // 스트리밍이라 진행률이 실제를 반영한다(§5.4-28, 아래 upload 핸들러가 그 구현)
-      const caps = ["enumerate", "upload-progress"];
+      // observe: 관찰 다중화 줄기(§5.2-20-a) — 이 파일이 구현하므로 무조건이다
+      const caps = ["enumerate", "upload-progress", "observe"];
       const adapter = await io.harnessCapabilities(pkg);
       if (adapter) {
         // 하네스 조회 3동사는 어댑터 필수 동사(info/models/commands)의 중계라 하네스가 있으면 산다
@@ -861,6 +956,43 @@ export const WIRE_ROUTES: WireRoute[] = [
       const t = enqueueTurn(deps, io, pkg, session, b);
       // 202 — 턴 종결을 붙들지 않는다(§5.1-12). 관찰은 stream/attach 로 몇 번이든 다시 연다
       json(res, 202, { turn: t.id, session });
+    },
+  },
+  // ── 관찰 다중화(§5.2-20-a): 줄기 열기 + 구독 편집 ──
+  {
+    methods: ["GET"],
+    scope: "base",
+    pattern: /^\/observe$/,
+    handler: ({ deps, req, res, url, pkg }) => {
+      requirePkg(deps.getLedger(), pkg);
+      const id = String(url.searchParams.get("id") ?? "");
+      if (!OBSERVER_ID_RE.test(id)) throw new WireError(400, "E_BAD_OBSERVER", `관찰자 id 형식 위반: ${id}`);
+      const key = observerKey(pkg, id);
+      observers.get(key)?.sse.close(); // 같은 id 의 재접속 — 이전 줄기는 대체된다(§5.2 ③)
+      const sse = openSse(req, res);
+      const obs: Observer = { id, pkg, sse, sessions: new Set(), sinks: new Map() };
+      observers.set(key, obs);
+      sse.onClose(() => closeObserver(obs));
+      sse.send(JSON.stringify({ t: Date.now(), event: "observe", status: "ready", id }));
+    },
+  },
+  {
+    methods: ["POST"],
+    scope: "base",
+    pattern: /^\/observe\/([A-Za-z0-9-]{1,80})\/sessions$/,
+    handler: async ({ deps, req, res, pkg, m }) => {
+      requirePkg(deps.getLedger(), pkg);
+      const obs = observers.get(observerKey(pkg, m[1]));
+      if (!obs) throw new WireError(404, "E_NO_OBSERVER", `열린 관찰 줄기 없음: ${m[1]}`);
+      const b = await readBody(req);
+      const list = (v: unknown): string[] => (Array.isArray(v) ? v : []).map((x) => String(x));
+      for (const sid of list(b.remove)) if (SLOT_RE.test(sid)) unobserveSession(obs, sid);
+      for (const sid of list(b.add)) {
+        if (!SLOT_RE.test(sid)) throw new WireError(400, "E_BAD_SESSION", `세션 id 형식 위반: ${sid}`);
+        if (obs.sessions.has(sid)) unobserveSession(obs, sid); // 재구독 = 재생부터 다시(§5.1-14)
+        observeSession(obs, sid);
+      }
+      json(res, 200, { ok: true, sessions: [...obs.sessions] });
     },
   },
   {

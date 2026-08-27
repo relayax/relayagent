@@ -370,7 +370,10 @@ export function TurnStatusChip() {
     : "text-[#c9a44a] font-medium";
   // 실패·끊김에는 바로 다시 보낼 길을 붙인다 — 같은 메시지를 새 가지로 재실행한다(assistant-ui reload).
   // 스레드가 실행 중이거나 마지막 메시지가 아니면 프리미티브가 스스로 비활성화한다.
+  // 라이브에서 끊긴 턴(meta.turnId 있음)은 같은 reload 가 재전송이 아니라 재관찰로 간다(runtime _cutTurns) —
+  // 문구도 그 뜻으로. 재생된 옛 끊김(좌표 없음)은 종전대로 재전송이다.
   const retry = kind !== "cancel";
+  const reattach = kind === "cut" && !!meta?.turnId;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1" role="status">
       <Badge variant="ghost"
@@ -381,9 +384,9 @@ export function TurnStatusChip() {
       {retry ? (
         <ActionBarPrimitive.Reload
           className="rc-retry inline-flex h-6 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11.5px] font-medium text-foreground hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
-          title="같은 메시지를 다시 보내요">
+          title={reattach ? "끊긴 응답에 다시 붙어요 — 같은 메시지를 다시 보내지 않아요" : "같은 메시지를 다시 보내요"}>
           <RotateCcwIcon className="size-3" />
-          다시 시도
+          {reattach ? "다시 연결" : "다시 시도"}
         </ActionBarPrimitive.Reload>
       ) : null}
     </div>

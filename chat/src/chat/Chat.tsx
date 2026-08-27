@@ -59,10 +59,10 @@ function ServerTurnWatch({ ctx, attach }: { ctx: RelayCtx; attach: ActiveTurn | 
     // interrupt 레이스로 아직 반환되는 그 좀비 턴을 재부착하지 않는다(=같은 프롬프트 재전송 방지).
     // 첫 프로브 완료 후 무장 해제 — 이후 프로브는 진짜 서버 스폰 턴을 정상 포착한다.
     let skipCancelled = takeConversationCancelled(ctx.conversationId);
-    const probe = async () => {
+    const probe = async (force = false) => {
       if (!alive || inflight) return;
       const now = Date.now();
-      if (now - last < 1500) return; // 행위 연타 흡수 — 프로브는 계기당 1회면 충분하다
+      if (!force && now - last < 1500) return; // 행위 연타 흡수 — 프로브는 계기당 1회면 충분하다
       last = now;
       inflight = true;
       try {
@@ -80,6 +80,10 @@ function ServerTurnWatch({ ctx, attach }: { ctx: RelayCtx; attach: ActiveTurn | 
       }
     };
     void probe(); // idle 진입 즉시 1회 — 발화 직후 종결·재진입 레이스 커버
+    // 종결 직후에 열리는 턴은 즉시 프로브가 놓친다 — 미뤄진 얹기의 답(CLI 가 현재 턴을 닫고 그 말로
+    // 다음 턴을 연다, 실측 2026-08-27: settled 2~3초 뒤 개설)·백그라운드 완료의 continuation 이
+    // 그렇다. push 없는 기판은 다음 사용자 행위까지 그 턴을 못 보므로 유한한 창 동안 몇 번 더 본다.
+    const timers = [1200, 2800, 5000, 8500].map((ms) => setTimeout(() => void probe(true), ms));
     const unwatch = watchServerTurns(ctx, () => void probe()); // push 있으면 이벤트가 계기
     const onVis = () => { if (!document.hidden) void probe(); };
     const onFocus = () => void probe();
@@ -90,6 +94,7 @@ function ServerTurnWatch({ ctx, attach }: { ctx: RelayCtx; attach: ActiveTurn | 
     window.addEventListener("keydown", onAct, true);
     return () => {
       alive = false;
+      for (const t of timers) clearTimeout(t);
       unwatch();
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("focus", onFocus);

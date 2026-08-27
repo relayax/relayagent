@@ -692,6 +692,9 @@ function widgetBundleNote(): string {
 // 없는 이 순간만이 죽은 턴과 살아 있는 턴을 구별할 수 있는 자리다.
 // CLI(cli.ts)는 이 함수를 부르기만 한다(CLAUDE.md: CLI 는 얇은 디스패처).
 export function startDaemon(): void {
+  // 데몬의 cwd 는 사라지지 않는 곳이어야 한다 — Tauri 앱이 임시 스테이징 디렉토리에서 띄운 데몬의 cwd 가
+  // 뒤에 지워져, 그 cwd 를 물려받는 자식(하네스 verb)이 전부 침묵한 실사고(2026-08-28). 홈은 남는다.
+  try { process.chdir(os.homedir()); } catch { /* 홈조차 없으면 있던 자리 — 진입 디렉토리 기본 cwd(spawn.ts)가 받친다 */ }
   const pidFile = path.join(RELAY_HOME, "run", "daemon.pid");
   if (fs.existsSync(pidFile)) {
     const old = Number(fs.readFileSync(pidFile, "utf8").trim());
