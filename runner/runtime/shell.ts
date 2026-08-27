@@ -3,8 +3,10 @@
 //
 //   · 사이드바 — 기판이 서빙하는 모든 view 문서에 스크립트 한 줄로 심긴다(view.ts serveViewFile·
 //     대화 폴백·판정 실패 화면). 패키지 트리는 크롬을 모른 채 남는다.
-//   · 홈 — "/" 가 내는 빈 문서(#relay-home)에 같은 스크립트가 런처를 그린다. 설치된 앱을
-//     늘어놓는 화면은 앱 하나의 화면이 아니므로 패키지에 두지 않는다.
+//   · 홈 — "/" 가 내는 빈 문서(#relay-home)에 위젯 번들(chat/src/chat/Home.tsx)이 런처를
+//     그린다(homeDoc 이 그 번들을 싣는다). 설치된 앱을 늘어놓는 화면은 앱 하나의 화면이
+//     아니므로 패키지에 두지 않고, 콘솔·위젯과 같은 shadcn 으로 그리려고 번들 쪽에 산다.
+//     이 스크립트는 그 문서에서도 사이드바만 맡는다.
 //
 // 구조는 relayos deployd 의 글로벌 바(portalbar.go)와 같은 결이다. 거기서 실증된 규약 셋을 딛는다:
 //   ① 주입은 서빙층 1점 — 패키지 협조 불요, 재발행 불요.
@@ -44,7 +46,7 @@ export interface ShellItem {
   href: string;
   /** 기판이 서빙하는 화면·대화 문서. 그 얼굴이 없으면 null */
   view: string | null;
-  /** 권한 화면 — 항목의 보조 진입(호버 ⋯). 지배 얼굴이 무엇이든 여기로는 갈 수 있다 */
+  /** 권한 화면 — 항목의 보조 진입(열린 줄의 ✎). 지배 얼굴이 무엇이든 여기로는 갈 수 있다 */
   detail: string;
   /** 지금 떠 있는 자식이 하나라도 있는가 — 상주 상태점 */
   resident: boolean;
@@ -264,38 +266,18 @@ var ICONS = {
   store: '<path d="M3 5.5h10l-.7 7a1 1 0 0 1-1 .9H4.7a1 1 0 0 1-1-.9zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
-  draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
   edit: '<path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M10 4l2 2"/>',
-  more: '<circle cx="3.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+  draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
   fold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M11.5 6.5 10 8l1.5 1.5"/>',
   unfold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M9.5 6.5 11 8l-1.5 1.5"/>'
 };
+var MARK = '<svg class="mark" viewBox="0 35.5776 94 53.8448" fill="currentColor" aria-label="Relay"><path d="M67.0781 35.5776C81.9467 35.5779 94 47.6318 94 62.5005C93.9998 77.3689 81.9466 89.4221 67.0781 89.4224C59.903 89.4224 53.3842 86.6144 48.5586 82.0386C47.6928 81.2176 46.3072 81.2176 45.4414 82.0386C40.6158 86.6144 34.097 89.4224 26.9219 89.4224C12.0534 89.4221 0.000245323 77.3689 0 62.5005C3.24964e-07 47.6318 12.0533 35.5779 26.9219 35.5776C34.0969 35.5776 40.6158 38.3857 45.4414 42.9614C46.3071 43.7822 47.6929 43.7822 48.5586 42.9614C53.3842 38.3857 59.9031 35.5776 67.0781 35.5776Z"/></svg>';
 function svg(d, cls){ return '<svg class="' + (cls||"") + '" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">' + d + '</svg>'; }
-// 홈 예시 — [칩 이름, 상자에 들어갈 문장]. 묶음 단위로 ↻ 가 돌린다
-var EXAMPLES = [
-  [["아침 요약 알림", "매일 아침 9시에 오늘 일정과 할 일을 요약해서 알려주는 비서"],
-   ["슬랙 답변 봇", "슬랙 채널에 질문이 오면 사내 문서를 찾아 답해주는 비서"],
-   ["가계부", "지출을 적으면 월별 합계와 그래프를 보여주는 가계부"],
-   ["문의 접수 폼", "고객 문의를 받는 폼 화면. 접수되면 나에게 알려주는 비서"]],
-  [["메모 정리", "적어둔 메모를 매주 주제별로 정리해주는 비서"],
-   ["뉴스 브리핑", "관심 키워드의 뉴스를 매일 저녁 모아서 짧게 브리핑해주는 비서"],
-   ["독서 기록", "읽은 책과 감상을 기록하고 검색할 수 있는 화면"],
-   ["회의록 정리", "회의 녹취 텍스트를 넣으면 결정 사항과 할 일로 정리해주는 비서"]],
-  [["습관 체크", "매일 저녁 오늘의 습관 체크를 물어보고 주간 달성률을 보여주는 비서"],
-   ["번역 도우미", "붙여넣은 글을 자연스러운 한국어·영어로 번역해주는 비서"],
-   ["일정 비서", "캘린더를 보고 회의 전에 준비할 것을 미리 알려주는 비서"],
-   ["미니 게임", "간단한 퀴즈 게임 화면"]]
-];
-var exPage = 0;
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
 var home = document.getElementById("relay-home");
 
 // 사이드바 행 메뉴 — 한 번에 하나만 열리고, 바깥 클릭·Esc 로 닫힌다
-function closeMenus(){ var o = document.querySelectorAll("#rlys .rw.op"); for (var i = 0; i < o.length; i++) o[i].classList.remove("op"); }
-function toggleMenu(row){ var was = row.classList.contains("op"); closeMenus(); if (!was) row.classList.add("op"); }
-document.addEventListener("click", function(ev){ if (!(ev.target && ev.target.closest && ev.target.closest("#rlys .rw.op"))) closeMenus(); });
-document.addEventListener("keydown", function(ev){ if (ev.key === "Escape") closeMenus(); });
 
 var css = [
 '@font-face{font-family:"Pretendard Variable";font-weight:45 920;font-style:normal;font-display:swap;src:url("/assets/pretendard.woff2") format("woff2-variations")}',
@@ -305,6 +287,7 @@ var css = [
 '#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fafafa;border-right:1px solid #e5e5e5;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
 '#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
+'#rlys .hd .mark{height:14px;width:auto;display:block;flex:none;color:#111318}',
 '#rlys .hd img{height:22px;width:auto;max-width:150px;object-fit:contain;display:block;flex:none}',
 '#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
@@ -328,17 +311,12 @@ var css = [
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .rw{position:relative;display:flex;align-items:center}',
-'#rlys .rw .mo{position:absolute;right:6px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border:0;padding:0;cursor:pointer;border-radius:6px;color:#98a1aa;background:#f0f0f0}',
-'#rlys .rw:hover .mo,#rlys .rw.op .mo,#rlys .rw .mo:focus-visible{display:inline-flex}',
-'#rlys .rw .mo:hover,#rlys .rw.op .mo{background:#e5e5e5;color:#16181b}',
-'#rlys .rw .mo svg{width:13px;height:13px}',
-'#rlys .rw:hover .it .dt,#rlys .rw.op .it .dt{display:none}',
-'#rlys .rw .mn{display:none;position:absolute;right:6px;top:calc(100% - 2px);z-index:5;min-width:120px;padding:4px;background:#fff;border:1px solid #e5e5e5;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08)}',
-'#rlys .rw.op .mn{display:block}',
-'#rlys .rw .mn a{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:5px;font-size:12.5px;color:#16181b;text-decoration:none}',
-'#rlys .rw .mn a:hover{background:#f0f0f0}',
-'#rlys .rw .mn a svg{width:13px;height:13px;color:#5c6570}',
-'#rlys.cl .rw .mo,#rlys.cl .rw .mn{display:none}',
+// 손보기 연필 — 지금 열린 앱의 줄에만 늘 보인다. 호버도 메뉴도 없다(그 줄은 이미 와 있으니 잘못 눌러 이동할 일이 없다)
+'#rlys .rw .ed{position:absolute;right:6px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--relay-accent-deep);text-decoration:none}',
+'#rlys .rw .ed:hover{background:#e5e5e5;color:#16181b}',
+'#rlys .rw .ed svg{width:13px;height:13px}',
+'#rlys .rw:has(.ed) .it .dt{display:none}',
+'#rlys.cl .rw .ed{display:none}',
 '#rlys .er{font-size:11.5px;color:#c0392b;padding:8px 10px;white-space:normal}',
 '#rlys .em{font-size:12px;color:#98a1aa;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
@@ -346,85 +324,10 @@ var css = [
 '#rlys.cl a.it,#rlys.cl button.it{justify-content:center;padding:7px 0;position:relative}',
 '#rlys.cl .hd{padding:10px 0 12px;justify-content:center}',
 '#rlys.cl .hd .fold{margin:0}',
+'#rlys.cl .hd .mark{display:none}',
 '#rlys.cl .it .dt{position:absolute;right:6px;bottom:6px}',
-// ── 홈(런처) ─────────────────────────────────────────────────────────────
+// ── 홈(런처) — 본체는 위젯 번들(chat/src/chat/Home.tsx)이 그린다. 여기는 치수 계약 한 줄뿐 ──
 'body:has(#relay-home){margin:0 0 0 var(--relay-side);background:#fafafa}',
-'#relay-home{min-height:100vh;background:#fafafa;color:#16181b;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif}',
-'#relay-home *{box-sizing:border-box}',
-'#relay-home .bt{border:1px solid #e5e5e5;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}',
-'#relay-home .bt:hover{background:#f0f0f0}',
-'#relay-home .bt.ac{background:var(--relay-accent);border-color:var(--relay-accent);color:#fff}',
-'#relay-home .bt.ac:hover{background:var(--relay-accent-deep)}',
-'#relay-home .gr{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px;padding:18px 20px}',
-'#relay-home .cd{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}',
-'#relay-home .cd:hover{border-color:var(--relay-accent)}',
-'#relay-home .cd .go{display:flex;flex-direction:column;gap:8px;text-decoration:none;color:inherit}',
-'#relay-home .cd .tp{display:flex;align-items:center;gap:10px}',
-'#relay-home .cd .av{width:30px;height:30px;border-radius:8px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#f0f0f0;font:700 13px inherit;color:#5c6570;overflow:hidden}',
-'#relay-home .cd .av img{width:30px;height:30px;object-fit:cover;display:block}',
-'#relay-home .cd .nm{flex:1 1 auto;min-width:0}',
-'#relay-home .cd b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-'#relay-home .cd .ver{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#98a1aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-// 새 판 배지 — 버전 라인의 화살표 칩(.nv) · 푸터의 업데이트 버튼(.upb) · 상단 요약 배너(.ub)
-'#relay-home .cd .nv{display:inline-block;margin-left:4px;padding:0 5px;border-radius:5px;font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--relay-accent-deep);background:var(--relay-accent-soft)}',
-'#relay-home .cd .upb{background:var(--relay-accent);color:#fff;border-radius:7px;padding:3px 9px;font:700 11.5px inherit;text-decoration:none;white-space:nowrap}',
-'#relay-home .cd .upb:hover{background:var(--relay-accent-deep)}',
-'#relay-home .ub{display:flex;align-items:center;gap:8px;margin:18px 20px -6px;padding:9px 14px;background:var(--relay-accent-soft);border:1px solid var(--relay-accent);border-radius:10px;font-size:12.5px;color:var(--relay-accent-deep)}',
-'#relay-home .ub b{font-weight:800}',
-'#relay-home .ub .gap{flex:1}',
-'#relay-home .ub a{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}',
-'#relay-home .cd p{margin:0;font-size:12.5px;color:#5c6570;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}',
-'#relay-home .cd .ft{display:flex;align-items:center;gap:6px}',
-'#relay-home .cd .cp{font-size:11px;font-weight:600;color:#5c6570;background:#f0f0f0;border-radius:6px;padding:1px 7px}',
-'#relay-home .cd .cp.er{color:#c0392b;background:#fdf2f1}',
-'#relay-home .cd .cp.ed{color:#b45309;background:#fef3c7}',
-// 말로 만들기 — 홈의 첫 입력. 위젯 대화로 보내진다
-'#relay-home .gh{max-width:1240px;margin:8px auto 0;padding:0 20px;font-size:12px;font-weight:700;color:#98a1aa;letter-spacing:.02em}',
-'#relay-home .gn{max-width:620px;margin:20px auto;padding:0 20px;text-align:center;font-size:13px;color:#98a1aa}',
-'#relay-home .ask{max-width:620px;margin:0 auto;padding:56px 20px 28px}',
-'#relay-home .ask h2{margin:0 0 16px;text-align:center;font-size:22px;font-weight:700;letter-spacing:-0.02em}',
-'#relay-home .af{display:flex;flex-direction:column;gap:10px;background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:14px 14px 10px;box-shadow:0 1px 2px rgba(22,24,27,.04)}',
-'#relay-home .af:focus-within{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}',
-'#relay-home .af textarea{border:0;resize:none;min-height:58px;font:14.5px/1.55 inherit;font-family:inherit;background:transparent;color:#16181b;outline:none;padding:0 2px}',
-'#relay-home .af .fr{display:flex;align-items:center;justify-content:space-between;gap:8px}',
-'#relay-home .af .fr .ah{margin:0;font-size:12px;color:#98a1aa}',
-'#relay-home .af .bt{flex:none;padding:7px 14px;font-size:13px;border-radius:999px}',
-'#relay-home .ex{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:12px 0 0}',
-'#relay-home .xb{border:1px solid #e5e5e5;background:#fff;color:#5c6570;border-radius:999px;padding:5px 12px;font:12.5px inherit;cursor:pointer}',
-'#relay-home .xb:hover{border-color:var(--relay-accent);color:var(--relay-accent-deep)}',
-'#relay-home .xb.mo{padding:5px 9px;color:#98a1aa}',
-'#relay-home .op{display:flex;flex-direction:column;margin-top:14px;border-top:1px solid #e5e5e5}',
-'#relay-home .op a{display:flex;align-items:center;gap:10px;padding:10px 6px;border-bottom:1px solid #e5e5e5;color:#16181b;text-decoration:none;font-size:13.5px}',
-'#relay-home .op a:hover{background:#f0f0f0}',
-'#relay-home .op a svg{width:15px;height:15px;color:#5c6570;flex:none}',
-'#relay-home .op a span{color:#98a1aa;font-size:12.5px;flex:1 1 auto}',
-'#relay-home .op a i{color:#98a1aa;font-style:normal}',
-// 만드는 중인 초안 — 장부에 없어도 설치본과 같은 카드로 격자 끝에 선다 (점선 테두리가 "아직" 의 표식)
-'#relay-home .cd.df{border-style:dashed;background:#fffdf5}',
-'#relay-home .cd.df:hover{border-color:#b45309}',
-'#relay-home .cd.df .av{background:#fef3c7;color:#b45309}',
-'#relay-home .cd.df .av svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}',
-// 사용 안내 — 첫 방문에 한 번, 이후엔 ?guide=1
-'.gd-veil{position:fixed;inset:0;background:rgba(22,24,27,.45);display:flex;align-items:center;justify-content:center;z-index:2147483200}',
-'.gd{width:min(440px,calc(100vw - 48px));background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:26px 28px;display:flex;flex-direction:column;gap:12px;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;box-sizing:border-box}',
-'.gd *{box-sizing:border-box}',
-'.gd .k{font:600 11.5px inherit;color:#0f766e;letter-spacing:.4px}',
-'.gd h2{margin:0;font-size:18px;line-height:1.4}',
-'.gd p{margin:0;color:#5c6570;min-height:88px}',
-'.gd p b{color:#16181b;font-weight:600}',
-'.gd .dots{display:flex;gap:6px;justify-content:center;padding:4px 0}',
-'.gd .dots i{width:6px;height:6px;border-radius:50%;background:#e5e5e5;cursor:pointer}',
-'.gd .dots i.on{background:#0f766e}',
-'.gd .nv{display:flex;justify-content:flex-end;gap:8px}',
-'.gd .bt{border:1px solid #e5e5e5;background:#fff;color:#16181b;border-radius:8px;padding:6px 12px;font:600 12.5px inherit;cursor:pointer}',
-'.gd .bt.ac{background:#0f766e;border-color:#0f766e;color:#fff}',
-'#relay-home .cd .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
-'#relay-home .cd .sp{flex:1}',
-'#relay-home .cd .mo{border:1px solid #e5e5e5;background:#fff;color:#5c6570;border-radius:7px;padding:3px 9px;font:600 11.5px inherit;text-decoration:none}',
-'#relay-home .cd .mo:hover{background:#f0f0f0;color:#16181b}',
-'#relay-home .ep{margin:18px 20px;background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:22px;text-align:center}',
-'#relay-home .ep h2{margin:0 0 4px;font-size:14px}',
-'#relay-home .ep p{margin:0 0 14px;font-size:12.5px;color:#98a1aa}',
 '@media print{#rlys{display:none}body{margin-left:0}}'
 ].join("");
 var style = document.createElement("style");
@@ -506,8 +409,10 @@ function renderSide(nav, err){
   hd.className = "hd";
   // 얼굴 — 기판이 nav.brand 로 준 이름·마크(임베더 브랜딩). 없으면 "Relay"
   var brand = nav && nav.brand;
-  hd.innerHTML = (brand && brand.logo ? '<img src="' + esc(brand.logo) + '" alt="">' : '') +
-    '<span>' + esc(brand && brand.name ? brand.name : "Relay") + '</span>';
+  // 임베더 브랜드가 없으면 기판의 마크만(assets/logo.svg 의 두 원) — 글자 없이. 접힌 레일에서도 보인다
+  hd.innerHTML = brand && (brand.logo || brand.name)
+    ? (brand.logo ? '<img src="' + esc(brand.logo) + '" alt="">' : '') + '<span>' + esc(brand.name || "Relay") + '</span>'
+    : MARK;
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";
@@ -529,7 +434,7 @@ function renderSide(nav, err){
   mk.title = "만들고 싶은 것을 말로 설명하면 빌더가 만듭니다";
   mk.innerHTML = '<span class="ic">' + svg(ICONS.plus) + '</span><span class="nm">새로 만들기</span>';
   mk.onclick = function(){
-    if (home) focusAsk();
+    if (home) { try { window.dispatchEvent(new CustomEvent("relay:home-ask")); } catch (e) {} }
     else location.href = "/#new";
   };
   top.appendChild(mk);
@@ -558,9 +463,9 @@ function renderSide(nav, err){
     for (var i = 0; i < nav.items.length; i++) {
       var it = nav.items[i];
       var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-      // 행은 패키지 화면으로, 오른쪽 끝 ··· 은 행에 붙은 부가 동작 메뉴(손보기) — 호버할 때만 나타난다.
-      // 연필을 직접 두지 않는다: 이동하는 행에 "고치기"가 같은 줄로 붙으면 잘못 누르고, 뜻도 섞인다.
-      // Relay(ring 0)는 손볼 대상이 아니라 메뉴를 두지 않는다.
+      // 행은 패키지 화면으로. 손보기 문은 **지금 열린 앱의 줄에만** 연필 하나 — 다른 줄에는 두지 않는다
+      // (이동하는 행에 "고치기"가 같이 붙으면 잘못 누르고 뜻도 섞인다; 열린 줄은 이동할 곳이 없다).
+      // 홈 카드는 신경 쓸 것만 세우므로 멀쩡히 도는 앱의 손보기 문은 이것 하나다. Relay(ring 0)는 손볼 대상이 아니다.
       var rw = document.createElement("div");
       rw.className = "rw";
       rw.appendChild(item(it.href, ic, it.label, {
@@ -569,21 +474,14 @@ function renderSide(nav, err){
         letter: !it.icon,
         title: it.pkg + (it.ring0 ? " · ring-0" : "") + " — " + FACE_KO[it.face]
       }));
-      if (!effective && !it.ring0 && it.href !== it.detail) {
-        var mo = document.createElement("button");
-        mo.type = "button";
-        mo.className = "mo";
-        mo.title = it.label + " 더보기";
-        mo.setAttribute("aria-label", it.label + " 더보기");
-        mo.setAttribute("aria-haspopup", "menu");
-        mo.innerHTML = svg(ICONS.more);
-        var mn = document.createElement("div");
-        mn.className = "mn";
-        mn.setAttribute("role", "menu");
-        mn.innerHTML = '<a role="menuitem" href="' + esc(it.detail) + '">' + svg(ICONS.edit) + '손보기</a>';
-        mo.onclick = (function(row){ return function(ev){ ev.preventDefault(); ev.stopPropagation(); toggleMenu(row); }; })(rw);
-        rw.appendChild(mo);
-        rw.appendChild(mn);
+      if (it.pkg === here && !effective && !it.ring0 && it.href !== it.detail) {
+        var ed = document.createElement("a");
+        ed.className = "ed";
+        ed.href = it.detail;
+        ed.title = it.label + " 손보기";
+        ed.setAttribute("aria-label", it.label + " 손보기");
+        ed.innerHTML = svg(ICONS.edit);
+        rw.appendChild(ed);
       }
       pk.appendChild(rw);
     }
@@ -596,263 +494,22 @@ function renderSide(nav, err){
 
 }
 
-// ── 홈(런처) — 사이드바와 같은 nav 를 그린다 ───────────────────────────────
-function renderHome(nav, err){
-  if (!home) return;
-  var wantAsk = location.hash === "#new";
-  if (wantAsk) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
-  // 다시 그릴 때(재조회) 입력 중이던 문장을 지키지 않으면 새로고침이 사용자의 글을 지운다
-  var typed = "";
-  try { var prev = home.querySelector(".af textarea"); if (prev) typed = prev.value; } catch (e) {}
-  home.textContent = "";
-  var drafts = nav && nav.drafts ? nav.drafts : [];
-
-  // 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 콘솔 에이전트의 대화로
-  // 보내지고(relay:chat-open send), 빌더 위임이 시작되면 위젯이 그 탭을 연다
-  // 시작은 이 상자 하나다. 별도의 "패키지 만들기" 버튼은 두지 않는다 — 불러오기·스토어는
-  // 상자 아래 한 줄씩이라, 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
-  // 빈 패키지를 손으로 여는 화면은 없다 — 빌더 없이 시작하려면 터미널의 relay draft <이름> 이다.
-  if (nav) {
-    var ask = document.createElement("div");
-    ask.className = "ask";
-    ask.innerHTML = '<h2>무엇을 만들까요?</h2>' +
-      '<form class="af"><textarea maxlength="2000" rows="2" placeholder="만들고 싶은 비서를 적어 주세요." aria-label="만들 것을 말로 설명"></textarea>' +
-      '<div class="fr"><p class="ah">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p><button type="submit" class="bt ac">시작</button></div></form>' +
-      // 예시 칩 — 무엇을 적으면 되는지가 보인다. 누르면 상자에 문장이 들어가고(보내는 건 사람),
-      // ↻ 는 다른 묶음으로 돌린다. 문구는 EXAMPLES 하나에서 고친다.
-      '<div class="ex"></div>' +
-      '<div class="op">' +
-        '<a href="' + esc(nav.importer) + '">' + svg(ICONS.down) + '불러오기<span>누군가에게 받은 에이전트 파일을 엽니다</span><i>›</i></a>' +
-        (nav.store ? '<a href="' + esc(nav.store) + '">' + svg(ICONS.store) + '스토어에서 담기<span>만들어진 에이전트를 골라 설치합니다</span><i>›</i></a>' : "") +
-      '</div>';
-    var af = ask.querySelector("form");
-    var ai = ask.querySelector("textarea");
-    if (typed) ai.value = typed;
-    var exEl = ask.querySelector(".ex");
-    function renderEx(){
-      exEl.textContent = "";
-      var set = EXAMPLES[exPage % EXAMPLES.length];
-      for (var x = 0; x < set.length; x++) (function(e){
-        var b = document.createElement("button");
-        b.type = "button"; b.className = "xb"; b.textContent = e[0]; b.title = e[1];
-        b.onclick = function(){ ai.value = e[1]; ai.focus(); try { ai.setSelectionRange(ai.value.length, ai.value.length); } catch (er) {} };
-        exEl.appendChild(b);
-      })(set[x]);
-      var more = document.createElement("button");
-      more.type = "button"; more.className = "xb mo"; more.textContent = "↻"; more.title = "다른 예시"; more.setAttribute("aria-label", "다른 예시");
-      more.onclick = function(){ exPage++; renderEx(); };
-      exEl.appendChild(more);
-    }
-    renderEx();
-    af.onsubmit = function(ev){
-      ev.preventDefault();
-      var text = (ai.value || "").trim();
-      if (!text) { ai.focus(); return; }
-      sendToChat(text);
-      ai.value = "";
-    };
-    // Enter 는 보내기, Shift+Enter 는 줄바꿈
-    ai.onkeydown = function(ev){ if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); af.requestSubmit(); } };
-    home.appendChild(ask);
-    if (wantAsk) focusAsk();
-  }
-
-  if (err) {
-    var e = document.createElement("div");
-    e.className = "ep";
-    e.innerHTML = '<h2>설치 목록을 읽지 못했습니다</h2><p>' + esc(err) + '</p>';
-    home.appendChild(e);
-    return;
-  }
-  if (!nav) return;
-
-  if (!nav.items.length && !drafts.length) {
-    var ep = document.createElement("div");
-    ep.className = "ep";
-    ep.innerHTML = '<h2>아직 설치된 에이전트가 없습니다</h2>' +
-      '<p>위 상자에 만들고 싶은 것을 적어 시작하세요.</p>';
-    home.appendChild(ep);
-    return;
-  }
-
-  // 새 판 요약 배너 — 하나라도 있으면 개수만 말한다. 실행은 각 카드의 버튼이 맡는다
-  // (설치 동의 관문이 판마다 서므로 "모두 업데이트" 일괄 버튼은 두지 않는다)
-  var ups = 0;
-  for (var u = 0; u < nav.items.length; u++) if (nav.items[u].update) ups++;
-  if (ups && nav.library) {
-    var ub = document.createElement("div");
-    ub.className = "ub";
-    ub.innerHTML = '⬆ <b>새 판이 나온 에이전트 ' + ups + '개</b> — 카드의 업데이트 버튼으로 받으세요' +
-      '<span class="gap"></span><a href="' + esc(nav.library) + '">내 서재 열기</a>';
-    home.appendChild(ub);
-  }
-
-  // 홈 카드는 전부가 아니라 **지금 신경 쓸 것**만이다 — 초안·수정 중·새 판·오류. 멀쩡히 도는
-  // 앱은 사이드바가 이미 목록으로 보여 주므로 여기 또 세우면 같은 목록이 두 번 선다.
-  // 손볼 게 없으면 홈은 상자 하나 — "만들 것 없으면 왼쪽에서 골라 쓰세요"가 저절로 읽힌다
-  var todo = [];
-  for (var t = 0; t < nav.items.length; t++) {
-    if (nav.items[t].editing || nav.items[t].update || nav.items[t].error) todo.push(nav.items[t]);
-  }
-  if (todo.length || drafts.length) {
-    var th = document.createElement("h3");
-    th.className = "gh";
-    th.textContent = "진행 중";
-    home.appendChild(th);
-  } else {
-    var no = document.createElement("p");
-    no.className = "gn";
-    no.textContent = "진행 중인 것이 없습니다 — 앱은 왼쪽 목록에서 골라 쓰세요.";
-    home.appendChild(no);
-  }
-  var gr = document.createElement("div");
-  gr.className = "gr";
-  for (var i = 0; i < todo.length; i++) {
-    var it = todo[i];
-    var av = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-    var cd = document.createElement("div");
-    cd.className = "cd";
-    cd.innerHTML =
-      '<a class="go" href="' + esc(it.href) + '">' +
-        '<span class="tp">' +
-          '<span class="av">' + av + '</span>' +
-          '<span class="nm"><b>' + esc(it.label) + '</b>' +
-            '<span class="ver">' + esc(it.pkg) + (it.version ? "@" + esc(it.version) : "") +
-              (it.update ? '<span class="nv">→ ' + esc(it.update) + '</span>' : "") +
-            '</span>' +
-          '</span>' +
-          (it.resident ? '<span class="dt" title="도는 중"></span>' : "") +
-        '</span>' +
-        '<p>' + esc(it.description) + '</p>' +
-      '</a>' +
-      '<div class="ft">' +
-        '<span class="cp">' + FACE_KO[it.face] + '</span>' +
-        (it.error ? '<span class="cp er">검사 실패</span>' : "") +
-        (it.editing ? '<span class="cp ed" title="적용하지 않은 수정이 스튜디오에 있습니다">수정 중</span>' : "") +
-        '<span class="sp"></span>' +
-        // 새 판 버튼 — 설치 티켓은 스토어 서재가 발급하므로 서재로 보낸다 (동의 관문은 그 다음)
-        (it.update && nav.library
-          ? '<a class="upb" href="' + esc(nav.library) + '" title="스토어 내 서재에서 새 판을 설치합니다">' + esc(it.update) + ' 업데이트</a>'
-          : "") +
-        '<a class="mo" href="' + esc(it.detail) + '">상세</a>' +
-      '</div>';
-    gr.appendChild(cd);
-  }
-  // 만드는 중인 초안 — 장부에 없어 설치 카드는 못 되지만, 어디에도 없으면 만들다 만 것이 잃은 것처럼
-  // 보인다. 설치본과 같은 격자에 같은 모양으로 세우고, 점선과 "초안" 배지로만 가른다
-  for (var d = 0; d < drafts.length; d++) {
-    var df = drafts[d];
-    var dc = document.createElement("div");
-    dc.className = "cd df";
-    dc.innerHTML =
-      '<a class="go" href="' + esc(df.href) + '">' +
-        '<span class="tp">' +
-          '<span class="av">' + svg(ICONS.draft) + '</span>' +
-          '<span class="nm"><b>' + esc(df.name) + '</b>' +
-            '<span class="ver">' + esc(df.name) + (df.version ? "@" + esc(df.version) : "") + '</span>' +
-          '</span>' +
-        '</span>' +
-        '<p>' + (df.changes ? '아직 발행하지 않은 초안 — 바뀐 파일 ' + df.changes + '개' : '아직 발행하지 않은 초안') + '</p>' +
-      '</a>' +
-      '<div class="ft">' +
-        '<span class="cp ed">초안</span>' +
-        '<span class="sp"></span>' +
-        '<a class="mo" href="' + esc(df.href) + '">이어 만들기</a>' +
-      '</div>';
-    gr.appendChild(dc);
-  }
-  home.appendChild(gr);
-}
-
-// 홈의 문장을 위젯 대화로 보낸다. 위젯 번들은 async 라 늦게 뜰 수 있다 — 전역 표면
-// (window.RelayChat, 번들 로드 시 선다)이 설 때까지 250ms 간격으로 기다린다(최대 8초)
-function sendToChat(text){ chatOpen({ send: text }); }
-/** 홈의 입력 상자로 — 사이드바의 [새로 만들기] */
-function focusAsk(){
-  var ta = home && home.querySelector(".af textarea");
-  if (!ta) return;
-  try { ta.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
-  ta.focus();
-}
-function chatOpen(detail){
-  var tries = 0;
-  (function fire(){
-    if (window.RelayChat) {
-      try { window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: detail })); } catch (e) {}
-      return;
-    }
-    if (++tries > 32) return;
-    setTimeout(fire, 250);
-  })();
-}
-
-// ── 사용 안내 — 홈 첫 방문에 한 번, 이후엔 ?guide=1(콘솔 설정의 [안내])로 연다 ─────────
-// 종전 안내는 콘솔 패키지 화면에 살았고 문구가 옛 3열 콘솔을 설명했다. 처음 닿는 자리가 이
-// 홈이므로 안내도 여기 산다 — 문구는 지금 구조(홈 카드·사이드바·말로 만들기·스튜디오)를 말한다
-var GUIDE_KEY = "relay-guide-v2";
-var GUIDE = [
-  { t: "Relay에 오신 것을 환영합니다",
-    b: "Relay는 AI 에이전트를 <b>앱처럼 설치해서 쓰는</b> 내 컴퓨터 속 작업 공간입니다. 설치된 앱은 <b>왼쪽 사이드바</b>에서 골라 쓰고, 이 홈에서는 <b>새로 만들거나 손볼 것</b>을 봅니다." },
-  { t: "만들기는 말로 시작합니다",
-    b: "홈 위의 입력창에 원하는 것을 적어 보세요. 예를 들어 <b>\"근태관리 도우미 만들어줘\"</b>. 빌더가 <b>설계부터 적용까지</b> 진행하고, 그 대화가 오른쪽에 열려 과정과 질문을 볼 수 있습니다." },
-  { t: "손으로 고치려면 상세 화면",
-    b: "사이드바에서 앱을 고르고 <b>[상세]</b>를 누르면 그 앱이 무엇을 하는지 한 장으로 보입니다. <b>줄을 누르면 그 자리에서</b> 고치고 결과를 미리 보며, <b>[적용]</b>을 눌러야 실제로 돌아가는 판이 바뀝니다." },
-  { t: "안전장치가 기본입니다",
-    b: "비밀번호와 토큰은 <b>금고에만 저장</b>되고, 에이전트는 <b>허락한 폴더만</b> 봅니다. 앱끼리 연결할 때도 <b>내 승인이 있어야</b> 켜집니다. 이 안내는 설정 화면의 [안내]로 다시 볼 수 있습니다." }
-];
-function renderGuide(){
-  var i = 0;
-  var veil = document.createElement("div");
-  veil.className = "gd-veil";
-  var card = document.createElement("div");
-  card.className = "gd";
-  card.setAttribute("role", "dialog");
-  card.setAttribute("aria-label", "사용 안내");
-  veil.appendChild(card);
-  function close(){
-    try { localStorage.setItem(GUIDE_KEY, "1"); } catch (e) {}
-    veil.remove();
-    try {
-      var u = new URL(location.href);
-      if (u.searchParams.has("guide")) { u.searchParams.delete("guide"); history.replaceState(null, "", u.pathname + (u.search || "")); }
-    } catch (e) {}
-  }
-  function draw(){
-    var last = i === GUIDE.length - 1;
-    var dots = "";
-    for (var n = 0; n < GUIDE.length; n++) dots += '<i class="' + (n === i ? "on" : "") + '" data-n="' + n + '"></i>';
-    card.innerHTML = '<div class="k">사용 안내 ' + (i + 1) + ' / ' + GUIDE.length + '</div>' +
-      '<h2>' + GUIDE[i].t + '</h2><p>' + GUIDE[i].b + '</p>' +
-      '<div class="dots">' + dots + '</div>' +
-      '<div class="nv">' + (i > 0 ? '<button type="button" class="bt" data-act="prev">이전</button>' : "") +
-      '<button type="button" class="bt ac" data-act="next">' + (last ? "시작하기" : "다음") + '</button></div>';
-    var ds = card.querySelectorAll(".dots i");
-    for (var k = 0; k < ds.length; k++) ds[k].onclick = function(ev){ i = Number(ev.currentTarget.getAttribute("data-n")) || 0; draw(); };
-    var pv = card.querySelector('[data-act="prev"]');
-    if (pv) pv.onclick = function(){ i = Math.max(0, i - 1); draw(); };
-    card.querySelector('[data-act="next"]').onclick = function(){ if (last) close(); else { i += 1; draw(); } };
-  }
-  veil.onclick = function(ev){ if (ev.target === veil) close(); };
-  draw();
-  document.body.appendChild(veil);
-  try { card.querySelector('[data-act="next"]').focus(); } catch (e) {}
-}
+// 홈 본체(입력 상자·카드·사용 안내)는 위젯 번들 Home.tsx 가 #relay-home 에 그린다(2026-08-27 이전엔 여기).
+// 사이드바는 그 문서에서도 이 스크립트가 그린다 — 크롬은 React 번들에 의존하지 않는다.
 
 function loadNav(){
   fetch("/shell/nav", { cache: "no-store" })
     .then(function(r){ return r.ok ? r.json() : r.json().then(function(d){ throw new Error(d && d.error || ("HTTP " + r.status)); }); })
-    .then(function(nav){ renderSide(nav, null); renderHome(nav, null); })
+    .then(function(nav){ renderSide(nav, null); })
     .catch(function(e){
       // 사이드바는 편의 크롬이라 문서를 죽이지 않는다. 다만 침묵하지도 않는다 —
       // 홈은 그 목록이 곧 내용이므로 실패가 화면의 본문이 된다
       var msg = "설치 목록을 읽지 못했습니다: " + (e && e.message || e);
       renderSide(null, msg);
-      renderHome(null, msg);
     });
 }
 
 renderSide(null, null);
-renderHome(null, null);
 loadNav();
 // 목록은 한 번 읽고 끝이 아니다 — 같은 문서에서 대화가 발행을 끝내거나(relay:turn settled),
 // 스튜디오가 적용·버리기를 마치거나(relay:nav-refresh), 다른 탭에 갔다 돌아오면 다시 읽는다.
@@ -861,10 +518,4 @@ window.addEventListener("relay:turn", function(ev){ var d = (ev && ev.detail) ||
 window.addEventListener("relay:nav-refresh", function(){ loadNav(); });
 document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadNav(); });
 
-if (home) {
-  var wantGuide = false, seenGuide = false;
-  try { wantGuide = new URLSearchParams(location.search).get("guide") === "1"; } catch (e) {}
-  try { seenGuide = localStorage.getItem(GUIDE_KEY) === "1"; } catch (e) {}
-  if (wantGuide || !seenGuide) renderGuide();
-}
 })();`;
