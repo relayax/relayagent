@@ -34,14 +34,15 @@ export function updateCount(items: ReadonlyArray<ShellItem>): number {
   return items.filter((it) => !!it.update).length;
 }
 
-/** 카드의 상태 칩 하나 + 버튼 하나. 홈 카드는 "지금 손볼 것"이라 카드 전체와 버튼이 같은 곳으로 간다 —
- *  수정 중 → 스튜디오(이어 수정), 새 판 → 서재(업데이트), 오류 → 상세(왜 실패했나). 우선순위는 그 순서 */
+/** 카드의 상태 칩 하나 + 목적지 하나. 홈 카드는 "지금 손볼 것"이라 카드 전체가 그곳으로 간다 —
+ *  수정 중·오류 → 스튜디오(수정 화면), 새 판 → 서재(업데이트 버튼). 우선순위는 오류 > 새 판 > 수정 중.
+ *  label 은 업데이트에만 쓰인다(나머지는 연필+"수정" 표시가 목적지를 말한다) */
 export interface CardAction { status: "editing" | "update" | "error"; chip: string; label: string; href: string }
 export function cardAction(it: ShellItem, library: string | null): CardAction {
-  if (it.error) return { status: "error", chip: "검사 실패", label: "확인", href: it.detail };
+  if (it.error) return { status: "error", chip: "검사 실패", label: "수정", href: it.detail };
   if (it.update && library) return { status: "update", chip: `새 판 ${it.update}`, label: "업데이트", href: library };
   if (it.update) return { status: "update", chip: `새 판 ${it.update}`, label: "상세", href: it.detail };
-  return { status: "editing", chip: "수정 중", label: "이어 수정", href: it.detail };
+  return { status: "editing", chip: "수정 중", label: "수정", href: it.detail };
 }
 
 /** 아바타 글자 — 아이콘이 없을 때 이름 첫 글자 */

@@ -15,7 +15,7 @@
  * 목록은 relay:turn(settled)·relay:nav-refresh·탭 복귀마다 다시 읽는다 — 사이드바와 같은 조건.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronRight, Download, FileText, RefreshCw, Store } from "lucide-react";
+import { ChevronRight, Download, FileText, Pencil, RefreshCw, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -209,11 +209,14 @@ function Progress({ nav }: { nav: ShellNav }) {
 const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-none ring-0 transition-colors hover:border-foreground/30 [--card-spacing:0px]";
 const chip = "rounded-md px-1.5 py-0 text-[11px] font-semibold";
 
+// 카드 전체가 링크다. 버튼은 두지 않는다 — 카드가 곧 그 초안/앱이고 누르면 고치러 가는 것이 이 격자의
+// 뜻이라, 버튼은 같은 말을 두 번 하는 셈이다. 목적지(수정 화면)는 오른쪽 아래의 연필+"수정" 표시가
+// 말한다(버튼 모양 아님, 호버에 진해진다). 예외는 목적지가 바깥(스토어 서재)인 업데이트뿐 — 그때만 버튼.
 function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
   const act = cardAction(it, library);
   const desc = describe(it.description);
   return (
-    <Card className={cardClass}>
+    <Card className={cn(cardClass, "group/hc")}>
       <a href={act.href} className="flex flex-col gap-2 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
           <span className="flex size-[30px] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-[13px] font-bold text-muted-foreground">
@@ -228,16 +231,24 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
         <CardContent className="px-0">
           <p className={cn("m-0 line-clamp-2 min-h-[2.6em] text-xs", desc ? "text-muted-foreground" : "text-muted-foreground/60 italic")}>{desc ?? "설명이 아직 없어요"}</p>
         </CardContent>
+        <CardFooter className="flex items-center gap-1.5 px-0">
+          <StatusChip status={act.status}>{act.chip}</StatusChip>
+          <span className="flex-1" />
+          {act.status === "update" ? (
+            <Button size="xs" render={<span />} className="pointer-events-none">{act.label}</Button>
+          ) : <EditHint />}
+        </CardFooter>
       </a>
-      <CardFooter className="flex items-center gap-1.5 px-0">
-        <StatusChip status={act.status}>{act.chip}</StatusChip>
-        <span className="flex-1" />
-        <Button size="xs" variant={act.status === "update" ? "default" : "outline"} render={<a href={act.href} />}
-          className={cn("no-underline", act.status !== "update" && "text-muted-foreground hover:text-foreground")}>
-          {act.label}
-        </Button>
-      </CardFooter>
     </Card>
+  );
+}
+
+/** 목적지 표시 — "누르면 수정 화면" 을 버튼 없이 말한다 */
+function EditHint() {
+  return (
+    <span className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground/70 transition-colors group-hover/hc:text-foreground">
+      <Pencil className="size-3" />수정
+    </span>
   );
 }
 
@@ -252,7 +263,7 @@ function StatusChip({ status, children }: { status: CardAction["status"] | "draf
 // 이름은 한 번만(설치본의 pkg 줄은 라벨과 다른 이름이라 뜻이 있지만 초안은 이름뿐이다)
 function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
   return (
-    <Card className={cn(cardClass, "border-dashed")}>
+    <Card className={cn(cardClass, "group/hc border-dashed")}>
       <a href={df.href} className="flex flex-col gap-2 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
           <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText className="size-4" /></span>
@@ -264,12 +275,12 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
         <CardContent className="px-0">
           <p className="m-0 line-clamp-2 min-h-[2.6em] text-xs text-muted-foreground">{draftLine(df.changes)}</p>
         </CardContent>
+        <CardFooter className="flex items-center gap-1.5 px-0">
+          <StatusChip status="draft">초안</StatusChip>
+          <span className="flex-1" />
+          <EditHint />
+        </CardFooter>
       </a>
-      <CardFooter className="flex items-center gap-1.5 px-0">
-        <StatusChip status="draft">초안</StatusChip>
-        <span className="flex-1" />
-        <Button size="xs" variant="outline" render={<a href={df.href} />} className="no-underline text-muted-foreground hover:text-foreground">이어 만들기</Button>
-      </CardFooter>
     </Card>
   );
 }

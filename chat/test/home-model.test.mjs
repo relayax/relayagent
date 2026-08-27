@@ -33,7 +33,7 @@ test("문구 — 아바타 글자·초안 한 줄·빈 상태", () => {
 });
 
 test("cardAction — 오류 > 새 판 > 수정 중 순으로 칩·버튼·목적지가 하나씩", () => {
-  assert.deepEqual(m.cardAction(item({ editing: true, detail: "/d" }), null), { status: "editing", chip: "수정 중", label: "이어 수정", href: "/d" });
+  assert.deepEqual(m.cardAction(item({ editing: true, detail: "/d" }), null), { status: "editing", chip: "수정 중", label: "수정", href: "/d" });
   assert.deepEqual(m.cardAction(item({ editing: true, update: "2.0", detail: "/d" }), "/lib"), { status: "update", chip: "새 판 2.0", label: "업데이트", href: "/lib" });
   assert.equal(m.cardAction(item({ update: "2.0", detail: "/d" }), null).href, "/d");
   assert.equal(m.cardAction(item({ error: "x", update: "2.0", detail: "/d" }), "/lib").status, "error");
