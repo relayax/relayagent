@@ -46,8 +46,9 @@ export default function DraftActions({
         적용{changedCount ? ` (${changedCount})` : ""}
       </Button>
       {/* 되돌리기 — 방금 적용한 것이 마음에 안 들 때 이전 버전으로. 채팅이 바로 적용하는 흐름의 안전망 */}
+      {/* "되돌리기"가 ⋯ 안의 ⌘Z 와 같은 이름이라 뜻이 섞였다 — 이건 버전, 저건 조작 취소(2026-08-27) */}
       <Button variant="outline" size="sm" title="예전에 적용했던 버전으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
-        되돌리기
+        이전 버전으로
       </Button>
       <span className="st-more">
         <Button variant="outline" size="icon-sm" title="더 보기" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((v) => !v)}>
@@ -55,13 +56,14 @@ export default function DraftActions({
         </Button>
         {more ? (
           <div className="st-menu" role="menu" onMouseLeave={() => setMore(false)}>
-            {item("되돌리기", `⌘Z — 되돌릴 수 있는 단계 ${draft.undoDepth}`, () => draft.stepHistory("undo"), { disabled: !draft.undoDepth })}
+            {/* 위: 방금 한 조작 · 가운데: 가끔 쓰는 것 · 아래(선 밑): 파괴적인 것. 이름은 부제보다 뜻이 먼저 보이게(2026-08-27) */}
+            {item("실행 취소", `⌘Z${draft.undoDepth ? ` · ${draft.undoDepth}단계` : ""}`, () => draft.stepHistory("undo"), { disabled: !draft.undoDepth })}
             {item("다시 실행", "⌘⇧Z", () => draft.stepHistory("redo"), { disabled: !draft.redoDepth })}
-            <span className="st-menu-div" aria-hidden="true" />
-            {item("검사만 하기", "선언한 것과 실제 파일이 맞는지 봅니다 — 고치지는 않습니다", () => void draft.validate())}
-            {item("기록 남기기", "지금까지 고친 것을 되돌릴 수 있는 지점으로 남깁니다", () => setDialog("commit"), { disabled: !changedCount })}
-            {item("내보내기", "남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다", () => void draft.pack(), { disabled: !status?.version.live })}
             {status?.installed ? item("새 탭에서 열기", "지금 돌아가고 있는 버전의 화면", () => window.open(viewHref, "_blank", "noreferrer")) : null}
+            <span className="st-menu-div" aria-hidden="true" />
+            {item("되돌릴 지점 남기기", "지금까지 고친 것을 기록해 두고 나중에 여기로 돌아올 수 있게", () => setDialog("commit"), { disabled: !changedCount })}
+            {item("검사하기", "선언과 실제 파일이 맞는지만 봅니다 — 고치지는 않습니다", () => void draft.validate())}
+            {item("내보내기", "남에게 주거나 스토어에 올릴 수 있는 파일로 만듭니다", () => void draft.pack(), { disabled: !status?.version.live })}
             <span className="st-menu-div" aria-hidden="true" />
             {item("작업 사본 버리기", "패널에서 고치던 것과 이력을 지웁니다 — 되돌릴 수 없습니다", () => setDialog("discard"), { danger: true })}
           </div>

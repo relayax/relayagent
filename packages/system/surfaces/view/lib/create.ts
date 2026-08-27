@@ -104,11 +104,17 @@ const viewDoc = (m: Manifest): string =>
 <body>
 <main>
   <h1>${m.display_name ?? "화면"}</h1>
-  <p>${m.description ?? "이 파일을 고치면 옆 미리보기가 곧바로 따라옵니다."}</p>
+  <p>${describeOrHint(m.description)}</p>
 </main>
 </body>
 </html>
 `;
+
+// 매니페스트의 자리표시 문구("설명을 적어 주세요.")가 실제 화면에 그대로 새어 나왔다(2026-08-27)
+function describeOrHint(d: string | undefined): string {
+  const t = (d ?? "").trim();
+  return !t || /^(설명을 적어 주세요\.?|TODO|description)$/i.test(t) ? "이 파일을 고치면 옆 미리보기가 곧바로 따라옵니다." : t;
+}
 
 const componentDoc = `// 자립 번들의 계약은 수출 하나다 — 소비자는 이 함수만 부른다.
 // 스타일도 여기서 심는다: 옆에 CSS 파일로 내면 소비자가 설치 이름이 박힌 주소를 조립해야 하고,

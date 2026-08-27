@@ -26,12 +26,12 @@ export default function SettingsPane({ reg, edges, onChanged }: { reg: Registry;
     <section className="pane">
       <header className="pane-head">
         <h2>설정</h2>
-        <span className="meta">지도 · 설치와 버전 · 권한 대장 · 자격 · 하네스</span>
+        {/* 종전의 "지도 · 설치와 버전 · 권한 대장 · 자격 · 하네스" 는 메뉴처럼 보이는데 누를 수 없는 라벨이었고,
+            "터미널: relay draft <이름>" 은 일반 사용자에게 뜻이 없었다 — 둘 다 뺐다(2026-08-27). 터미널 안내는 README 에 있다 */}
+        <span className="meta">설치된 에이전트와 그 사이의 연결</span>
         <div className="right">
           {/* 사용 안내는 홈(기판 셸)에 산다 — 처음 닿는 자리가 거기라서. 여기서는 그 문으로 보낸다 */}
           <a className="ob-open" href="/?guide=1" title="사용 안내 다시 보기">안내</a>
-          {/* 빈 패키지를 손으로 여는 화면은 없다 — 빌더 없이 시작할 사람을 위한 한 문장 */}
-          <span className="meta" title="빌더 없이 빈 패키지를 열려면">터미널: <code>relay draft &lt;이름&gt;</code></span>
         </div>
       </header>
       <div className={`settings-body${selected ? " has-detail" : ""}${!selected && closing ? " detail-closing" : ""}`}>

@@ -202,18 +202,19 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
     return sec === "scripts" ? all.filter((it) => !it.id.includes("/")) : all;
   };
 
-  // 항목의 사람 말 — 폼의 id 는 그대로 두고 보이는 글만 바꾼다
-  const display = (sec: string, it: SectionItem, row: Row | undefined): { title: string; sub?: string } => {
+  // 항목의 사람 말 — 폼의 id 는 그대로 두고 보이는 글만 바꾼다.
+  // mono 는 부제가 id·경로일 때만. 산문을 고정폭으로 찍으면 글자가 다 따로 놀아 줄이 시끄럽다
+  const display = (sec: string, it: SectionItem, row: Row | undefined): { title: string; sub?: string; mono?: boolean } => {
     if (sec === "triggers") {
       const t = (m.triggers ?? []).find((x) => x.id === it.id);
       const ko = t?.when?.cron ? cronToKorean(t.when.cron) : t?.when?.event ? `${t.when.event} 이 생기면` : null;
-      return ko ? { title: ko, sub: it.id } : { title: it.id, sub: it.sub };
+      return ko ? { title: ko, sub: it.id, mono: true } : { title: it.id, sub: it.sub };
     }
     if (sec === "scripts") {
       const r = row?.items.find((x) => x.sub === it.id);
-      return r ? { title: r.text, sub: it.id } : { title: it.id };
+      return r ? { title: r.text, sub: it.id, mono: true } : { title: it.id };
     }
-    if (sec === "surfaces") return it.id === "view" ? { title: "화면", sub: it.sub } : it.id === "components" ? { title: "끼울 부품", sub: it.sub } : { title: it.title, sub: "채널" };
+    if (sec === "surfaces") return it.id === "view" ? { title: "화면", sub: it.sub } : it.id === "components" ? { title: "부품", sub: it.sub } : { title: it.title, sub: "채널" };
     return { title: it.title, sub: it.sub };
   };
 
@@ -258,7 +259,7 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
           <div key={it.id}>
             <button type="button" className="ap-item" aria-expanded={isOpen(s.sec, it.id)} onClick={() => toggle(s.sec, it.id)}>
               <span className="ap-item-t">{d.title}</span>
-              {d.sub ? <span className="ap-item-s">{d.sub}</span> : null}
+              {d.sub ? <span className={`ap-item-s${d.mono ? " mono" : ""}`}>{d.sub}</span> : null}
               {st ? <span className={`ap-item-st${st.on ? " on" : ""}`} title={st.title}>{st.label}</span> : null}
               <Chevron />
             </button>
@@ -290,11 +291,12 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
             </div>
             {/* 엔진 — 펼칠 것 없이 여기서 바로 고른다. 켜면 붙고 끄면 뺀다 */}
             <div className="ap-engine">
-              <span className="ap-engine-l">사용 가능 엔진</span>
+              {/* 켜진 것은 이름만, 꺼진 것은 "+ 이름" — 색 차이만으로는 고를 수 있는 건지 상태 표시인지 안 보였다(2026-08-27) */}
+              <span className="ap-engine-l" title="이 에이전트를 돌릴 수 있는 AI 엔진. 누르면 붙이거나 뺍니다">엔진</span>
               <span className="st-picks">
                 {ENGINES.map((e) => (
                   <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy} title={have.has(e.id) ? `${e.label} 빼기` : `${e.label} 붙이기`} onClick={() => onEngine(e.id)}>
-                    {e.label}
+                    {have.has(e.id) ? e.label : `+ ${e.label}`}
                   </button>
                 ))}
               </span>
@@ -303,7 +305,8 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
               <>
               <button type="button" className="ap-item" aria-expanded={isOpen("agents", landing)} onClick={() => toggle("agents", landing)}>
                 <span className="ap-item-t">성격과 역할</span>
-                <span className="ap-item-s">{landing}</span>
+                {/* 값 자리에 에이전트 id 가 서 있었다 — 무엇을 적는 글인지로(2026-08-27). 인사말은 길어 제목을 밀었다 */}
+                <span className="ap-item-s">말투 · 역할 · 할 일</span>
                 <Chevron />
               </button>
               {slot("agents", landing)}
@@ -316,7 +319,7 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
           {AGENT_SECS.filter((s) => agentItems(s).length || open.sec === s.sec).map((s) => section(s, agentItems(s), byKey.get(s.k)))}
           {AGENT_SECS.some((s) => !agentItems(s).length && open.sec !== s.sec) ? (
             <section className="ap-sec ap-more">
-              <div className="ap-sec-h"><span className="ap-sec-t plain"><span>더 붙일 수 있는 것</span></span></div>
+              <div className="ap-sec-h"><span className="ap-sec-t plain"><span>추가하기</span></span></div>
               <div className="ap-chips">
                 {AGENT_SECS.filter((s) => !agentItems(s).length && open.sec !== s.sec).map((s) => (
                   <AddMenu key={s.sec} sec={s.sec} title={s.add} label={s.title} m={m} files={files} onPick={onPick} onAsk={onAsk} />

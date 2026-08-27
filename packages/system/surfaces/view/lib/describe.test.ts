@@ -111,7 +111,7 @@ test("describe — faces 줄과 보조 에이전트", () => {
     surfaces: { view: { source: "view" }, components: { source: "parts" }, channels: [{ name: "slack", source: "c", entry: "run" }] },
   };
   const rows = describe(m, { ...base, landing: "diary" });
-  assert.deepEqual(byKey(rows, "faces").items, [{ text: "화면", sub: "view" }, { text: "끼울 부품", sub: "parts" }, { text: "slack", sub: "채널" }]);
+  assert.deepEqual(byKey(rows, "faces").items, [{ text: "화면", sub: "view" }, { text: "부품", sub: "parts" }, { text: "slack", sub: "채널" }]);
   assert.deepEqual(byKey(rows, "talk").items, [{ text: "이 화면" }, { text: "indexer", sub: "보조" }]);
 });
 

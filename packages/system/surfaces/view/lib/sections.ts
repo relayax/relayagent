@@ -92,7 +92,7 @@ export const SECTIONS: SectionDef[] = [
         out.push({
           id: "components",
           title: "components",
-          sub: "다른 화면에 끼우는 부품",
+          sub: "다른 앱 화면에서 쓰는 조각",
           files: under(files, c.source),
         });
       }
@@ -186,7 +186,7 @@ export const SECTIONS: SectionDef[] = [
     label: "맡길 수 있는 일",
     material: "배선",
     yamlKey: "missions",
-    hint: "다른 패키지이 이 패키지에 맡길 수 있는 일. 이름과 설명을 적어 두면 다른 패키지이 그 이름으로 일을 넘깁니다.",
+    hint: "다른 패키지가 이 패키지에 넘길 수 있는 일감. 이름과 설명을 적어 두면 그 이름으로 일이 들어옵니다.",
     declared: (m) => !!m.missions?.length,
     items: (m) => (m.missions ?? []).map((x) => ({ id: x.name, title: x.name, sub: x.description, files: [] })),
   },

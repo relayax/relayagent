@@ -138,7 +138,7 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
     key: "faces", q: "화면과 채널", sec: "surfaces", empty: "아직 없음",
     items: [
       ...(m.surfaces?.view ? [{ text: "화면", sub: m.surfaces.view.source }] : []),
-      ...(m.surfaces?.components ? [{ text: "끼울 부품", sub: m.surfaces.components.source }] : []),
+      ...(m.surfaces?.components ? [{ text: "부품", sub: m.surfaces.components.source }] : []),
       ...(m.surfaces?.channels ?? []).map((c) => ({ text: c.name, sub: "채널" })),
     ],
   });

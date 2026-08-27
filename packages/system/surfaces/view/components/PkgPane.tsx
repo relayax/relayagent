@@ -122,11 +122,12 @@ export default function PkgPane({
         <Button variant="ghost" size="icon-sm" className="back" nativeButton={false} render={<a href="/" title="홈으로" />}>←</Button>
         {item?.icon ? <img className="p-ic" src={item.icon} alt="" /> : <span className="p-ic ltr">{(pkg.name[0] ?? "?").toUpperCase()}</span>}
         <h2>{m?.display_name ?? title?.display ?? pkg.name}</h2>
-        <span className="meta mono">
+        {/* 머리에는 버전만 — "@haemin/detail-page@0.1.7" 같은 식별자 표기는 사람에게 뜻이 없다.
+            패키지 이름은 툴팁으로만 남긴다(ring-0 꼬리도 같은 이유로 뺐다) */}
+        <span className="meta" title={m?.name ?? pkg.name}>
           {ghost
-            ? `미발행${title?.draft ? ` · 초안 v${title.draft}` : ""}`
-            : `${m?.name ?? pkg.name}@${m?.version ?? "?"}${title?.draft && title.draft !== title.live ? ` · 초안 v${title.draft}` : ""}`}
-          {pkg.ring === 0 ? " · ring-0" : ""}
+            ? title?.draft ? `초안 v${title.draft}` : "미발행"
+            : `v${m?.version ?? "?"}${title?.draft && title.draft !== title.live ? ` · 초안 v${title.draft}` : ""}`}
         </span>
         <span ref={setSlot} className="pane-actions" />
       </header>
@@ -178,6 +179,8 @@ function ViewFace({ pkg, item }: { pkg: Pkg; item: ShellItem | null }) {
       </div>
     );
   }
+  // 설명 한 줄은 없앴다(2026-08-27) — 화면이 화면처럼 서 있으면 "이게 돌아가는 화면" 이라고
+  // 적어 줄 필요가 없다. 자리와 테두리가 이미 말한다
   return (
     <div className="pane-body viewface">
       <iframe className="vf-frame" src={src} title={`${pkg.manifest?.display_name ?? pkg.name} 화면`} />

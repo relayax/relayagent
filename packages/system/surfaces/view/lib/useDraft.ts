@@ -11,6 +11,7 @@ import type { Made } from "@/lib/create";
 import { SECTIONS, type Material } from "@/lib/sections";
 import {
   draftList,
+  draftIcon,
   draftOpen,
   draftRead,
   draftReadFile,
@@ -406,6 +407,7 @@ export function useDraft(
   const ctx: SectionCtx | null = useMemo(() => {
     if (!pkg || !status || !manifest) return null;
     return {
+      pkg,
       manifest,
       text: status.manifest,
       files: status.files,
@@ -426,6 +428,13 @@ export function useDraft(
       openFile: (f) => nav({ file: f }),
       openItem: (it) => nav({ item: it, file: null }),
       made: onMade,
+      setIcon: (emoji) =>
+        draftIcon(pkg, emoji)
+          .then(refresh)
+          .catch((e) => {
+            say("err", `아이콘 실패: ${String(e instanceof Error ? e.message : e)}`);
+            throw e;
+          }),
       seedHarness: (source, entry) =>
         draftOpen(pkg, { seedHarness: [{ source, entry }] })
           .then(refresh)

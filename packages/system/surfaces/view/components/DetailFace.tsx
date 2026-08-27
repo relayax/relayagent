@@ -68,6 +68,9 @@ export default function DetailFace({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [palette, setPalette] = useState(false);
+  // 작업 사본이 있는지 아직 모르는 동안(첫 조회) 머리를 비워 둔다 — 여기서 무엇이든 그리면
+  // 이미 사본이 있는 패키지에서 버튼이 한 번 번쩍이고 [적용]로 갈린다
+  const [probed, setProbed] = useState(false);
   // [＋ 추가] 메뉴에서 고른 종류 — 팔레트가 이것의 질문으로 바로 연다
   const [pickedKind, setPickedKind] = useState<Creatable | null>(null);
   // 설치본의 동사 이름 — 설치본 트리에서. draft 가 열리면 draft 의 파일 목록이 대신한다
@@ -88,13 +91,19 @@ export default function DetailFace({
   // 들어올 때: 초안이거나 이미 draft 가 있으면 연다. 없으면 설치본을 보여주고, 줄을 누를 때 연다
   useEffect(() => {
     let on = true;
+    setProbed(false);
     if (ghost) {
-      void draft.open();
+      void draft.open().finally(() => { if (on) setProbed(true); });
       return;
     }
     void draftList()
-      .then((r) => { if (on && r.drafts.some((d) => d.name === pkg.name)) void draft.open(); })
-      .catch(() => {});
+      .then((r) => {
+        if (!on) return;
+        // 사본이 있으면 열린 뒤에야 안다 — 열기 전에 세우면 그 사이가 곧 번쩍임이다
+        if (r.drafts.some((d) => d.name === pkg.name)) return draft.open().finally(() => { if (on) setProbed(true); });
+        setProbed(true);
+      })
+      .catch(() => { if (on) setProbed(true); });
     void callScript<{ tree: string[] }>("pkg-read", { name: pkg.name })
       .then((r) => { if (on) setLiveScripts(scriptNamesFromTree(r.tree ?? [], pkg.manifest?.scripts?.source)); })
       .catch(() => { if (on) setLiveScripts([]); });
@@ -226,7 +235,7 @@ export default function DetailFace({
       className={`head-status${draft.changedCount ? " on" : ""}`}
       title={draft.agentBusy ? "이 패키지의 빌더 대화에서 턴이 돌고 있습니다 — 끝나면 화면이 새 내용을 반영합니다" : draft.changedCount ? "고친 것이 있지만 아직 돌아가는 판에 적용되지 않았습니다" : undefined}
     >
-      {draft.agentBusy ? "빌더 작업 중…" : draft.changedCount ? `수정 ${draft.changedCount}건 · 아직 적용 안 됨` : "변경 없음"}
+      {draft.agentBusy ? "빌더 작업 중…" : draft.changedCount ? "아직 적용 안 됨" : "변경 없음"}
     </span>
   ) : null;
   const actions = actionsSlot
@@ -247,16 +256,13 @@ export default function DetailFace({
             }}
           />
           </>
-        ) : (
-          <>
-            <Button size="sm" onClick={() => void draft.open()} title="고칠 수 있는 사본을 엽니다 — 적용하기 전에는 돌아가는 버전이 바뀌지 않습니다">
-              고치기
-            </Button>
-            <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 버전의 화면을 새 탭에서 엽니다" />}>
-              ↗
-            </Button>
-          </>
-        ),
+        ) : probed ? (
+          // [고치기] 는 두지 않는다 — 줄·[＋ 추가]·엔진 칩이 이미 눌리면 사본을 연다.
+          // 아무 데도 데려가지 않는 문이라, 사본이 이미 있는 패키지에서는 번쩍이기만 했다(2026-08-27)
+          <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 버전의 화면을 새 탭에서 엽니다" />}>
+            ↗
+          </Button>
+        ) : null,
         actionsSlot,
       )
     : null;

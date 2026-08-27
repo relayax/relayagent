@@ -113,6 +113,16 @@ export function draftRun(name: string, verb: string, input: unknown): Promise<{ 
   return callScript("draft-run", { name, verb, input });
 }
 
+/** 패키지 대표 아이콘 — 이모지 하나를 고르면 기판이 품은 Tossface 그림을 draft 에 앉히고 relay.yaml 에 선언한다 */
+export function draftIcon(name: string, emoji: string): Promise<{ icon: string; glyph: string }> {
+  return callScript("draft-icon", { name, emoji });
+}
+
+/** 고를 수 있는 그림 전부 — 코드포인트 이름(u1F4D2). 그림 주소는 /pkg/system/asset/assets/tossface/<이름>.svg */
+export function draftIconList(): Promise<{ glyphs: string[] }> {
+  return callScript("draft-icon-list", {});
+}
+
 export function draftPublish(name: string, version?: string): Promise<PublishOutcome> {
   return callScript("draft-publish", { name, version });
 }
