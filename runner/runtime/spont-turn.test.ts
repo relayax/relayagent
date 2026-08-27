@@ -132,8 +132,10 @@ test("주입 없이 열린 턴이 자기 좌표·자기 장부로 서고, reply 
     assert.ok(!fs.readFileSync(path.join(dir, f), "utf8").includes("미뤄진 얹기의 답"), `${f} 에 섞였다`);
   }
 
-  // ③ 닫혔다 — 안 닫으면 그 슬롯이 영구 busy 다
-  assert.deepEqual(closed[closed.length - 1], { id: spont.id, ok: true });
+  // ③ 닫혔다 — 안 닫으면 그 슬롯이 영구 busy 다.
+  //    **id 로 찾는다**: 주입 턴의 종결과 이 턴의 종결은 서로 다른 경로가 내므로 도착 순서가
+  //    고정이 아니다(CI 에서 뒤집혔다). 위치로 집으면 코드가 아니라 스케줄러를 재게 된다.
+  assert.deepEqual(closed.filter((c) => c.id === spont.id), [{ id: spont.id, ok: true }]);
 
   // ④ 이력에도 앉는다 — 상주가 죽어도 그 답이 대화에 남는다
   const texts = io.readMessages(PKG, slot).map((m) => String(m.text));
