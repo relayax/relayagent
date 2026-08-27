@@ -16,6 +16,7 @@ import { startServices, startChannels, stopServices, type RunnerIO } from "../ru
 import { Ticker } from "../runtime/triggers.ts";
 import { MIME, json, esc, readBody, streamFile } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
+import { injectShell } from "../runtime/shell.ts";
 
 /** 준비된(동의 전) 봉투의 대기소 — 데몬 하나당 하나. 만료분은 접근 때마다 걷힌다 */
 const prepared = new Map<string, { p: Prepared; at: number }>();
@@ -28,50 +29,70 @@ const MAX_IMPORT = 200 * 1024 * 1024;
 // 걷어낸 마켓 표면을 되살리지 않으면서 필요한 문 하나만 세울 수 있다.
 
 const SHELL = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Relay 설치</title><style>
-:root{--bg:#f5f6f7;--card:#fff;--ink:#16181b;--soft:#5c6570;--faint:#98a1aa;--line:#e6e9ec;--accent:#0f766e;--accent-strong:#115e59;--accent-soft:rgba(13,148,136,.1)}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;-webkit-font-smoothing:antialiased;word-break:keep-all}
-.card{max-width:440px;margin:8vh auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px 30px 24px}
-h1{margin:0 0 4px;font-size:19px;font-weight:800;letter-spacing:-.02em}
-.sub{margin:0 0 18px;font:12px ui-monospace,Menlo,monospace;color:var(--faint)}
-p{color:var(--soft);font-size:13px;margin:0 0 12px}
-.seal{display:flex;gap:8px;align-items:center;background:var(--accent-soft);color:var(--accent-strong);border-radius:9px;padding:9px 12px;font-size:12px;margin-bottom:16px}
-.seal code{font:10.5px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
-h2{font-size:12.5px;font-weight:700;margin:0 0 8px}
-dl{border:1px solid var(--line);border-radius:10px;padding:2px 14px;margin:0 0 14px}
-dl>div{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Relay 설치</title>
+<link rel="stylesheet" href="/assets/chat-app.css"><style>
+/* 위젯 번들의 shadcn 토큰(--background·--primary·--radius…)과 Pretendard 위에, shadcn 컴포넌트
+   (Card·Button·Alert·Table)의 클래스 값을 그대로 옮겨 적는다. 유틸리티 클래스는 번들에 쓰인 것만
+   남아 있으므로 여기서 이름을 빌리지 않고 값을 적는다 */
+*,*::before,*::after{box-sizing:border-box;border:0 solid var(--border)}
+body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.5 var(--rc-sans);-webkit-font-smoothing:antialiased;word-break:keep-all}
+.card{max-width:448px;margin:32px auto;background:var(--card);color:var(--card-foreground);border:1px solid var(--border);border-radius:calc(var(--radius) + 4px);box-shadow:0 1px 2px 0 rgb(0 0 0/.05);padding:24px;display:flex;flex-direction:column;gap:20px}
+.card>*{margin:0}
+h1{font-size:16px;font-weight:600;line-height:1.3;letter-spacing:-.01em;margin:0 0 4px}
+.desc{font-size:13px;color:var(--muted-foreground);margin:0 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sub{font:12px/1.5 var(--rc-mono);color:var(--muted-foreground)}
+p{color:var(--muted-foreground);font-size:14px}
+h2{font-size:14px;font-weight:500;margin:0 0 8px}
+.warn,.seal{border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:13px;line-height:1.5;display:flex;gap:10px;align-items:flex-start}
+.warn{color:#b45309;border-color:#fde68a;background:#fffbeb}
+.warn::before,.seal::before{content:"";flex:none;width:16px;height:16px;margin-top:1px;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
+.warn::before{--i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E")}
+.seal::before{--i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/%3E%3C/svg%3E")}
+.seal{color:var(--foreground);display:block;position:relative;padding-left:42px}
+.warn{display:block;position:relative;padding-left:42px}
+.warn::before{position:absolute;left:16px;top:13px}
+.seal small,.warn small{display:block;color:var(--muted-foreground);font-size:12px;margin-top:6px}
+.warn code{display:block;font:11.5px/1.5 var(--rc-mono);color:var(--foreground);overflow-wrap:anywhere;margin-top:2px}
+.seal::before{position:absolute;left:16px;top:13px}
+.seal code{display:block;font:12px/1.5 var(--rc-mono);color:var(--foreground);overflow-wrap:anywhere;margin-top:2px}
+dl{border:1px solid var(--border);border-radius:var(--radius);margin:0;overflow:hidden}
+dl>div{display:flex;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;line-height:1.5}
 dl>div:last-child{border-bottom:0}
-dt{flex:none;width:42px;color:var(--faint);font-weight:700;font-size:11px;padding-top:1px}
-dd{margin:0;color:var(--soft);overflow-wrap:anywhere}
-dd code{font:11.5px ui-monospace,Menlo,monospace}
-.nots{font-size:12.5px;color:var(--soft);background:#eef0f2;border-radius:9px;padding:10px 12px;margin-bottom:18px}
-.row{display:flex;gap:9px}
-button,.btn{flex:1;text-align:center;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:11px;font:600 13.5px inherit;cursor:pointer;text-decoration:none;display:block}
-button.go{background:var(--accent);border-color:var(--accent);color:#fff}
-.note{font-size:11.5px;color:var(--faint);text-align:center;margin:12px 0 0}
-.warn{background:#fdf3e7;color:#9a5b06;border-radius:9px;padding:10px 12px;font-size:12.5px;margin-bottom:12px}
-.drop{border:1.5px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;color:var(--soft);font-size:13px;cursor:pointer}
-.drop.on{border-color:var(--accent);background:var(--accent-soft)}
-.drop b{display:block;font-size:14px;color:var(--ink);margin-bottom:4px}
+dt{flex:none;width:80px;color:var(--muted-foreground)}
+.nots{font-size:12px;color:var(--muted-foreground);margin-top:8px}
+dd{margin:0;overflow-wrap:anywhere}
+dd code{font:12px var(--rc-mono);background:var(--muted);border-radius:4px;padding:1px 5px}
+.row{display:flex;gap:8px;justify-content:flex-end}
+button,.btn{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 16px;border-radius:calc(var(--radius) - 2px);font:500 14px/1 var(--rc-sans);white-space:nowrap;cursor:pointer;text-decoration:none;transition:background .15s,color .15s;outline:none}
+button:focus-visible,.btn:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklch,var(--ring) 50%,transparent)}
+.btn{border:1px solid var(--border);background:var(--background);color:var(--foreground);box-shadow:0 1px 2px 0 rgb(0 0 0/.05)}
+.btn:hover{background:var(--muted)}
+button.go{border:1px solid transparent;background:var(--primary);color:var(--primary-foreground)}
+button.go:hover{background:color-mix(in oklch,var(--primary) 80%,transparent)}
+.note{font-size:12px;color:var(--muted-foreground);text-align:center}
+.note:empty{display:none}
+.drop{border:1px dashed var(--border);border-radius:var(--radius);padding:36px 20px;text-align:center;color:var(--muted-foreground);font-size:14px;cursor:pointer;transition:background .15s}
+.drop.on{border-color:var(--ring);background:var(--muted)}
+.drop b{display:block;font-size:14px;font-weight:500;color:var(--foreground);margin-bottom:4px}
 </style></head><body>`;
 
 /** 가져오기 — 손에 든 봉투를 여는 문 */
 function importPage(res: http.ServerResponse): void {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  res.end(`${SHELL}<div class="card">
-<h1>불러오기</h1>
-<p>받은 에이전트 파일(<code>.relay</code>)을 놓으면 무엇을 요구하는지 먼저 보여 드립니다. 설치는 동의한 뒤에 시작합니다.</p>
-<div class="drop" id="d"><b>여기에 파일을 놓거나 클릭</b>.relay 파일</div>
+  res.end(injectShell(`${SHELL}<div class="card">
+<div><h1>파일 불러오기</h1>
+<p class="desc">받은 <code>.relay</code> 파일을 놓으세요. 설치하기 전에 이 에이전트가 무엇을 하는지 먼저 보여 드립니다.</p></div>
+<div class="drop" id="d"><b>파일을 여기에 놓거나 클릭해서 선택</b>.relay 파일</div>
 <input type="file" id="f" accept=".relay" style="display:none">
 <p class="note" id="st"></p>
 <script>
 var d=document.getElementById("d"),f=document.getElementById("f"),st=document.getElementById("st");
 function send(file){
   if(!file){return}
-  st.textContent="여는 중… "+file.name;
+  st.textContent=file.name+" 여는 중…";
   fetch("/store/import",{method:"POST",body:file}).then(function(r){return r.json()}).then(function(j){
     if(j.id){location.href="/store/install/consent?id="+encodeURIComponent(j.id)}
-    else{st.textContent=j.error||"열지 못했습니다"}
+    else{st.textContent=j.error||"파일을 열지 못했습니다"}
   }).catch(function(e){st.textContent=String(e)});
 }
 d.onclick=function(){f.click()};
@@ -80,22 +101,22 @@ d.ondragover=function(e){e.preventDefault();d.className="drop on"};
 d.ondragleave=function(){d.className="drop"};
 d.ondrop=function(e){e.preventDefault();d.className="drop";send(e.dataTransfer.files[0])};
 </script>
-</div></body></html>`);
+</div></body></html>`));
 }
 
 /** 한 줄짜리 결과·오류 화면 */
 function installPage(res: http.ServerResponse, code: number, title: string, detail: string, ok = false): void {
   res.writeHead(code, { "content-type": "text/html; charset=utf-8" });
-  res.end(
+  res.end(injectShell(
     `${SHELL}<div class="card"><h1>${esc(title)}</h1><p>${esc(detail)}</p>` +
       // 실패도 막다른 골목이 아니어야 한다 — 온 곳(서재)으로 되돌아가거나 홈으로 나간다
       (ok
-        ? `<a class="btn" href="/pkg/system/view/">콘솔 열기</a>`
-        : `<div style="display:flex;gap:8px;margin-top:16px">` +
+        ? `<div class="row"><a class="btn" href="/pkg/system/view/">콘솔 열기</a></div>`
+        : `<div class="row">` +
           `<a class="btn" href="javascript:history.back()">← 돌아가기</a>` +
           `<a class="btn" href="/">홈으로</a></div>`) +
       `</div></body></html>`,
-  );
+  ));
 }
 
 /**
@@ -105,41 +126,47 @@ function installPage(res: http.ServerResponse, code: number, title: string, deta
  */
 function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = false): void {
   const d = prep.disclosure;
+  const row = (label: string, body: string) => `<div><dt>${label}</dt><dd>${body}</dd></div>`;
+  const authNote: Record<string, string> = { oauth: "설치 후 로그인", token: "설치 후 키 입력" };
   const rows: string[] = [];
-  for (const f of d.folders) rows.push(`<div><dt>폴더</dt><dd><code>${esc(f.path)}</code> 를 만들고 읽고 씁니다</dd></div>`);
-  for (const l of d.llm) rows.push(`<div><dt>LLM</dt><dd>${esc(l.provider)} 계정으로 돕니다 (${esc(l.auth)})</dd></div>`);
-  for (const n of d.network) rows.push(`<div><dt>외부</dt><dd><code>${esc(n.url)}</code> 로 나갑니다${n.auth === "none" ? "" : ` (자격: ${esc(n.auth)} — 값은 vault, 연결은 설치 후)`}</dd></div>`);
-  for (const w of d.wakeups) rows.push(`<div><dt>자동</dt><dd>${esc(w.when)} 에 스스로 깨어납니다</dd></div>`);
-  if (d.host.length) rows.push(`<div><dt>호스트</dt><dd>${esc(d.host.join(" · "))}</dd></div>`);
-  if (d.borrows.length) rows.push(`<div><dt>빌림</dt><dd>${esc(d.borrows.join(" · "))}</dd></div>`);
-  if (d.spawns.length) rows.push(`<div><dt>프로세스</dt><dd>${esc(d.spawns.join(" · "))}</dd></div>`);
-  if (d.hostMethods.length) rows.push(`<div><dt>기판</dt><dd>host 브리지 <code>${esc(d.hostMethods.join(", "))}</code></dd></div>`);
+  for (const f of d.folders) rows.push(row("폴더", `<code>${esc(f.path)}</code> 를 만들고 읽고 씁니다`));
+  for (const l of d.llm) rows.push(row("AI", `${esc(l.provider)} 계정으로 AI 를 씁니다${authNote[l.auth] ? ` (${authNote[l.auth]})` : ""}`));
+  for (const n of d.network) rows.push(row("인터넷", `<code>${esc(n.url)}</code> 에 접속합니다${n.auth === "none" ? "" : " (로그인 정보는 설치 후 따로 넣습니다)"}`));
+  for (const w of d.wakeups) rows.push(row("자동 실행", `${esc(w.when)} 에 자동으로 실행됩니다`));
+  if (d.host.length) rows.push(row("실행 도구", `${esc(d.host.join(", "))} 로 실행됩니다`));
+  if (d.borrows.length) rows.push(row("다른 에이전트", `${esc(d.borrows.join(", "))} 의 기능을 씁니다`));
+  if (d.spawns.length) rows.push(row("백그라운드", `${esc(d.spawns.join(", "))} 를 계속 실행합니다`));
+  if (d.hostMethods.length) rows.push(row("Relay", `내부 기능 <code>${esc(d.hostMethods.join(", "))}</code> 를 씁니다`));
 
   const nots: string[] = [];
-  if (!d.network.length) nots.push("인터넷으로 나가지 않고");
-  if (!d.wakeups.length) nots.push("스스로 깨어나지 않고");
-  if (!d.borrows.length) nots.push("다른 패키지의 능력을 빌리지 않습니다");
+  if (!d.network.length) nots.push("인터넷 접속");
+  if (!d.wakeups.length) nots.push("자동 실행");
+  if (!d.borrows.length) nots.push("다른 에이전트 사용");
 
+  // 출처 — 스토어가 확인한 파일인지, 손으로 받은 파일인지를 숨기지 않는다
+  const origin = sideloaded && !prep.signed
+    ? `<div class="warn">출처를 확인할 수 없는 파일입니다. 스토어를 거치지 않았으니 보낸 사람을 믿을 수 있을 때만 설치하세요.<small>파일 지문 — 보낸 사람이 알려 준 값과 같은지 확인하세요</small><code>${esc(prep.digest)}</code></div>`
+    : `<div class="seal">${prep.signed ? "스토어에서 확인한 파일입니다" : "파일이 손상되지 않았습니다"}<small>파일 지문</small><code>${esc(prep.digest)}</code></div>`;
+
+  const name = prep.manifest.display_name ?? prep.name;
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  res.end(
+  res.end(injectShell(
     `${SHELL}<div class="card">
-<h1>${esc(prep.manifest.display_name ?? prep.name)} 설치</h1>
-<p class="sub">${esc(prep.ref)} · ${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p>
-${sideloaded && !prep.signed
-      ? `<div class="warn">스토어를 거치지 않은 무서명 봉투입니다 — 보낸 사람을 믿을 수 있을 때만 설치하세요</div>
-<div class="seal">봉인값 · <code>${esc(prep.digest)}</code></div>`
-      : `<div class="seal">${prep.signed ? "서명·봉인 확인됨" : "봉인 확인됨"} · <code>${esc(prep.digest)}</code></div>`}
-<h2>이 에이전트가 요구하는 것</h2>
-<dl>${rows.join("") || `<div><dt>—</dt><dd>따로 요구하는 것이 없습니다</dd></div>`}</dl>
-${nots.length ? `<div class="nots">이 패키지는 ${esc(nots.join(", "))}.</div>` : ""}
+<div><h1>${esc(name)} 설치</h1>
+${prep.manifest.description ? `<p class="desc">${esc(prep.manifest.description)}</p>` : ""}
+<p class="sub">${esc(prep.ref)} · v${esc(prep.version)} · ${(prep.size / 1024).toFixed(0)}KB</p></div>
+${origin}
+<div><h2>설치하면 이 에이전트는</h2>
+<dl>${rows.join("") || row("—", "폴더·계정·인터넷 어느 것도 쓰지 않습니다")}</dl>
+${nots.length ? `<p class="nots">${esc(nots.join(" · "))}은 하지 않습니다</p>` : ""}</div>
 <form method="post" action="/store/install/confirm" class="row">
   <input type="hidden" name="id" value="${esc(prep.id)}">
   <a class="btn" href="/pkg/system/view/">취소</a>
-  <button class="go" type="submit">동의하고 설치</button>
+  <button class="go" type="submit">설치</button>
 </form>
-<p class="note">동의하기 전까지 이 패키지의 코드는 한 줄도 실행되지 않았습니다</p>
+<p class="note">설치 전에는 이 에이전트의 코드가 한 줄도 실행되지 않습니다</p>
 </div></body></html>`,
-  );
+  ));
 }
 
 
@@ -196,7 +223,7 @@ if (p === "/store/install" && req.method === "GET") {
     // 링크가 가리키는 판과 인덱스의 판이 어긋나면 멈춘다 — 낡은 링크로 엉뚱한 봉인을
     // 대조하다 실패하느니, 무엇이 어긋났는지 말해 주는 편이 낫다
     if (want && want !== entry.version) {
-      { installPage(res, 409, "새 판이 나왔습니다", `링크는 ${want}, 스토어는 ${entry.version} 입니다. 내 서재에서 다시 눌러 주세요.`); return true; }
+      { installPage(res, 409, "새 버전이 있습니다", `링크는 v${want}, 스토어는 v${entry.version} 입니다. 내 서재에서 다시 눌러 주세요.`); return true; }
     }
     const abs = await redeemWithTicket(STORE_INDEX_URL, entry, ticket);
     const prep = prepareArtifact(getLedger(), abs, { digest: entry.digest, registry: STORE_INDEX_URL });
@@ -213,12 +240,12 @@ if (p === "/store/install/confirm" && req.method === "POST") {
   const b = await readBody(req);
   const held = prepared.get(String(b.id ?? ""));
   if (!held || Date.now() - held.at > PREPARE_TTL) {
-    { installPage(res, 410, "준비가 만료되었습니다", "스토어의 내 서재에서 다시 눌러 주세요."); return true; }
+    { installPage(res, 410, "시간이 지나 다시 열어야 합니다", "스토어의 내 서재에서 설치를 다시 눌러 주세요."); return true; }
   }
   prepared.delete(held.p.id);
   try {
     const r = activatePrepared(getLedger(), held.p);
-    { installPage(res, 200, `${held.p.manifest.display_name ?? held.p.name} 설치 완료`, `${r.name} 로 설치되었습니다. 콘솔에서 바로 쓸 수 있습니다.`, true); return true; }
+    { installPage(res, 200, `${held.p.manifest.display_name ?? held.p.name} 설치 완료`, "이제 바로 쓸 수 있습니다.", true); return true; }
   } catch (e) {
     { installPage(res, 500, "설치에 실패했습니다", e instanceof Error ? e.message : String(e)); return true; }
   }
@@ -313,7 +340,7 @@ if (p === "/store/import" && req.method === "POST") {
 if (p === "/store/install/consent" && req.method === "GET") {
   const held = prepared.get(url.searchParams.get("id") ?? "");
   if (!held || Date.now() - held.at > PREPARE_TTL) {
-    { installPage(res, 410, "준비가 만료되었습니다", "봉투를 다시 열어 주세요."); return true; }
+    { installPage(res, 410, "시간이 지나 다시 열어야 합니다", "파일을 다시 불러와 주세요."); return true; }
   }
   { consentPage(res, held.p, true); return true; }
 }
