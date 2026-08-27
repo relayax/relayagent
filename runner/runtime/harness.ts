@@ -377,9 +377,16 @@ interface Resident {
   tasks: Set<string>;
   /** 마지막 봉투 이벤트 시각 — 스톨 워치독의 근거 */
   lastEvent: number;
-  /** 마지막 턴의 장부 — 유휴 턴(자발 continuation)의 이벤트가 여기 남는다.
-   *  턴마다 갱신된다: 유휴 이벤트는 "직전 턴에 이어진 것"이라 그 장부가 제 자리다 */
-  ledgerFile: string | null;
+  /**
+   * 유휴 중에 열린 자발 턴 — 주입 없이 하네스가 스스로 연 턴이다(백그라운드 완료의 continuation,
+   * 그리고 남은 경계가 없어 다음 턴으로 미뤄진 얹기의 답).
+   *
+   * 자기 장부를 갖는다. 종전에는 **직전 턴의 장부**에 이어 적었는데 그것은 계약 위반이었다:
+   * 재생은 settled 에서 끊어야 하고 그 뒤로는 어떤 이벤트도 없어야 하는데(client-protocol
+   * §6-36), 이어 적으면 재부착이 종결 뒤 줄을 다시 재생한다. 게다가 붙을 턴 id 가 없어
+   * 화면은 그 실황을 통째로 버렸다 — 답이 나왔는데 "아무 일도 안 일어나는" 자리였다.
+   */
+  spont: { id: string; file: string } | null;
 }
 
 const residents = new Map<string, Resident>();
@@ -552,11 +559,28 @@ function armIdle(key: string, r: Resident): void {
   r.idle.unref?.();
 }
 
-// 유휴 이벤트 — 주입 없는 자발 턴(백그라운드 continuation)의 배달.
-// reply 는 이력에 bot 메시지로 앉히고, 나머지는 진행 장부에 남겨 위젯이 줍게 한다
+/**
+ * 유휴 이벤트 — 주입 없이 하네스가 스스로 연 턴의 배달.
+ *
+ * 첫 이벤트가 턴을 **연다**: 자기 장부를 하나 만들고 관찰 창에 세운다(turnTap). 관찰·재부착·
+ * 재생이 전부 턴 id 로 붙으므로, 이 개설이 없으면 답이 실제로 나와도 화면에 닿을 길이 없다 —
+ * 도구 위임 턴이 "아무 일도 안 일어나는 것처럼" 보이던 자리와 같은 구멍이다(wire adoptSessionTurn).
+ * reply/error 가 그 턴을 닫는다. 이력에 앉히는 것은 종전과 같다.
+ */
 function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): void {
+  if (!r.spont) {
+    const id = crypto.randomUUID();
+    const file = turnLedgerPath(r.io, r.pkg, r.slot, id);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, ""); // 관찰이 즉시 붙어도 읽을 파일이 있게(wire enqueueTurn 과 같은 규율)
+      r.spont = { id, file };
+      // 개설을 먼저 알린다 — 아래 tap 이 중계될 턴이 그 사이 서 있어야 한다
+      turnTap?.open(r.pkg, r.slot, r.spont);
+    } catch { /* 세션 디렉토리가 지워짐 — 장부 없이 이력 배달만 계속한다 */ }
+  }
   try {
-    if (r.ledgerFile) appendEvent(r.ledgerFile, ev);
+    if (r.spont) appendEvent(r.spont.file, ev);
   } catch { /* 세션 디렉토리가 지워짐 — 기록만 포기 */ }
   tap(r.pkg, r.slot, ev);
   if (ev.event === "reply") {
@@ -566,6 +590,15 @@ function idleEvent(r: Resident, ev: { event: string; [k: string]: unknown }): vo
       context: ev.context ?? null,
     });
   }
+  if (ev.event !== "reply" && ev.event !== "error") return;
+  const spont = r.spont;
+  r.spont = null;
+  if (!spont) return;
+  try {
+    turnTap?.close(r.pkg, r.slot, spont.id, ev.event === "reply"
+      ? { ok: true, result: { reply: String(ev.text ?? ""), code: 0, model: typeof ev.model === "string" ? ev.model : null, usage: ev.usage ?? null, context: ev.context ?? null } }
+      : { ok: false, message: String(ev.message ?? "하네스 오류") });
+  } catch { /* 방청자 사정 */ }
 }
 
 function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string, env: Record<string, string>, cwd: string, fp: string): Resident {
@@ -580,7 +613,7 @@ function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string
   }
   if (cur) retireEntry(key, cur);
   const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now(), ledgerFile: null };
+  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now(), spont: null };
   child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
@@ -605,17 +638,24 @@ function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string
   child.stderr!.on("data", (d) => {
     r.stderrTail = (r.stderrTail + String(d)).slice(-2000);
   });
+  // 사망 배달 — 진행 중 턴이 있으면 그 턴의 실패이고, 유휴라도 **자발 턴이 열려 있으면**
+  // 그것을 닫아야 한다. 안 닫으면 관찰 창에 선 턴이 영영 running 으로 남아 그 슬롯이
+  // 영구 busy 가 되고, 다음 메시지가 전부 그 유령 턴으로 수렴한다
+  const dying = (message: string): void => {
+    if (r.sink) return void r.sink({ event: "error", message });
+    if (r.spont) idleEvent(r, { event: "error", message });
+  };
   child.on("error", (e) => {
     if (residents.get(key) === r) residents.delete(key);
-    r.sink?.({ event: "error", message: `하네스 상주 기동 실패: ${e}` });
+    dying(`하네스 상주 기동 실패: ${e}`);
   });
   child.on("close", (code) => {
     rl.close();
     if (residents.get(key) === r) residents.delete(key);
     if (r.idle) clearTimeout(r.idle);
-    // 턴 도중의 사망은 그 턴의 실패다 — 유휴 사망(sink 없음)은 다음 턴이 새 상주로 잇는다
+    // 턴 도중의 사망은 그 턴의 실패다 — 유휴 사망은 다음 턴이 새 상주로 잇는다
     const tail = r.stderrTail.trim().split("\n").slice(-2).join(" / ");
-    r.sink?.({ event: "error", message: `하네스 상주 종료 (exit ${code})${tail ? " — " + tail : ""}` });
+    dying(`하네스 상주 종료 (exit ${code})${tail ? " — " + tail : ""}`);
   });
   residents.set(key, r);
   return r;
@@ -640,7 +680,6 @@ function residentTurn(
     const r = acquireResident(io, pkg, slot, entry, env, cwd, fp);
     live.set(key, r.child);
     r.lastEvent = Date.now();
-    r.ledgerFile = eventsFile; // 이 턴 이후의 유휴 이벤트도 같은 장부에 남는다
     // 스톨 워치독 — 무이벤트가 길면 고착이다. 취소 제어로 턴을 실패 종결시켜 슬롯을 풀어준다
     const stall = setInterval(() => {
       if (askPending.has(key)) return; // 사람을 기다리는 중 — 무이벤트지 고착이 아니다

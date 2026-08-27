@@ -127,7 +127,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 | Line | Meaning |
 |---|---|
 | `{"type":"turn","prompt":…}` | Inject the next turn (`serve` only). The substrate serializes turns per slot. |
-| `{"type":"steer","prompt":…}` | Add a user utterance to the **turn already in flight** (requires capability `steer`). Never opens a turn: no second `reply`, and the settlement that arrives covers both utterances. Echo it back as a `steer` event when it lands. |
+| `{"type":"steer","prompt":…}` | Add a user utterance to the **turn already in flight** (requires capability `steer`). The substrate does not open a turn for it. Echo it back as a `steer` event when it lands. Where the words end up is the CLI's call, not the adapter's — see **Steering** below. |
 | `{"type":"cancel"}` | Abort the in-flight turn. The adapter kills its CLI and settles with `error` + exit 130. |
 | `{"type":"answer","id":…,"answers":[{question,selected[]}…]}` | Resolve a pending `ask`. Empty `answers` = the user cancelled. |
 | EOF | Retire. `serve`: finish the in-flight turn, then drain (below), then exit 0. |
@@ -144,19 +144,30 @@ client-side field invented downstream is how two substrates end up meaning diffe
 - **Background tasks** — while `task`-started entries are unsettled, retirement defers force-kill
   timers and the substrate defers the idle TTL (drain). When a background task completes while the
   session is idle, the resulting spontaneous turn is emitted as a normal event stream ending in
-  `reply {origin:"task"}`; the substrate appends it to the conversation history. A turn injected
+  `reply {origin:"task"}`; the substrate opens a turn of its own for it — with its own ledger, so
+  observers can attach and replay it like any other — and appends it to the conversation history.
+  A deferred `steer` (above) surfaces through the same door. A turn injected
   while a spontaneous turn is in flight must be queued behind it, never cross-wired.
-- **Steering** — `steer` adds an utterance to a turn that is already running, and is the only
-  control line that carries user text without opening a turn. The adapter hands it to its CLI on
-  the same conversation and changes nothing else: one turn, one `reply`, one settlement covering
-  every utterance the turn received. A `steer` arriving when no turn is in flight is dropped — the
-  substrate owns that race (it knows whether the turn is still running and falls back to sending a
-  normal turn), so an adapter that queued it instead would deliver the same words twice.
-  *Physical basis (claude-code 2.1.222, measured 2026-08-26): a user frame written to an
-  `--input-format stream-json` CLI mid-turn lands at the next sampling boundary — after the tool
-  call in flight returns, before the next one is chosen — and the CLI still emits exactly one
-  `result`. The words arrive between tool calls, never inside one; an adapter must not promise the
-  latter.*
+- **Steering has two endings, and the adapter must survive both.** `steer` is the only control
+  line that carries user text without opening a turn. Where those words land is the CLI's call:
+  - **Folded in** — a sampling boundary is still ahead (a tool call is in flight), so the words
+    join the running turn and one `reply` settles everything it received.
+  - **Deferred** — no boundary is left (the model is already writing its answer), so the CLI
+    settles the current turn and opens **a new one** for the steered words. That turn was injected
+    by nobody, and an adapter that only admits spontaneous turns after a background task will
+    silently discard it.
+
+  An adapter must therefore treat "a steer was accepted this turn" as a reason to admit one
+  spontaneous turn after settlement, exactly as a finished background task is (below).
+  *Both endings were measured on claude-code 2.1.222. The first on 2026-08-26 (steer during a tool
+  chain), the second on 2026-08-27 — and the second arrived as a bug report: the deferred turn ran
+  for real, read the files it was asked about, produced its answer, and every frame of it was
+  dropped. What the user saw was "no reply", while the machine was visibly busy. The lesson worth
+  keeping is that measuring one ending does not establish the other.*
+
+- **A `steer` arriving when no turn is in flight is dropped.** The substrate owns that race — it
+  knows whether the turn is still running and falls back to sending a normal turn — so an adapter
+  that queued it instead would deliver the same words twice.
 - **A pending `ask` waits.** The adapter does not time it out and does not answer on the user's
   behalf: a question with no answer yet is a turn correctly waiting on a person, and the only one
   who may end that wait is the person — by answering, or by `cancel` (the Stop button). The
