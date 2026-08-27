@@ -34,16 +34,31 @@ export function updateCount(items: ReadonlyArray<ShellItem>): number {
   return items.filter((it) => !!it.update).length;
 }
 
-export const FACE_KO: Record<ShellItem["face"], string> = { view: "화면", chat: "대화", live: "상주", parts: "부품" };
+/** 카드의 상태 칩 하나 + 버튼 하나. 홈 카드는 "지금 손볼 것"이라 카드 전체와 버튼이 같은 곳으로 간다 —
+ *  수정 중 → 스튜디오(이어 수정), 새 판 → 서재(업데이트), 오류 → 상세(왜 실패했나). 우선순위는 그 순서 */
+export interface CardAction { status: "editing" | "update" | "error"; chip: string; label: string; href: string }
+export function cardAction(it: ShellItem, library: string | null): CardAction {
+  if (it.error) return { status: "error", chip: "검사 실패", label: "확인", href: it.detail };
+  if (it.update && library) return { status: "update", chip: `새 판 ${it.update}`, label: "업데이트", href: library };
+  if (it.update) return { status: "update", chip: `새 판 ${it.update}`, label: "상세", href: it.detail };
+  return { status: "editing", chip: "수정 중", label: "이어 수정", href: it.detail };
+}
 
 /** 아바타 글자 — 아이콘이 없을 때 이름 첫 글자 */
 export function initialOf(label: string): string {
   return (label.trim()[0] || "?").toUpperCase();
 }
 
-/** 초안 카드의 한 줄 */
+/** 설명 한 줄 — 매니페스트 기본 문구("설명을 적어 주세요.")나 빈 값은 설명이 아니다 */
+const PLACEHOLDER_DESC = /^(설명을 적어 주세요\.?|TODO|description)$/i;
+export function describe(description: string): string | null {
+  const d = (description || "").trim();
+  return !d || PLACEHOLDER_DESC.test(d) ? null : d;
+}
+
+/** 초안 카드의 한 줄 — 칩이 "초안"을 말하므로 여기는 진행 정도만 */
 export function draftLine(changes: number): string {
-  return changes ? `아직 발행하지 않은 수정본 · 바뀐 파일 ${changes}개` : "아직 발행하지 않은 수정본";
+  return changes ? `바뀐 파일 ${changes}개` : "아직 내용이 없어요";
 }
 
 export function isEmptyNav(nav: ShellNav): boolean {

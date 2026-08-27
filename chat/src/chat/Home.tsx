@@ -25,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { fetchNav, type ShellItem, type ShellNav } from "./nav";
-import { FACE_KO, draftLine, examplesAt, initialOf, isEmptyNav, todoOf, updateCount } from "./home-model";
+import { cardAction, describe, draftLine, examplesAt, initialOf, isEmptyNav, todoOf, updateCount, type CardAction } from "./home-model";
 
 const ASK_EVENT = "relay:home-ask";
 const GUIDE_KEY = "relay-guide-v2";
@@ -210,43 +210,46 @@ const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-no
 const chip = "rounded-md px-1.5 py-0 text-[11px] font-semibold";
 
 function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
+  const act = cardAction(it, library);
+  const desc = describe(it.description);
   return (
     <Card className={cardClass}>
-      <a href={it.href} className="flex flex-col gap-2 text-inherit no-underline">
+      <a href={act.href} className="flex flex-col gap-2 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
           <span className="flex size-[30px] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-[13px] font-bold text-muted-foreground">
             {it.icon ? <img src={it.icon} alt="" className="block size-[30px] object-cover" /> : initialOf(it.label)}
           </span>
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px]">{it.label}</b>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">
-              {it.pkg}{it.version ? "@" + it.version : ""}
-              {it.update ? <Badge variant="secondary" className="ml-1 rounded px-1.5 py-0 font-mono text-[10px] font-bold">→ {it.update}</Badge> : null}
-            </span>
+            <span className="block truncate font-mono text-[11px] text-muted-foreground">{it.pkg}{it.version ? "@" + it.version : ""}</span>
           </span>
           {it.resident ? <span className="size-[7px] shrink-0 rounded-full bg-emerald-500" title="도는 중" /> : null}
         </CardHeader>
         <CardContent className="px-0">
-          <p className="m-0 line-clamp-2 min-h-[2.6em] text-xs text-muted-foreground">{it.description}</p>
+          <p className={cn("m-0 line-clamp-2 min-h-[2.6em] text-xs", desc ? "text-muted-foreground" : "text-muted-foreground/60 italic")}>{desc ?? "설명이 아직 없어요"}</p>
         </CardContent>
       </a>
       <CardFooter className="flex items-center gap-1.5 px-0">
-        <Badge variant="secondary" className={chip}>{FACE_KO[it.face]}</Badge>
-        {it.error ? <Badge variant="destructive" className={chip}>검사 실패</Badge> : null}
-        {it.editing ? <Badge variant="outline" className={cn(chip, "border-blue-200 bg-blue-50 text-blue-700")} title="적용하지 않은 수정이 스튜디오에 있습니다">수정 중</Badge> : null}
+        <StatusChip status={act.status}>{act.chip}</StatusChip>
         <span className="flex-1" />
-        {it.update && library ? (
-          // 새 판 버튼 — 설치 티켓은 스토어 서재가 발급하므로 서재로 보낸다(동의 관문은 그 다음)
-          <Button size="xs" render={<a href={library} />} title="스토어 내 서재에서 새 판을 설치합니다" className="no-underline">{it.update} 업데이트</Button>
-        ) : null}
-        <Button size="xs" variant="outline" render={<a href={it.detail} />} className="no-underline text-muted-foreground hover:text-foreground">상세</Button>
+        <Button size="xs" variant={act.status === "update" ? "default" : "outline"} render={<a href={act.href} />}
+          className={cn("no-underline", act.status !== "update" && "text-muted-foreground hover:text-foreground")}>
+          {act.label}
+        </Button>
       </CardFooter>
     </Card>
   );
 }
 
+function StatusChip({ status, children }: { status: CardAction["status"] | "draft"; children: React.ReactNode }) {
+  if (status === "error") return <Badge variant="destructive" className={chip}>{children}</Badge>;
+  if (status === "editing") return <Badge variant="outline" className={cn(chip, "border-blue-200 bg-blue-50 text-blue-700")} title="적용하지 않은 수정이 스튜디오에 있습니다">{children}</Badge>;
+  return <Badge variant="outline" className={chip}>{children}</Badge>;
+}
+
 // 만드는 중인 초안 — 장부에 없어 설치 카드는 못 되지만, 어디에도 없으면 만들다 만 것이 잃은 것처럼
-// 보인다. 설치본과 같은 격자에 같은 모양으로 세우고, 점선과 "초안" 배지로만 가른다
+// 보인다. 설치본과 같은 격자에 같은 모양으로 세우고, 점선과 "초안" 칩으로만 가른다.
+// 이름은 한 번만(설치본의 pkg 줄은 라벨과 다른 이름이라 뜻이 있지만 초안은 이름뿐이다)
 function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
   return (
     <Card className={cn(cardClass, "border-dashed")}>
@@ -255,7 +258,7 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
           <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText className="size-4" /></span>
           <span className="min-w-0 flex-1">
             <b className="block truncate text-[13.5px]">{df.name}</b>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">{df.name}{df.version ? "@" + df.version : ""}</span>
+            <span className="block truncate font-mono text-[11px] text-muted-foreground">{df.version ?? "버전 없음"}</span>
           </span>
         </CardHeader>
         <CardContent className="px-0">
@@ -263,7 +266,7 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
         </CardContent>
       </a>
       <CardFooter className="flex items-center gap-1.5 px-0">
-        <Badge variant="outline" className={chip}>초안</Badge>
+        <StatusChip status="draft">초안</StatusChip>
         <span className="flex-1" />
         <Button size="xs" variant="outline" render={<a href={df.href} />} className="no-underline text-muted-foreground hover:text-foreground">이어 만들기</Button>
       </CardFooter>

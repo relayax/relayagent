@@ -23,8 +23,18 @@ test("examplesAt — 묶음이 끝에서 처음으로 돌고 음수도 안전", 
 test("문구 — 아바타 글자·초안 한 줄·빈 상태", () => {
   assert.equal(m.initialOf("  relay"), "R");
   assert.equal(m.initialOf(""), "?");
-  assert.equal(m.draftLine(0), "아직 발행하지 않은 수정본");
-  assert.equal(m.draftLine(4), "아직 발행하지 않은 수정본 · 바뀐 파일 4개");
+  assert.equal(m.draftLine(0), "아직 내용이 없어요");
+  assert.equal(m.draftLine(4), "바뀐 파일 4개");
+  assert.equal(m.describe("설명을 적어 주세요."), null);
+  assert.equal(m.describe("  "), null);
+  assert.equal(m.describe("가계부"), "가계부");
   assert.equal(m.isEmptyNav({ items: [], drafts: [] }), true);
   assert.equal(m.isEmptyNav({ items: [], drafts: [{ name: "a", version: null, changes: 0, href: "/" }] }), false);
+});
+
+test("cardAction — 오류 > 새 판 > 수정 중 순으로 칩·버튼·목적지가 하나씩", () => {
+  assert.deepEqual(m.cardAction(item({ editing: true, detail: "/d" }), null), { status: "editing", chip: "수정 중", label: "이어 수정", href: "/d" });
+  assert.deepEqual(m.cardAction(item({ editing: true, update: "2.0", detail: "/d" }), "/lib"), { status: "update", chip: "새 판 2.0", label: "업데이트", href: "/lib" });
+  assert.equal(m.cardAction(item({ update: "2.0", detail: "/d" }), null).href, "/d");
+  assert.equal(m.cardAction(item({ error: "x", update: "2.0", detail: "/d" }), "/lib").status, "error");
 });
