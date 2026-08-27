@@ -17,8 +17,9 @@
  *    SSEParser(chat/src/sse.ts, Phase 0-a 상륙분)가 버린다. 종결 정본은
  *    turn/settled(§5.2-20·§6-36) — settled 없는 EOF 는 E_DISCONNECTED(가짜완료 금지).
  *  - 커넥션 예산(§5.2) — push 는 페이지당 공유 커넥션 1개(백오프 재접속 + document.hidden
- *    시 반납), 턴 스트림은 진행 중에만, stream/attach 는 서로 대체 접속(신규 추가 아님).
- *    이 transport 는 관찰 커넥션을 인스턴스당 1개로 강제한다(새 관찰이 이전 관찰을 닫는다).
+ *    시 반납). 관찰은 기판이 capability observe 를 선언하면 **커넥션 한 줄기**로 다중화되고
+ *    (§5.2-20-a), 아니면 세션마다 직접 열되 같은 세션의 이전 관찰을 대체하고 인스턴스당
+ *    OBSERVE_MAX 로 접는다. 어느 길이든 소비자의 핸들 계약은 같다.
  *  - push 실패는 fail-loud(§5.8) — dead 래치 금지. 실패마다 onError 로 표면화하고,
  *    구독자가 남아 있는 한 백오프로 재시도한다.
  *  - 이벤트 어휘는 하네스 봉투 protocol 3 재사용(§6-35, harness-protocol.md:55-68) —
@@ -74,6 +75,11 @@ export type StreamHandle = { settled: Promise<Result<TurnSettled>>; close(): voi
  *  한쪽만 고쳐도 아무도 모르게 갈린다. 예산의 주인은 관찰을 여는 층, 즉 transport 다 */
 export const REATTACH_MAX = 5;
 
+/** 인스턴스(transport)당 동시 관찰 상한. 브라우저 HTTP/1.1 origin 커넥션 예산 6 에서 push 공유
+ *  커넥션 1 을 빼고 unary fetch 몫 2 를 남긴 값(§5.2 — relayos 실사고: 탭 5개 SSE 상시 점유 →
+ *  fetch 기아). 탭 셸이 pane 을 전부 살려 두므로 진행 턴 수만큼 관찰이 열린다 — 이 상한이 예산이다. */
+export const OBSERVE_MAX = 3;
+
 // ── 동사 응답 shape (§5) ─────────────────────────────────────────────────────
 
 /** §7 닫힌 어휘 — 새 capability 는 계약 문서 개정이다. */
@@ -86,7 +92,8 @@ export type Capability =
   | "harness-commands"
   | "harness-variants"
   | "effort"
-  | "upload-progress";
+  | "upload-progress"
+  | "observe";
 
 export type Capabilities = { protocol: number; capabilities: Capability[] };
 
@@ -238,15 +245,50 @@ export function createTransport(opts: TransportOptions) {
       body: JSON.stringify(body),
     });
 
-  // ── SSE 관찰 (§5.2) ────────────────────────────────────────────────────────
+  // ── 개막 캐시 — 관찰이 어느 길로 갈지(capability observe) transport 스스로 알아야 한다 ────
 
-  const openObservation = (url: string, onEvent: OnEvent): StreamHandle => {
+  const fetchCapabilities = async (): Promise<Result<Capabilities>> => {
+    const r = await get<Capabilities>(base + "/capabilities");
+    if (isError(r)) {
+      if (r.error.code === "E_HTTP_404") {
+        return err("E_PROTOCOL", "이 기판은 클라이언트 계약 v" + PROTOCOL_VERSION + " 이전 세대입니다(capabilities 부재).");
+      }
+      return r;
+    }
+    if (r.protocol !== PROTOCOL_VERSION) {
+      return err("E_PROTOCOL", "계약 버전 불일치: 기판 " + String(r.protocol) + " ≠ 클라이언트 " + PROTOCOL_VERSION);
+    }
+    return r;
+  };
+  let capsCache: Promise<Result<Capabilities>> | null = null;
+  /** 매 호출이 기판에 다시 묻는다(하네스 전환 뒤 capability 집합이 바뀐다) — 성공값만 캐시에 남는다. */
+  const loadCaps = (): Promise<Result<Capabilities>> => {
+    const p = fetchCapabilities();
+    capsCache = p;
+    void p.then((r) => { if (isError(r) && capsCache === p) capsCache = null; });
+    return p;
+  };
+  const muxSupported = async (): Promise<boolean> => {
+    const r = await (capsCache ?? loadCaps());
+    return !isError(r) && Array.isArray(r.capabilities) && r.capabilities.includes("observe");
+  };
+
+  // ── 직접 관찰 (§5.2 — observe 미선언 기판) ─────────────────────────────────
+
+  /** 관찰 하나. fetch 는 start() 가 연다(상한 대기 때문에 생성과 개시가 갈린다). onDone 은
+   *  슬롯 반납 신호 — fetch 가 실제로 끝났을 때, 또는 열리기 전에 닫혔을 때 정확히 한 번. */
+  type Observation = { settled: Promise<Result<TurnSettled>>; start(): void; close(reason?: string): void };
+
+  const openObservation = (url: string, onEvent: OnEvent, onDone: () => void): Observation => {
     const ctrl = new AbortController();
     let finish!: (r: Result<TurnSettled>) => void;
     let done = false;
     const settled = new Promise<Result<TurnSettled>>((resolve) => {
       finish = (r) => { if (!done) { done = true; resolve(r); } };
     });
+    let started = false;
+    let released = false;
+    const release = (): void => { if (!released) { released = true; onDone(); } };
 
     const consume = (msg: string): void => {
       let ev: unknown;
@@ -259,57 +301,328 @@ export function createTransport(opts: TransportOptions) {
       }
     };
 
+    const start = (): void => {
+      if (started || ctrl.signal.aborted) return;
+      started = true;
+      (async () => {
+        let res: Response;
+        try {
+          res = await fetchFn(url, {
+            method: "GET",
+            credentials: "same-origin",
+            headers: { accept: "text/event-stream" },
+            signal: ctrl.signal,
+          });
+        } catch (e) {
+          finish(ctrl.signal.aborted
+            ? err("E_DISCONNECTED", "관찰을 클라이언트가 닫음")
+            : err("E_NETWORK", e instanceof Error ? e.message : String(e)));
+          return;
+        }
+        if (!res.ok) { finish(await envelopeOf(res)); return; } // E_NO_TURN(§5.1-14) 도 이 경로
+        if (!res.body) { finish(err("E_DISCONNECTED", "SSE 응답에 body 없음")); return; }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        const parser = new SSEParser();
+        try {
+          for (;;) {
+            const { done: eof, value } = await reader.read();
+            if (eof) break;
+            for (const msg of parser.feed(dec.decode(value, { stream: true }))) consume(msg);
+          }
+          const rest = parser.flush();
+          if (rest != null) consume(rest);
+        } catch { /* 절단 — 아래 판정으로 귀결 */ }
+        // settled 를 이미 받았으면 no-op(래치). 아니면 가짜완료 금지 판정(§5.2-20).
+        finish(err(
+          "E_DISCONNECTED",
+          "연결이 끊겼어요 — 진행 중이던 턴은 서버에서 계속 실행됩니다. turn.attach 로 재접속하세요.",
+        ));
+      })().finally(release);
+    };
+
+    return {
+      settled,
+      start,
+      close: (reason?: string) => {
+        finish(err("E_DISCONNECTED", reason ?? "관찰을 클라이언트가 닫음"));
+        ctrl.abort();
+        if (!started) release(); // 열리기 전에 닫힘 — 끝날 fetch 가 없으니 여기서 반납한다
+      },
+    };
+  };
+
+  // 커넥션 예산(§5.2): 관찰의 단위는 세션이다 — stream/attach 는 같은 세션의 이전 관찰만 대체한다.
+  // 전역 슬롯 하나로 접으면 pane 마다 자기 세션을 관찰하는 탭 셸에서 두 세션이 서로의 관찰을
+  // 번갈아 닫고, 재접속이 그 순환을 REATTACH_MAX 까지 돌린다(2026-08-27 "관찰을 클라이언트가 닫음").
+  // 인스턴스당 동시 관찰은 OBSERVE_MAX: 초과분의 attach 는 슬롯이 비면 순서대로 열리고, 새 턴의
+  // stream 은 가장 오래 열린 관찰을 양보시킨다. 양보된 쪽의 복구는 attach 라 대기열에 서므로
+  // 양보가 양보를 부르지 않는다.
+  const observations = new Map<string, Observation>(); // session → 그 세션의 관찰(열림 또는 대기)
+  const opened: Observation[] = []; // 열린 순서 — 양보 후보는 맨 앞
+  const waiting: Observation[] = [];
+  const admit = (): void => {
+    while (opened.length < OBSERVE_MAX && waiting.length) {
+      const o = waiting.shift()!;
+      opened.push(o);
+      o.start();
+    }
+  };
+  const directObserve = (session: string, url: string, onEvent: OnEvent, mode: "stream" | "attach"): StreamHandle => {
+    observations.get(session)?.close();
+    const h: Observation = openObservation(url, onEvent, () => {
+      if (observations.get(session) === h) observations.delete(session);
+      const oi = opened.indexOf(h);
+      if (oi >= 0) opened.splice(oi, 1);
+      const wi = waiting.indexOf(h);
+      if (wi >= 0) waiting.splice(wi, 1);
+      admit();
+    });
+    observations.set(session, h);
+    if (mode === "stream" && opened.length >= OBSERVE_MAX) {
+      waiting.unshift(h);
+      opened[0].close("관찰 슬롯을 새 턴에 양보 — turn.attach 로 재접속하세요.");
+    } else {
+      waiting.push(h);
+    }
+    admit();
+    return h;
+  };
+
+  // ── 관찰 다중화 (§5.2-20-a, capability observe) — 세션 몇 개를 보든 SSE 한 줄기 ──────
+  //
+  // 줄기: GET {base}/observe?id=<관찰자 id>. 구독 편집: POST {base}/observe/<id>/sessions {add,remove}.
+  // 줄기의 이벤트마다 turn·session 이 덧붙어 오고, observe 제어 이벤트(ready·session·turn)가
+  // 관찰 창의 좌표를 알린다. 핸들은 세션 안의 턴 하나에 묶인다 — attach 는 창의 첫 턴, stream 은
+  // 그 턴. 창 밖의 턴(이미 종결)은 직접 stream 으로 장부를 재생한다(§5.1-13). 늦게 묶인 핸들은
+  // 줄기가 이미 받아 둔 그 턴의 줄을 먼저 받는다 — 서버 재생을 다시 청하지 않는다.
+  // 줄기가 끊기면 모든 핸들이 절단(§5.2-20)으로 판정되고, 소비자의 재접속이 새 줄기를 연다.
+
+  type MuxWant = { kind: "stream"; turn: string } | { kind: "attach" };
+  type MuxHandle = {
+    session: string;
+    want: MuxWant;
+    turn: string | null;
+    onEvent: OnEvent;
+    finish: (r: Result<TurnSettled>) => void;
+    done: boolean;
+    fallback: StreamHandle | null;
+  };
+  type MuxSession = { handles: Set<MuxHandle>; turns: string[] | null; ledger: Map<string, EnvelopeEvent[]> };
+  type Mux = { id: string; ctrl: AbortController; ready: Promise<boolean>; sessions: Map<string, MuxSession>; dead: boolean };
+  let mux: Mux | null = null;
+
+  const muxPost = async (m: Mux, body: { add?: string[]; remove?: string[] }): Promise<boolean> => {
+    if (!(await m.ready) || m.dead) return false;
+    try {
+      const res = await fetchFn(base + "/observe/" + encodeURIComponent(m.id) + "/sessions", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const muxClose = (m: Mux): void => {
+    if (m.dead) return;
+    m.dead = true;
+    if (mux === m) mux = null;
+    m.ctrl.abort();
+  };
+
+  /** 핸들 종결 + 세션 살림 — 핸들이 없어진 세션은 구독을 걷고, 세션이 없어진 줄기는 닫는다. */
+  const muxFinish = (m: Mux, h: MuxHandle, r: Result<TurnSettled>): void => {
+    if (h.done) return;
+    h.done = true;
+    h.fallback?.close();
+    h.finish(r);
+    const s = m.sessions.get(h.session);
+    if (!s || !s.handles.delete(h) || s.handles.size) return;
+    m.sessions.delete(h.session);
+    if (m.sessions.size) void muxPost(m, { remove: [h.session] });
+    else muxClose(m);
+  };
+
+  const muxDied = (m: Mux, why: string): void => {
+    if (m.dead) return;
+    muxClose(m);
+    for (const s of [...m.sessions.values()]) {
+      for (const h of [...s.handles]) {
+        if (h.done) continue;
+        h.done = true;
+        h.fallback?.close();
+        h.finish(err("E_DISCONNECTED", why));
+      }
+    }
+    m.sessions.clear();
+  };
+
+  const muxDeliver = (m: Mux, h: MuxHandle, e: EnvelopeEvent): void => {
+    if (h.done) return;
+    try { h.onEvent(e); } catch { /* 소비자 오류가 줄기를 죽이지 않게 */ }
+    if (e.event === "turn" && e.status === "settled") muxFinish(m, h, { turn: h.turn ?? "", ok: e.ok === true });
+  };
+
+  /** 관찰 창(turns)을 아는 순간 핸들을 턴에 묶고, 줄기가 받아 둔 장부를 먼저 준다. */
+  const muxBind = (m: Mux, s: MuxSession, h: MuxHandle): void => {
+    if (h.done || h.turn != null || h.fallback || s.turns == null) return;
+    if (h.want.kind === "attach") {
+      const first = s.turns[0];
+      if (!first) { muxFinish(m, h, err("E_NO_TURN", "진행 중 턴 없음: " + h.session)); return; }
+      h.turn = first;
+    } else if (s.turns.includes(h.want.turn)) {
+      h.turn = h.want.turn;
+    } else {
+      // 창 밖의 턴 — 이미 종결했다. 장부 재생은 직접 stream 이 맡는다(§5.1-13)
+      const url = base + "/turns/" + encodeURIComponent(h.want.turn) + "/stream";
+      h.fallback = directObserve(h.session, url, h.onEvent, "stream");
+      void h.fallback.settled.then((r) => muxFinish(m, h, r));
+      return;
+    }
+    for (const e of s.ledger.get(h.turn) ?? []) muxDeliver(m, h, e);
+  };
+
+  const muxConsume = (m: Mux, msg: string, onReady: () => void): void => {
+    let raw: unknown;
+    try { raw = JSON.parse(msg); } catch { return; }
+    if (!raw || typeof raw !== "object" || typeof (raw as { event?: unknown }).event !== "string") return;
+    const ev = raw as EnvelopeEvent;
+    const session = typeof ev.session === "string" ? ev.session : "";
+    const turn = typeof ev.turn === "string" ? ev.turn : "";
+    if (ev.event === "observe") {
+      if (ev.status === "ready") { onReady(); return; }
+      const s = m.sessions.get(session);
+      if (!s) return;
+      if (ev.status === "session") {
+        s.turns = Array.isArray(ev.turns) ? (ev.turns as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        s.ledger.clear(); // 서버 재생이 뒤따른다
+        for (const h of [...s.handles]) muxBind(m, s, h);
+      } else if (ev.status === "turn" && turn) {
+        if (s.turns == null) s.turns = [];
+        if (!s.turns.includes(turn)) s.turns.push(turn);
+        for (const h of [...s.handles]) muxBind(m, s, h);
+      }
+      return;
+    }
+    const s = m.sessions.get(session);
+    if (!s || !turn) return;
+    const buf = s.ledger.get(turn) ?? [];
+    buf.push(ev);
+    s.ledger.set(turn, buf);
+    for (const h of [...s.handles]) if (h.turn === turn) muxDeliver(m, h, ev);
+    if (ev.event === "turn" && ev.status === "settled") {
+      s.ledger.delete(turn);
+      if (s.turns) s.turns = s.turns.filter((t) => t !== turn);
+    }
+  };
+
+  const muxOpen = (): Mux => {
+    if (mux && !mux.dead) return mux;
+    const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+    let onReady: (ok: boolean) => void = () => {};
+    const ready = new Promise<boolean>((r) => { onReady = r; });
+    const m: Mux = { id, ctrl: new AbortController(), ready, sessions: new Map(), dead: false };
+    mux = m;
     (async () => {
       let res: Response;
       try {
-        res = await fetchFn(url, {
+        res = await fetchFn(base + "/observe?id=" + encodeURIComponent(id), {
           method: "GET",
           credentials: "same-origin",
           headers: { accept: "text/event-stream" },
-          signal: ctrl.signal,
+          signal: m.ctrl.signal,
         });
       } catch (e) {
-        finish(ctrl.signal.aborted
-          ? err("E_DISCONNECTED", "관찰을 클라이언트가 닫음")
-          : err("E_NETWORK", e instanceof Error ? e.message : String(e)));
+        onReady(false);
+        muxDied(m, m.ctrl.signal.aborted ? "관찰을 클라이언트가 닫음" : "관찰 줄기를 열지 못했어요: " + (e instanceof Error ? e.message : String(e)));
         return;
       }
-      if (!res.ok) { finish(await envelopeOf(res)); return; } // E_NO_TURN(§5.1-14) 도 이 경로
-      if (!res.body) { finish(err("E_DISCONNECTED", "SSE 응답에 body 없음")); return; }
+      if (!res.ok || !res.body) { onReady(false); muxDied(m, "관찰 줄기 응답 " + res.status); return; }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       const parser = new SSEParser();
       try {
         for (;;) {
-          const { done: eof, value } = await reader.read();
-          if (eof) break;
-          for (const msg of parser.feed(dec.decode(value, { stream: true }))) consume(msg);
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const msg of parser.feed(dec.decode(value, { stream: true }))) muxConsume(m, msg, () => onReady(true));
         }
-        const rest = parser.flush();
-        if (rest != null) consume(rest);
-      } catch { /* 절단 — 아래 판정으로 귀결 */ }
-      // settled 를 이미 받았으면 no-op(래치). 아니면 가짜완료 금지 판정(§5.2-20).
-      finish(err(
-        "E_DISCONNECTED",
-        "연결이 끊겼어요 — 진행 중이던 턴은 서버에서 계속 실행됩니다. turn.attach 로 재접속하세요.",
-      ));
+      } catch { /* 절단 */ }
+      onReady(false);
+      muxDied(m, m.ctrl.signal.aborted
+        ? "관찰을 클라이언트가 닫음"
+        : "연결이 끊겼어요 — 진행 중이던 턴은 서버에서 계속 실행됩니다. turn.attach 로 재접속하세요.");
     })();
+    return m;
+  };
 
+  const muxObserve = (m: Mux, session: string, want: MuxWant, onEvent: OnEvent): StreamHandle => {
+    let finish!: (r: Result<TurnSettled>) => void;
+    let done = false;
+    const settled = new Promise<Result<TurnSettled>>((resolve) => {
+      finish = (r) => { if (!done) { done = true; resolve(r); } };
+    });
+    const h: MuxHandle = { session, want, turn: null, onEvent, finish, done: false, fallback: null };
+    const s = m.sessions.get(session);
+    if (!s) {
+      m.sessions.set(session, { handles: new Set([h]), turns: null, ledger: new Map() });
+      void muxPost(m, { add: [session] }).then((ok) => {
+        if (ok || m.dead) return;
+        for (const x of [...(m.sessions.get(session)?.handles ?? [])]) {
+          muxFinish(m, x, err("E_DISCONNECTED", "관찰 구독에 실패했어요 — turn.attach 로 재접속하세요."));
+        }
+      });
+    } else {
+      // 같은 세션의 이전 관찰은 대체한다(§5.2 ④) — 새 핸들을 먼저 앉혀 구독이 내려가지 않게 한다
+      const olds = [...s.handles];
+      s.handles.add(h);
+      for (const old of olds) muxFinish(m, old, err("E_DISCONNECTED", "관찰을 클라이언트가 닫음"));
+      muxBind(m, s, h);
+    }
     return {
       settled,
-      close: () => {
-        finish(err("E_DISCONNECTED", "관찰을 클라이언트가 닫음"));
-        ctrl.abort();
-      },
+      close: () => muxFinish(m, h, err("E_DISCONNECTED", "관찰을 클라이언트가 닫음")),
     };
   };
 
-  // 커넥션 예산(§5.2): 턴 관찰은 transport 당 1개 — stream/attach 는 이전 관찰의 대체 접속이다.
-  let observation: StreamHandle | null = null;
-  const observe = (url: string, onEvent: OnEvent): StreamHandle => {
-    observation?.close();
-    const h = observation = openObservation(url, onEvent);
-    return h;
+  // ── 관찰 진입 — 길은 개막이 정한다. 핸들은 즉시 돌려주고 안쪽은 판정 뒤에 연다 ───────
+
+  const observeTurn = (session: string, want: MuxWant, onEvent: OnEvent): StreamHandle => {
+    let finish!: (r: Result<TurnSettled>) => void;
+    let done = false;
+    const settled = new Promise<Result<TurnSettled>>((resolve) => {
+      finish = (r) => { if (!done) { done = true; resolve(r); } };
+    });
+    let inner: StreamHandle | null = null;
+    let closed = false;
+    void muxSupported().then((useMux) => {
+      if (closed) return;
+      inner = useMux
+        ? muxObserve(muxOpen(), session, want, onEvent)
+        : directObserve(
+            session,
+            want.kind === "stream"
+              ? base + "/turns/" + encodeURIComponent(want.turn) + "/stream"
+              : base + "/turns/attach?session=" + encodeURIComponent(session),
+            onEvent,
+            want.kind,
+          );
+      void inner.settled.then(finish);
+    });
+    return {
+      settled,
+      close: () => {
+        closed = true;
+        finish(err("E_DISCONNECTED", "관찰을 클라이언트가 닫음"));
+        inner?.close();
+      },
+    };
   };
 
   // ── push 공유 커넥션 (§5.8 — fail-loud, dead 래치 금지) ────────────────────
@@ -454,31 +767,22 @@ export function createTransport(opts: TransportOptions) {
      * 개막 호출(§3-7). 구 기판(404)·protocol 불일치는 E_PROTOCOL 판정 —
      * 구 wire 폴백 없음(fail-loud, §9-44).
      */
-    capabilities: async (): Promise<Result<Capabilities>> => {
-      const r = await get<Capabilities>(base + "/capabilities");
-      if (isError(r)) {
-        if (r.error.code === "E_HTTP_404") {
-          return err("E_PROTOCOL", "이 기판은 클라이언트 계약 v" + PROTOCOL_VERSION + " 이전 세대입니다(capabilities 부재).");
-        }
-        return r;
-      }
-      if (r.protocol !== PROTOCOL_VERSION) {
-        return err("E_PROTOCOL", "계약 버전 불일치: 기판 " + String(r.protocol) + " ≠ 클라이언트 " + PROTOCOL_VERSION);
-      }
-      return r;
-    },
+    capabilities: (): Promise<Result<Capabilities>> => loadCaps(),
 
     turn: {
       /** §5.1-12 — 비블로킹 시작. 202 {turn, session}, 종결은 stream/attach 로 관찰. */
       send: (req: TurnSendRequest): Promise<Result<TurnStarted>> => post<TurnStarted>(base + "/turns", req),
 
-      /** §5.1-13 — send 직후의 관찰 창. 종결된 턴이면 장부 재생 후 즉시 settled·EOF. */
-      stream: (turn: string, onEvent: OnEvent): StreamHandle =>
-        observe(base + "/turns/" + encodeURIComponent(turn) + "/stream", onEvent),
+      /** §5.1-13 — send 직후의 관찰 창. 종결된 턴이면 장부 재생 후 즉시 settled·EOF.
+       *  session = 관찰의 단위(§5.2 ④) — 같은 세션의 이전 관찰만 대체한다. observe 기판에선 줄기
+       *  하나에 실리고, 아니면 직접 SSE(상한에 닿으면 가장 오래 열린 관찰을 양보시킨다). */
+      stream: (turn: string, session: string, onEvent: OnEvent): StreamHandle =>
+        observeTurn(session, { kind: "stream", turn }, onEvent),
 
-      /** §5.1-14 — 진행 중 턴 재접속(장부 처음부터 재생 + 라이브). 없으면 E_NO_TURN. */
+      /** §5.1-14 — 진행 중 턴 재접속(장부 처음부터 재생 + 라이브). 없으면 E_NO_TURN.
+       *  직접 SSE 에서 상한에 닿으면 슬롯이 빌 때까지 대기한다 — 양보시키지 않는다(순환 차단). */
       attach: (session: string, onEvent: OnEvent): StreamHandle =>
-        observe(base + "/turns/attach?session=" + encodeURIComponent(session), onEvent),
+        observeTurn(session, { kind: "attach" }, onEvent),
 
       /** §5.1-15 — 봉투 cancel 제어로 전달된다. */
       interrupt: (turn: string): Promise<Result<{ ok: boolean }>> =>

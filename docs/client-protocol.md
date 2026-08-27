@@ -235,6 +235,20 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     '완료'로 마감하고 서버 턴은 계속 돌았다(chat/transport.ts:285-297, 2026-07-16).
     종결 마커를 프레이밍 수준의 전용 이벤트로 승격하면 "결과처럼 생긴 중간 프레임"
     문제가 원천 소거된다.*
+20-a. **관찰 다중화 — capability `observe`, 옵셔널.** 기판이 선언하면 클라이언트는 관찰을
+    SSE **한 줄기**로 다중화한다: `GET {base}/observe?id=<관찰자 id>` 가 줄기를 열고
+    (첫 이벤트 `{event:"observe", status:"ready", id}`), `POST {base}/observe/<id>/sessions
+    {add?: [session], remove?: [session]}` 가 구독을 편집한다. 세션 구독은 §5.1-14 attach 와
+    같은 골격이다 — `{event:"observe", status:"session", session, turns:[id…]}` 로 관찰 창
+    (진행·대기 턴)을 알리고, 각 턴의 장부를 재생한 뒤 라이브를 잇는다. 구독 뒤에 서는 턴은
+    `{event:"observe", status:"turn", session, turn}` 으로 알린다. 줄기의 모든 이벤트 줄에는
+    `turn`·`session` 이 덧붙는다(§6 어휘에 additive — 소비자는 그 열쇠로 나눈다). 창 밖의 턴
+    (이미 종결)은 여전히 `turn.stream`(§5.1-13)의 장부 재생이 답한다. 줄기 자체의 절단은
+    §5.2-20 과 같다 — 실린 관찰 전부가 `E_DISCONNECTED` 이고 재접속이 새 줄기를 연다.
+    관찰자 id 는 클라이언트 발급 불투명 문자열(`[A-Za-z0-9-]{1,80}`), 같은 id 의 재접속은
+    이전 줄기를 대체한다. 미선언 기판(구 기판·relayos)에서는 아래 예산 조항의 직접 SSE 로
+    떨어진다. `turn.stream`·`turn.attach` 의 추상 동사와 핸들 계약은 두 길에서 같다 —
+    소비자는 어느 길인지 모른다(OSS 2026-08-27 신설, runner/runtime/wire.ts).
 
 **커넥션 예산 — 계약 조항이다.** 브라우저의 HTTP/1.1 origin 당 커넥션 예산(6개)을 SSE
 상시 점유가 소진하면 마지막 슬롯을 두고 fetch 와 SSE 재접속이 경주하고, SSE 가 이기는
@@ -242,8 +256,14 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 새로고침 fetch 수 분간 미도달, relayos chat/src/transport.ts:310-312 주석). 그래서:
 ① `push.subscribe`(§5.8)는 **페이지당 공유 커넥션 1개**, ② 턴 스트림(`turn.stream`)은
 턴 진행 중에만 열고, ③ `turn.attach` 는 신규 커넥션 추가가 아니라 기존 관찰의 **대체
-접속**이다. loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브라우저 origin
-기준이다.
+접속**이다. ④ 대체의 단위는 **세션**이다 — stream/attach 는 같은 세션의 이전 관찰만 닫고
+다른 세션의 관찰은 건드리지 않는다(탭 셸은 세션마다 관찰을 연다 — 전역 슬롯 하나로 접으면
+두 세션이 서로를 번갈아 끊고 재접속이 그 순환을 돌린다, 2026-08-27 실사고). ⑤ capability
+`observe`(20-a)를 선언한 기판에서는 관찰 전부가 줄기 하나에 실리므로 관찰이 예산을 먹지
+않는다. 미선언 기판에서만 직접 SSE 를 열고, 그때는 인스턴스당 동시 관찰을 3개로 접는다
+(push 1 + unary fetch 몫 2): 초과분의 attach 는 슬롯이 빌 때까지 대기하고, 새 턴의 stream 은
+가장 오래된 관찰을 양보시킨다(양보된 쪽은 §5.2-20 절단 복구의 attach 로 대기열에 선다).
+loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브라우저 origin 기준이다.
 
 ### 5.3 세션과 이력
 
@@ -496,6 +516,7 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
 | `harness-commands` | 커맨드 목록 조회 | `harness.commands` | OSS ○ (client-wire.ts:783-807, 800-803) · relayos ○ (/api/instances/commands, api_turns.go:271) |
 | `effort` | effort 설정 수용 | `harness.set` 의 `effort` 필드 | 하네스 어댑터 capability `effort` 의 투영 |
 | `upload-progress` | 업로드 전 구간 스트리밍(진행률이 실제를 반영) | (서빙 방식 선언 — 동사 없음) | 양쪽 스트리밍 (client-wire.ts:735-752 · upload.go) |
+| `observe` | 관찰 다중화 — 세션 여러 개의 턴 스트림을 SSE 한 줄기로(§5.2-20-a) | `GET /observe` · `POST /observe/<id>/sessions` (추상 동사 `turn.stream/attach` 의 운반 방식 — 소비자 표면 변화 없음) | OSS ○ (2026-08-27, runner/runtime/wire.ts) · relayos × (미선언 → 직접 SSE + 인스턴스당 3 상한) |
 | `steer` | 진행 중 턴에 사용자 발화 얹기 | `turn.steer` | 하네스 어댑터 capability `steer` 의 투영 — claude-code ○ · codex/kimi/pi ×(`serve` 자체가 없어 얹을 프로세스가 없다) |
 | `cancel-by-session` | 턴 id 없이 대화축으로 진행 턴 취소 | `turn.cancel` | relayos ○ (채널 어댑터가 소비 — POST /turns/cancel) · OSS × (턴 id 를 쥔 화면뿐) |
 

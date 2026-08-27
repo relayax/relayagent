@@ -423,7 +423,8 @@ function friendlyTurnError(text: string): string {
 /** files = 이 턴의 무대 산출물(stage 상대 경로). 봉투 축 확장이 아니라 여기 사는 이유:
  *  실황은 봉투 file 이벤트가, 재생은 이력의 files 가 같은 자리를 채운다 — 두 길이 한 필드로
  *  모여야 방금 본 화면과 다시 연 화면이 같은 것을 그린다. */
-export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[] };
+/** turnId = 절단(cut)으로 마감된 라이브 턴의 좌표 — 상태 칩의 "다시 연결"이 재관찰할 근거(재생 이력엔 없다). */
+export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[]; turnId?: string };
 
 export type ReplayMessage =
   | { role: "user"; content: { type: "text"; text: string }[]; createdAt?: Date; turnId?: string }
@@ -695,6 +696,12 @@ export async function loadActiveTurn(ctx: RelayCtx): Promise<ActiveTurn | null> 
 let _attachTurn: ActiveTurn | null = null;
 export function setAttachTurn(a: ActiveTurn | null): void { _attachTurn = a; }
 function takeAttachTurn(): ActiveTurn | null { const a = _attachTurn; _attachTurn = null; return a; }
+
+/** 절단으로 마감된 턴의 좌표 — 사용자 메시지 id 로 남긴다. assistant-ui 의 reload("다시 시도")는 같은
+ *  사용자 메시지 아래 새 가지를 여는데, 그것을 새 turn.send 로 보내면 같은 요청이 큐 턴으로 한 번 더
+ *  돈다(실측 2026-08-27: 20분 턴이 끊긴 뒤 재시도가 같은 프롬프트를 다시 실행했다). 좌표가 있으면
+ *  재관찰(attach, 종결했으면 장부 재생)로 간다. 새 메시지는 새 id 라 여기에 걸리지 않는다. */
+const _cutTurns = new Map<string, ActiveTurn>();
 
 /** 서버 스폰 턴 감시의 push 반쪽(§5.8) — capability push 선언 기판에서만 공유 커넥션(§5.2
  *  커넥션 예산 — transport 가 페이지당 1개로 접는다)을 구독하고, 이벤트마다 onSignal 을
@@ -1348,7 +1355,11 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       const t = wireOf(ctx);
       // Re-attach mode: this append was synthesized on mount to rejoin an in-flight turn, not to
       // start a new one — observe the existing turn's ledger+live (no turn.send, no attachments).
-      const attach = takeAttachTurn();
+      // 절단된 턴의 reload 도 같은 길이다 — 좌표가 남아 있으면 재전송이 아니라 재관찰.
+      const lastMsg = messages[messages.length - 1];
+      const cut = lastMsg?.id ? _cutTurns.get(lastMsg.id) ?? null : null;
+      if (cut && lastMsg?.id) _cutTurns.delete(lastMsg.id);
+      const attach = takeAttachTurn() ?? cut;
       const prompt = attach ? attach.prompt : textOf(messages[messages.length - 1]);
       const attachments = attach ? [] : takePendingAttachments();
 
@@ -1437,16 +1448,16 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       // 관찰을 끝까지 몬다. 절단(E_DISCONNECTED/E_NETWORK)이면 attach 로 대체 접속해 잇고,
       // 이을 턴이 없으면(E_NO_TURN) 그 사이 종결된 것 — 종결 턴의 turn.stream 이 장부를 재생
       // 후 즉시 settled·EOF 한다(§5.1-13). 폴백 폴링은 없다.
+      // attach 는 진행 중 턴이 이미 관측된 경로라 세션이 이미 발급/주입돼 있다 — 매핑만 통과.
+      const attachSession = () => wireSessionOf(ctx) ?? ctx.conversationId;
       const replaySettledTurn = async (): Promise<Result<TurnSettled>> => {
         reducer = newReducer();
         queue.length = 0;
-        handle = t.turn.stream(knownTurnId, onEvent);
+        handle = t.turn.stream(knownTurnId, attachSession(), onEvent);
         return handle.settled;
       };
       const drive = async (): Promise<{ code: string; message: string } | null> => {
         let res: Result<TurnSettled>;
-        // attach 는 진행 중 턴이 이미 관측된 경로라 세션이 이미 발급/주입돼 있다 — 매핑만 통과.
-        const attachSession = () => wireSessionOf(ctx) ?? ctx.conversationId;
         if (attach) {
           handle = t.turn.attach(attachSession(), onEvent);
           res = await handle.settled;
@@ -1472,7 +1483,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
           if (isError(started)) return started.error;
           knownTurnId = typeof started.turn === "string" ? started.turn : "";
           if (!knownTurnId) return { code: "E_NO_TURN", message: "턴 id 없이 개설 응답이 왔습니다" };
-          handle = t.turn.stream(knownTurnId, onEvent);
+          handle = t.turn.stream(knownTurnId, sid.session, onEvent);
           res = await handle.settled;
         }
         for (let i = 0; i < REATTACH_MAX; i++) {
@@ -1550,7 +1561,12 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
           return;
         }
         meta.custom.ended = cutClass ? "cut" : "error";
-        const msg = friendlyTurnError(driveError.message || driveError.code);
+        if (cutClass && knownTurnId && lastMsg?.id) {
+          meta.custom.turnId = knownTurnId;
+          _cutTurns.set(lastMsg.id, { turnId: knownTurnId, prompt });
+        }
+        // 계약 코드는 코드로 말한다 — transport 의 message 는 기계 문장이라 화면에 내지 않는다.
+        const msg = TURN_ERROR_TEXT[driveError.code] ?? friendlyTurnError(driveError.message || driveError.code);
         appendErrorReason(parts, msg);
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;

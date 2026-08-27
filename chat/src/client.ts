@@ -175,8 +175,8 @@ const wireCapabilities = async (base: string) => unwrap(await tFor(base).capabil
 const wireTurnSend = async (base: string, req: TurnSendRequest) => unwrap(await tFor(base).turn.send(req));
 // 스트림 동사는 **핸들**을 돌려준다 — settled 만 받아 가면 close() 참조가 사라져 소비자가
 // 관찰을 끊을 길이 없어진다(SPA 라우팅에서 열린 fetch·reader 가 남는다)
-const wireTurnStream = (base: string, turn: string, onEvent: OnEvent): StreamHandle =>
-  tFor(base).turn.stream(turn, onEvent);
+const wireTurnStream = (base: string, turn: string, session: string, onEvent: OnEvent): StreamHandle =>
+  tFor(base).turn.stream(turn, session, onEvent);
 const wireTurnAttach = (base: string, session: string, onEvent: OnEvent): StreamHandle =>
   tFor(base).turn.attach(session, onEvent);
 const wireTurnInterrupt = async (base: string, turn: string) => unwrap(await tFor(base).turn.interrupt(turn));
@@ -488,7 +488,7 @@ export function createChat(opts: CreateChatOptions) {
       };
       let last = initial === "attach"
         ? await run(() => wireTurnAttach(base, sessionId, feed(reducer)))
-        : await run(() => wireTurnStream(base, turnId, feed(reducer)));
+        : await run(() => wireTurnStream(base, turnId, sessionId, feed(reducer)));
       for (let i = 0; i < REATTACH_MAX && isCut(last); i++) {
         await new Promise((r) => setTimeout(r, REATTACH_BACKOFF_MS * (i + 1)));
         // 재접속은 장부를 처음부터 재생한다 — 신선한 리듀서로 받아야 완결 텍스트가 두 번

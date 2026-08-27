@@ -65,9 +65,17 @@ function commandForEntry(entry: string): { command: string; prefix: string[] } {
   return { command: windowsBash(), prefix: [entry] };
 }
 
+/** 진입 파일의 디렉토리를 기본 cwd 로 — 부모(데몬)의 cwd 를 물려받지 않는다. 실사고(2026-08-28): Tauri 앱이
+ *  데몬을 임시 스테이징 디렉토리(current_app)에서 띄웠고 그 디렉토리가 뒤에 지워졌다. cwd 가 사라진 자식에서
+ *  어댑터의 `node --input-type=module`·`claude` 가 uv_cwd ENOENT 로 죽어 info/models 동사가 전부 침묵했고,
+ *  개막 capability(steer·effort)가 빠졌다. cwd 를 명시하는 세션 스폰만 무사했다. */
+function withEntryCwd<T extends { cwd?: string | URL }>(entry: string, options: T): T {
+  return options.cwd ? options : { ...options, cwd: path.dirname(entry) };
+}
+
 export function spawnEntry(entry: string, args: readonly string[], options?: SpawnOptions): ChildProcess {
   const { command, prefix } = commandForEntry(entry);
-  return nodeSpawn(command, [...prefix, ...args], options ?? {});
+  return nodeSpawn(command, [...prefix, ...args], withEntryCwd(entry, options ?? {}));
 }
 
 export function spawnEntrySync(
@@ -86,5 +94,5 @@ export function spawnEntrySync(
   options: SpawnSyncOptions = {},
 ): SpawnSyncReturns<string> | SpawnSyncReturns<Buffer> {
   const { command, prefix } = commandForEntry(entry);
-  return nodeSpawnSync(command, [...prefix, ...args], options as never) as SpawnSyncReturns<string> | SpawnSyncReturns<Buffer>;
+  return nodeSpawnSync(command, [...prefix, ...args], withEntryCwd(entry, options) as never) as SpawnSyncReturns<string> | SpawnSyncReturns<Buffer>;
 }
