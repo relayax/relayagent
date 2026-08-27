@@ -48,6 +48,8 @@ await esbuild.build({
   legalComments: "none",
   define: { "process.env.NODE_ENV": dev ? '"development"' : '"production"' },
   loader: { ".css": "css" },
+  // css 의 url("/assets/…") 는 기판이 서빙하는 절대 경로다 — 번들에 넣지 않는다
+  external: ["/assets/*"],
   plugins: [fixDetachedThis],
   logLevel: "info",
 });
