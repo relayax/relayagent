@@ -17,17 +17,17 @@ import {
   MessagePrimitive,
 } from "@assistant-ui/react";
 import type { ThreadMessageLike } from "@assistant-ui/react";
-import type { TurnMeta, RelayCtx, ReplayMessage } from "./runtime";
+import type { TurnMeta, RelayCtx, ReplayMessage, ModelOption } from "./runtime";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { makeAdapter, getCtx, loadHistory, loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, loadActiveTurn, setAttachTurn, takeConversationCancelled, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, onTurnPhase, onTurnUsage, respondAsk, hasSteer, steerTurn, stepMeta, loadConversations, renameConversation, deleteConversation, fileDownloadUrl, watchServerTurns, iconUrlForInstance,
   loadHarnessVariants,
-  setHarnessVariant,
+  loadModelOptionsFor,
+  setHarnessAndModel,
   hasEffort,
   serverAgentOf,
   serverParamOf,
-  loadConversationsOf,
-} from "./runtime";
+  loadConversationsOf, injectedCoords } from "./runtime";
 import type { AgentEntry } from "./runtime";
 import type { Attachment, SlashCommand, ActiveTurn, TurnUsageLive, ConversationRow, ConversationsInfo, InboxRow } from "./runtime";
 import { loadInbox, loadInstances, type NavInstance } from "./runtime";
@@ -1474,6 +1474,16 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
   const target = useContext(PaneTargetCtx);
   const [picking, setPicking] = useState(false);
   const [adding, setAdding] = useState(false);
+  // 피커는 칩에 붙는 카드다(모델 메뉴와 같은 자리) — 밖을 누르거나 Esc 면 닫는다, 같은 규약.
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!picking && !adding) return;
+    const onDown = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) { setPicking(false); setAdding(false); } };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setPicking(false); setAdding(false); } };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [picking, adding]);
   // 대상 축은 에이전트에 바인딩된 대화에만 있다(main 대화엔 워크벤치 개념이 없다).
   const hasTargetAxis = !!(displayBinding(ctx.conversationId).agent || serverAgentOf(ctx.conversationId));
   if (!derived.length && !host.length) return null;
@@ -1491,16 +1501,16 @@ function ContextChips({ onSend }: { onSend: (text: string) => void }) {
   return (
     <div className="rc-chips">
       {derived.length > 0 && (target ? (
-        <span className="rc-chip-wrap">
+        <span className="rc-chip-wrap" ref={wrapRef}>
           <button type="button" className="rc-chip rc-chip-btn" title={label + " — 클릭해서 대상 바꾸기"}
-                  aria-haspopup="listbox" aria-expanded={picking} onClick={() => setPicking((v) => !v)}>
+                  aria-haspopup="listbox" aria-expanded={picking} onClick={() => { setAdding(false); setPicking((v) => !v); }}>
             {chipBody}
             <span className="rc-chip-caret" aria-hidden>▾</span>
           </button>
           {picking && <TargetPicker ctx={ctx} target={target} onSend={onSend} onClose={() => setPicking(false)} />}
           {hasTargetAxis && (
             <button type="button" className="rc-chip rc-chip-add" title="작업 대상 추가 — 이 대화에서 함께 볼 워크벤치"
-                    aria-haspopup="listbox" aria-expanded={adding} onClick={() => setAdding((v) => !v)}>+</button>
+                    aria-haspopup="listbox" aria-expanded={adding} onClick={() => { setPicking(false); setAdding((v) => !v); }}>+</button>
           )}
           {adding && <TargetAddPicker ctx={ctx} target={target} onSend={onSend} onClose={() => setAdding(false)} />}
         </span>
@@ -1576,27 +1586,31 @@ function TargetPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; target:
   }
 
   return (
-    <div className="rc-slash rc-target-pick" role="listbox" aria-label="대화 대상 바꾸기">
+    <div className="rc-pick-card rc-target-pick" role="listbox" aria-label="대화 대상 바꾸기">
       <div className="rc-target-note">
         {empty ? "빈 대화라 이 자리에서 대상만 바뀝니다" : "말이 오간 대화는 그대로 두고 그 대상의 대화로 이동합니다"}
       </div>
       {items.length === 0 ? (
         <div className="rc-target-note">이 에이전트 안에서 바꿀 수 있는 다른 대상이 없습니다</div>
       ) : items.map((it) => (
-        <button type="button" key={it.key} role="option" aria-selected={false} className="rc-slash-item"
+        <button type="button" key={it.key} role="option" aria-selected={false} className="rc-pick-item"
                 onPointerDown={(e) => { e.preventDefault(); it.run(); onClose(); }}>
-          <span className="rc-slash-nm">{it.name}</span>
-          <span className="rc-slash-desc">{it.desc}</span>
+          <span className="rc-pick-text">
+            <span className="rc-pick-main">{it.name}</span>
+            <span className="rc-pick-sub">{it.desc}</span>
+          </span>
         </button>
       ))}
       {insts.length > 0 && (
         <>
           <div className="rc-target-sec">다른 에이전트 — 새 탭으로 열립니다</div>
           {insts.map((i) => (
-            <button type="button" key={i.id} role="option" aria-selected={false} className="rc-slash-item"
+            <button type="button" key={i.id} role="option" aria-selected={false} className="rc-pick-item"
                     onPointerDown={(e) => { e.preventDefault(); target.openInstance(i.id); onClose(); }}>
-              <span className="rc-slash-nm"><span className="rc-target-out" aria-hidden>↗</span> {i.id}</span>
-              <span className="rc-slash-desc">{i.pkg || (i.kind === "base" ? "코어 도구" : "에이전트")}</span>
+              <span className="rc-pick-text">
+                <span className="rc-pick-main"><span className="rc-target-out" aria-hidden>↗</span> {i.id}</span>
+                <span className="rc-pick-sub">{i.pkg || (i.kind === "base" ? "코어 도구" : "에이전트")}</span>
+              </span>
             </button>
           ))}
         </>
@@ -1640,7 +1654,7 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
   };
 
   return (
-    <div className="rc-slash rc-target-pick" role="listbox" aria-label="작업 대상 추가" aria-multiselectable>
+    <div className="rc-pick-card rc-target-pick" role="listbox" aria-label="작업 대상 추가" aria-multiselectable>
       <div className="rc-target-note">
         {"지금 대상: " + (curTargets.length ? curTargets.join(", ") : "없음")}
         {empty ? " · 빈 대화라 이 자리에서 더해집니다" : " · 대화는 그대로 두고 대상만 더합니다"}
@@ -1653,10 +1667,10 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
         <>
           {candidates.map((t) => (
             <button type="button" key={t} role="option" aria-selected={picked.includes(t)}
-                    className={"rc-slash-item rc-target-opt" + (picked.includes(t) ? " on" : "")}
+                    className={"rc-pick-item rc-target-opt" + (picked.includes(t) ? " on" : "")}
                     onPointerDown={(e) => { e.preventDefault(); toggle(t); }}>
-              <span className="rc-slash-nm">
-                <span className="rc-target-box" aria-hidden>{picked.includes(t) ? "☑" : "☐"}</span> {t}
+              <span className="rc-pick-text">
+                <span className="rc-pick-main"><span className="rc-target-box" aria-hidden>{picked.includes(t) ? "☑" : "☐"}</span> {t}</span>
               </span>
             </button>
           ))}
@@ -1671,16 +1685,12 @@ function TargetAddPicker({ ctx, target, onSend, onClose }: { ctx: RelayCtx; targ
 }
 
 const EFFORT_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" };
-const EFFORT_TICKS: Record<string, string> = { low: "L", medium: "M", high: "H", xhigh: "XH", max: "MAX" };
 
-/** Per-conversation reasoning effort as a 5-step labeled slider (low→max) with a dumbbell icon —
- *  the Claude-Code "Effort" control. With no override, the knob parks (HOLLOW) at the effective
- *  default — the level a turn would really run at, reported by the brain (instance-binding effort →
- *  claude-code's high). Click a dot to set an explicit level (solid); click the active explicit dot
- *  again to fall back to the default; ←/→ or ↑/↓ adjust. Persists brain-side per conversation. */
-function EffortSelector() {
-  // effort 는 하네스 어댑터 capability 의 투영이다(§7) — 안 받는 하네스(codex 등)에서 칸을
-  // 그리면 눌러도 아무 일이 없다. 기판에 물어보고, 하네스 전환 때 다시 묻는다.
+/** 메뉴 바닥의 추론 강도 줄 — "Effort (High)" + 5점 슬라이더(low→max). 오버라이드가 없으면
+ *  노브가 실효 기본(브레인이 보고한 레벨)에 **빈 원**으로 앉고, 점을 누르면 명시(꽉 찬 원),
+ *  켜진 명시 점을 다시 누르면 기본으로. ←/→·↑/↓ 로도 옮긴다. 대화별로 브레인에 저장.
+ *  effort 는 하네스 capability 의 투영이다(§7) — 안 받는 하네스(codex 등)면 줄 자체를 비운다. */
+function EffortRow() {
   const [supported, setSupported] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
@@ -1702,16 +1712,15 @@ function EffortSelector() {
   }, [ctx.conversationId]);
 
   const isDefault = !effort;
-  const shownLevel = isDefault ? defaultEffort : effort;    // knob parks at the effective level
+  const shownLevel = isDefault ? defaultEffort : effort;
   const shownIdx = EFFORT_LEVELS.indexOf(shownLevel as (typeof EFFORT_LEVELS)[number]);
-  // ModelSelector.set 과 같은 규약 — 저장 실패를 표시하고 서버 정본으로 수렴시킨다.
+  // ModelPicker.setModelId 와 같은 규약 — 저장 실패를 표시하고 서버 정본으로 수렴시킨다.
   const [err, setErr] = useState(false);
   const set = (v: string) => {
     setErr(false); setEffortState(v);
     void setEffort(ctx, v).then((ok) => { if (!ok) setErr(true); notifyOverridesChanged(); });
   };
-  const label = EFFORT_LABELS[shownLevel] || shownLevel;    // the level name — no separate "기본" text
-
+  const label = EFFORT_LABELS[shownLevel] || shownLevel;
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowRight" || e.key === "ArrowUp") {
       e.preventDefault(); set(EFFORT_LEVELS[Math.min(EFFORT_LEVELS.length - 1, shownIdx + 1)]);
@@ -1719,17 +1728,15 @@ function EffortSelector() {
       e.preventDefault(); set(EFFORT_LEVELS[Math.max(0, shownIdx - 1)]);
     }
   };
-
-  // 미지원이면 자리 자체를 비운다. null(조회 전)에는 그리던 대로 둔다 — 첫 프레임에 깜빡이지 않게
   if (supported === false) return null;
 
   return (
-    <div className={"rc-effort" + (loaded ? "" : " rc-effort-loading")}
-         title="추론 강도 — 이 대화에만 적용, 다음 응답부터. 점을 눌러 설정 · 켜진 점을 다시 누르면 기본값(빈 노브). 빈 노브 위치가 이 대화가 기본으로 실행되는 레벨입니다.">
-      <svg className="rc-effort-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <div className={"rc-pick-foot" + (loaded ? "" : " rc-model-loading")}
+         title="추론 강도 — 이 대화에만 적용, 다음 응답부터. 점을 눌러 설정 · 켜진 점을 다시 누르면 기본값(빈 원). 빈 원 위치가 이 대화가 기본으로 실행되는 레벨입니다.">
+      <svg className="rc-pick-foot-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M4 9.5v5M6.5 7v10M17.5 7v10M20 9.5v5M6.5 12h11" />
       </svg>
-      <span className="rc-effort-lb">Effort <span className="rc-effort-val">({label})</span>{err && <span className="rc-save-err">저장 실패</span>}</span>
+      <span className="rc-pick-foot-lb">Effort <span className={"rc-pick-foot-val" + (isDefault ? " ghost" : "")}>({label})</span>{err && <span className="rc-save-err">저장 실패</span>}</span>
       <div className="rc-effort-track" role="slider" tabIndex={loaded ? 0 : -1}
            aria-label="추론 강도" aria-valuemin={0} aria-valuemax={EFFORT_LEVELS.length}
            aria-valuenow={shownIdx + 1} aria-valuetext={label} onKeyDown={onKeyDown}>
@@ -1739,10 +1746,7 @@ function EffortSelector() {
             <button type="button" key={lv} className="rc-effort-step"
               onClick={() => set(effort === lv ? "" : lv)}
               aria-label={EFFORT_LABELS[lv] || lv} title={EFFORT_LABELS[lv] || lv}>
-              <span className="rc-effort-dot-wrap">
-                <span className={"rc-effort-dot" + (on ? " on" : "") + (on && isDefault ? " ghost" : "")} />
-              </span>
-              <span className={"rc-effort-tick" + (on ? " on" : "")}>{EFFORT_TICKS[lv] || lv}</span>
+              <span className={"rc-effort-dot" + (i <= shownIdx ? " lit" : "") + (on ? " on" : "") + (on && isDefault ? " ghost" : "")} />
             </button>
           );
         })}
@@ -1751,83 +1755,55 @@ function EffortSelector() {
   );
 }
 
-/** 하네스 변형 선택 — capability harness-variants 뒤(§5.5-30-a). 변형 선택은 자격 행위가
- *  아니라 **설정**이다: 매니페스트가 후보를 선언하고(BOM) 장부가 활성 하나를 든다.
- *  후보가 하나뿐이거나 기판이 capability 를 선언하지 않으면 아무것도 그리지 않는다 —
- *  고를 것이 없는 자리에 빈 피커를 두지 않는다. */
-function HarnessSelector() {
+/** 공급자 표시명 — llm.provider 는 소문자 어휘라 화면용으로만 다듬는다. 모르는 값은 그대로. */
+const PROVIDER_LABEL: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", vllm: "vLLM", moonshot: "Moonshot", google: "Google" };
+function providerLabelOf(v: { name: string; provider?: string }): string {
+  if (!v.provider) return v.name;
+  return PROVIDER_LABEL[v.provider] ?? v.provider[0].toUpperCase() + v.provider.slice(1);
+}
+/** 트리거에 보이는 하네스 짧은 이름 — "claude-code" → "Claude", "codex" → "Codex".
+ *  피드백(2026-08-26): 바깥엔 "기본"이란 말 없이 무엇으로 도는지 한 단어면 된다. */
+function harnessShortOf(name: string): string {
+  const w = name.split("-")[0] || name;
+  return w[0].toUpperCase() + w.slice(1);
+}
+
+/** 한 버튼 안의 모델 선택 — 왼쪽은 공급자(하네스 변형, capability harness-variants), 오른쪽은
+ *  호버한 공급자의 모델 카탈로그. 옛 HarnessSelector + ModelSelector 를 합친 것(2026-08-26):
+ *  두 버튼이 나란히 있으면 "Harness" 라는 말을 알아야 모델을 바꿀 수 있었다.
+ *  - 변형이 하나뿐(또는 미선언)이면 왼쪽 단을 그리지 않고 모델 목록만 편다.
+ *  - 오른쪽 단은 공급자에 **호버(포커스)해야** 열린다. 활성이 아닌 공급자도 전환 없이 그 목록을
+ *    보여준다(`?variant=` 조회). 거기서 모델을 고르면 전환+지정이 한 요청으로 간다.
+ *  - 모델 줄은 이 대화의 오버라이드(다음 응답부터). "기본"은 인스턴스 바인딩을 따른다. */
+function ModelPicker() {
   const ctx = useRelayCtx();
+  // ── 공급자(하네스) 축 ──
   const [active, setActive] = useState<string | null>(null);
   const [variants, setVariants] = useState<{ name: string; provider?: string }[]>([]);
-  const [open, setOpen] = useState(false);
-  const [err, setErr] = useState(false);
+  const [hErr, setHErr] = useState(false);
   // 전환은 성공했는데 그 하네스가 준비되지 않은 경우(도구 미설치·설치 파손·미로그인).
   // 다음 턴이 실패할 때까지 침묵하지 않는다 — 처방은 어댑터 setup 이 이미 문장으로 준다.
   const [notReady, setNotReady] = useState("");
-  const boxRef = useRef<HTMLDivElement>(null);
-  const load = useCallback(() => {
+  const loadVariants = useCallback(() => {
     void loadHarnessVariants().then((r) => { setActive(r.active); setVariants(r.variants); });
   }, []);
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [open]);
-  if (variants.length < 2) return null;
+  useEffect(() => { loadVariants(); }, [loadVariants]);
 
-  const set = (name: string) => {
-    if (name === active) { setOpen(false); return; }
-    setErr(false); setNotReady(""); setActive(name); setOpen(false);
-    void setHarnessVariant(ctx, name).then((r) => {
-      if (!r.ok) { setErr(true); load(); return; }
-      if (r.ready && !r.ready.ok) setNotReady(r.ready.note);
-      // 전환은 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 모델 피커를 다시 읽힌다
-      notifyOverridesChanged();
-    });
-  };
-
-  return (
-    <div className="rc-model" ref={boxRef}
-         title="하네스 — 이 패키지가 동봉한 실행 어댑터 중 활성 하나. 바꾸면 모델 오버라이드는 해제됩니다.">
-      <button type="button" className="rc-model-btn" onClick={() => setOpen((o) => !o)}
-              aria-haspopup="listbox" aria-expanded={open}>
-        <svg className="rc-model-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M4 7h16M4 12h16M4 17h10" />
-        </svg>
-        <span className="rc-model-lb">Harness <span className="rc-model-val">({active ?? "-"})</span>{err && <span className="rc-save-err">전환 실패</span>}</span>
-      </button>
-      {open && (
-        <div className="rc-model-menu" role="listbox">
-          {variants.map((v) => (
-            <button type="button" role="option" key={v.name} aria-selected={active === v.name}
-                    className={"rc-model-item" + (active === v.name ? " on" : "")} onClick={() => set(v.name)}>
-              {v.name}{v.provider ? ` · ${v.provider}` : ""}
-            </button>
-          ))}
-        </div>
-      )}
-      {notReady && <div className="rc-model-notice" role="status">준비되지 않은 하네스입니다 — {notReady}</div>}
-    </div>
-  );
-}
-
-/** Per-conversation model override as a compact dropdown — EffortSelector 와 대칭. 오버라이드가
- *  없으면 실효 모델(인스턴스 바인딩/llm_default 상속·비면 CLI 기본)을 흐리게 보여주고, 항목을
- *  고르면 이 대화의 다음 턴부터 그 모델로 실행된다(브레인 세션 row 저장 → resume 후에도 유지). */
-function ModelSelector() {
-  const ctx = useRelayCtx();
+  // ── 모델 축 ──
   const [model, setModelState] = useState("");        // per-conversation override ("" = default)
   const [defaultModel, setDefaultModel] = useState(""); // effective model when unset ("" = CLI 기본)
   const [open, setOpen] = useState(false);
+  // 오른쪽 단(모델 목록)은 공급자 줄에 호버·포커스해야 편다(피드백 2026-08-26: 열자마자 다 보이면 시끄럽다)
+  const [hover, setHover] = useState<string | null>(null);
+  // 서브 카드 자리 — 오른쪽에 두 카드가 설 폭이 없으면(도크 폭 ~380px) 위로 쌓는다. 열 때 한 번 잰다.
+  const [stack, setStack] = useState(false);
+  // 공급자별 카탈로그 — undefined = 아직 안 물음, null = 미도달
+  const [byVariant, setByVariant] = useState<Record<string, ModelOption[] | null>>({});
   const [loaded, setLoaded] = useState(false);
-  // 피커 항목 — 서버 카탈로그(가족별 최신). 로드 전/미도달은 정적 폴백(modelOptions 초기값).
+  // 활성 하네스 항목 — 서버 카탈로그(가족별 최신). 로드 전/미도달은 정적 폴백(modelOptions 초기값).
   const [options, setOptions] = useState(modelOptions());
   const boxRef = useRef<HTMLDivElement>(null);
-  // 카탈로그는 **하네스에 딸린다** — 마운트 때 한 번만 읽으면 하네스를 바꿔도 옛 하네스의
-  // 모델이 계속 떠 있다(실사고: Harness codex 인데 피커가 Fable·Opus·Sonnet).
-  // overrides-changed 는 하네스 전환도 실어 나른다(HarnessSelector 가 전환 뒤에 알린다).
+  // 카탈로그는 **하네스에 딸린다** — overrides-changed 는 하네스 전환도 실어 나른다.
   useEffect(() => {
     let alive = true;
     const load = () => loadModelOptions().then((o) => { if (alive) setOptions(o); });
@@ -1845,9 +1821,23 @@ function ModelSelector() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
+  useEffect(() => {
+    if (!open) { setHover(null); return; }
+    const r = boxRef.current?.getBoundingClientRect();
+    setStack(!!r && window.innerWidth - r.left < 470);
+  }, [open]);
+  // 호버한 공급자의 카탈로그를 한 번만 묻는다(runtime 이 변형별로 캐시한다)
+  useEffect(() => {
+    if (!hover || hover === active || hover in byVariant) return;
+    let alive = true;
+    void loadModelOptionsFor(hover).then((o) => { if (alive) setByVariant((m) => ({ ...m, [hover]: o })); });
+    return () => { alive = false; };
+  }, [hover, active, byVariant]);
 
   const labelOf = modelLabelOf;
   // 저장 실패는 되돌리고 표시한다 — 낙관 표시만 남고 서버엔 저장 안 된 채 다른 모델로 턴이
@@ -1862,19 +1852,22 @@ function ModelSelector() {
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
   // 실효 기본 — 바인딩/llm_default 가 비면(CLI 기본) 마지막 init 프레임의 실행 모델로 표시.
-  // "기본"이라는 글자만으로는 어떤 모델로 도는지 알 수 없다는 피드백(2026-07-24)의 봉합.
   // 첫 턴 전엔 둘 다 비어 알 수 없음 — 그때만 맨 "기본".
   const effDefault = defaultModel || lastConnectedModel();
-  const set = (v: string) => {
-    if (running) {
-      const prior = lastConnectedModel() || model || defaultModel;
-      const next = v || effDefault;
-      if (prior && next && labelOf(prior) !== labelOf(next)) {
-        setNotice(`진행 중인 응답은 ${withRo(labelOf(prior))} 완료됩니다`);
-        if (noticeTimer.current) clearTimeout(noticeTimer.current);
-        noticeTimer.current = setTimeout(() => setNotice(""), 6000);
-      }
+
+  const noteRunning = (v: string) => {
+    if (!running) return;
+    const prior = lastConnectedModel() || model || defaultModel;
+    const next = v || effDefault;
+    if (prior && next && labelOf(prior) !== labelOf(next)) {
+      setNotice(`진행 중인 응답은 ${withRo(labelOf(prior))} 완료됩니다`);
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+      noticeTimer.current = setTimeout(() => setNotice(""), 6000);
     }
+  };
+  /** 활성 하네스의 모델 줄 — 오버라이드만 바꾼다 */
+  const setModelId = (v: string) => {
+    noteRunning(v);
     setErr(false); setUnknownId(false); setModelState(v); setOpen(false);
     void setModel(ctx, v).then((r) => {
       if (!r.ok) setErr(true);
@@ -1882,40 +1875,135 @@ function ModelSelector() {
       notifyOverridesChanged();
     });
   };
-  // 트리거는 ({shown}) 로 감싸 렌더 — 여기선 모델명만(ghost 스타일이 "기본 상태"를 표시).
-  const shown = model ? labelOf(model) : (effDefault ? labelOf(effDefault) : "기본");
+  /** 다른 공급자의 모델 줄 — 전환 + 지정을 한 요청으로 */
+  const setHarnessModel = (name: string, v: string) => {
+    noteRunning(v);
+    setErr(false); setHErr(false); setUnknownId(false); setNotReady("");
+    setActive(name); setModelState(v); setOpen(false);
+    void setHarnessAndModel(ctx, name, v).then((r) => {
+      if (!r.ok) { setHErr(true); loadVariants(); notifyOverridesChanged(); return; }
+      if (r.ready && !r.ready.ok) setNotReady(r.ready.note);
+      if (r.known === false) setUnknownId(true);
+      notifyOverridesChanged(); // 모델 카탈로그·오버라이드를 새 하네스 것으로 다시 읽힌다
+    });
+  };
+
+  const twoPane = variants.length >= 2;
+  // 바깥(트리거)엔 오버라이드가 있으면 그 모델, 없으면 하네스 한 단어("Claude").
+  // 변형 미선언 기판은 실효 모델(알면) — 그때만 "기본".
+  const shown = model ? labelOf(model) : active ? harnessShortOf(active) : (effDefault ? labelOf(effDefault) : "기본");
+
+  /** 한 공급자의 모델 목록 단. own = 활성 하네스(오버라이드 축) / 아니면 전환 축 */
+  const rowsFor = (p: { name: string; provider?: string } | null) => {
+    const own = !p || p.name === active;
+    const list = own ? options : byVariant[p.name];
+    const pick = (id: string) => (own ? setModelId(id) : setHarnessModel(p!.name, id));
+    return (
+      <>
+        {list === undefined && <div className="rc-pick-note">모델 목록을 읽는 중…</div>}
+        {list === null && <div className="rc-pick-note">모델 목록을 받지 못했습니다 — 고르면 이 공급자로 바꿉니다</div>}
+        {list !== undefined && (
+          <button type="button" role="option" aria-selected={own && !model}
+                  className={"rc-pick-item" + (own && !model ? " on" : "")} onClick={() => pick("")}>
+            <span className="rc-pick-text">
+              <span className="rc-pick-main">기본</span>
+              {own && effDefault && <span className="rc-pick-sub">현재 {labelOf(effDefault)}</span>}
+            </span>
+            {own && !model && <CheckIcon />}
+          </button>
+        )}
+        {(list ?? []).map((m) => {
+          const on = own && model === m.id;
+          return (
+            <button type="button" role="option" key={m.id} aria-selected={on}
+                    className={"rc-pick-item" + (on ? " on" : "")} onClick={() => pick(m.id)}>
+              <span className="rc-pick-text">
+                <span className="rc-pick-main">{m.label}</span>
+                {m.label.toLowerCase() !== m.id.toLowerCase() && <span className="rc-pick-sub">{m.id}</span>}
+              </span>
+              {on && <CheckIcon />}
+            </button>
+          );
+        })}
+      </>
+    );
+  };
+  const hovered = hover ? variants.find((v) => v.name === hover) ?? null : null;
 
   return (
     <div className={"rc-model" + (loaded ? "" : " rc-model-loading")} ref={boxRef}
-         title="모델 — 이 대화에만 적용, 다음 응답부터. '기본'은 인스턴스 바인딩(없으면 CLI 기본)을 따릅니다.">
+         title="AI 모델 — 이 대화에만 적용, 다음 응답부터. '기본'은 인스턴스 바인딩(없으면 CLI 기본)을 따릅니다.">
       <button type="button" className="rc-model-btn" onClick={() => setOpen((o) => !o)}
               aria-haspopup="listbox" aria-expanded={open}>
         <svg className="rc-model-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 9h6v6H9z" />
         </svg>
-        <span className="rc-model-lb">Model <span className={"rc-model-val" + (model ? "" : " ghost")}>({shown})</span>{err && <span className="rc-save-err">저장 실패</span>}{!err && unknownId && <span className="rc-save-err">목록에 없는 id</span>}</span>
+        <span className="rc-model-lb">
+          <span className={"rc-model-val" + (model ? "" : " ghost")}>{shown}</span>
+          <svg className="rc-model-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9l6 6 6-6" /></svg>
+          {err && <span className="rc-save-err">저장 실패</span>}
+          {!err && hErr && <span className="rc-save-err">전환 실패</span>}
+          {!err && !hErr && unknownId && <span className="rc-save-err">목록에 없는 id</span>}
+        </span>
       </button>
       {open && (
-        <div className="rc-model-menu" role="listbox">
-          <button type="button" role="option" aria-selected={!model}
-                  className={"rc-model-item" + (!model ? " on" : "")} onClick={() => set("")}>
-            기본{effDefault ? ` (${labelOf(effDefault)})` : ""}
-          </button>
-          {options.map((m) => (
-            <button type="button" role="option" key={m.id} aria-selected={model === m.id}
-                    className={"rc-model-item" + (model === m.id ? " on" : "")} onClick={() => set(m.id)}>
-              {m.label}
-            </button>
-          ))}
+        <div className={"rc-pick" + (stack ? " stack" : "")}>
+          <div className="rc-pick-card">
+            {twoPane ? (
+              <div className="rc-pick-list" role="listbox" aria-label="공급자">
+                {variants.map((v) => (
+                  <button type="button" role="option" key={v.name} aria-selected={active === v.name}
+                          className={"rc-pick-item" + (active === v.name ? " on" : "") + (hover === v.name ? " hov" : "")}
+                          onMouseEnter={() => setHover(v.name)} onFocus={() => setHover(v.name)}
+                          onClick={() => setHover(v.name)}>
+                    <span className="rc-pick-text">
+                      <span className="rc-pick-main">{providerLabelOf(v)}</span>
+                      {providerLabelOf(v) !== v.name && <span className="rc-pick-sub">{v.name}</span>}
+                    </span>
+                    {active === v.name && <CheckIcon />}
+                    <svg className="rc-pick-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 6l6 6-6 6" /></svg>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="rc-pick-list" role="listbox" aria-label="모델">{rowsFor(null)}</div>
+            )}
+            <EffortRow />
+          </div>
+          {twoPane && hovered && (
+            <div className="rc-pick-card rc-pick-sub-card">
+              <div className="rc-pick-list" role="listbox" aria-label="모델">{rowsFor(hovered)}</div>
+            </div>
+          )}
         </div>
       )}
       {notice && <div className="rc-model-notice" role="status">{notice}</div>}
-      {unknownId && !notice && (
+      {!notice && notReady && <div className="rc-model-notice" role="status">준비되지 않은 하네스입니다 — {notReady}</div>}
+      {!notice && !notReady && unknownId && (
         <div className="rc-model-notice" role="status">
           저장은 됐지만 이 하네스의 모델 목록에 없는 id 입니다 — 다음 턴이 실패할 수 있습니다
         </div>
       )}
     </div>
+  );
+}
+
+/** Phosphor Icons(MIT) path — 의존성 없이 인라인. 256 뷰박스, fill=currentColor.
+ *  글자 아이콘(↑ ■ +)은 폰트마다 굵기·기준선이 달라 버튼 안에서 비뚤어 보였다(피드백 2026-08-26). */
+const PH = {
+  arrowUp: "M208.49,120.49a12,12,0,0,1-17,0L140,69V216a12,12,0,0,1-24,0V69L64.49,120.49a12,12,0,0,1-17-17l72-72a12,12,0,0,1,17,0l72,72A12,12,0,0,1,208.49,120.49Z",
+  stop: "M216,56V200a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V56A16,16,0,0,1,56,40H200A16,16,0,0,1,216,56Z",
+  plus: "M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z",
+};
+function PhIcon({ d, size }: { d: string; size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 256 256" fill="currentColor" aria-hidden><path d={d} /></svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg className="rc-pick-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12l5 5L20 7" /></svg>
   );
 }
 
@@ -2277,10 +2365,10 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
-    // 160px(max-height) 을 넘을 때만 스크롤. 한 줄일 땐 scrollHeight 반올림으로 뜨는
+    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+    // 200px(max-height) 을 넘을 때만 스크롤. 한 줄일 땐 scrollHeight 반올림으로 뜨는
     // 헛 세로 스크롤바를 숨긴다(좁은 셸 패널에서 특히 잘 보이던 문제).
-    ta.style.overflowY = ta.scrollHeight > 160 ? "auto" : "hidden";
+    ta.style.overflowY = ta.scrollHeight > 200 ? "auto" : "hidden";
   };
 
   // deployd 셸의 chat.open prefill 중계 수신 — 셸은 이 앱(React) 마운트 타이밍을 모르므로
@@ -2527,7 +2615,6 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
           <div className="rc-drop-in"><span className="rc-drop-ic">⬇</span> 여기에 파일을 놓으세요</div>
         </div>
       )}
-      <ContextChips onSend={sendOrQueue} />
       {queued.length > 0 && (
         <div className="rc-queued-list">
           {queued.map((q, i) => (
@@ -2543,24 +2630,6 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
         <div className="rc-att-error" role="alert">
           <span className="rc-att-error-tx">{attError}</span>
           <button type="button" className="rc-att-error-x" aria-label="닫기" onClick={() => setAttError(null)}>×</button>
-        </div>
-      )}
-      {atts.length > 0 && (
-        <div className="rc-atts">
-          {atts.map((a) => (
-            <div className="rc-att" key={a.id}>
-              {a.mime.startsWith("image/") && a.dataUrl
-                ? <img className="rc-att-thumb" src={a.dataUrl} alt={a.name} />
-                : <span className="rc-att-ic" aria-hidden>▢</span>}
-              <span className="rc-att-meta">
-                <span className="rc-att-nm" title={a.name}>{a.name}</span>
-                <span className="rc-att-sz">
-                  {a.uploading ? `업로드 ${a.progress ?? 0}%` : fmtSize(a.size)}
-                </span>
-              </span>
-              <button type="button" className="rc-att-x" aria-label="첨부 제거" onClick={() => removeAtt(a.id)}>×</button>
-            </div>
-          ))}
         </div>
       )}
       {slashOpen && (
@@ -2605,19 +2674,26 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
           ))}
         </div>
       )}
-      <div className="rc-composer-row">
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          className="rc-file-input"
-          onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ""; }}
-        />
-        <button type="button" className="rc-attach" aria-label="파일 첨부" title="파일 첨부" onClick={() => fileRef.current?.click()}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
-        </button>
+      {/* 입력 카드 — 위는 글, 아래 줄은 왼쪽(+ 첨부 · 모델)·오른쪽(컨텍스트 · 전송). 카드 빈자리를 눌러도 입력으로 */}
+      <div className="rc-box" onClick={(e) => { if (e.target === e.currentTarget) taRef.current?.focus(); }}>
+        {atts.length > 0 && (
+          <div className="rc-atts">
+            {atts.map((a) => (
+              <div className="rc-att" key={a.id}>
+                {a.mime.startsWith("image/") && a.dataUrl
+                  ? <img className="rc-att-thumb" src={a.dataUrl} alt={a.name} />
+                  : <span className="rc-att-ic" aria-hidden>▢</span>}
+                <span className="rc-att-meta">
+                  <span className="rc-att-nm" title={a.name}>{a.name}</span>
+                  <span className="rc-att-sz">
+                    {a.uploading ? `업로드 ${a.progress ?? 0}%` : fmtSize(a.size)}
+                  </span>
+                </span>
+                <button type="button" className="rc-att-x" aria-label="첨부 제거" onClick={() => removeAtt(a.id)}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           ref={taRef}
           className="rc-input"
@@ -2634,51 +2710,64 @@ function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; onSwitch?
           onKeyDown={onKeyDown}
           onPaste={onPaste}
         />
-        {running ? (
-          <button type="button" className="rc-cancel" aria-label="중지" onClick={() => rt.cancelRun()}>■</button>
-        ) : (
-          <button type="button" className="rc-send" aria-label="전송"
-            disabled={(!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)}
-            title={atts.some((a) => a.uploading) ? "파일 업로드 중…" : undefined}
-            onClick={submit}>↑</button>
-        )}
+        <div className="rc-box-foot">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            className="rc-file-input"
+            onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ""; }}
+          />
+          <button type="button" className="rc-attach" aria-label="파일 첨부" title="파일 첨부" onClick={() => fileRef.current?.click()}>
+            <PhIcon d={PH.plus} size={16} />
+          </button>
+          {/* 에이전트(대상) 칩 — 카드 아래 줄, + 와 모델 사이. 드롭다운은 컴포저 폭 기준(.rc-slash) */}
+          <ContextChips onSend={sendOrQueue} />
+          <ModelPicker />
+          <span style={{ flex: 1 }} />
+          {ctxUsed > 0 && (
+            <span className={"rc-ctx-wrap" + (ctxArmed ? " rc-armed" : "")}>
+              <button type="button"
+                className={"rc-ctx" + (ctxPct >= 85 ? " hot" : ctxPct >= 60 ? " warm" : "")}
+                onClick={() => {
+                  // 터치(hover 없음)에선 hover 툴팁 경고를 볼 수 없다 — 첫 탭은 툴팁만 열고
+                  // (rc-armed, 3초 유지) 둘째 탭이 실제 압축. 데스크톱은 기존 한 번 클릭 그대로.
+                  if (window.matchMedia("(hover: none)").matches && !ctxArmedRef.current) {
+                    ctxArmedRef.current = true;
+                    setCtxArmed(true);
+                    window.setTimeout(() => { ctxArmedRef.current = false; setCtxArmed(false); }, 3000);
+                    return;
+                  }
+                  ctxArmedRef.current = false;
+                  setCtxArmed(false);
+                  if (running || queueRef.current.length) { queueRef.current.push({ text: "/compact", atts: [] }); syncQueued(); }
+                  else sendNow("/compact", []);
+                }}
+                aria-label={`컨텍스트 ${fmtTok(ctxUsed)}/${fmtTok(ctxWindow)} (${ctxPct}%) — 클릭하면 압축`}>
+                <span className="rc-ctx-ring" style={{ ["--rc-ctx-pct" as any]: `${ctxPct}%` }} aria-hidden />
+                <span className="rc-ctx-lb">{ctxPct}%</span>
+              </button>
+              <span className="rc-ctx-tip" role="tooltip">
+                <span className="rc-ctx-tip-h">{ctxRemain}% of context remaining until auto-compact.</span>
+                <span className="rc-ctx-tip-sub">Click to compact now.</span>
+                <span className="rc-ctx-tip-num">{fmtTok(ctxUsed)}/{fmtTok(ctxWindow)} ({ctxPct}%)</span>
+              </span>
+            </span>
+          )}
+          {running ? (
+            <button type="button" className="rc-cancel" aria-label="중지" onClick={() => rt.cancelRun()}>
+              <PhIcon d={PH.stop} size={13} />
+            </button>
+          ) : (
+            <button type="button" className="rc-send" aria-label="전송"
+              disabled={(!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)}
+              title={atts.some((a) => a.uploading) ? "파일 업로드 중…" : undefined}
+              onClick={submit}><PhIcon d={PH.arrowUp} size={16} /></button>
+          )}
+        </div>
       </div>
       {notice && <div className="rc-builtin-notice" role="status">{notice}</div>}
-      <div className="rc-composer-foot">
-        <EffortSelector />
-        <HarnessSelector />
-        <ModelSelector />
-        <span style={{ flex: 1 }} />
-        {ctxUsed > 0 && (
-          <span className={"rc-ctx-wrap" + (ctxArmed ? " rc-armed" : "")}>
-            <button type="button"
-              className={"rc-ctx" + (ctxPct >= 85 ? " hot" : ctxPct >= 60 ? " warm" : "")}
-              onClick={() => {
-                // 터치(hover 없음)에선 hover 툴팁 경고를 볼 수 없다 — 첫 탭은 툴팁만 열고
-                // (rc-armed, 3초 유지) 둘째 탭이 실제 압축. 데스크톱은 기존 한 번 클릭 그대로.
-                if (window.matchMedia("(hover: none)").matches && !ctxArmedRef.current) {
-                  ctxArmedRef.current = true;
-                  setCtxArmed(true);
-                  window.setTimeout(() => { ctxArmedRef.current = false; setCtxArmed(false); }, 3000);
-                  return;
-                }
-                ctxArmedRef.current = false;
-                setCtxArmed(false);
-                if (running || queueRef.current.length) { queueRef.current.push({ text: "/compact", atts: [] }); syncQueued(); }
-                else sendNow("/compact", []);
-              }}
-              aria-label={`컨텍스트 ${fmtTok(ctxUsed)}/${fmtTok(ctxWindow)} (${ctxPct}%) — 클릭하면 압축`}>
-              <span className="rc-ctx-ring" style={{ ["--rc-ctx-pct" as any]: `${ctxPct}%` }} aria-hidden />
-              <span className="rc-ctx-lb">{ctxPct}%</span>
-            </button>
-            <span className="rc-ctx-tip" role="tooltip">
-              <span className="rc-ctx-tip-h">{ctxRemain}% of context remaining until auto-compact.</span>
-              <span className="rc-ctx-tip-sub">Click to compact now.</span>
-              <span className="rc-ctx-tip-num">{fmtTok(ctxUsed)}/{fmtTok(ctxWindow)} ({ctxPct}%)</span>
-            </span>
-          </span>
-        )}
-      </div>
+
     </div>
   );
 }
@@ -2831,34 +2920,75 @@ function AnchorController({ rootRef }: { rootRef: RefObject<HTMLDivElement | nul
   return null;
 }
 
-/** 빈 시작 화면 — 인사 + 에이전트 슬래시 커맨드 스타터 칩(클릭 → 컴포저 프리필). 어디서 시작할지
- *  고민하지 않게(원칙 2). 커맨드가 없으면 칩 없이 인사만. */
+/** 빈 시작 화면 — 이 대화가 무엇을 위한 것인지 한 줄로. "무엇이든 물어보세요"는 에이전트를
+ *  손보는 대화(agent-builder)인지 알 수 없었고, 슬래시 칩(/packages·/compact…)은 시작에 도움이
+ *  안 됐다 — 둘 다 은퇴. 바인딩된 에이전트가 있으면 그 이름으로 안내한다. */
 function EmptyStarter({ ctx }: { ctx: RelayCtx }) {
-  const [commands, setCommands] = useState<SlashCommand[]>([]);
-  useEffect(() => {
-    let alive = true;
-    loadCommands(ctx).then((c) => {
-      if (alive) setCommands(c.filter((x) => x.kind !== "builtin").slice(0, 4));
-    });
-    return () => { alive = false; };
-  }, [ctx.conversationId]);
+  const bind = displayBinding(ctx.conversationId);
+  const builder = bind.agent === "agent-builder";
+  const creating = builder && !bind.param; // 손볼 패키지가 없는 빌더 = 새로 만드는 자리
+  const onDraft = injectedCoords().draft;
+  const title = creating ? "무엇을 만들까요?"
+    : builder ? `${bind.param} 에이전트를 손보는 대화`
+    : onDraft ? "고친 판과 대화 — 아직 적용 전"
+    : bind.agent ? `${bind.agent} 와의 대화` : "무엇이든 물어보세요";
+  const hint = creating
+    ? "하고 싶은 일을 한 줄로 적어 주세요. 아래 예시를 누르면 입력칸에 채워집니다."
+    : builder
+    ? "바꾸고 싶은 것을 말로 적어 주세요 — 성격, 기능, 스케줄, 연결 무엇이든. 적용을 누르기 전까지는 실제 에이전트에 반영되지 않습니다."
+    : onDraft ? "고친 성격·기능으로 대화합니다. 마음에 들면 위의 [적용]을 누르세요 — 돌아가는 판은 아직 그대로입니다."
+    : null;
+  // 예시 — 누르면 입력칸에 들어간다(전송은 사람이). 탑바의 [＋ 만들기]를 은퇴시키며 그
+  // 자리를 여기로 옮겼다: 버튼이 아니라 글이라 가볍고, 무엇을 말하면 되는지가 보인다.
+  // 새로 만드는 자리는 v0 식으로 — 짧은 키워드 칩 + [다른 예시] 로 묶음을 돌린다.
+  const [page, setPage] = useState(0);
+  const examples = creating ? CREATE_EXAMPLES[page % CREATE_EXAMPLES.length]
+    : builder ? EDIT_EXAMPLES.map((t) => ({ label: t, text: t })) : [];
+  const prefill = (text: string) => {
+    try { window.postMessage({ type: "relay:chat-prefill", text, nonce: String(Date.now()) }, window.location.origin); } catch { /* 무시 */ }
+  };
   return (
     <div className="rc-empty">
       <div className="rc-empty-ic" aria-hidden>✦</div>
-      <div className="rc-empty-t">무엇이든 물어보세요</div>
-      {commands.length > 0 && (
-        <div className="rc-starter">
-          {commands.map((c) => (
-            <button type="button" key={c.name} className="rc-starter-chip" title={c.description}
-                    onClick={() => _prefillComposer?.("/" + c.name + " ")}>
-              /{c.name}
-            </button>
+      <div className="rc-empty-t">{title}</div>
+      {hint && <div className="rc-empty-h">{hint}</div>}
+      {examples.length ? (
+        <div className="rc-empty-ex">
+          {examples.map((e) => (
+            <button key={e.label} type="button" className="rc-empty-exb" title={e.text} onClick={() => prefill(e.text)}>{e.label}</button>
           ))}
+          {creating && (
+            <button type="button" className="rc-empty-exb rc-empty-more" aria-label="다른 예시" title="다른 예시"
+              onClick={() => setPage((p) => p + 1)}>↻</button>
+          )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
+
+/** 새로 만들기 예시 — 칩은 짧은 이름, 채워지는 글은 한 줄 요청. 묶음 단위로 돌린다. */
+const CREATE_EXAMPLES: { label: string; text: string }[][] = [
+  [
+    { label: "아침 요약 알림", text: "매일 아침 9시에 오늘 일정과 할 일을 요약해서 알려주는 에이전트를 만들어줘" },
+    { label: "슬랙 답변 봇", text: "슬랙 채널에서 질문이 오면 사내 문서를 찾아 답해주는 에이전트를 만들어줘" },
+    { label: "메모 정리", text: "내가 적어두는 메모를 매주 주제별로 정리해주는 에이전트를 만들어줘" },
+    { label: "일정 비서", text: "캘린더를 보고 회의 전에 준비할 것을 미리 알려주는 에이전트를 만들어줘" },
+  ],
+  [
+    { label: "문의 접수 폼", text: "고객 문의를 받는 폼 화면을 만들고, 접수되면 나에게 알려주는 에이전트를 만들어줘" },
+    { label: "가계부", text: "지출을 적으면 월별로 합계와 그래프를 보여주는 가계부 에이전트를 만들어줘" },
+    { label: "뉴스 브리핑", text: "관심 키워드의 뉴스를 매일 저녁 모아서 짧게 브리핑해주는 에이전트를 만들어줘" },
+    { label: "독서 기록", text: "읽은 책과 감상을 기록하고 검색할 수 있는 화면을 가진 에이전트를 만들어줘" },
+  ],
+  [
+    { label: "습관 체크", text: "매일 저녁 오늘의 습관 체크를 물어보고 주간 달성률을 보여주는 에이전트를 만들어줘" },
+    { label: "번역 도우미", text: "붙여넣은 글을 자연스러운 한국어·영어로 번역해주는 에이전트를 만들어줘" },
+    { label: "회의록 정리", text: "회의 녹취 텍스트를 넣으면 결정 사항과 할 일로 정리해주는 에이전트를 만들어줘" },
+    { label: "미니 게임", text: "간단한 퀴즈 게임 화면을 가진 에이전트를 만들어줘" },
+  ],
+];
+const EDIT_EXAMPLES = ["매일 아침 9시에 요약을 보내줘", "슬랙 채널을 연결해줘", "화면에 검색 기능을 넣어줘"];
 
 /** 과거 스크롤 중일 때 최신으로 내려가는 플로팅 버튼(레퍼런스 하단 중앙 원형). */
 function JumpToBottom({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {

@@ -458,12 +458,14 @@ function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
   return env;
 }
 
-export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info" | "setup" | "commands"): { ok: boolean; out: string } {
+/** variant 를 주면 활성이 아닌 선언 변형에도 묻는다(모델 피커가 공급자 호버로 그 카탈로그를
+ *  미리 보는 자리, §5.5-29) — 조회일 뿐 장부는 건드리지 않는다. 미선언 이름은 거부. */
+export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info" | "setup" | "commands", variant?: string): { ok: boolean; out: string } {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  const v = activeHarness(m, rec.harness);
-  if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
+  const v = variant ? ((m.harness?.variants ?? []).find((x) => x.name === variant) ?? null) : activeHarness(m, rec.harness);
+  if (!v) throw new Error(variant ? `미선언 하네스: ${variant}` : `하네스 미동봉 패키지: ${name}`);
   const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v, name) });
   // models·info·commands 는 stdout 이 JSON 계약이다. stderr(강등 사유 등)를 섞으면
   // JSON 해석이 깨져 화면의 모델 목록이 통째로 사라진다 — 진단문은 setup 에만 합친다

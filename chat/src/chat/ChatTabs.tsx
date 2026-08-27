@@ -65,7 +65,10 @@ function loadTabs(v: ChatTabsVariant): Tab[] {
     if (!Array.isArray(raw)) return [];
     return raw
       .filter((t) => t && typeof t.instanceId === "string" && t.instanceId && typeof t.conversationId === "string")
-      .map((t) => ({ key: keyOf(t.instanceId, t.conversationId), instanceId: t.instanceId, conversationId: t.conversationId, title: String(t.title || "") }));
+      .map((t) => ({ key: keyOf(t.instanceId, t.conversationId), instanceId: t.instanceId, conversationId: t.conversationId, title: String(t.title || "") }))
+      // 같은 좌표는 하나만 — key 가 겹치면 pane 의 보임 판정(key === active)이 전부 참이 되어
+      // 모든 pane 이 나란히 그려진다. 저장 시점에 이미 합쳐지지만 낡은 저장분도 여기서 막는다
+      .filter((t: Tab, i: number, arr: Tab[]) => arr.findIndex((x) => x.key === t.key) === i);
   } catch { return []; }
 }
 
@@ -138,7 +141,8 @@ function loadSplit(v: ChatTabsVariant): SplitPersist {
 
 /** 표시 이름 — 서버/자동 제목이 있으면 그대로, 없으면 "기본 대화"/"대화 <suffix>". */
 function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
-  if (t.title && !isPlaceholderTitle(t.title)) return t.title;
+  // 외부(임베더·목록)가 붙인 앞 트리 기호("└ ", "├ ")는 탭 안에서 뜻이 없어 표시에서만 뗀다.
+  if (t.title && !isPlaceholderTitle(t.title)) return t.title.replace(/^[\u2500-\u257f\s]+/, "") || t.title;
   const id = t.conversationId;
   // main 패밀리(threadFamily)와 로컬 드래프트("c-…" — 지연 민팅 전) 모두 기본 대화로 그린다.
   if (!id || threadFamily(id) === "main") return "기본 대화";
@@ -428,7 +432,7 @@ function TabStrip({
           const b = badgeOf(t);
           return (
             <div key={t.key} role="tab" aria-selected={t.key === activeKey}
-                 className={"rc-desk-tab" + (t.key === activeKey ? " on" : "") + (t.key === dragTab ? " drag" : "") + (t.preview ? " preview" : "")}
+                 className={"rc-desk-tab" + (t.key === activeKey ? " on" : "") + (t.key === dragTab ? " drag" : "") + (t.preview ? " rc-preview" : "")}
                  title={t.instanceId + " · " + t.conversationId + (t.preview ? "\n미리보기 — 말을 걸면 탭으로 고정됩니다" : "")}
                  draggable={editingKey !== t.key}
                  onDragStart={(e) => onTabDragStart(e, t.key)}
@@ -560,11 +564,28 @@ export function ChatTabs({
   // 지연 민팅 재바인딩 — 드래프트 좌표의 탭이 session.create 발급 id 를 받으면 탭 기록의
   // conversationId 만 갈아끼운다(key 유지 → pane 무재마운트, 매핑은 runtime 이 번역). 영속은
   // 발급 id 로 남아 새로고침 뒤에도 그 대화가 열린다. 페이지 슬롯 좌표도 같이 따라간다.
+  // 재바인딩 결과 같은 세션을 든 탭이 둘 이상이면 하나로 합친다 — 바인딩 seed 드래프트 여러 개가
+  // 같은 기존 세션을 이어받으면(resolveBoundSeed) 좌표가 같은 탭이 겹쳐 쌓이고, 새로고침 뒤
+  // key 가 충돌해 pane 이 전부 나란히 보였다. 먼저 있던 탭이 남고 활성·그룹은 그리로 옮긴다.
   useEffect(() => onSessionMinted(({ conversation, session }) => {
-    setTabs((prev) => {
-      if (!prev.some((t) => t.conversationId === conversation)) return prev;
-      return prev.map((t) => (t.conversationId === conversation ? { ...t, conversationId: session } : t));
+    const cur = tabsRef.current;
+    if (!cur.some((t) => t.conversationId === conversation)) return;
+    const rebound = cur.map((t) => (t.conversationId === conversation ? { ...t, conversationId: session } : t));
+    const survivor = new Map<string, string>(); // 좌표 → 남는 탭 key
+    const dropped = new Map<string, string>();  // 사라지는 탭 key → 남는 탭 key
+    const merged = rebound.filter((t) => {
+      const coord = keyOf(t.instanceId, t.conversationId);
+      const s = survivor.get(coord);
+      if (s) { dropped.set(t.key, s); return false; }
+      survivor.set(coord, t.key);
+      return true;
     });
+    setTabs(merged);
+    if (dropped.size) {
+      const a0 = dropped.get(active0Ref.current); if (a0) setActive0(a0);
+      const a1 = dropped.get(active1Ref.current); if (a1) setActive1(a1);
+      setG2((prev) => prev.filter((k) => !dropped.has(k)));
+    }
     const slot = pageSlotRef.current;
     if (slot && slot.conversationId === conversation) pageSlotRef.current = { ...slot, conversationId: session };
   }), []);
@@ -1134,8 +1155,10 @@ export function ChatTabs({
               {split && stripFor(1)}
               {actions}
             </div>
-            {/* row2 — 그룹별 활성 대화 이름 브레드크럼(더블클릭 rename, "칩 자리" 이름 유지) */}
-            {(activeTab0 || activeTab1) && (
+            {/* row2 — 그룹별 활성 대화 이름 브레드크럼(더블클릭 rename, "칩 자리" 이름 유지).
+                dock 에서는 두지 않는다 — 탭 줄이 이미 이름을 보여주고(더블클릭 rename 도 탭에서
+                된다), 패키지 화면의 탑바 밑에 머리가 두 줄이면 무겁다. desk 는 그대로 */}
+            {variant !== "dock" && (activeTab0 || activeTab1) && (
               <div className="rc-tabs-crumbs">
                 {activeTab0 && crumbCell(activeTab0, "crumb0", split ? { flex: leftBasis } : undefined)}
                 {split && <div className="rc-ghead-gap" aria-hidden />}

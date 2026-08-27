@@ -13,7 +13,7 @@ import { MIME, json } from "../http.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { RELAY_HOME, sessionDir, sessionPath, saveLedger, type Ledger } from "../supply/ledger.ts";
+import { RELAY_HOME, packagesPath, sessionDir, sessionPath, saveLedger, type Ledger } from "../supply/ledger.ts";
 import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
 import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
@@ -87,12 +87,16 @@ export interface SessionRow {
   /** 이 대화의 정체성(§5.3-21 additive) — 착지 에이전트가 아닌 대화가 밝힌다 */
   agent?: string;
   param?: string;
+  /** 작업 사본 위 세션 — 고친 판을 적용 전에 써보는 대화. 설치본 대화 목록과 섞이지 않게 표시한다 */
+  draft?: boolean;
 }
 
 /** 개설 시점의 대화 바인딩(§5.3-22) — 판정을 통과한 값만 온다 */
 export interface SessionBinding {
   agent?: string;
   param?: string;
+  /** true 면 이 세션은 작업 사본 트리 위에 선다(harness.ts sessionTreeOf). 작업 사본이 없으면 400 */
+  draft?: boolean;
 }
 
 /** 세션 메타 갱신(§5.3-23). 키가 있는 축만 바뀐다 */
@@ -138,8 +142,8 @@ export interface ClientWireIO {
   updateSession(pkg: string, slot: string, patch: SessionPatch): boolean | Promise<boolean>;
   /** 세션 제거 — 저장소에서 이 대화의 자취를 지운다. 진행 중 상주 은퇴는 계약이 먼저 한다 */
   removeSession(pkg: string, slot: string): void | Promise<void>;
-  /** 하네스 조회 3동사(§5.5-29) */
-  harnessQuery(pkg: string, verb: "info" | "models" | "commands"): HarnessAnswer | Promise<HarnessAnswer>;
+  /** 하네스 조회 3동사(§5.5-29). variant = 활성이 아닌 선언 변형에 묻기(models 의 `?variant=`) */
+  harnessQuery(pkg: string, verb: "info" | "models" | "commands", variant?: string): HarnessAnswer | Promise<HarnessAnswer>;
   /** 개막(§3-7)이 투영할 어댑터 capability. null = 하네스 조회 축 자체가 없다(동사도 함께 죽는다) */
   harnessCapabilities(pkg: string): string[] | null | Promise<string[] | null>;
   /** 모델·강도·변형 설정의 영속(§5.5-30/30-a) — 이 계약 축이 장부를 쓰는 유일한 자리 */
@@ -634,6 +638,7 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
           session: e.name,
           ...(rowAgent ? { agent: rowAgent } : {}),
           ...(rowParam ? { param: rowParam } : {}),
+          ...(fs.existsSync(path.join(dir, "draft")) ? { draft: true } : {}),
           label: label || e.name,
           updated: fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs,
           archived: fs.existsSync(path.join(dir, "archived")),
@@ -649,6 +654,7 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
       const dir = sessionDir(pkg, id); // 즉시 영속 — 발급한 세션이 목록·이력 조회에 곧장 실재한다
       if (binding.agent) fs.writeFileSync(path.join(dir, "agent"), binding.agent);
       if (binding.param) fs.writeFileSync(path.join(dir, "param"), binding.param);
+      if (binding.draft) fs.writeFileSync(path.join(dir, "draft"), "");
       return id;
     },
 
@@ -672,8 +678,8 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
     // sessionPath 인 이유: 삭제가 살림을 먼저 만들면 안 된다(없는 세션의 삭제가 빈 디렉토리를 남긴다)
     removeSession: (pkg, slot) => fs.rmSync(sessionPath(pkg, slot), { recursive: true, force: true }),
 
-    harnessQuery: (pkg, verb) => {
-      const r = harnessVerb(getLedger(), pkg, verb);
+    harnessQuery: (pkg, verb, variant) => {
+      const r = harnessVerb(getLedger(), pkg, verb, variant);
       let value: unknown;
       try {
         value = JSON.parse(r.out);
@@ -969,12 +975,16 @@ export const WIRE_ROUTES: WireRoute[] = [
       const b = await readBody(req);
       const agent = String(b.agent ?? "").trim();
       const param = String(b.param ?? "").trim();
-      if (agent && !(loadManifest(ledger.packages[pkg].path).agents ?? []).some((a) => a.name === agent)) {
+      // 작업 사본 위 세션(additive) — 고친 판을 적용 전에 써보는 대화. 에이전트 판정도 그 나무에서
+      const draft = b.draft === true;
+      const tree = draft ? path.join(packagesPath(), pkg) : ledger.packages[pkg].path;
+      if (draft && !fs.existsSync(tree)) throw new WireError(400, "E_NO_DRAFT", `작업 사본 없는 패키지: ${pkg}`);
+      if (agent && !(loadManifest(tree).agents ?? []).some((a) => a.name === agent)) {
         throw new WireError(400, "E_BAD_AGENT", `agents[] 선언 밖 에이전트: ${agent}`);
       }
       if (param && !agent) throw new WireError(400, "E_BAD_PARAM", "param 은 agent 없이 설 수 없다");
       if (param.length > 256) throw new WireError(400, "E_BAD_PARAM", "param 이 너무 길다(≤256)");
-      const id = await io.createSession(pkg, { ...(agent ? { agent } : {}), ...(param ? { param } : {}) });
+      const id = await io.createSession(pkg, { ...(agent ? { agent } : {}), ...(param ? { param } : {}), ...(draft ? { draft: true } : {}) });
       json(res, 200, { session: id });
     },
   },
@@ -1121,14 +1131,20 @@ export const WIRE_ROUTES: WireRoute[] = [
     methods: ["GET"],
     scope: "base",
     pattern: /^\/harness\/(info|models|commands)$/,
-    handler: async ({ deps, io, res, pkg, m }) => {
+    handler: async ({ deps, io, url, res, pkg, m }) => {
       const rec = requirePkg(deps.getLedger(), pkg);
       const man = loadManifest(rec.path);
       // capability 미선언(하네스 미동봉) 동사 호출은 404 + 봉투(§3-8) — 코드는 기판 소유 어휘.
       // 선언(BOM)의 판정은 이 파일이 쥔다 — 이음새는 "무엇이 답인가"만 답한다
       if (!activeHarness(man, rec.harness)) throw new WireError(404, "E_NO_HARNESS", `하네스 미동봉 패키지: ${pkg}`);
       const verb = m[1] as "info" | "models" | "commands";
-      const r = await io.harnessQuery(pkg, verb);
+      // models 만 `?variant=` 로 활성 아닌 선언 변형의 카탈로그를 묻는다(§5.5-29) — 모델 피커가
+      // 공급자에 호버했을 때 전환 없이 그 목록을 보여주는 자리. 선언 밖 이름은 요청 결함.
+      const variant = verb === "models" ? (url.searchParams.get("variant") || undefined) : undefined;
+      if (variant && !(man.harness?.variants ?? []).some((v) => v.name === variant)) {
+        throw new WireError(400, "E_BAD_REQUEST", `미선언 하네스: ${variant}`);
+      }
+      const r = await io.harnessQuery(pkg, verb, variant);
       if (verb === "commands") {
         // 패키지 커맨드 + 하네스 네이티브 커맨드의 병합 — 병합은 기판 몫(§5.5-29)
         const fromHarness = Array.isArray(r.value) ? r.value : [];

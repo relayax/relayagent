@@ -86,6 +86,9 @@ type InjectedCoords = {
   /** base 가 명시 주입됐는가 — 자동 마운트 게이트의 판정 근거. 미주입 문서에서 마운트 문법을
    *  조립하는 대신 마운트를 포기해야 하므로(§2-6) "부재"와 "빈 문자열 주입"을 구분한다. */
   declared: boolean;
+  /** 이 문서는 작업 사본의 문(/draft/…)이다 — 세션을 작업 사본 위에 민팅하고, 설치본 대화와
+   *  섞지 않는다(마지막 세션 기억·이어받기·목록 전부 별도) */
+  draft: boolean;
 };
 
 /** 좌표 주입 2형(§2-6): ① 전역 __RELAY_CONTEXT.{base,root,baseFor,viewFor} — 기판이 서빙
@@ -99,7 +102,7 @@ export function injectedCoords(): InjectedCoords {
   const root = typeof c.root === "string" ? c.root : attrEl?.getAttribute("data-relay-root") ?? base;
   const baseFor = typeof c.baseFor === "function" ? c.baseFor : null;
   const viewFor = typeof c.viewFor === "function" ? c.viewFor : null;
-  return { base, root, baseFor, viewFor, declared: typeof c.base === "string" || attrEl != null };
+  return { base, root, baseFor, viewFor, declared: typeof c.base === "string" || attrEl != null, draft: c.draft === true };
 }
 
 /** desk 뷰 iframe 의 주소. 주입(viewFor)이 없으면 null — 클라이언트가 /i/<id>·/pkg/<pkg> 류
@@ -217,7 +220,7 @@ function wireSessionOf(ctx: RelayCtx): string | null {
   return wireSessionForId(ctx.conversationId);
 }
 
-const lastSessionKey = (instanceId: string) => "relay-chat-last-session:" + (instanceId || "default");
+const lastSessionKey = (instanceId: string) => "relay-chat-last-session:" + (instanceId || "default") + (injectedCoords().draft ? "@draft" : "");
 function rememberLastSession(instanceId: string, session: string): void {
   try { localStorage.setItem(lastSessionKey(instanceId), session); } catch { /* quota */ }
 }
@@ -268,7 +271,8 @@ async function resolveBoundSeed(ctx: RelayCtx): Promise<string | null> {
   if (!bind.agent || bind.sibling) return null;
   const r = await wireOf(ctx).session.list();
   if (isError(r)) return null;
-  const hit = (r.sessions ?? []).find((s) => !s.archived && (s.agent ?? "") === bind.agent && (s.param ?? "") === bind.param);
+  const draft = injectedCoords().draft;
+  const hit = (r.sessions ?? []).find((s) => !s.archived && !!s.draft === draft && (s.agent ?? "") === bind.agent && (s.param ?? "") === bind.param);
   if (!hit) return null;
   return adoptMinted(ctx, id, hit.session).session;
 }
@@ -285,9 +289,11 @@ export async function ensureWireSession(ctx: RelayCtx): Promise<Result<{ session
   const adopted = await resolveBoundSeed(ctx);
   if (adopted != null) return { session: adopted };
   const bind = displayBinding(id);
-  const r = await wireOf(ctx).session.create(
-    bind.agent ? { agent: bind.agent, ...(bind.param ? { param: bind.param } : {}) } : undefined,
-  );
+  const draft = injectedCoords().draft;
+  const r = await wireOf(ctx).session.create({
+    ...(bind.agent ? { agent: bind.agent, ...(bind.param ? { param: bind.param } : {}) } : {}),
+    ...(draft ? { draft: true } : {}),
+  });
   if (isError(r)) return r;
   const real = typeof r.session === "string" ? r.session : "";
   if (!real) return { error: { code: "E_NO_SESSION", message: "세션 발급 응답에 session 이 없습니다" } };
@@ -527,8 +533,10 @@ export async function loadConversationsOf(instanceId: string, _principal: string
   if (base == null) return { conversations: [] };
   const r = await transportFor(base, injectedCoords().root || base).session.list();
   if (isError(r)) return { conversations: [] };
+  // 작업 사본의 문에서는 작업 사본 세션만, 설치본의 문에서는 설치본 세션만 — 두 판의 대화를 섞지 않는다
+  const onDraft = injectedCoords().draft;
   const conversations: ConversationRow[] = (Array.isArray(r.sessions) ? r.sessions : [])
-    .filter((s) => s && typeof s.session === "string" && s.session)
+    .filter((s) => s && typeof s.session === "string" && s.session && !!s.draft === onDraft)
     .map((s) => {
       if (typeof s.agent === "string" && s.agent) {
         _convAgent.set(s.session, { agent: s.agent, param: typeof s.param === "string" ? s.param : "" });
@@ -785,15 +793,40 @@ export async function loadModelOptions(): Promise<ModelOption[]> {
   if (!(await capsFor(base, root)).has("harness-models")) return _modelOptions;
   const r = await transportFor(base, root).harness.models();
   if (isError(r)) return _modelOptions;
-  const ids = (Array.isArray(r.value) ? r.value : []).filter((v): v is string => typeof v === "string" && isModelId(v));
+  const curated = curateModels(r.value);
+  if (curated.length > 0) _modelOptions = curated;
+  return _modelOptions;
+}
+
+/** 카탈로그 → 피커 항목(가족별 최신 1개). 서버가 최신순 정렬 — 가족별 첫 행이 최신. */
+function curateModels(value: unknown): ModelOption[] {
+  const ids = (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string" && isModelId(v));
   const byFamily = new Map<string, ModelOption>();
-  for (const id of ids) { // 서버가 최신순 정렬 — 가족별 첫 행이 최신
+  for (const id of ids) {
     const fam = familyOf(id);
     if (!fam || byFamily.has(fam)) continue;
     byFamily.set(fam, { id, label: labelOf(id) });
   }
-  if (byFamily.size > 0) _modelOptions = [...byFamily.values()];
-  return _modelOptions;
+  return [...byFamily.values()];
+}
+
+// 변형별 카탈로그 — 피커가 공급자에 호버만 해도 그 모델 목록을 보여주는 자리. 활성 하네스의
+// 정적 폴백(_modelOptions)과 섞지 않는다: 다른 하네스의 목록에 claude 폴백이 끼면 거짓말이다.
+const _optionsByVariant = new Map<string, ModelOption[]>();
+/** 선언 변형의 모델 카탈로그(`?variant=`, §5.5-29). null = 미도달(capability 없음·오류·빈 답). */
+export async function loadModelOptionsFor(variant: string): Promise<ModelOption[] | null> {
+  const hit = _optionsByVariant.get(variant);
+  if (hit) return hit;
+  const g = getCtx();
+  const base = baseOf(g);
+  const root = rootOf(g);
+  if (!(await capsFor(base, root)).has("harness-models")) return null;
+  const r = await transportFor(base, root).harness.models(variant);
+  if (isError(r)) return null;
+  const curated = curateModels(r.value);
+  if (curated.length === 0) return null;
+  _optionsByVariant.set(variant, curated);
+  return curated;
 }
 
 // contextWindowFor — 컨텍스트 미터의 분모(토큰) 휴리스틱 폴백. 구 카탈로그(max_input_tokens)
@@ -871,6 +904,20 @@ export async function setHarnessVariant(
   invalidateCaps();
   _modelOptions = MODEL_OPTIONS;
   return { ok: true, ready: r.ready ?? null };
+}
+
+/** 전환 + 모델 지정을 한 요청으로(§5.5-30/30-a) — 다른 공급자의 모델 줄을 바로 고른 경우.
+ *  두 요청으로 나누면 전환 뒤 첫 요청이 오버라이드를 지운 채 턴이 낄 수 있다. */
+export async function setHarnessAndModel(
+  ctx: RelayCtx,
+  harness: string,
+  model: string,
+): Promise<{ ok: boolean; known: boolean | null; ready: { ok: boolean; note: string } | null }> {
+  const r = await wireOf(ctx).harness.set({ harness, model: model || "" });
+  if (isError(r)) return { ok: false, known: null, ready: null };
+  invalidateCaps();
+  _modelOptions = MODEL_OPTIONS;
+  return { ok: true, known: r.known ?? null, ready: r.ready ?? null };
 }
 
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {

@@ -285,6 +285,8 @@ interface ViewMount {
   base: string;
   /** __RELAY_CONTEXT.base — 대화 위젯이 지나는 API 접두사. null 이면 주입하지 않는다 */
   api: string | null;
+  /** 작업 사본의 문 — 위젯이 세션을 작업 사본 위에 민팅한다(__RELAY_CONTEXT.draft) */
+  draft?: boolean;
   imports: Record<string, string>;
   fav: string;
   /** 접두사 판정이 실패했을 때 화면이 내미는 처방 */
@@ -378,19 +380,8 @@ export function serveView(ledger: Ledger, pkg: string, rest: string, res: http.S
     // GUI 에서 카드를 눌러도 쓸 길이 없는 막다른 골목을 없애는 폴백이다.
     // 판정은 착지 에이전트의 실재다: "대화할 상대가 있는가" 를 별도 선언이 아니라 agents[] 가 답한다
     if (landingAgentName(m)) {
-      const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-      const fav = pkgIconHref(pkg, m);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return void res.end(injectShell(`<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="${esc(fav)}">
-<title>${esc(m.display_name ?? pkg)}</title>
-<link rel="stylesheet" href="/assets/chat-app.css">
-<style>html,body{height:100%;margin:0;background:#f5f6f7}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
-</head><body><div id="chat"></div>
-<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + encodeURIComponent(pkg))},root:"",instanceId:${JSON.stringify(pkg)}};window.RELAY_CHAT_MANUAL=1;</script>
-<script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
-</body></html>`));
+      return void res.end(chatFallbackDoc(pkg, m, "/pkg/" + encodeURIComponent(pkg), pkgIconHref(pkg, m), false));
     }
     return void json(res, 404, { error: `view 표면 없는 패키지: ${pkg}` });
   }
@@ -438,7 +429,13 @@ export function serveDraftView(ledger: Ledger, pkg: string, pkgRoot: string, res
   }
   const view = m.surfaces?.view;
   if (!view) {
-    return void fault(F, res, 404, "화면이 선언되지 않았습니다", "surfaces.view 를 선언하면 이 자리에 작업 사본의 화면이 뜹니다. 화면 없는 패키지의 미리보기는 대화가 맡습니다.");
+    // 화면 없는 대화형 패키지 — 작업 사본 위 대화가 곧 미리보기다. 문(API)은 도는 판의 것이라
+    // 설치된 적 없는 초안은 아직 말할 상대가 없다
+    if (landingAgentName(m) && ledger.packages[pkg]) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      return void res.end(chatFallbackDoc(pkg, m, "/pkg/" + encodeURIComponent(pkg), draftIconHref(pkg, m), true));
+    }
+    return void fault(F, res, 404, "화면이 선언되지 않았습니다", "surfaces.view 를 선언하면 이 자리에 작업 사본의 화면이 뜹니다. 화면 없는 패키지의 미리보기는 대화가 맡습니다 — 한 번 적용한 뒤부터.");
   }
   const root = path.normalize(path.join(pkgRoot, view.source, view.out ?? ""));
   if (view.out && !fs.existsSync(root)) {
@@ -455,6 +452,7 @@ export function serveDraftView(ledger: Ledger, pkg: string, pkgRoot: string, res
     // 도는 판이 있으면 그 API 를 쓴다(대화·업로드가 갈 곳은 거기뿐이다). 없으면 주입하지
     // 않는다 — 없는 문을 가리키는 좌표를 심으면 위젯이 조용히 죽는다
     api: ledger.packages[pkg] ? `/pkg/${encodeURIComponent(pkg)}` : null,
+    draft: true,
     imports,
     fav: draftIconHref(pkg, m),
     rebuild: `스튜디오의 [미리보기 굽기]`,
@@ -532,8 +530,24 @@ function componentImportMapTag(imports: Record<string, string>): string {
   return `<script type="importmap">${body}</script>`;
 }
 
-function viewContextTag(pkg: string, api: string): string {
-  return `<script>window.__RELAY_CONTEXT={base:${JSON.stringify(api)},root:"",instanceId:${JSON.stringify(pkg)}};</script>`;
+function viewContextTag(pkg: string, api: string, draft = false): string {
+  return `<script>window.__RELAY_CONTEXT={base:${JSON.stringify(api)},root:"",instanceId:${JSON.stringify(pkg)}${draft ? ",draft:true" : ""}};</script>`;
+}
+
+/** 화면 없는 대화형 패키지의 기본 대화 문서 — 위젯만 얹은 한 장. 설치본(/pkg)과 작업 사본(/draft)
+ *  두 문이 같은 장을 낸다; draft 면 위젯이 세션을 작업 사본 위에 민팅한다 */
+function chatFallbackDoc(pkg: string, m: Manifest, api: string, fav: string, draft: boolean): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  return injectShell(`<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="${esc(fav)}">
+<title>${esc(m.display_name ?? pkg)}${draft ? " · 고친 판" : ""}</title>
+<link rel="stylesheet" href="/assets/chat-app.css">
+<style>html,body{height:100%;margin:0;background:#f5f6f7}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
+</head><body><div id="chat"></div>
+${viewContextTag(pkg, api, draft)}<script>window.RELAY_CHAT_MANUAL=1;</script>
+<script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
+</body></html>`);
 }
 
 // 패키지 대표 아이콘의 서빙 주소 — 카드 아바타와 탭 favicon 이 같은 그림(manifest icon)을 본다
@@ -624,7 +638,7 @@ function serveViewFile(file: string, mount: ViewMount, res: http.ServerResponse)
   // 없다" 가 구조적으로 불가능하다. 미리보기 프레임에도 그대로 심는다 — 셸 스크립트가 top
   // 문서가 아니면 스스로 물러나므로(shell.ts 자가억제) iframe 안에서는 아무 일도 하지 않고,
   // 미리보기를 새 창으로 띄운 경우에는 크롬이 있는 편이 맞다
-  const ctxTag = mount.api ? viewContextTag(pkg, mount.api) : "";
+  const ctxTag = mount.api ? viewContextTag(pkg, mount.api, !!mount.draft) : "";
   res.end(injectShell(html.slice(0, at) + ctxTag + componentImportMapTag(imports) + iconTag + html.slice(at)));
 }
 

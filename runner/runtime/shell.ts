@@ -266,24 +266,48 @@ var ICONS = {
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
   draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
   edit: '<path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M10 4l2 2"/>',
-  fold: '<path d="M6 3.5 2.5 8 6 12.5M13 8H3"/>',
-  unfold: '<path d="M10 3.5 13.5 8 10 12.5M3 8h10"/>'
+  more: '<circle cx="3.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+  fold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M11.5 6.5 10 8l1.5 1.5"/>',
+  unfold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M9.5 6.5 11 8l-1.5 1.5"/>'
 };
 function svg(d, cls){ return '<svg class="' + (cls||"") + '" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">' + d + '</svg>'; }
+// 홈 예시 — [칩 이름, 상자에 들어갈 문장]. 묶음 단위로 ↻ 가 돌린다
+var EXAMPLES = [
+  [["아침 요약 알림", "매일 아침 9시에 오늘 일정과 할 일을 요약해서 알려주는 비서"],
+   ["슬랙 답변 봇", "슬랙 채널에 질문이 오면 사내 문서를 찾아 답해주는 비서"],
+   ["가계부", "지출을 적으면 월별 합계와 그래프를 보여주는 가계부"],
+   ["문의 접수 폼", "고객 문의를 받는 폼 화면. 접수되면 나에게 알려주는 비서"]],
+  [["메모 정리", "적어둔 메모를 매주 주제별로 정리해주는 비서"],
+   ["뉴스 브리핑", "관심 키워드의 뉴스를 매일 저녁 모아서 짧게 브리핑해주는 비서"],
+   ["독서 기록", "읽은 책과 감상을 기록하고 검색할 수 있는 화면"],
+   ["회의록 정리", "회의 녹취 텍스트를 넣으면 결정 사항과 할 일로 정리해주는 비서"]],
+  [["습관 체크", "매일 저녁 오늘의 습관 체크를 물어보고 주간 달성률을 보여주는 비서"],
+   ["번역 도우미", "붙여넣은 글을 자연스러운 한국어·영어로 번역해주는 비서"],
+   ["일정 비서", "캘린더를 보고 회의 전에 준비할 것을 미리 알려주는 비서"],
+   ["미니 게임", "간단한 퀴즈 게임 화면"]]
+];
+var exPage = 0;
 function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
 var home = document.getElementById("relay-home");
 
+// 사이드바 행 메뉴 — 한 번에 하나만 열리고, 바깥 클릭·Esc 로 닫힌다
+function closeMenus(){ var o = document.querySelectorAll("#rlys .rw.op"); for (var i = 0; i < o.length; i++) o[i].classList.remove("op"); }
+function toggleMenu(row){ var was = row.classList.contains("op"); closeMenus(); if (!was) row.classList.add("op"); }
+document.addEventListener("click", function(ev){ if (!(ev.target && ev.target.closest && ev.target.closest("#rlys .rw.op"))) closeMenus(); });
+document.addEventListener("keydown", function(ev){ if (ev.key === "Escape") closeMenus(); });
+
 var css = [
 ':root{--relay-side:' + (collapsed ? RAIL : W) + 'px;--relay-accent:#0f766e;--relay-accent-deep:#115e59;--relay-accent-soft:rgba(13,148,136,.1)}',
+'#rlys.hid{display:none}',
 'body{margin-left:var(--relay-side);transition:margin-left .16s ease}',
-'#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fff;border-right:1px solid #e6e9ec;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
+'#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#f4f7f6;border-right:1px solid #e3e8e6;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
 '#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
 '#rlys .hd img{height:22px;width:auto;max-width:150px;object-fit:contain;display:block;flex:none}',
 '#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
 '#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
-'#rlys .hd .fold:hover{background:#eef0f2;color:#5c6570}',
+'#rlys .hd .fold:hover{background:#e6ece9;color:#5c6570}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
 '#rlys .lb{font-size:11px;font-weight:700;color:#98a1aa;text-transform:uppercase;letter-spacing:.04em;padding:12px 10px 6px;white-space:nowrap}',
 '#rlys .gp{display:flex;flex-direction:column;gap:1px}',
@@ -293,21 +317,27 @@ var css = [
 '#rlys .it.mk:hover{background:#0f766e}',
 '#rlys .it.mk .ic{color:#fff}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
-'#rlys .it:hover{background:#eef0f2}',
+'#rlys .it:hover{background:#e6ece9}',
 '#rlys .it.on{background:var(--relay-accent-soft);color:var(--relay-accent-deep);font-weight:600}',
 '#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#5c6570;border-radius:5px;overflow:hidden}',
 '#rlys .it.on .ic{color:var(--relay-accent)}',
 '#rlys .it .ic svg{width:15px;height:15px}',
 '#rlys .it .ic img{width:18px;height:18px;border-radius:4px;object-fit:cover;display:block}',
-'#rlys .it .ic.ltr{background:#eef0f2;font:700 11px inherit;color:#5c6570}',
+'#rlys .it .ic.ltr{background:#e3e8e6;font:700 11px inherit;color:#5c6570}',
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .rw{position:relative;display:flex;align-items:center}',
-'#rlys .rw .mo{position:absolute;right:6px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border-radius:6px;color:#98a1aa;background:#eef0f2}',
-'#rlys .rw:hover .mo{display:inline-flex}',
-'#rlys .rw .mo:hover{background:#dfe3e7;color:#16181b}',
+'#rlys .rw .mo{position:absolute;right:6px;width:22px;height:22px;display:none;align-items:center;justify-content:center;border:0;padding:0;cursor:pointer;border-radius:6px;color:#98a1aa;background:#eef0f2}',
+'#rlys .rw:hover .mo,#rlys .rw.op .mo,#rlys .rw .mo:focus-visible{display:inline-flex}',
+'#rlys .rw .mo:hover,#rlys .rw.op .mo{background:#dfe3e7;color:#16181b}',
 '#rlys .rw .mo svg{width:13px;height:13px}',
-'#rlys .rw:hover .it .dt{display:none}',
+'#rlys .rw:hover .it .dt,#rlys .rw.op .it .dt{display:none}',
+'#rlys .rw .mn{display:none;position:absolute;right:6px;top:calc(100% - 2px);z-index:5;min-width:120px;padding:4px;background:#fff;border:1px solid #e6e9ec;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08)}',
+'#rlys .rw.op .mn{display:block}',
+'#rlys .rw .mn a{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:5px;font-size:12.5px;color:#16181b;text-decoration:none}',
+'#rlys .rw .mn a:hover{background:#eef0f2}',
+'#rlys .rw .mn a svg{width:13px;height:13px;color:#5c6570}',
+'#rlys.cl .rw .mo,#rlys.cl .rw .mn{display:none}',
 '#rlys .er{font-size:11.5px;color:#c0392b;padding:8px 10px;white-space:normal}',
 '#rlys .em{font-size:12px;color:#98a1aa;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
@@ -358,6 +388,10 @@ var css = [
 '#relay-home .af .fr{display:flex;align-items:center;justify-content:space-between;gap:8px}',
 '#relay-home .af .fr .ah{margin:0;font-size:12px;color:#98a1aa}',
 '#relay-home .af .bt{flex:none;padding:7px 14px;font-size:13px;border-radius:999px}',
+'#relay-home .ex{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:12px 0 0}',
+'#relay-home .xb{border:1px solid #e6e9ec;background:#fff;color:#5c6570;border-radius:999px;padding:5px 12px;font:12.5px inherit;cursor:pointer}',
+'#relay-home .xb:hover{border-color:var(--relay-accent);color:var(--relay-accent-deep)}',
+'#relay-home .xb.mo{padding:5px 9px;color:#98a1aa}',
 '#relay-home .op{display:flex;flex-direction:column;margin-top:14px;border-top:1px solid #e6e9ec}',
 '#relay-home .op a{display:flex;align-items:center;gap:10px;padding:10px 6px;border-bottom:1px solid #e6e9ec;color:#16181b;text-decoration:none;font-size:13.5px}',
 '#relay-home .op a:hover{background:#eef0f2}',
@@ -402,12 +436,26 @@ el.setAttribute("aria-label", "설치된 에이전트");
 if (collapsed) el.className = "cl";
 document.body.appendChild(el);
 
+// 보이는 상태(effective)와 사람의 선호(collapsed)를 가른다 — 패키지 수정 화면은 세 칸이라
+// 사이드바를 아예 숨겨 자리를 내주는데(relay:shell-fold {hide:true}, 화면이 자기 머리에
+// ← 뒤로 를 둔다), 그건 화면의 사정이지 사람의 선택이 아니다. 저장하지 않고, 떠나면 선호로 돌아간다.
+var effective = collapsed, hidden = false;
+function applyFold(v){
+  effective = v;
+  el.className = (v ? "cl" : "") + (hidden ? " hid" : "");
+  document.documentElement.style.setProperty("--relay-side", (hidden ? 0 : v ? RAIL : W) + "px");
+}
 function setCollapsed(v){
   collapsed = v;
-  el.className = v ? "cl" : "";
-  document.documentElement.style.setProperty("--relay-side", (v ? RAIL : W) + "px");
+  applyFold(v);
   try { localStorage.setItem(KEY, v ? "1" : "0"); } catch (e) {}
 }
+window.addEventListener("relay:shell-fold", function(ev){
+  var d = (ev && ev.detail) || {};
+  hidden = !!d.hide;
+  applyFold(d.on ? true : collapsed);
+  if (lastNav) renderSide(lastNav, lastErr);
+});
 
 // 지금 어느 패키지에 서 있는가 — 좌표는 기판이 주입한다(§2-6). 콘솔 위에서는 그 페이지가
 // 보고 있는 패키지(?p=)가 곧 현재 항목이다
@@ -446,7 +494,9 @@ function applyBrand(nav){
   if (b.name) document.title = document.title === "Relay" ? b.name : document.title;
 }
 
+var lastNav = null, lastErr = null;
 function renderSide(nav, err){
+  lastNav = nav; lastErr = err;
   var here = current();
   applyBrand(nav);
   el.textContent = "";
@@ -460,9 +510,9 @@ function renderSide(nav, err){
   var fold = document.createElement("button");
   fold.type = "button";
   fold.className = "fold";
-  fold.setAttribute("aria-label", collapsed ? "사이드바 펼치기" : "사이드바 접기");
-  fold.innerHTML = svg(collapsed ? ICONS.unfold : ICONS.fold);
-  fold.onclick = function(){ setCollapsed(!collapsed); renderSide(nav, err); };
+  fold.setAttribute("aria-label", effective ? "사이드바 펼치기" : "사이드바 접기");
+  fold.innerHTML = svg(effective ? ICONS.unfold : ICONS.fold);
+  fold.onclick = function(){ setCollapsed(!effective); renderSide(nav, err); };
   hd.appendChild(fold);
   el.appendChild(hd);
 
@@ -507,8 +557,9 @@ function renderSide(nav, err){
     for (var i = 0; i < nav.items.length; i++) {
       var it = nav.items[i];
       var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-      // 행은 패키지 화면으로, 오른쪽 끝 연필은 손보기(상세 화면)로 — 호버할 때만 나타난다.
-      // 장식 아이콘은 두지 않는다: 그 자리에 뭔가 보이면 사람은 누른다
+      // 행은 패키지 화면으로, 오른쪽 끝 ··· 은 행에 붙은 부가 동작 메뉴(손보기) — 호버할 때만 나타난다.
+      // 연필을 직접 두지 않는다: 이동하는 행에 "고치기"가 같은 줄로 붙으면 잘못 누르고, 뜻도 섞인다.
+      // Relay(ring 0)는 손볼 대상이 아니라 메뉴를 두지 않는다.
       var rw = document.createElement("div");
       rw.className = "rw";
       rw.appendChild(item(it.href, ic, it.label, {
@@ -517,14 +568,21 @@ function renderSide(nav, err){
         letter: !it.icon,
         title: it.pkg + (it.ring0 ? " · ring-0" : "") + " — " + FACE_KO[it.face]
       }));
-      if (!collapsed && it.href !== it.detail) {
-        var mo = document.createElement("a");
+      if (!effective && !it.ring0 && it.href !== it.detail) {
+        var mo = document.createElement("button");
+        mo.type = "button";
         mo.className = "mo";
-        mo.href = it.detail;
-        mo.title = it.label + " 손보기";
-        mo.setAttribute("aria-label", it.label + " 손보기");
-        mo.innerHTML = svg(ICONS.edit);
+        mo.title = it.label + " 더보기";
+        mo.setAttribute("aria-label", it.label + " 더보기");
+        mo.setAttribute("aria-haspopup", "menu");
+        mo.innerHTML = svg(ICONS.more);
+        var mn = document.createElement("div");
+        mn.className = "mn";
+        mn.setAttribute("role", "menu");
+        mn.innerHTML = '<a role="menuitem" href="' + esc(it.detail) + '">' + svg(ICONS.edit) + '손보기</a>';
+        mo.onclick = (function(row){ return function(ev){ ev.preventDefault(); ev.stopPropagation(); toggleMenu(row); }; })(rw);
         rw.appendChild(mo);
+        rw.appendChild(mn);
       }
       pk.appendChild(rw);
     }
@@ -557,8 +615,11 @@ function renderHome(nav, err){
     var ask = document.createElement("div");
     ask.className = "ask";
     ask.innerHTML = '<h2>무엇을 만들까요?</h2>' +
-      '<form class="af"><textarea maxlength="2000" rows="2" placeholder="만들고 싶은 비서를 적어 주세요. 예: 매일 저녁 하루를 정리해 일기로 남겨 주는 비서" aria-label="만들 것을 말로 설명"></textarea>' +
+      '<form class="af"><textarea maxlength="2000" rows="2" placeholder="만들고 싶은 비서를 적어 주세요." aria-label="만들 것을 말로 설명"></textarea>' +
       '<div class="fr"><p class="ah">적으면 빌더가 설계부터 적용까지 진행하고, 그 대화가 오른쪽에 열립니다.</p><button type="submit" class="bt ac">시작</button></div></form>' +
+      // 예시 칩 — 무엇을 적으면 되는지가 보인다. 누르면 상자에 문장이 들어가고(보내는 건 사람),
+      // ↻ 는 다른 묶음으로 돌린다. 문구는 EXAMPLES 하나에서 고친다.
+      '<div class="ex"></div>' +
       '<div class="op">' +
         '<a href="' + esc(nav.importer) + '">' + svg(ICONS.down) + '불러오기<span>누군가에게 받은 에이전트 파일을 엽니다</span><i>›</i></a>' +
         (nav.store ? '<a href="' + esc(nav.store) + '">' + svg(ICONS.store) + '스토어에서 담기<span>만들어진 에이전트를 골라 설치합니다</span><i>›</i></a>' : "") +
@@ -566,6 +627,22 @@ function renderHome(nav, err){
     var af = ask.querySelector("form");
     var ai = ask.querySelector("textarea");
     if (typed) ai.value = typed;
+    var exEl = ask.querySelector(".ex");
+    function renderEx(){
+      exEl.textContent = "";
+      var set = EXAMPLES[exPage % EXAMPLES.length];
+      for (var x = 0; x < set.length; x++) (function(e){
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "xb"; b.textContent = e[0]; b.title = e[1];
+        b.onclick = function(){ ai.value = e[1]; ai.focus(); try { ai.setSelectionRange(ai.value.length, ai.value.length); } catch (er) {} };
+        exEl.appendChild(b);
+      })(set[x]);
+      var more = document.createElement("button");
+      more.type = "button"; more.className = "xb mo"; more.textContent = "↻"; more.title = "다른 예시"; more.setAttribute("aria-label", "다른 예시");
+      more.onclick = function(){ exPage++; renderEx(); };
+      exEl.appendChild(more);
+    }
+    renderEx();
     af.onsubmit = function(ev){
       ev.preventDefault();
       var text = (ai.value || "").trim();

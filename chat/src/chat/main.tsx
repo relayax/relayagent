@@ -103,8 +103,13 @@ const FLOAT_CSS = `
 .rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;font-size:22px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
 .rc-float-fab:hover{background:var(--rc-accent-strong,#115e59)}
 .rc-float-dock.open .rc-float-fab{display:none}
-.rc-float-panel{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);box-shadow:-10px 0 36px rgba(0,0,0,.10);display:none;flex-direction:column;overflow:hidden}
+.rc-float-panel{position:fixed;top:var(--rc-dock-top,0px);right:0;bottom:0;width:var(--rc-dock-w,380px);max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);display:none;flex-direction:column;overflow:hidden}
 .rc-float-dock.open .rc-float-panel{display:flex}
+.rc-float-grip{position:fixed;top:var(--rc-dock-top,0px);bottom:0;right:calc(var(--rc-dock-w,380px) - 4px);width:8px;cursor:col-resize;z-index:2147483001;display:none}
+.rc-float-dock.open .rc-float-grip{display:block}
+.rc-float-grip:hover,.rc-float-grip.on{background:rgba(13,148,136,.25)}
+body.rc-resizing{cursor:col-resize;user-select:none}
+body.rc-resizing iframe{pointer-events:none}
 `;
 
 function autoFloat() {
@@ -136,13 +141,20 @@ function autoFloat() {
   // 도킹은 겹침이 아니라 **공간 예약**이다 — 열면 body 폭을 줄여 화면이 나란히 앉는다(org
   // 기판의 도킹 계약과 같은 결: 화면이 body 기준 폭(w-full/100%)이면 자연히 함께 줄어든다).
   // fixed 오버레이만 있으면 전폭 화면 위에 패널이 떠서 내용을 가린다 — 실사용 보고의 답.
-  const PANEL_W = 440;
+  // 패널 폭 — 왼쪽 가장자리를 끌어 조절하고 기억한다(relay-dock-w). 기본 380.
+  const DOCK_KEY = "relay-dock-w";
+  const MIN_W = 300, MAX_W = 720;
+  let PANEL_W = 380;
+  try { const v = Number(localStorage.getItem(DOCK_KEY)); if (v >= MIN_W && v <= MAX_W) PANEL_W = v; } catch { /* 무시 */ }
+  document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
   const prevBodyWidth = document.body.style.width;
   const prevBodyTransition = document.body.style.transition;
-  const reserve = (v: boolean) => {
+  const reserve = (v: boolean, animate = true) => {
     if (v && window.innerWidth > PANEL_W * 2) {
-      document.body.style.transition = "width .18s ease";
-      document.body.style.width = `calc(100% - ${PANEL_W}px)`;
+      document.body.style.transition = animate ? "width .18s ease" : "none";
+      // body 의 margin-left(전역 사이드바가 :root --relay-side 로 민 폭)까지 빼야 나란히 선다 —
+      // width 는 내용 폭이라 margin 을 모른 채 100% 를 재면 그만큼 패널 밑으로 들어간다
+      document.body.style.width = `calc(100% - ${PANEL_W}px - var(--relay-side, 0px))`;
     } else {
       document.body.style.width = prevBodyWidth;
       document.body.style.transition = prevBodyTransition;
@@ -173,6 +185,9 @@ function autoFloat() {
     opened = v;
     dock.classList.toggle("open", v);
     reserve(v);
+    // 페이지가 읽는 값 — 열린 도크의 폭(닫히면 0). 패키지 화면의 탑바가 이만큼 오른쪽으로 더 뻗어
+    // 도크 위를 덮는다(도크는 페이지가 준 --rc-dock-top 아래에서 시작한다)
+    document.documentElement.style.setProperty("--rc-dock-open-w", v ? PANEL_W + "px" : "0px");
     if (v && pendingScope && handle) {
       const req = pendingScope;
       pendingScope = null;
@@ -182,6 +197,34 @@ function autoFloat() {
   fab.addEventListener("click", () => {
     ensureMounted();
     setOpen(!opened);
+  });
+
+  // ── 폭 조절 — 패널 왼쪽 가장자리 드래그. 패널 **밖**(dock)에 둔다: 위젯의 React 루트가
+  // 패널 안을 통째로 소유해 첫 렌더에 기존 자식을 지우기 때문이다
+  const grip = document.createElement("div");
+  grip.className = "rc-float-grip";
+  grip.title = "끌어서 폭 조절";
+  dock.appendChild(grip);
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("on");
+    document.body.classList.add("rc-resizing");
+    const move = (ev: PointerEvent) => {
+      PANEL_W = Math.min(MAX_W, Math.max(MIN_W, Math.round(window.innerWidth - ev.clientX)));
+      document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
+      document.documentElement.style.setProperty("--rc-dock-open-w", PANEL_W + "px");
+      reserve(true, false);
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.classList.remove("on");
+      document.body.classList.remove("rc-resizing");
+      try { localStorage.setItem(DOCK_KEY, String(PANEL_W)); } catch { /* 무시 */ }
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
   });
 
   // ── prefill/send 중계(view-bridge §4-9·10) — 크롬은 React 위젯의 마운트 타이밍을 모른다:

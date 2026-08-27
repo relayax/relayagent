@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, loadLedger, saveLedger, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
+import { API_URL, RELAY_HOME, loadLedger, saveLedger, packagesPath, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { spawnEntry, spawnEntrySync } from "../spawn.ts";
 // 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
@@ -728,12 +728,50 @@ function stageDiffFiles(stage: string, before: Map<string, number>): { path: str
   return out;
 }
 
+/**
+ * 이 세션이 서는 나무 — 작업 사본 위 세션이면 draft 트리, 아니면 설치본(fallback).
+ * 슬롯의 `draft` 마커가 판정이다(wire 가 민팅 때 심는다, SessionBinding.draft). 고친 에이전트를
+ * 적용 전에 써보는 자리: 페르소나·스킬·커맨드·동사가 전부 작업 사본에서 온다. 장부·도는 판은
+ * 그대로다. 마커가 있어도 작업 사본이 없으면(버렸다) 설치본으로 — 없는 나무 위에 세우지 않는다
+ */
+export function sessionTreeOf(pkg: string, slot: string | null | undefined, fallback: string): string {
+  if (!slot) return fallback;
+  if (!fs.existsSync(path.join(sessionPath(pkg, slot), "draft"))) return fallback;
+  const tree = path.join(packagesPath(), pkg);
+  return fs.existsSync(tree) ? tree : fallback;
+}
+
+/** 번들 재료(페르소나·스킬·커맨드)의 지문 — 파일 mtime·size 를 훑는다. 내용이 바뀌면 값이 달라져
+ *  상주가 은퇴하고 새 글로 다시 선다. 서브에이전트 페르소나까지 포함(dispatch). */
+function bundleSourceSig(tree: string, m: Manifest, agent: string): string {
+  const decl = (m.agents ?? []).find((a) => a.name === agent);
+  if (!decl) return "";
+  const h = crypto.createHash("sha256");
+  const stamp = (rel: string | undefined) => {
+    if (!rel) return;
+    const abs = path.join(tree, rel);
+    const walk = (p: string) => {
+      let st: fs.Stats;
+      try { st = fs.statSync(p); } catch { return; }
+      if (st.isDirectory()) { for (const e of fs.readdirSync(p).sort()) walk(path.join(p, e)); return; }
+      h.update(p + "\u0000" + st.mtimeMs + "\u0000" + st.size + "\u0000");
+    };
+    walk(abs);
+  };
+  stamp(decl.persona);
+  stamp(decl.skills);
+  stamp(decl.commands);
+  for (const sub of decl.dispatch ?? []) stamp((m.agents ?? []).find((a) => a.name === sub)?.persona);
+  return h.digest("hex").slice(0, 16);
+}
+
 export async function runSession(input: SessionInput): Promise<SessionResult> {
   const rec = input.ledger.packages[input.pkg];
   if (!rec) throw new Error(`미설치 패키지: ${input.pkg}`);
   const authority = input.authority ?? localAuthority(() => input.ledger);
   const io = input.io ?? localSessionIO(() => input.ledger);
-  const m = loadManifest(rec.path);
+  const tree = sessionTreeOf(input.pkg, input.slot, rec.path);
+  const m = loadManifest(tree);
   // 대화의 에이전트 정체성 — 명시 > 슬롯의 agent 메타(위임 세션이 심는다) > 착지.
   // 메타가 없으면 착지로 가는 종전 동작 그대로다. 메타는 선언 검증을 거친다: 임의 문자열이
   // 에이전트 행세를 하면 composeBundle 이 기본 페르소나로 조용히 강등된다(fail-loud 위반).
@@ -772,8 +810,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 인수인계 판정은 번들 조립보다 앞이어야 한다 — 회전(번들 삭제)이 조립 뒤에 오면
   // 이 턴이 방금 조립된 번들을 지우고, 앞에 오면 조립이 빈 자리를 새로 채운다
   const handoff = harnessHandoff(io, input.pkg, slot, variant.name);
-  const bundle = composeBundle(io, rec.path, m, agent, slot, input.pkg, token, { cwd: workdir, stage });
-  const entry = path.join(rec.path, variant.source, variant.entry);
+  const bundle = composeBundle(io, tree, m, agent, slot, input.pkg, token, { cwd: workdir, stage });
+  const entry = path.join(tree, variant.source, variant.entry);
 
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
@@ -803,8 +841,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   // 상주 지문: 이 값이 달라지면 낡은 상주를 은퇴시키고 새로 편다.
   // 자격은 값 대신 해시로 — 지문이 로그에 실려도 비밀이 새지 않는다
   const cred = variant.llm?.auth?.env ? env[variant.llm.auth.env] ?? "" : "";
+  // 페르소나·스킬·커맨드의 지문도 넣는다 — 이것이 빠지면 에이전트 글을 고쳐도 상주가 옛 번들을
+  // 계속 들고 돈다(고쳐도 안 먹는 침묵 실패). 파일 mtime·size 로 싸게 잰다(내용 읽기 없이).
+  const personaSig = bundleSourceSig(tree, m, agent);
   const fp = crypto.createHash("sha256")
-    .update([rec.path, agent, variant.name, rec.model ?? "", rec.effort ?? "", cred].join("\u0000"))
+    .update([tree, agent, variant.name, rec.model ?? "", rec.effort ?? "", cred, personaSig].join("\u0000"))
     .digest("hex").slice(0, 16);
   const resident = !input.interactive && residentsEnabled && harnessServes(entry, env);
 

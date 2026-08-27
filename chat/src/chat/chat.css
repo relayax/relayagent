@@ -192,6 +192,7 @@
 }
 .rc-empty-ic { font-size: 24px; color: var(--rc-accent); opacity: 0.75; }
 .rc-empty-t { font-size: 14px; font-weight: 500; color: var(--rc-soft); }
+.rc-empty-h { font-size: 12.5px; line-height: 1.55; color: var(--rc-faint); max-width: 300px; }
 .rc-starter { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 2px; max-width: 340px; }
 .rc-starter-chip {
   border: 1px solid var(--rc-line); background: var(--rc-bg); border-radius: 999px;
@@ -487,12 +488,26 @@
 .rc-file-dl { flex: 0 0 auto; color: var(--rc-accent); font-weight: 700; }
 
 /* ── composer ────────────────────────────────────────────────────────────── */
+/* 컴포저 — 구분선·바탕 띠 없음. 모든 도구가 입력 카드 하나에 들어왔으니(2026-08-26) 카드가 로그 위에
+   떠 있으면 된다: 띠와 선은 카드 밖에 도구가 흩어져 있던 때의 것. */
 .rc-composer {
   position: relative;
   flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px;
-  padding: 12px 14px; border-top: 1px solid var(--rc-line); background: var(--rc-bg);
+  padding: 6px 14px 14px; background: transparent;
 }
-.rc-composer-row { display: flex; align-items: flex-end; gap: 8px; }
+/* 입력 카드 — 글칸과 도구 줄이 한 테두리 안에 산다(입력은 테두리 없음, 카드가 포커스 링을 진다).
+   떠 있는 카드: 옅은 테두리 + 부드러운 그림자. 포커스에도 그림자는 유지하고 링만 더한다. */
+.rc-box {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px;
+  border: 1px solid var(--rc-line); border-radius: 16px; background: var(--rc-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04); cursor: text;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.rc-box:focus-within {
+  border-color: var(--rc-accent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 3px rgba(13, 148, 136, 0.12);
+}
+.rc-box-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; row-gap: 6px; cursor: default; }
 
 /* slash-command picker */
 .rc-slash {
@@ -511,49 +526,18 @@
 .rc-slash-nm { font-size: 13px; font-weight: 600; font-family: var(--rc-mono); color: var(--rc-accent); }
 .rc-slash-desc { font-size: 12px; color: var(--rc-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* composer-foot — Effort 슬라이더 · Model 드롭다운 · 컨텍스트 미터 */
-.rc-composer-foot { display: flex; align-items: center; gap: 8px; }
-.rc-effort { display: inline-flex; align-items: center; gap: 7px; color: var(--rc-faint); }
-.rc-effort-ic { flex: none; opacity: 0.75; }
-.rc-effort-lb { font: 11px/1 var(--rc-sans); color: var(--rc-faint); white-space: nowrap; }
-.rc-effort-val { color: var(--rc-ink); font-weight: 600; }
-.rc-effort-track {
-  display: inline-flex; align-items: flex-start; gap: 7px;
-  padding: 3px 4px 2px; margin-left: 1px; outline: none; border-radius: 10px;
-}
-.rc-effort-track:focus-visible { box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35); }
-.rc-effort-step {
-  display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 0; border: none; background: none; cursor: pointer;
-}
-.rc-effort-dot-wrap { height: 14px; display: flex; align-items: center; justify-content: center; }
-.rc-effort-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--rc-line);
-  transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
-}
-.rc-effort-step:hover .rc-effort-dot { background: var(--rc-faint); transform: scale(1.15); }
-.rc-effort-dot.on {   /* 명시 선택 — 꽉 찬 노브 */
-  width: 12px; height: 12px; background: var(--rc-accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(13, 148, 136, 0.22);
-}
-.rc-effort-dot.on.ghost {   /* 기본값 상속 — 빈 노브 */
-  background: transparent; border: 2px solid var(--rc-accent);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.16);
-}
-.rc-effort-tick { font: 8px/1 var(--rc-sans); color: var(--rc-faint); opacity: 0.55; }
-.rc-effort-tick.on { opacity: 1; color: var(--rc-ink); font-weight: 600; }
-.rc-effort-loading { opacity: 0.5; pointer-events: none; }
 
 .rc-model { position: relative; display: inline-flex; align-items: center; color: var(--rc-faint); }
+/* 모델 버튼 — 에이전트 칩(.rc-chip)과 같은 알약. 한 줄에 같은 무게로 선다 */
 .rc-model-btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px;
-  background: none; border: 0; border-radius: 6px; cursor: pointer; color: inherit;
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 999px; cursor: pointer; color: inherit;
 }
 .rc-model-btn:hover { background: var(--rc-hover); }
 .rc-model-ic { flex: none; opacity: 0.75; }
-.rc-model-lb { font: 11px/1 var(--rc-sans); color: var(--rc-faint); white-space: nowrap; }
+.rc-model-lb { display: inline-flex; align-items: center; font: 12px/1 var(--rc-sans); color: var(--rc-faint); white-space: nowrap; }
 .rc-model-val { color: var(--rc-ink); font-weight: 600; }
-.rc-model-val.ghost { color: var(--rc-faint); font-weight: 500; }
+.rc-model-val.ghost { color: var(--rc-ink); font-weight: 400; }
 .rc-save-err { margin-left: 5px; color: var(--rc-err); font-weight: 600; }
 .rc-model-menu {
   position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; min-width: 150px;
@@ -568,6 +552,62 @@
 .rc-model-item:hover { background: var(--rc-hover); }
 .rc-model-item.on { font-weight: 600; background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
 .rc-model-loading { opacity: 0.5; pointer-events: none; }
+.rc-model-chev { flex: none; margin-left: 4px; opacity: 0.6; vertical-align: -1px; }
+/* 한 버튼 안의 메뉴 — 카드(머리·공급자 줄·Effort 바닥줄) + 호버한 공급자의 모델 서브 카드 */
+.rc-pick {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
+  display: flex; align-items: flex-end; gap: 6px;
+}
+.rc-pick-card {
+  min-width: 232px; padding: 6px; border: 1px solid var(--rc-line); border-radius: 12px;
+  background: var(--rc-bg); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.14);
+}
+.rc-pick-sub-card { min-width: 200px; }
+/* 오른쪽에 자리가 없으면 서브 카드를 위로 — 도크 폭에선 두 카드가 나란히 서지 못한다 */
+.rc-pick.stack { flex-direction: column-reverse; align-items: stretch; }
+.rc-pick-list { display: flex; flex-direction: column; gap: 1px; }
+.rc-pick-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  text-align: left; padding: 7px 10px; background: none; border: 0; border-radius: 8px; cursor: pointer;
+  color: var(--rc-ink); white-space: nowrap;
+}
+.rc-pick-item:hover, .rc-pick-item.hov { background: var(--rc-hover); }
+.rc-pick-item.on { background: var(--rc-accent-soft); }
+.rc-pick-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.rc-pick-main { font: 500 12.5px/1.25 var(--rc-sans); }
+.rc-pick-item.on .rc-pick-main { font-weight: 600; }
+.rc-pick-sub { font: 11px/1.3 var(--rc-sans); color: var(--rc-faint); }
+.rc-pick-check { flex: none; color: var(--rc-accent-strong); }
+.rc-pick-arrow { flex: none; opacity: 0.4; }
+.rc-pick-note { padding: 6px 10px 8px; font: 11px/1.4 var(--rc-sans); color: var(--rc-soft); white-space: nowrap; }
+/* 바닥줄 — Effort (레벨) + 점 슬라이더. 위 목록과 실선 하나로 나뉜다 */
+.rc-pick-foot {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 9px 10px 4px;
+  border-top: 1px solid var(--rc-line); color: var(--rc-faint);
+}
+.rc-pick-foot-ic { flex: none; opacity: 0.8; }
+.rc-pick-foot-lb { font: 500 12.5px/1 var(--rc-sans); color: var(--rc-ink); white-space: nowrap; }
+.rc-pick-foot-val { color: var(--rc-soft); font-weight: 500; }
+.rc-pick-foot-val.ghost { color: var(--rc-faint); }
+.rc-effort-track {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
+  padding: 5px 8px; border-radius: 999px; background: var(--rc-accent-soft); outline: none;
+}
+.rc-effort-track:focus-visible { box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35); }
+.rc-effort-step { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 0; border: none; background: none; cursor: pointer; }
+.rc-effort-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--rc-line);
+  transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.rc-effort-dot.lit { background: var(--rc-accent); opacity: 0.55; }
+.rc-effort-step:hover .rc-effort-dot { transform: scale(1.25); opacity: 1; }
+.rc-effort-dot.on {   /* 명시 선택 — 꽉 찬 노브 */
+  width: 10px; height: 10px; opacity: 1; background: var(--rc-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.rc-effort-dot.on.ghost {   /* 기본값 상속 — 빈 노브 */
+  background: var(--rc-bg); border: 2px solid var(--rc-accent);
+}
 /* 진행 중 턴 안내 — 전환 시 "진행 중인 응답은 <실제 모델>로 완료됩니다" (6초 자동 소멸) */
 .rc-model-notice {
   position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 29;
@@ -612,8 +652,8 @@
   padding: 4px 8px; border-radius: 7px; background: var(--rc-ground);
 }
 
-/* 입력창 위 컨텍스트 칩들 — [● 인스턴스] [/ 라우트에이전트] */
-.rc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 카드 아래 줄의 컨텍스트 칩들 — [● 인스턴스] [/ 라우트에이전트] */
+.rc-chips { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .rc-chip {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
   padding: 4px 10px; border: 1px solid var(--rc-line); border-radius: 999px;
@@ -622,13 +662,19 @@
 .rc-chip .rc-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-ok); flex: 0 0 auto; }
 .rc-chip .rc-chip-slash { opacity: 0.5; font-weight: 600; flex: 0 0 auto; color: var(--rc-accent); }
 .rc-chip .rc-chip-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 대상 칩(조작 가능) — 클릭하면 대상 피커. wrap 은 position 을 만들지 않는다: 드롭다운(.rc-slash)이
-   컴포저 폭을 기준으로 서야 다른 피커들과 같은 자리에 뜬다. */
-.rc-chip-wrap { display: inline-flex; max-width: 100%; }
+/* 대상 칩(조작 가능) — 클릭하면 대상 피커. 피커는 **칩에 붙는 카드**다(모델 메뉴 .rc-pick 과 같은
+   자리·같은 카드) — 칩이 입력 카드 아래 줄로 내려온 뒤(2026-08-26) 컴포저 폭짜리 드롭다운은 어색했다. */
+.rc-chip-wrap { position: relative; display: inline-flex; max-width: 100%; }
 .rc-chip-part { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .rc-chip-btn { cursor: pointer; gap: 8px; font: 12px/1 var(--rc-sans); }
 .rc-chip-btn:hover { background: var(--rc-hover); }
 .rc-chip-caret { opacity: 0.45; flex: 0 0 auto; font-size: 10px; }
+.rc-target-pick {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
+  width: max-content; min-width: 240px; max-width: min(340px, calc(100vw - 40px));
+  max-height: 300px; overflow-y: auto;
+}
+.rc-target-pick .rc-pick-item { white-space: normal; }
 .rc-target-pick .rc-target-note { padding: 6px 10px; color: var(--rc-faint); font-size: 11px; line-height: 1.5; }
 /* [+] 대상 추가 — 칩과 같은 알약이되 정사각(아이콘 자리). 교체(▾)와 시각적으로 분리한다. */
 .rc-chip-add { cursor: pointer; padding: 4px 9px; font: 13px/1 var(--rc-sans); color: var(--rc-faint); }
@@ -640,7 +686,7 @@
 }
 .rc-target-out { opacity: 0.6; }
 .rc-target-opt .rc-target-box { font-size: 12px; opacity: 0.7; }
-.rc-target-opt.on { background: var(--rc-hover); }
+.rc-target-opt.on { background: var(--rc-accent-soft); }
 .rc-target-apply {
   margin-top: 2px; width: 100%; border: 0; border-radius: 8px; cursor: pointer;
   padding: 8px 10px; font: 600 12px/1.3 var(--rc-sans); color: #fff; background: var(--rc-accent);
@@ -661,15 +707,15 @@
 .rc-queued-x:hover { color: var(--rc-ink); }
 
 .rc-input {
-  flex: 1 1 auto; resize: none; border: 1px solid var(--rc-line); border-radius: 12px;
-  padding: 7px 13px; font: 14px/1.45 var(--rc-sans); color: var(--rc-ink); background: var(--rc-bg);
-  max-height: 160px; overflow-y: hidden; outline: none; caret-color: var(--rc-accent);
+  flex: 1 1 auto; resize: none; border: 0; border-radius: 0; width: 100%;
+  padding: 4px 2px 0; font: 14px/1.45 var(--rc-sans); color: var(--rc-ink); background: transparent;
+  /* 최소 세 줄 — grow() 가 inline height 를 내려도 min-height 가 이긴다. 넘치면 200px 까지 자란 뒤 스크롤 */
+  min-height: 66px; max-height: 200px; overflow-y: hidden; outline: none; caret-color: var(--rc-accent);
 }
 .rc-input::placeholder { color: var(--rc-faint); }
-.rc-input:focus { border-color: var(--rc-accent); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15); }
 .rc-send, .rc-cancel {
-  flex: 0 0 auto; width: 36px; height: 36px; border: 0; border-radius: 50%;
-  background: var(--rc-accent); color: #fff; font-size: 16px; cursor: pointer;
+  flex: 0 0 auto; width: 30px; height: 30px; border: 0; border-radius: 50%;
+  background: var(--rc-accent); color: #fff; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.12s ease;
 }
@@ -681,8 +727,8 @@
 /* attach button */
 .rc-file-input { display: none; }
 .rc-attach {
-  flex: 0 0 auto; width: 36px; height: 36px; border: 1px solid var(--rc-line); border-radius: 50%;
-  background: var(--rc-bg); color: var(--rc-soft); cursor: pointer;
+  flex: 0 0 auto; width: 28px; height: 28px; border: 0; border-radius: 8px;
+  background: none; color: var(--rc-soft); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
 .rc-attach:hover { background: var(--rc-hover); color: var(--rc-ink); }
@@ -827,16 +873,9 @@
 .rc-desk-tabstrip {
   display: flex; align-items: stretch; flex: 1 1 auto; min-width: 0;
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
-  scrollbar-width: thin; scrollbar-color: transparent transparent;
+  scrollbar-width: none; /* 스크롤바는 그리지 않는다 — ‹ › 화살표·휠이 이동을 맡는다 */
 }
-/* 스크롤바는 자리를 항상 차지하되(overflow 시에만 생김) 썸은 hover 때만 보인다 — hover 로
-   나타났다 사라져도 탭 높이가 튀지 않게. 넘칠 탭이 없으면 스크롤바 자체가 없다. */
-.rc-desk-tabstrip:hover { scrollbar-color: var(--rc-faint) transparent; }
-.rc-desk-tabstrip::-webkit-scrollbar { height: 6px; }
-.rc-desk-tabstrip::-webkit-scrollbar-track { background: transparent; }
-.rc-desk-tabstrip::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.rc-desk-tabstrip:hover::-webkit-scrollbar-thumb { background: var(--rc-line); }
-.rc-desk-tabstrip:hover::-webkit-scrollbar-thumb:hover { background: var(--rc-faint); }
+.rc-desk-tabstrip::-webkit-scrollbar { display: none; }
 /* 고정 액션 그룹 — 항상 우측 끝. 넘치는 탭은 이 뒤로 들어간다(불투명 배경 + 페이드 경계). */
 .rc-tabs-actions {
   display: flex; align-items: stretch; flex: 0 0 auto; position: relative;
@@ -847,20 +886,27 @@
   background: linear-gradient(to right, transparent, var(--rc-ground));
 }
 .rc-desk-tab {
-  display: flex; align-items: center; gap: 7px; padding: 0 10px 0 12px; max-width: 220px;
+  display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px;
+  flex: 1 1 auto; min-width: 128px; max-width: 240px; /* 탭끼리 폭을 나눠 갖고, 128px 아래로는 넘쳐 ‹ › 로 */
   border-right: 1px solid var(--rc-line); cursor: pointer; color: var(--rc-soft);
-  font-size: 12.5px; white-space: nowrap; flex: 0 0 auto; background: transparent;
+  font-size: 12.5px; white-space: nowrap; background: transparent;
 }
 .rc-desk-tab:hover { background: var(--rc-hover); }
 .rc-desk-tab.on { background: var(--rc-bg); color: var(--rc-ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--rc-accent); }
-.rc-desk-tab-tx { overflow: hidden; text-overflow: ellipsis; }
-/* 미리보기 탭(페이지 이동이 빌려 쓰는 한 자리) — VSCode 처럼 기울임으로 "아직 내 탭이 아님"을 표시. */
-.rc-desk-tab.preview .rc-desk-tab-tx { font-style: italic; }
+.rc-desk-tab-tx { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: 18px; } /* 오른쪽 여백 = × 가 겹치는 자리 — 말줄임이 × 뒤에 숨지 않게 */
+/* 미리보기 탭(페이지 이동이 빌려 쓰는 한 자리) — 클래스는 rc- 접두 필수(호스트 페이지의 .preview 와 충돌해 탭이 세로로 쌓인 적 있음). VSCode 처럼 기울임으로 "아직 내 탭이 아님"을 표시. */
+.rc-desk-tab.rc-preview .rc-desk-tab-tx { font-style: italic; }
+/* × 는 활성 탭·hover 때만. flex 흐름 안에서 음수 마진으로 글자 꼬리 위에 겹친다 — 글자는 탭 폭을
+   다 쓰고, 나타나도 밀리지 않는다. 왼쪽 그림자 페이드가 겹친 글자를 가린다. */
 .rc-desk-close {
-  border: 0; background: none; color: var(--rc-faint); cursor: pointer; font-size: 15px; line-height: 1;
-  padding: 2px 4px; border-radius: 5px; flex: 0 0 auto;
+  display: none; flex: 0 0 auto; width: 20px; margin-left: -20px; align-self: center;
+  border: 0; color: var(--rc-faint); cursor: pointer; font-size: 15px; line-height: 1;
+  padding: 2px 4px; border-radius: 5px; background: var(--rc-ground);
+  box-shadow: -10px 0 8px -2px var(--rc-ground);
 }
-.rc-desk-close:hover { background: var(--rc-line); color: var(--rc-ink); }
+.rc-desk-tab:hover .rc-desk-close { display: block; background: var(--rc-hover); box-shadow: -10px 0 8px -2px var(--rc-hover); }
+.rc-desk-tab.on .rc-desk-close { display: block; background: var(--rc-bg); box-shadow: -10px 0 8px -2px var(--rc-bg); }
+.rc-desk-close:hover { color: var(--rc-ink); }
 /* 뱃지 3상태: run=teal 펄스 점 · ask=앰버 칩(질문 대기) · done=emerald ✓(완료·안읽음) */
 .rc-desk-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
 .rc-desk-badge.run { width: 8px; height: 8px; border-radius: 50%; background: var(--rc-accent); animation: rc-pulse 1.5s ease-in-out infinite; }
@@ -913,9 +959,10 @@
 @media (max-width: 720px) {
   .rc-desk-view { display: none; }
   .rc-desk-viewtoggle { display: none; }
-  .rc-send, .rc-cancel, .rc-attach { width: 40px; height: 40px; }
-  /* 작은 아이콘 버튼도 터치 타깃 승격 — 첨부 제거·대기 취소·탭 닫기·헤더 버튼. */
-  .rc-att-x, .rc-queued-x, .rc-desk-close, .rc-head-btn {
+  .rc-send, .rc-cancel, .rc-attach { width: 36px; height: 36px; }
+  /* 작은 아이콘 버튼도 터치 타깃 승격 — 첨부 제거·대기 취소·헤더 버튼.
+     (탭 닫기 × 는 겹쳐 뜨는 absolute 라 여기서 display 를 건드리면 항상 보이고 자리가 틀어진다 — 제외.) */
+  .rc-att-x, .rc-queued-x, .rc-head-btn {
     min-width: 32px; min-height: 32px;
     display: inline-flex; align-items: center; justify-content: center;
   }
@@ -930,13 +977,10 @@
   .rc-step-caret { opacity: 0.6; }
   /* 컨텍스트 미터 — 첫 탭은 툴팁만(armed), 둘째 탭이 compact(Chat.tsx 2-탭 가드와 짝). */
   .rc-ctx-wrap.rc-armed .rc-ctx-tip { display: flex; }
-  /* Effort 5단 — 6px 점으로는 옆 단계를 오탭한다. 히트영역만 키우고 시각은 유지. */
-  .rc-effort-step { min-width: 34px; min-height: 36px; justify-content: center; }
-  .rc-effort-track { gap: 2px; }
+  /* Effort 5단 — 작은 점으로는 옆 단계를 오탭한다. 히트영역만 키우고 시각은 유지. */
+  .rc-effort-step { min-width: 28px; min-height: 32px; }
 }
 
-/* composer-foot 는 좁은 폭에서 줄바꿈 — 안 하면 aside overflow:hidden 에 미터가 조용히 잘린다. */
-.rc-composer-foot { flex-wrap: wrap; row-gap: 6px; }
 
 /* 마크다운 넓은 표 — 표 자체가 가로 스크롤을 갖고, 로그 전체는 가로 고정. */
 .rc-md table { display: block; overflow-x: auto; max-width: 100%; }
@@ -970,7 +1014,7 @@
   background: var(--rc-bg); color: var(--rc-ink); font: 600 13px var(--rc-sans); padding: 3px 7px; outline: none;
 }
 /* 도킹 변형 — 탭 바가 좁아 화면 토글은 숨고(뷰는 이미 옆), 탭 최대폭 축소 */
-.rc-tabs-dock .rc-desk-tab { max-width: 150px; }
+.rc-tabs-dock .rc-desk-tab { max-width: 200px; }
 
 /* ── 탭 DnD 순서 이동 · 우클릭 메뉴 · 채팅 2분할(탭 그룹) ─────────────────── */
 .rc-desk-tab.drag { opacity: .45; }
@@ -1050,3 +1094,9 @@
 .rc-author-act { margin-top: 8px; align-self: flex-start; border: 1px solid var(--rc-line, #e6e9ec); background: var(--rc-bg, #fff); color: var(--rc-accent-strong, #115e59); border-radius: 7px; padding: 4px 10px; font: 600 11.5px var(--rc-sans, -apple-system, sans-serif); cursor: pointer; }
 .rc-author-act:hover { background: var(--rc-hover, #eef0f2); }
 .rc-author-act:disabled { opacity: .6; cursor: default; }
+
+/* 빈 시작 화면의 예시 문장 — 누르면 입력칸에 들어간다 */
+.rc-empty-ex { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 12px; }
+.rc-empty-exb { border: 1px solid var(--rc-line, #e6e9ec); background: var(--rc-bg, #fff); border-radius: 999px; padding: 5px 11px; font: 12.5px inherit; color: var(--rc-soft, #5c6570); cursor: pointer; }
+.rc-empty-exb:hover { border-color: var(--rc-accent, #0f766e); color: var(--rc-accent-strong, #115e59); }
+.rc-empty-more { padding: 5px 9px; color: var(--rc-faint, #8a939c); }
