@@ -62,7 +62,11 @@ const scopeToWidget = {
 const tailwindCss = {
   name: "tailwind",
   setup(build) {
-    build.onLoad({ filter: /\/tw\.css$/ }, async (args) => {
+    // 경로 구분자를 둘 다 본다 — esbuild 는 args.path 를 OS 네이티브로 준다.
+    // 슬래시만 보면 Windows 에서 이 로더가 통째로 안 걸리고, tw.css 가 postcss 를 타지 않아
+    // @import "tw-animate-css" 가 esbuild 로 흘러가 죽는다(그 패키지는 exports 에 style 조건만
+    // 있어 esbuild 가 해석할 수 없다 — Tailwind 가 인라인해 주는 것이 유일한 길이다).
+    build.onLoad({ filter: /[\\/]tw\.css$/ }, async (args) => {
       const src = await readFile(args.path, "utf8");
       const out = await postcss([tailwind(), scopeToWidget]).process(src, { from: args.path });
       return { contents: out.css, loader: "css", resolveDir: dirname(args.path) };
