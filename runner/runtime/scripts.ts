@@ -157,6 +157,10 @@ export function apiTarget(base: string, p: string, name: string): string {
 export interface ServiceIO {
   /** null = 세울 수 있는 문이 없음 → 부르는 쪽이 fail-loud */
   body(pkg: string, service: string, port: number | null): { url: string; authorization?: string } | null;
+  /** 동사가 딛는 바닥(ctx.workspace) — 미구현이면 장부의 workspace(1인 기판: 세션과 같은 폴더).
+   *  임베더가 세션 바닥을 사람마다 가르면 동사의 바닥도 같은 규칙이어야 한다 — 갈리면 동사가
+   *  남긴 파일을 세션이 못 보고, 사람별 몸의 산출물이 공용 폴더에 섞인다(조직 실측 2026-08-27) */
+  workspace?(pkg: string): string;
 }
 
 // 1인 기판의 기본 이음새 — 선언 port 의 loopback. 프로세스 형은 env.PORT 로 그 포트를 받고,
@@ -234,6 +238,11 @@ export function makeCtx(
     pkg,
     caller,
     get workspace() {
+      if (io.workspace) {
+        const d = io.workspace(pkg);
+        fs.mkdirSync(d, { recursive: true });
+        return d;
+      }
       return workspaceDir(ledger, pkg);
     },
     dir: (name) => resolveDirService(ledger, pkg, m, name),

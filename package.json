@@ -1,6 +1,6 @@
 {
   "name": "relayagent",
-  "version": "0.3.12",
+  "version": "0.3.14",
   "description": "A personal substrate for agent packages that ship their own screens.",
   "license": "MIT",
   "type": "module",

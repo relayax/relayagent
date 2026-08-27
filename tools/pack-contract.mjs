@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // 판정 계약 패키지(@relay/contract) 패킹 — 릴리스 아티팩트 relay-contract-<tag>.tgz 의 원료.
 // 임베더(relayos control-ts 판정 정본 뷰 · lib/sdk MCP 문 합성 뷰)가 소스 사본 대신 소비할
-// npm 패키지를 굽는다. 내용물은 자기 완결 계약 3파일 + 문법 정본:
+// npm 패키지를 굽는다. 내용물은 자기 완결 계약 4파일 + 문법 정본:
 //   runner/supply/manifest.ts            판정기 (judge · disclosure · declaredPaths)
 //   runner/authority-contract.ts  권위 이음새 계약 (의존성 0)
 //   runner/runtime/mcp.ts                 MCP 문 합성 (의존성 0)
+//   runner/runtime/oauth-rfc.ts           OAuth RFC 조각 (디스커버리·DCR·PKCE·교환·회전 — node:crypto 만)
 //   relay.manifest.yaml           문법 정본 (판정기의 주석 짝)
 //
 // .js + .d.ts 로 굽는 이유(실측 2026-08-24): tsc 소비자(control-ts)는 node_modules 의 .ts 를
@@ -34,13 +35,13 @@ if (!yamlRange) {
 // 결과의 자리는 바뀌면 안 된다 — 그래서 rootDir 을 트리에 걸지 않고, 세 파일을 평면 소스
 // 디렉토리에 모아 거기서 굽는다. (트리 자리를 rootDir 로 쓰면 산출이 supply/manifest.js 로
 // 눕어 소비자의 import 가 전부 깨진다 — 실측 2026-08-25.)
-const SOURCES = ["runner/supply/manifest.ts", "runner/authority-contract.ts", "runner/runtime/mcp.ts"];
+const SOURCES = ["runner/supply/manifest.ts", "runner/authority-contract.ts", "runner/runtime/mcp.ts", "runner/runtime/oauth-rfc.ts"];
 
 const stage = join(repo, "out", "contract-stage");
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-// 평면 소스 사본. 계약 3파일은 상대 import 가 0 인 자기완결 파일이라 사본이 원본과 같게 컴파일된다.
+// 평면 소스 사본. 계약 4파일은 상대 import 가 0 인 자기완결 파일이라 사본이 원본과 같게 컴파일된다.
 // 그 성질이 깨지면(누가 runner 내부로 상대 import 를 얻으면) 여기서 **해석 실패로 죽는다** —
 // 아래 내용물 판정보다 이른, 더 정직한 자리다.
 const src = join(repo, "out", "contract-src");
@@ -48,7 +49,7 @@ rmSync(src, { recursive: true, force: true });
 mkdirSync(src, { recursive: true });
 for (const f of SOURCES) copyFileSync(join(repo, f), join(src, basename(f)));
 
-// 계약 3파일만 CJS + 선언으로 에밋한다. rootDir=평면 소스라 산출이 stage 바로 아래에 눕는다.
+// 계약 4파일만 CJS + 선언으로 에밋한다. rootDir=평면 소스라 산출이 stage 바로 아래에 눕는다.
 // --ignoreConfig: 루트 tsconfig(noEmit·NodeNext)은 이 빌드와 무관하다 — TS7 은 CLI 파일
 // 지정과 tsconfig 동거를 조용히 넘기지 않고 이 플래그를 요구한다.
 execFileSync(
@@ -97,6 +98,8 @@ const want = new Set([
   "package/authority-contract.js", "package/authority-contract.d.ts",
   "package/mcp.js", "package/mcp.d.ts",
   "package/relay.manifest.yaml",
+  "package/oauth-rfc.js", "package/mcp.d.ts",
+  "package/oauth-rfc.d.ts", "package/mcp.d.ts",
 ]);
 const got = new Set(
   execFileSync("tar", ["-tzf", tgz], { encoding: "utf8" }).split("\n").map((s) => s.trim()).filter(Boolean),

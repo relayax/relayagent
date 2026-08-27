@@ -20,7 +20,7 @@ import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validat
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath, historyDraft, restoreDraft } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
-import { serveView, serveComponents, serveDraftView, serveDraftComponents } from "./runtime/view.ts";
+import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
 import { shellNav, storeLatest, homeDoc, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
@@ -609,6 +609,14 @@ export function createApi(
         const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
         spawn(opener, [dir], { detached: true, stdio: "ignore" }).unref();
         return void json(res, 200, { ok: true, dir });
+      }
+      // 작업 폴더의 파일 — 패키지 자기 view 가 자기 산출물을 그리는 읽기전용 문(runtime/view.ts
+      // serveWorkspaceFile). 결재 축이 아니라 선언이 없다: 화면도 폴더도 같은 패키지 것이다
+      const wsFile = p.match(/^\/pkg\/([^/]+)\/workspace\/(.+)$/);
+      if (wsFile && req.method === "GET") {
+        const name = decodeURIComponent(wsFile[1]);
+        if (!getLedger().packages[name]) return void json(res, 404, { error: `미설치 패키지: ${name}` });
+        return void serveWorkspaceFile(workspacePath(getLedger(), name), decodeURIComponent(wsFile[2]), req, res);
       }
 
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);

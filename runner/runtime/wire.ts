@@ -148,6 +148,10 @@ export interface ClientWireIO {
   harnessCapabilities(pkg: string): string[] | null | Promise<string[] | null>;
   /** 모델·강도·변형 설정의 영속(§5.5-30/30-a) — 이 계약 축이 장부를 쓰는 유일한 자리 */
   setHarnessConfig(pkg: string, patch: HarnessConfigPatch): HarnessConfig | Promise<HarnessConfig>;
+  /** 읽기 짝 — 턴이 스폰 직전에 묻는다. 미구현이면 장부(rec.model/effort)가 답한다(1인 기판).
+   *  임베더가 설정을 자기 저장소(사람별 행)에 두면 여기서 그 값을 낸다 — 안 내면 사람이 고른
+   *  모델이 저장만 되고 세션에는 실리지 않는다(조직 실측 2026-08-26) */
+  harnessConfig?(pkg: string): HarnessConfig | Promise<HarnessConfig>;
 }
 
 export interface ClientWireDeps {
@@ -435,10 +439,14 @@ async function runTurn(deps: ClientWireDeps, io: ClientWireIO, t: TurnRecord, bo
   appendTurnEvent(t, { event: "turn", status: "started", turn: t.id, session: t.session });
   let ok = false;
   try {
+    // 이 사람의 모델·강도 — 이음새가 답하면 그것, 아니면 장부(runSession 이 rec 를 본다)
+    const cfg = io.harnessConfig ? await io.harnessConfig(t.pkg) : null;
     const r = await runSession({
       ledger: deps.getLedger(),
       pkg: t.pkg,
       authority: deps.authority,
+      ...(cfg?.model ? { model: cfg.model } : {}),
+      ...(cfg?.effort ? { effort: cfg.effort } : {}),
       // 계약 축과 실행 축이 같은 좌표를 딛는다 — 여기서 세션 이음새를 안 실으면 화면이 보는
       // 대화(이 파일의 history.get)와 하네스가 쌓는 대화가 서로 다른 저장소로 갈린다
       io: io.session,

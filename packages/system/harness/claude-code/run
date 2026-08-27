@@ -451,6 +451,11 @@ function resetTick() {
 // 백그라운드 원장 — 드레인(은퇴 유예)과 task 이벤트의 근거
 const tasks = new Map();   // task_id -> note
 let sawTaskDone = false;   // 자발 턴 승격 게이트 — 유령 턴 방지 (relayos 실측 계보)
+// 얹기의 두 번째 결말을 받는 게이트. steer 프레임이 **남은 샘플링 경계 없이** 도착하면
+// (마지막 도구가 끝나고 본문 생성 중) CLI 는 현재 턴을 result 로 닫고 그 프레임을 **다음 턴**으로
+// 넘긴다. 그 턴은 주입 없이 열리므로 sawTaskDone 과 같은 승격이 필요하다 — 없으면 실제로 돌아
+// 파일까지 읽은 답이 통째로 버려진다(2026-08-27 실사고: 사용자에게는 "답장이 안 온다"로 보였다).
+let steerOpen = false;
 
 // 대기 중 ask(AskUserQuestion) 1건 — 한 번에 하나(단일 질문 계약).
 // 시계는 없다: 답이 올 때까지 기다린다(harness-protocol §Lifecycle). 기다림을 끊는 것은
@@ -504,6 +509,9 @@ relay("SIGTERM");
 relay("SIGINT");
 
 function inject(prompt, opts = {}) {
+  // 주입이 오면 얹기 무장은 푼다 — 미뤄진 얹기가 있었다면 그 답은 이 주입보다 먼저 났다.
+  // 남겨두면 이후 아무 잔여 프레임이나 자발 턴으로 승격시켜 유령 턴이 된다
+  steerOpen = false;
   turn = { kind: "injected", prompt, said: "", filed: new Set(), restarted: !!opts.restarted, done: false, ctxIn: 0 };
   resetTick();
   if (!child) boot();
@@ -639,8 +647,9 @@ const onLine = (line) => {
   // 유휴에 흘러오는 본류 프레임 = 백그라운드 완료의 자발 턴(continuation).
   // 선행 task 완료 신호가 있을 때만 턴으로 승격한다 — 잔류 프레임의 유령 턴 방지
   if (!turn) {
-    if (MODE !== "serve" || !sawTaskDone) return;
+    if (MODE !== "serve" || !(sawTaskDone || steerOpen)) return;
     sawTaskDone = false;
+    steerOpen = false;
     openSpont();
   }
 
@@ -809,6 +818,10 @@ try {
       }
       // 얹힌 뒤에만 증언한다 — 이 이벤트가 장부의 그 자리에 남아 재생이 같은 순서를 본다
       emit({ event: "steer", text: c.prompt });
+      // 이 얹기가 현재 턴에 접힐지, 다음 턴으로 미뤄질지는 CLI 가 정한다(경계가 남았는가).
+      // 접히면 이 무장은 그냥 쓰이지 않고 다음 주입에서 풀린다 — 비용은 없고, 반대로 미뤄진
+      // 경우에 무장이 없으면 그 답이 어디에도 닿지 못한다
+      steerOpen = true;
       return;
     }
     if (c?.type === "turn" && MODE === "serve") {

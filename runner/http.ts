@@ -58,3 +58,27 @@ export function streamFile(file: string, res: http.ServerResponse): void {
   res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
   fs.createReadStream(file).pipe(res);
 }
+
+/**
+ * 재검증형 파일 응답 — 같은 주소에 덮어쓰이는 산출물(구운 카드·로고)을 위한 것이다. streamFile 은
+ * 캐시 헤더가 없어 브라우저가 옛 판을 붙들었다(실측: 사진을 붙여 다시 구운 표지가 사진 없는
+ * 채로 남았다). no-cache 는 "쓰기 전에 물어보라" 이고 ETag/Last-Modified 가 그 물음의 답이라,
+ * 안 바뀐 파일은 304 한 줄로 끝나고 바뀐 파일은 주소가 같아도 새로 온다
+ */
+export function streamFileRevalidated(file: string, st: fs.Stats, req: http.IncomingMessage, res: http.ServerResponse): void {
+  const etag = `W/"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  // Last-Modified 는 초 단위다 — 비교도 같은 해상도로 잘라야 방금 쓴 파일이 영영 "갱신됨" 이 되지 않는다
+  const lastModified = new Date(Math.floor(st.mtimeMs / 1000) * 1000).toUTCString();
+  const inm = req.headers["if-none-match"];
+  const ims = Date.parse(String(req.headers["if-modified-since"] ?? ""));
+  const fresh = inm != null
+    ? String(inm).split(",").map((s) => s.trim()).includes(etag)
+    : !Number.isNaN(ims) && ims >= Date.parse(lastModified);
+  const headers = { etag, "last-modified": lastModified, "cache-control": "no-cache" };
+  if (fresh) {
+    res.writeHead(304, headers);
+    return void res.end();
+  }
+  res.writeHead(200, { ...headers, "content-type": MIME[path.extname(file)] ?? "application/octet-stream", "content-length": String(st.size) });
+  fs.createReadStream(file).pipe(res);
+}

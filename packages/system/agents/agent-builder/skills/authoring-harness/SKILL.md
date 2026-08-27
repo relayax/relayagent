@@ -23,11 +23,12 @@ description: 새 하네스 어댑터를 저작할 때 읽는다. 동사 프로�
 
 | 동사 | 성질 | 계약 |
 |---|---|---|
-| `session [prompt]` | 실행 | prompt 없으면 TTY(exec 로 넘겨 네이티브 UI 를 그대로 쓴다). 있으면 headless, stdout = 최종 응답만 |
+| `session [prompt]` | 실행 | prompt 없으면 TTY(exec 로 넘겨 네이티브 UI 를 그대로 쓴다). 있으면 headless — stdout 은 **봉투 JSONL** 이다(아래) |
 | `setup` | 진단(읽기) | 도구 실재와 로그인 점검. exit 0 = 준비됨. 실패면 **사유와 다음 한 걸음**을 stdout 에 |
 | `models` | 조회 | JSON 문자열 배열. **절대 빈 배열을 내지 마라.** 자격에 못 닿으면 도구가 스스로 선언하는 어휘까지만 강등 |
 | `commands` | 조회 | JSON 배열 `[{name, description?, tty?}]`. 없으면 `[]` |
-| `info` | 서술 | JSON `{name, provider, verbs, account?}` |
+| `info` | 서술 | JSON `{name, provider, protocol, verbs, capabilities, account?}`. `capabilities` 는 **닫힌 어휘**이고 물리적으로 구현한 것만 선언한다 — 선언해 놓고 죽어 있으면 화면이 그 기능을 켜고 아무 일도 안 일어난다 |
+| `serve` | 실행(선택) | 상주 세션. 턴을 stdin 으로 주입받고 프로세스를 턴마다 갈지 않는다. `info.verbs` 에 실으면 데몬이 이쪽을 우선한다 |
 | `login [--token]` | 처방(쓰기) | 대화형 인증. exec 로 TTY 상속. 지원하면 `info.verbs` 에 실어라 |
 
 미지 동사는 **exit 0 으로 통과시키지 마라**. 오타가 조용히 세션으로 흐른다.
@@ -150,7 +151,7 @@ RELAY_NAME          설치 이름          RELAY_AGENT     착지 에이전트
 RELAY_PRINCIPAL     호출자             RELAY_SESSION   슬롯 키(같은 값 재호출 = 대화 이어가기)
 RELAY_API           기판 loopback      RELAY_TOKEN     이 패키지의 토큰
 RELAY_BUNDLE        중립 번들 경로      RELAY_MODEL     선택된 모델(선택)
-<선언한 auth.env>    kind: token 자격
+<선언한 auth.env>    선언이 이름을 말하면 기판이 댄다 (kind 무관 — 무인 기판엔 로그인할 사람이 없다)
 ```
 
 번들(`RELAY_BUNDLE`) 안의 중립 데이터:
@@ -159,7 +160,7 @@ RELAY_BUNDLE        중립 번들 경로      RELAY_MODEL     선택된 모델(�
 persona.md          착지 에이전트 페르소나
 agents/<sub>.md     서브에이전트 본문 (frontmatter 없음 — 형식은 어댑터가 입힌다)
 skills/ commands/   선언된 스킬·커맨드 트리
-meta.json           { pkg, agent, slot, workspace, stage, hooks.deny[], agents[], mcp{url,authorization} }
+meta.json           { pkg, agent, slot, cwd, stage, hooks.deny[], agents[], mcp{url,authorization} }
 ```
 
 번들은 **읽기 원천이자 어댑터의 작업 공간이며, 회전 경계다**. 번역 산출물(설정 파일,
@@ -169,4 +170,30 @@ meta.json           { pkg, agent, slot, workspace, stage, hooks.deny[], agents[]
 돌아오는 버그가 된다. 전환된 대화의 연속성은 어댑터 몫이 아니다 — 기판이 자기 이력 장부에서
 인수인계 서문을 합성해 첫 턴에 실어준다.
 
-출력은 exit code + stdout(최종 응답)뿐이다. 진행 로그는 stderr 로 보내라.
+## 봉투 — stdout 은 JSONL, stdin 은 제어
+
+`session <prompt>` 와 `serve` 는 같은 봉투를 쓴다. stdout 한 줄 = 이벤트 하나
+(`delta` · `tool` · `usage` · `task` · `ask` · `steer` · `file` · `reply` · `error`), stdin 한 줄 =
+제어 하나(`turn` · `steer` · `cancel` · `answer`). **정본은 `docs/harness-protocol.md` 다** —
+필드와 판정은 거기서 읽어라. 여기 옮겨 적으면 두 문서가 갈리는 날이 온다.
+
+진행 로그는 stderr 로 보내라. 턴의 성패는 `reply`/`error` **정확히 하나**가 정한다 —
+실패를 텍스트로 위장하지 마라.
+
+## 버리지 마라 — 봉투에서 말이 사라지는 세 자리
+
+전부 실사고에서 왔다. 셋 다 증상이 같다: **기계는 일하는데 사용자에게는 아무 일도 안 일어난다.**
+
+**질문은 기다린다.** 대기 중 `ask` 에 시계를 걸어 기본값으로 진행하지 마라. 답을 지어내는
+어댑터는 사용자 입에 말을 넣고, 기록은 그것을 사용자의 말로 남긴다. 기다림을 끊는 것은
+사람뿐이다(답하거나 `cancel`). 기판이 그동안 스톨 시계를 멈춰 주므로 기다림에 비용이 없다.
+
+**얹기(`steer`)는 결말이 둘이다.** 남은 샘플링 경계가 있으면 현재 턴에 접히고, 없으면
+(모델이 이미 답을 쓰는 중) CLI 가 현재 턴을 닫고 **그 말로 새 턴을 연다**. 두 번째 결말을
+안 받으면 그 턴이 실제로 돌아 파일까지 읽고 답을 낸 뒤 통째로 버려진다 — 얹기를 받았으면
+정산 뒤 자발 턴 하나를 통과시켜라.
+
+**주입 없이 열리는 턴이 있다.** 백그라운드 작업의 continuation, 미뤄진 얹기의 답. 기판이
+`turn` 을 주지 않았는데 하네스가 스스로 여는 턴이다. 승격 게이트를 좁게 잡으면(예: 백그라운드
+완료만) 나머지가 조용히 사라지고, 게이트가 없으면 잔여 프레임이 유령 턴이 된다 —
+**사유가 있을 때만 열고, 열었으면 닫아라**(reply/error 하나로).
