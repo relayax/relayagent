@@ -26,7 +26,7 @@ export default function EditorPanel({ draft, onBack }: { draft: Draft; onBack: (
         <>
           {conflict === effFile ? (
             <div className="banner" role="alert" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>다른 손(빌더·다른 화면)이 이 파일을 먼저 고쳤습니다 — 지금 버퍼는 그 위 판이 아닙니다.</span>
+              <span>다른 손(빌더·다른 화면)이 이 파일을 먼저 고쳤습니다 — 지금 버퍼는 그 최신 내용 위에 있지 않습니다.</span>
               <Button variant="outline" size="sm" onClick={draft.conflictReload}>
                 새 내용 읽기 (내 편집 버림)
               </Button>

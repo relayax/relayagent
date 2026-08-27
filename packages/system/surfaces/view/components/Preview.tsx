@@ -140,7 +140,7 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
       </div>
       <div className="pv-foot">
         {view.out
-          ? `빌드가 필요한 화면입니다 — 소스를 고친 뒤 [미리보기 만들기] 를 눌러야 이 프레임이 새 판을 냅니다.`
+          ? `빌드가 필요한 화면입니다 — 소스를 고친 뒤 [미리보기 만들기] 를 눌러야 이 프레임이 새로 그려집니다.`
           : `빌드 없는 화면이라 파일을 저장하면 이 프레임이 곧바로 새로 읽습니다.`}
       </div>
     </div>
@@ -664,7 +664,7 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
     <div className="pv">
       <Head chip="대화가 될 모습" url={`${agent.name} · draft`}>
         {ctx.status.installed ? (
-          <Button variant="outline" size="sm" render={<a href={`/pkg/${encodeURIComponent(ctx.pkg)}/view/`} target="_blank" rel="noreferrer" />} title="도는 판의 대화를 새 탭에서 엽니다">
+          <Button variant="outline" size="sm" render={<a href={`/pkg/${encodeURIComponent(ctx.pkg)}/view/`} target="_blank" rel="noreferrer" />} title="돌아가는 버전의 대화를 새 탭에서 엽니다">
             도는 판과 대화
           </Button>
         ) : null}

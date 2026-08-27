@@ -304,7 +304,7 @@ export function PublishDialog({
           </div>
         ) : null}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="publish-version">버전 (비우면 자동 — 지금 {draftVersion ?? "?"}, 이전 판이 있으면 끝자리를 올립니다)</Label>
+          <Label htmlFor="publish-version">버전 (비우면 자동 — 지금 {draftVersion ?? "?"}, 이전 버전이 있으면 끝자리를 올립니다)</Label>
           <Input id="publish-version" value={version} placeholder="자동" onChange={(e) => setVersion(e.target.value)} />
         </div>
         {err ? <p className="text-sm text-destructive">{err}</p> : null}
@@ -398,16 +398,18 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
   }, [pkg]);
 
   return (
-    <Overlay title="이전 판으로" onClose={onClose}>
+    <Overlay title="이전 버전으로" onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <p className="text-xs text-muted-foreground">실제로 돌아가는 판을 예전에 적용했던 판으로 바꿉니다. 스튜디오에서 고치던 내용은 그대로 남습니다.</p>
-        {releases ? (
+        <p className="text-xs text-muted-foreground">실제로 돌아가는 버전을 예전에 적용했던 버전으로 바꿉니다. 스튜디오에서 고치던 내용은 그대로 남습니다.</p>
+        {releases && !releases.length ? (
+          <p className="text-xs text-muted-foreground">아직 이전 버전이 없습니다 — 적용할 때마다 여기 쌓입니다</p>
+        ) : releases ? (
           <div className="lv">
             {releases.map((r) => (
               <div key={r.version} className="lv-row" style={{ cursor: "default" }}>
                 <span className="lv-tx">
                   <span className="lv-t">
-                    v{r.version} {r.live ? <Badge variant="secondary">지금 돌아가는 판</Badge> : null}
+                    v{r.version} {r.live ? <Badge variant="secondary">지금 돌아가는 버전</Badge> : null}
                   </span>
                   <span className="lv-s">{new Date(r.time).toLocaleString()}</span>
                 </span>
@@ -421,7 +423,7 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
                       setErr(null);
                       try {
                         await releaseRollback(pkg, r.version);
-                        onDone(`이전 판으로 바꿨습니다: v${r.version}`);
+                        onDone(`이전 버전으로 바꿨습니다: v${r.version}`);
                         await load();
                       } catch (e) {
                         setErr(String(e instanceof Error ? e.message : e));
@@ -430,12 +432,11 @@ export function ReleasesDialog({ pkg, onDone, onClose }: { pkg: string; onDone: 
                       }
                     }}
                   >
-                    {busy === r.version ? "바꾸는 중…" : "이 판으로"}
+                    {busy === r.version ? "바꾸는 중…" : "이 버전으로"}
                   </Button>
                 ) : null}
               </div>
             ))}
-            {!releases.length ? <div className="empty">아직 이전 판이 없습니다 — 적용할 때마다 여기 쌓입니다</div> : null}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">불러오는 중…</p>
@@ -460,7 +461,7 @@ export function DiscardDialog({ pkg, installed, onDone, onClose }: { pkg: string
         <p className="text-xs text-muted-foreground">
           <b>{pkg} 에서 고치던 내용과 그 이력이 모두 지워집니다. 복구할 수 없습니다.</b>
           {installed
-            ? " 지금 돌아가는 판은 그대로 남습니다 — 다시 열면 그 판의 사본으로 새로 시작합니다."
+            ? " 지금 돌아가는 버전은 그대로 남습니다 — 다시 열면 그 버전의 사본으로 새로 시작합니다."
             : " 이 패키지는 아직 한 번도 적용된 적이 없어, 작업한 것 전부가 사라집니다."}
         </p>
         {err ? <p className="text-sm text-destructive">{err}</p> : null}

@@ -39,14 +39,14 @@ export default function DraftActions({
           채팅 수정은 빌더가 바로 적용하므로 이 버튼을 거치지 않는다(그때는 changedCount 0). */}
       <Button
         size="sm"
-        title={changedCount ? "패널에서 고친 것을 지금 도는 판으로 반영합니다" : "패널에서 고친 것이 없습니다"}
+        title={changedCount ? "패널에서 고친 것을 지금 돌아가는 버전에 반영합니다" : "패널에서 고친 것이 없습니다"}
         disabled={!changedCount && !!status?.installed}
         onClick={() => setDialog("publish")}
       >
         적용{changedCount ? ` (${changedCount})` : ""}
       </Button>
-      {/* 되돌리기 — 방금 적용한 것이 마음에 안 들 때 이전 판으로. 채팅이 바로 적용하는 흐름의 안전망 */}
-      <Button variant="outline" size="sm" title="예전에 적용했던 판으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
+      {/* 되돌리기 — 방금 적용한 것이 마음에 안 들 때 이전 버전으로. 채팅이 바로 적용하는 흐름의 안전망 */}
+      <Button variant="outline" size="sm" title="예전에 적용했던 버전으로 되돌립니다" disabled={!status?.version.live} onClick={() => setDialog("releases")}>
         되돌리기
       </Button>
       <span className="st-more">
@@ -55,13 +55,13 @@ export default function DraftActions({
         </Button>
         {more ? (
           <div className="st-menu" role="menu" onMouseLeave={() => setMore(false)}>
-            {item("되돌리기", `⌘Z — 쌓인 판 ${draft.undoDepth}`, () => draft.stepHistory("undo"), { disabled: !draft.undoDepth })}
+            {item("되돌리기", `⌘Z — 되돌릴 수 있는 단계 ${draft.undoDepth}`, () => draft.stepHistory("undo"), { disabled: !draft.undoDepth })}
             {item("다시 실행", "⌘⇧Z", () => draft.stepHistory("redo"), { disabled: !draft.redoDepth })}
             <span className="st-menu-div" aria-hidden="true" />
             {item("검사만 하기", "선언한 것과 실제 파일이 맞는지 봅니다 — 고치지는 않습니다", () => void draft.validate())}
             {item("기록 남기기", "지금까지 고친 것을 되돌릴 수 있는 지점으로 남깁니다", () => setDialog("commit"), { disabled: !changedCount })}
             {item("내보내기", "남에게 주거나 스토어에 올릴 수 있는 형태로 만듭니다", () => void draft.pack(), { disabled: !status?.version.live })}
-            {status?.installed ? item("새 탭에서 열기", "지금 돌아가고 있는 판의 화면", () => window.open(viewHref, "_blank", "noreferrer")) : null}
+            {status?.installed ? item("새 탭에서 열기", "지금 돌아가고 있는 버전의 화면", () => window.open(viewHref, "_blank", "noreferrer")) : null}
             <span className="st-menu-div" aria-hidden="true" />
             {item("작업 사본 버리기", "패널에서 고치던 것과 이력을 지웁니다 — 되돌릴 수 없습니다", () => setDialog("discard"), { danger: true })}
           </div>

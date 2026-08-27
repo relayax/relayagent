@@ -184,8 +184,8 @@ export default function DetailFace({
   const links = !ghost ? (
     <>
       {draft.status?.installed ? (
-        <Button variant="outline" size="sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다" />}>
-          돌아가는 판 열기 ↗
+        <Button variant="outline" size="sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 버전의 화면을 새 탭에서 엽니다" />}>
+          돌아가는 버전 열기 ↗
         </Button>
       ) : null}
       <Button
@@ -249,10 +249,10 @@ export default function DetailFace({
           </>
         ) : (
           <>
-            <Button size="sm" onClick={() => void draft.open()} title="고칠 수 있는 사본을 엽니다 — 적용하기 전에는 돌아가는 판이 바뀌지 않습니다">
+            <Button size="sm" onClick={() => void draft.open()} title="고칠 수 있는 사본을 엽니다 — 적용하기 전에는 돌아가는 버전이 바뀌지 않습니다">
               고치기
             </Button>
-            <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 판의 화면을 새 탭에서 엽니다" />}>
+            <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 버전의 화면을 새 탭에서 엽니다" />}>
               ↗
             </Button>
           </>
