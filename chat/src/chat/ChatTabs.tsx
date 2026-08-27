@@ -26,21 +26,34 @@
  *   · 탭 전부 닫힘 → dock=onAllClosed(패널 닫힘), desk=빈 상태.
  *   · variant="desk" 만 우측 뷰 iframe split(드래그 크기조절) 노출 — 뷰는 포커스 그룹의 활성 탭을 따른다.
  *   · 탭 드래그 = 같은 그룹 안 순서 이동 + **그룹 간 이동**(다른 스트립 위에 놓기 — 놓으면 활성화).
- *   · 탭 우클릭 = 컨텍스트 메뉴(닫기·다른 탭 닫기·오른쪽 탭 닫기·분할/그룹 이동/분할 해제).
+ *   · 탭 우클릭 = 컨텍스트 메뉴(닫기·다른 탭 닫기·오른쪽 탭 닫기·분할/그룹 이동/분할 해제) — shadcn ContextMenu.
  *   · 분할 경계는 드래그로 좌우 크기 조절(splitPct 20~80%, 영속).
  *   · localStorage: tabs/active 는 종전 키 그대로, split 키는 구 "splitKey 문자열" → 신
  *     JSON({keys,active,pct}) 을 모두 읽는다(마이그레이션).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { ChatApp, OpenConversationCtx, PaneTargetCtx, type DeskTurnStatus, type PaneTarget } from "./Chat";
 import {
   loadInbox, loadInstances, renameConversation, deleteConversation, loadConversationTitle,
   seedConversation, isLocalConversation, onSessionMinted, viewUrlForInstance,
   type InboxRow, type RelayCtx,
 } from "./runtime";
-import { siblingThread, threadFamily } from "./routematch";
+import { displayBinding, siblingThread, threadFamily } from "./routematch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Item, ItemActions, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 import "./chat.css";
+
+// 탭 바(40px) 안에 서는 아이콘 버튼 — 바 높이를 꽉 채우고 모서리는 세우지 않는다(종전 rc-tabs-* 룩).
+const BAR_BTN = "h-full w-auto self-stretch rounded-none px-[11px] text-[var(--rc-soft)]";
+// 보관함 행 안의 작은 액션(✎·🗑·✓) — 행 hover 때만 드러나는 20px 아이콘.
+const ROW_ACT = "size-5 rounded-[5px] text-[11.5px] text-[var(--rc-faint)] hover:text-[var(--rc-soft)]";
 
 export type ChatTabsVariant = "dock" | "desk";
 
@@ -65,7 +78,10 @@ function loadTabs(v: ChatTabsVariant): Tab[] {
     if (!Array.isArray(raw)) return [];
     return raw
       .filter((t) => t && typeof t.instanceId === "string" && t.instanceId && typeof t.conversationId === "string")
-      .map((t) => ({ key: keyOf(t.instanceId, t.conversationId), instanceId: t.instanceId, conversationId: t.conversationId, title: String(t.title || "") }));
+      .map((t) => ({ key: keyOf(t.instanceId, t.conversationId), instanceId: t.instanceId, conversationId: t.conversationId, title: String(t.title || "") }))
+      // 같은 좌표는 하나만 — key 가 겹치면 pane 의 보임 판정(key === active)이 전부 참이 되어
+      // 모든 pane 이 나란히 그려진다. 저장 시점에 이미 합쳐지지만 낡은 저장분도 여기서 막는다
+      .filter((t: Tab, i: number, arr: Tab[]) => arr.findIndex((x) => x.key === t.key) === i);
   } catch { return []; }
 }
 
@@ -136,15 +152,19 @@ function loadSplit(v: ChatTabsVariant): SplitPersist {
   } catch { return none; }
 }
 
-/** 표시 이름 — 서버/자동 제목이 있으면 그대로, 없으면 "기본 대화"/"대화 <suffix>". */
+/** 표시 이름 — 서버/자동 제목이 있으면 그대로, 없으면 "기본 대화"/"새 대화". */
 function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
-  if (t.title && !isPlaceholderTitle(t.title)) return t.title;
+  // 외부(임베더·목록)가 붙인 앞 트리 기호("└ ", "├ ")는 탭 안에서 뜻이 없어 표시에서만 뗀다.
+  if (t.title && !isPlaceholderTitle(t.title)) return t.title.replace(/^[\u2500-\u257f\s]+/, "") || t.title;
   const id = t.conversationId;
   // main 패밀리(threadFamily)와 로컬 드래프트("c-…" — 지연 민팅 전) 모두 기본 대화로 그린다.
   if (!id || threadFamily(id) === "main") return "기본 대화";
-  const sep = id.includes("~") ? "~" : "-";
-  const suffix = id.slice(id.lastIndexOf(sep) + 1);
-  return "대화 " + suffix.slice(0, 6);
+  // 도킹 슬롯은 "새 대화"가 아니라 무엇을 하는 대화인지로 — 빌더 탭이 옆의 "기본 대화"와 무엇이
+  // 다른지 알 수 없었다(2026-08-27). 빈 화면(EmptyStarter)과 같은 말.
+  const b = displayBinding(id);
+  if (b.agent === "agent-builder") return b.param ? `${b.param} 손보기` : "새로 만들기";
+  if (b.agent) return `${b.agent} 대화`;
+  return "새 대화";
 }
 
 /** 자동 제목을 덮어써도 되는 placeholder 인가 — 서버의 진짜 제목은 보존한다.
@@ -152,8 +172,7 @@ function labelOf(t: Pick<Tab, "title" | "conversationId">): string {
  *   인스턴스 id 도 사람이 붙인 제목일 수 있어 placeholder 로 보지 않는다. 자동 제목은 "새/기본/대화 ".) */
 function isPlaceholderTitle(title: string): boolean {
   if (!title) return true;
-  if (title === "새 대화" || title === "기본 대화") return true;
-  return /^대화 /.test(title);
+  return title === "새 대화" || title === "기본 대화" || title === "이름 없는 대화";
 }
 
 function relTime(iso?: string): string {
@@ -191,33 +210,38 @@ async function loadPickerRows(principal: string): Promise<InboxRow[]> {
   return rows;
 }
 
-/** 보관함 드롭다운 — 전 에이전트 대화 나열 + 열기 + 이름변경·삭제(구 SessionMenu list UI 이식). */
-function InboxDropdown({
-  principal, existing, onOpen, onClose, style, onMutated,
+/** 보관함 피커 — 전 에이전트 대화 나열 + 열기 + 이름변경·삭제(구 SessionMenu list UI 이식).
+ *  배치·바깥클릭·Escape 는 Popover 가 맡는다(body 포털 — 도킹 aside 의 transform·overflow 클리핑
+ *  탈출은 그대로). 열림 상태는 부모 소유 — "새 대화"가 열 대상이 없을 때 여기로 유도한다. */
+function InboxPicker({
+  principal, existing, open, onOpenChange, trigger, onOpen, onMutated,
 }: {
   principal: string;
   existing: Set<string>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** 트리거 요소 — PopoverTrigger 가 render 로 감싼다(바 아이콘 버튼 · 빈 화면의 큰 버튼). */
+  trigger: ReactElement;
   onOpen: (t: Tab) => void;
-  onClose: () => void;
-  style?: CSSProperties;
   onMutated: (instanceId: string, conversationId: string, title: string | null) => void;
 }) {
   const [rows, setRows] = useState<InboxRow[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
   const refresh = useCallback(() => loadPickerRows(principal).then(setRows), [principal]);
+  // 열릴 때마다 목록을 다시 읽는다 — 편집·확인 상태도 매번 초기화.
   useEffect(() => {
+    if (!open) return;
     let alive = true;
+    setRows(null); setEditing(null); setConfirming(null);
     loadPickerRows(principal).then((r) => { if (alive) setRows(r); });
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) onClose(); };
-    document.addEventListener("pointerdown", onDown);
-    return () => { alive = false; document.removeEventListener("pointerdown", onDown); };
-  }, [principal, onClose]);
+    return () => { alive = false; };
+  }, [open, principal]);
   useEffect(() => { if (editing) editRef.current?.select(); }, [editing]);
 
+  const close = () => onOpenChange(false);
   const ctxOf = (r: InboxRow): RelayCtx => ({ instanceId: r.instance, principal, conversationId: r.conversation_id, title: r.title || r.instance });
   const label = (r: InboxRow) => (r.title ? r.title : isLocalConversation(r.conversation_id) ? "기본 대화" : r.conversation_id);
   // 시드 = 미민팅 로컬 드래프트 — 서버에 아직 없으니 삭제 버튼을 감춘다.
@@ -244,89 +268,120 @@ function InboxDropdown({
     await refresh();
   };
 
-  // document.body 로 포털 — 도킹 aside 의 transform(→fixed 가둠)+overflow:hidden 클리핑을 탈출.
-  // style(fixed 뷰포트 좌표)이 body 컨텍스트에서 올바르게 배치된다. 위치 미지정 시 좌상단 폴백.
-  return createPortal(
-    <div className="rc-desk-picker" ref={boxRef} role="menu" style={style || { position: "fixed", top: 48, left: 12 }}>
-      {rows === null ? (
-        <div className="rc-sess-note">불러오는 중…</div>
-      ) : rows.length === 0 ? (
-        <div className="rc-sess-note">열 수 있는 에이전트가 없습니다</div>
-      ) : (
-        rows.map((r) => {
-          const k = keyOf(r.instance, r.conversation_id);
-          const open = existing.has(k);
-          if (editing === k) {
-            return (
-              <div key={k} className="rc-sess-item rc-sess-edit">
-                <input ref={editRef} className="rc-sess-input" defaultValue={r.title || ""} placeholder={label(r)} maxLength={120} disabled={busy}
-                       onKeyDown={(e) => {
-                         if (e.key === "Enter") { e.preventDefault(); void saveRename(r, (e.target as HTMLInputElement).value); }
-                         if (e.key === "Escape") { e.preventDefault(); setEditing(null); }
-                       }} />
-                <button type="button" className="rc-sess-act" title="저장" aria-label="이름 저장" disabled={busy}
-                        onClick={() => void saveRename(r, editRef.current?.value ?? "")}>✓</button>
-              </div>
-            );
-          }
-          if (confirming === k) {
-            return (
-              <div key={k} className="rc-sess-item rc-sess-confirm">
-                <span className="rc-sess-name">"{label(r)}" 삭제?</span>
-                <button type="button" className="rc-sess-act rc-sess-danger" disabled={busy} onClick={() => void doDelete(r)}>{busy ? "삭제 중…" : "삭제"}</button>
-                <button type="button" className="rc-sess-act" disabled={busy} onClick={() => setConfirming(null)}>취소</button>
-              </div>
-            );
-          }
-          return (
-            <div key={k} role="menuitem" tabIndex={0} className="rc-sess-item"
-                 title={r.instance + " · " + r.conversation_id}
-                 onClick={() => { if (!open) onOpen(tabOf(r)); onClose(); }}
-                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!open) onOpen(tabOf(r)); onClose(); } }}>
-              <span className="rc-inbox-src">{r.instance}</span>
-              <span className="rc-sess-name">{label(r)}</span>
-              {open ? <span className="rc-sess-time">열림</span> : r.last_started_at && <span className="rc-sess-time">{relTime(r.last_started_at)}</span>}
-              <span className="rc-sess-acts">
-                <button type="button" className="rc-sess-act" title="이름 바꾸기" aria-label="이름 바꾸기"
-                        onClick={(e) => { e.stopPropagation(); setConfirming(null); setEditing(k); }}>✎</button>
-                {!isSeed(r) && (
-                  <button type="button" className="rc-sess-act" title="대화 삭제" aria-label="대화 삭제"
-                          onClick={(e) => { e.stopPropagation(); setEditing(null); setConfirming(k); }}>🗑</button>
-                )}
-              </span>
-            </div>
-          );
-        })
+  // 행 공통 — 한 줄(줄바꿈 없음)·12.5px. Item 의 [a]:hover 는 앵커 전용이라 hover 배경을 직접 준다.
+  const ROW = "flex-nowrap gap-2 rounded-[7px] px-2 py-1.5 text-[12.5px]";
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger render={trigger} aria-haspopup="menu" aria-expanded={open} />
+      {open && (
+        <PopoverContent align="end" side="bottom" sideOffset={4}
+                        className="w-[300px] max-w-[calc(100vw-16px)] gap-0 rounded-[10px] p-1">
+          {rows === null ? (
+            <div className="px-2 py-2 text-[11.5px] text-muted-foreground">불러오는 중…</div>
+          ) : rows.length === 0 ? (
+            <Empty className="gap-1 p-4">
+              <EmptyHeader className="gap-1">
+                <EmptyTitle className="text-[13px]">열 수 있는 에이전트가 없어요</EmptyTitle>
+                <EmptyDescription className="text-[11.5px]">에이전트를 설치하면 여기에 보여요</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            // max-h 는 루트(flex 열)에 — 뷰포트(overflow:scroll)가 그 안에서 줄어들며 스크롤한다.
+            <ScrollArea className="flex max-h-[60vh] flex-col">
+              <ItemGroup role="menu" className="gap-0.5 has-data-[size=xs]:gap-0.5">
+                {rows.map((r) => {
+                  const k = keyOf(r.instance, r.conversation_id);
+                  const isOpen = existing.has(k);
+                  if (editing === k) {
+                    return (
+                      <Item key={k} size="xs" className={ROW}>
+                        <Input ref={editRef} className="h-7 flex-1 px-2 text-[12.5px] md:text-[12.5px] border-[var(--rc-accent)]" defaultValue={r.title || ""} placeholder={label(r)} maxLength={120} disabled={busy}
+                               onKeyDown={(e) => {
+                                 if (e.key === "Enter") { e.preventDefault(); void saveRename(r, (e.target as HTMLInputElement).value); }
+                                 if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setEditing(null); }
+                               }} />
+                        <ItemActions>
+                          <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="저장" aria-label="이름 저장" disabled={busy}
+                                  onClick={() => void saveRename(r, editRef.current?.value ?? "")}>✓</Button>
+                        </ItemActions>
+                      </Item>
+                    );
+                  }
+                  if (confirming === k) {
+                    return (
+                      <Item key={k} size="xs" className={ROW}>
+                        <ItemContent className="min-w-0">
+                          <ItemTitle className="w-full font-normal text-[12.5px]">"{label(r)}" 삭제?</ItemTitle>
+                        </ItemContent>
+                        <ItemActions className="gap-1">
+                          <Button type="button" variant="destructive" size="xs" className="h-6 px-2 font-semibold" disabled={busy} onClick={() => void doDelete(r)}>{busy ? "삭제 중…" : "삭제"}</Button>
+                          <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-[var(--rc-faint)]" disabled={busy} onClick={() => setConfirming(null)}>취소</Button>
+                        </ItemActions>
+                      </Item>
+                    );
+                  }
+                  const go = () => { if (!isOpen) onOpen(tabOf(r)); close(); };
+                  return (
+                    <Item key={k} role="menuitem" tabIndex={0} size="xs"
+                          className={cn(ROW, "cursor-pointer hover:bg-muted focus-visible:bg-muted")}
+                          title={r.instance + " · " + r.conversation_id}
+                          onClick={go}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}>
+                      <ItemMedia>
+                        <Badge variant="secondary" className="h-4 max-w-24 px-1.5 text-[10px] font-semibold [&>*]:truncate">
+                          <span className="truncate">{r.instance}</span>
+                        </Badge>
+                      </ItemMedia>
+                      <ItemContent className="min-w-0">
+                        <ItemTitle className="w-full font-normal text-[12.5px]">{label(r)}</ItemTitle>
+                      </ItemContent>
+                      {/* 우측 = 시간(평소) ↔ 액션(hover/focus, 터치 기기는 상시) — 같은 자리를 나눠 써 행 폭을 유지. */}
+                      <ItemActions className="shrink-0 gap-0.5">
+                        {isOpen
+                          ? <Badge variant="secondary" className="group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">열림</Badge>
+                          : r.last_started_at && (
+                            <span className="text-[11px] tabular-nums text-muted-foreground group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">{relTime(r.last_started_at)}</span>
+                          )}
+                        <span className="hidden items-center gap-0.5 group-hover/item:inline-flex group-focus-within/item:inline-flex [@media(hover:none)]:inline-flex">
+                          <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="이름 바꾸기" aria-label="이름 바꾸기"
+                                  onClick={(e) => { e.stopPropagation(); setConfirming(null); setEditing(k); }}>✎</Button>
+                          {!isSeed(r) && (
+                            <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="대화 삭제" aria-label="대화 삭제"
+                                    onClick={(e) => { e.stopPropagation(); setEditing(null); setConfirming(k); }}>🗑</Button>
+                          )}
+                        </span>
+                      </ItemActions>
+                    </Item>
+                  );
+                })}
+              </ItemGroup>
+            </ScrollArea>
+          )}
+        </PopoverContent>
       )}
-    </div>,
-    document.body,
+    </Popover>
   );
 }
 
 type TabMenuItem = { label: string; run: () => void; disabled?: boolean; title?: string } | "sep";
 
-/** 탭 우클릭 컨텍스트 메뉴 — InboxDropdown 과 같은 관용구(body 포털 + 바깥클릭/Escape 닫기). */
-function TabMenu({ at, items, onClose }: { at: { top: number; left: number }; items: TabMenuItem[]; onClose: () => void }) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) onClose(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [onClose]);
-  return createPortal(
-    <div className="rc-tab-menu" ref={boxRef} role="menu" style={{ position: "fixed", top: at.top, left: at.left }}>
+/** 탭 우클릭 메뉴 본문 — 항목 목록을 ContextMenuItem 으로 편다. 닫힘·배치·키보드는 ContextMenu 소관. */
+function TabMenuItems({ items }: { items: TabMenuItem[] }) {
+  return (
+    <>
       {items.map((it, i) =>
         it === "sep" ? (
-          <div key={i} className="rc-tab-menu-sep" role="separator" />
+          <ContextMenuSeparator key={i} />
         ) : (
-          <button key={i} type="button" role="menuitem" className="rc-tab-menu-item" disabled={it.disabled}
-                  title={it.title} onClick={() => { onClose(); it.run(); }}>{it.label}</button>
+          // disabled 여도 title 툴팁은 살린다(pointer-events 복원) — "왜 안 되는지"를 hover 로 말해주는 항목이 있다.
+          <ContextMenuItem key={i} disabled={it.disabled} title={it.title} onClick={it.run}
+                           className={cn("text-[13px]", it.title && "data-disabled:pointer-events-auto")}>
+            {it.label}
+          </ContextMenuItem>
         ),
       )}
-    </div>,
-    document.body,
+    </>
   );
 }
 
@@ -334,8 +389,8 @@ function TabMenu({ at, items, onClose }: { at: { top: number; left: number }; it
  *  활성 탭 자동 시야 유지. 상태(활성·드래그·메뉴)는 부모가 소유하고 여기는 표시/이벤트만. */
 function TabStrip({
   tabs, activeKey, focused, editingKey, dragTab, style,
-  badgeOf, renderRename,
-  onActivate, onClose, onMenu, onEditStart,
+  badgeOf, renderRename, menuItemsOf,
+  onActivate, onClose, onEditStart,
   onTabDragStart, onTabDragOver, onTabDragEnd, onStripDragOver,
   onFocusGroup,
 }: {
@@ -347,9 +402,10 @@ function TabStrip({
   style?: CSSProperties;
   badgeOf: (t: Tab) => { cls: string; text: string } | null;
   renderRename: (t: Tab, cls: string) => ReactNode;
+  /** 우클릭 메뉴 항목 — 그룹·분할 상태는 부모가 알므로 항목 계산도 부모 몫. */
+  menuItemsOf: (key: string) => TabMenuItem[];
   onActivate: (key: string) => void;
   onClose: (key: string) => void;
-  onMenu: (key: string, at: { top: number; left: number }) => void;
   onEditStart: (key: string) => void;
   onTabDragStart: (e: React.DragEvent, key: string) => void;
   onTabDragOver: (e: React.DragEvent, key: string) => void;
@@ -419,46 +475,51 @@ function TabStrip({
   return (
     <div className={"rc-tab-ghead" + (focused ? " focus" : "")} style={style} onMouseDownCapture={onFocusGroup}>
       {overflow && (
-        <button type="button" className="rc-tab-arrow" disabled={!canL} aria-label="탭 왼쪽으로 스크롤"
-                onClick={() => nudge(-1)}>‹</button>
+        <Button type="button" variant="ghost" size="icon-xs" className={cn(BAR_BTN, "w-6 px-0 pb-[3px] text-[17px]")} disabled={!canL} aria-label="탭 왼쪽으로 스크롤"
+                onClick={() => nudge(-1)}>‹</Button>
       )}
       <div className="rc-desk-tabstrip" role="tablist" ref={stripRef}
            onDragOver={onStripDragOver} onDrop={(e) => { e.preventDefault(); onTabDragEnd(); }}>
         {tabs.map((t) => {
           const b = badgeOf(t);
           return (
-            <div key={t.key} role="tab" aria-selected={t.key === activeKey}
-                 className={"rc-desk-tab" + (t.key === activeKey ? " on" : "") + (t.key === dragTab ? " drag" : "") + (t.preview ? " preview" : "")}
-                 title={t.instanceId + " · " + t.conversationId + (t.preview ? "\n미리보기 — 말을 걸면 탭으로 고정됩니다" : "")}
-                 draggable={editingKey !== t.key}
-                 onDragStart={(e) => onTabDragStart(e, t.key)}
-                 onDragOver={(e) => onTabDragOver(e, t.key)}
-                 onDrop={(e) => { e.preventDefault(); onTabDragEnd(); }}
-                 onDragEnd={onTabDragEnd}
-                 onContextMenu={(e) => {
-                   e.preventDefault();
-                   onMenu(t.key, {
-                     top: Math.min(e.clientY, Math.max(8, window.innerHeight - 220)),
-                     left: Math.min(e.clientX, Math.max(8, window.innerWidth - 200)),
-                   });
-                 }}
-                 onClick={() => onActivate(t.key)}
-                 onDoubleClick={(e) => { e.stopPropagation(); onEditStart(t.key); }}>
-              {b && (b.cls === "run"
-                ? <span className="rc-desk-badge run" aria-label="동작중" />
-                : <span className={"rc-desk-badge " + b.cls} aria-label={b.cls === "ask" ? "질문 대기" : "완료"}>{b.text}</span>)}
-              {editingKey === t.key
-                ? renderRename(t, "rc-tab-rename")
-                : <span className="rc-desk-tab-tx">{labelOf(t)}</span>}
-              <button type="button" className="rc-desk-close" aria-label="탭 닫기"
-                      onClick={(e) => { e.stopPropagation(); onClose(t.key); }}>×</button>
-            </div>
+            // 탭 하나 = ContextMenu 하나. 트리거는 render 로 탭 div 자체를 쓴다(role=tab·드래그·클릭 유지) —
+            // 우클릭·롱프레스 배치는 ContextMenu 가 포인터 좌표로 잡는다.
+            <ContextMenu key={t.key}>
+              <ContextMenuTrigger render={
+                <div role="tab" aria-selected={t.key === activeKey}
+                     className={"rc-desk-tab" + (t.key === activeKey ? " on" : "") + (t.key === dragTab ? " drag" : "") + (t.preview ? " rc-preview" : "")}
+                     title={t.instanceId + " · " + t.conversationId + (t.preview ? "\n미리보기 · 메시지를 보내면 탭으로 남아요" : "")}
+                     draggable={editingKey !== t.key}
+                     onDragStart={(e) => onTabDragStart(e, t.key)}
+                     onDragOver={(e) => onTabDragOver(e, t.key)}
+                     onDrop={(e) => { e.preventDefault(); onTabDragEnd(); }}
+                     onDragEnd={onTabDragEnd}
+                     onClick={() => onActivate(t.key)}
+                     onDoubleClick={(e) => { e.stopPropagation(); onEditStart(t.key); }} />
+              }>
+                {/* 안 본 결과 점은 chat.css 소유(정지, 애니메이션 없음) — 질문 대기는 작은 Badge. */}
+                {b && (b.cls === "unread"
+                  ? <span className="rc-desk-badge unread" aria-label="안 본 결과" />
+                  : <Badge variant="outline" aria-label="질문 대기"
+                           className="h-4 min-w-4 shrink-0 px-1 text-[10px] leading-none">{b.text}</Badge>)}
+                {editingKey === t.key
+                  ? renderRename(t, "rc-tab-rename")
+                  : <span className="rc-desk-tab-tx">{labelOf(t)}</span>}
+                {/* rc-desk-close 유지 — 글자 꼬리 위에 겹치는 음수 마진·페이드 그림자를 chat.css 가 소유한다. */}
+                <Button type="button" variant="ghost" size="icon-xs" className="rc-desk-close h-auto" aria-label="탭 닫기"
+                        onClick={(e) => { e.stopPropagation(); onClose(t.key); }}>×</Button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="min-w-44">
+                <TabMenuItems items={menuItemsOf(t.key)} />
+              </ContextMenuContent>
+            </ContextMenu>
           );
         })}
       </div>
       {overflow && (
-        <button type="button" className="rc-tab-arrow" disabled={!canR} aria-label="탭 오른쪽으로 스크롤"
-                onClick={() => nudge(1)}>›</button>
+        <Button type="button" variant="ghost" size="icon-xs" className={cn(BAR_BTN, "w-6 px-0 pb-[3px] text-[17px]")} disabled={!canR} aria-label="탭 오른쪽으로 스크롤"
+                onClick={() => nudge(1)}>›</Button>
       )}
     </div>
   );
@@ -502,10 +563,8 @@ export function ChatTabs({
   const [focus, setFocus] = useState<0 | 1>(0); // 포커스 그룹 — 새 탭·크럼 강조·desk 뷰 대상
   const [status, setStatus] = useState<Record<string, DeskTurnStatus>>({});
   const [unread, setUnread] = useState<Record<string, boolean>>({});
-  const [picking, setPicking] = useState(false);
-  const [pickAt, setPickAt] = useState<{ top: number; left: number } | null>(null);
+  const [picking, setPicking] = useState(false); // 보관함 피커(Popover) 열림
   const [editingKey, setEditingKey] = useState<string | null>(null); // 탭/브레드크럼 인라인 이름편집
-  const [menu, setMenu] = useState<{ key: string; top: number; left: number } | null>(null); // 탭 우클릭
   const [dragTab, setDragTab] = useState<string | null>(null); // 드래그 중인 탭(반투명 표시)
 
   // desk 전용 우측 뷰 split.
@@ -560,11 +619,28 @@ export function ChatTabs({
   // 지연 민팅 재바인딩 — 드래프트 좌표의 탭이 session.create 발급 id 를 받으면 탭 기록의
   // conversationId 만 갈아끼운다(key 유지 → pane 무재마운트, 매핑은 runtime 이 번역). 영속은
   // 발급 id 로 남아 새로고침 뒤에도 그 대화가 열린다. 페이지 슬롯 좌표도 같이 따라간다.
+  // 재바인딩 결과 같은 세션을 든 탭이 둘 이상이면 하나로 합친다 — 바인딩 seed 드래프트 여러 개가
+  // 같은 기존 세션을 이어받으면(resolveBoundSeed) 좌표가 같은 탭이 겹쳐 쌓이고, 새로고침 뒤
+  // key 가 충돌해 pane 이 전부 나란히 보였다. 먼저 있던 탭이 남고 활성·그룹은 그리로 옮긴다.
   useEffect(() => onSessionMinted(({ conversation, session }) => {
-    setTabs((prev) => {
-      if (!prev.some((t) => t.conversationId === conversation)) return prev;
-      return prev.map((t) => (t.conversationId === conversation ? { ...t, conversationId: session } : t));
+    const cur = tabsRef.current;
+    if (!cur.some((t) => t.conversationId === conversation)) return;
+    const rebound = cur.map((t) => (t.conversationId === conversation ? { ...t, conversationId: session } : t));
+    const survivor = new Map<string, string>(); // 좌표 → 남는 탭 key
+    const dropped = new Map<string, string>();  // 사라지는 탭 key → 남는 탭 key
+    const merged = rebound.filter((t) => {
+      const coord = keyOf(t.instanceId, t.conversationId);
+      const s = survivor.get(coord);
+      if (s) { dropped.set(t.key, s); return false; }
+      survivor.set(coord, t.key);
+      return true;
     });
+    setTabs(merged);
+    if (dropped.size) {
+      const a0 = dropped.get(active0Ref.current); if (a0) setActive0(a0);
+      const a1 = dropped.get(active1Ref.current); if (a1) setActive1(a1);
+      setG2((prev) => prev.filter((k) => !dropped.has(k)));
+    }
     const slot = pageSlotRef.current;
     if (slot && slot.conversationId === conversation) pageSlotRef.current = { ...slot, conversationId: session };
   }), []);
@@ -969,18 +1045,6 @@ export function ChatTabs({
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [dragging]);
 
-  // 버튼 우측에 정렬해 왼쪽으로 펴고, 뷰포트 안으로 클램프(도킹은 버튼이 우측 끝 → 오른쪽 넘침 방지).
-  const PICK_W = 300;
-  const togglePicker = (el: HTMLElement) => {
-    if (picking) { setPicking(false); return; }
-    const r = el.getBoundingClientRect();
-    const left = Math.max(8, Math.min(r.right - PICK_W, window.innerWidth - PICK_W - 8));
-    const top = Math.min(r.bottom + 4, Math.max(8, window.innerHeight - 140));
-    setPickAt({ top, left });
-    setPicking(true);
-  };
-  const pickStyle: CSSProperties | undefined = pickAt ? { position: "fixed", top: pickAt.top, left: pickAt.left, width: PICK_W } : undefined;
-
   const existing = useMemo(() => new Set(tabs.map((t) => t.key)), [tabs]);
   const activeTab0 = group0.find((t) => t.key === active0) || null;
   const activeTab1 = split ? group1.find((t) => t.key === active1) || null : null;
@@ -992,13 +1056,19 @@ export function ChatTabs({
   const badgeOf = (t: Tab): { cls: string; text: string } | null => {
     const s = status[t.key] || "idle";
     if (s === "ask") return { cls: "ask", text: "❓" };
-    if (s === "running") return { cls: "run", text: "" };
-    if (unread[t.key]) return { cls: "done", text: "✓" };
+    // 실행 중은 탭이 알릴 일이 아니다(들어가 보면 안다). 알릴 것은 "안 본 결과"뿐 — 정지된 점 하나.
+    if (unread[t.key]) return { cls: "unread", text: "" };
     return null;
   };
 
   const renameInput = (t: Tab, cls: string) => (
-    <input ref={editRef} className={cls} defaultValue={t.title && !isPlaceholderTitle(t.title) ? t.title : ""}
+    // cls: "rc-tab-rename"(탭 텍스트 자리) | "rc-crumb-rename"(크럼 행 전체) — 자리별 폭·글자만 다르다.
+    <Input ref={editRef}
+           className={cn("border-[var(--rc-accent)] text-[var(--rc-ink)]",
+             cls === "rc-tab-rename"
+               ? "h-6 w-auto min-w-20 max-w-40 rounded-[5px] px-[5px] text-[12.5px] md:text-[12.5px]"
+               : "h-7 flex-1 rounded-md px-[7px] text-[13px] font-semibold md:text-[13px]")}
+           defaultValue={t.title && !isPlaceholderTitle(t.title) ? t.title : ""}
            placeholder={labelOf(t)} maxLength={120}
            onClick={(e) => e.stopPropagation()}
            onDoubleClick={(e) => e.stopPropagation()}
@@ -1011,6 +1081,32 @@ export function ChatTabs({
 
   // 좌측 그룹 폭 — 분할 시 스플리터(6px)의 절반을 좌측이 부담해 헤드/크럼/pane 3행이 픽셀 정렬.
   const leftBasis = `0 0 calc(${splitPct}% - 3px)`;
+
+  // 탭 우클릭 메뉴 항목 — 그 탭이 선 그룹 기준(다른 탭·오른쪽 탭은 같은 그룹 안), 분할 여부로 하단이 갈린다.
+  const menuItemsOf = (key: string): TabMenuItem[] => {
+    const inG1 = g2set.has(key);
+    const gtabs = inG1 ? group1 : group0;
+    const idx = gtabs.findIndex((t) => t.key === key);
+    if (idx < 0) return [];
+    return [
+      { label: "닫기", run: () => closeTab(key) },
+      { label: "다른 탭 닫기", run: () => closeOthers(key), disabled: gtabs.length < 2 },
+      { label: "오른쪽 탭 닫기", run: () => closeToRight(key), disabled: idx === gtabs.length - 1 },
+      "sep",
+      ...(split
+        ? ([
+            inG1
+              ? { label: "왼쪽 그룹으로 이동", run: () => moveToGroup(key, 0) }
+              : { label: "오른쪽 그룹으로 이동", run: () => moveToGroup(key, 1) },
+            { label: "분할 해제", run: unsplit },
+          ] as TabMenuItem[])
+        : ([{
+            label: "오른쪽으로 분할", run: () => moveToGroup(key, 1), disabled: tabs.length < 2,
+            // disabled 만으로는 "왜 안 되는지"가 안 보인다 — hover 툴팁으로 조건을 말해준다.
+            title: tabs.length < 2 ? "대화 탭이 두 개 이상 열려 있어야 나눌 수 있어요" : undefined,
+          }] as TabMenuItem[])),
+    ];
+  };
 
   const stripFor = (gi: 0 | 1) => {
     const g = gi === 0 ? group0 : group1;
@@ -1026,7 +1122,7 @@ export function ChatTabs({
         renderRename={renameInput}
         onActivate={(key) => activate(gi, key)}
         onClose={closeTab}
-        onMenu={(key, at) => setMenu({ key, ...at })}
+        menuItemsOf={menuItemsOf}
         onEditStart={setEditingKey}
         onTabDragStart={onTabDragStart}
         onTabDragOver={onTabDragOver}
@@ -1037,37 +1133,42 @@ export function ChatTabs({
     );
   };
 
+  // 보관함 피커 — 트리거만 자리마다 다르다(바 아이콘 · 빈 화면 큰 버튼). 열림 상태는 picking 하나.
+  const picker = (trigger: ReactElement) => (
+    <InboxPicker principal={principal} existing={existing} open={picking} onOpenChange={setPicking}
+                 trigger={trigger} onOpen={addTab} onMutated={onInboxMutated} />
+  );
+
   const actions = (
     <div className="rc-tabs-actions">
-      <div className="rc-desk-add-wrap">
-        <button type="button" className="rc-tabs-inbox" aria-label="보관함 — 전 에이전트 대화" title="보관함 — 내 모든 에이전트 대화"
-                onClick={(e) => togglePicker(e.currentTarget)}>
+      {picker(
+        <Button type="button" variant="ghost" size="icon-sm" className={BAR_BTN} aria-label="대화 목록" title="대화 목록 · 모든 에이전트의 대화">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 6h14l2 7v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5z" />
           </svg>
-        </button>
-        {picking && <InboxDropdown principal={principal} existing={existing} onOpen={addTab} onClose={() => setPicking(false)} style={pickStyle} onMutated={onInboxMutated} />}
-      </div>
-      <button type="button" className="rc-tabs-new" aria-label="새 대화" title="새 대화 열기" onClick={newConversation}>
+        </Button>,
+      )}
+      <Button type="button" variant="ghost" size="icon-sm" className={cn(BAR_BTN, "text-[var(--rc-accent-strong)]")} aria-label="새 대화" title="새 대화 열기" onClick={newConversation}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M12 5v14M5 12h14" />
         </svg>
-      </button>
+      </Button>
       {variant === "desk" && viewTab && viewSrc && (
-        <button type="button" className={"rc-desk-viewtoggle" + (showView ? " on" : "")}
-                aria-pressed={showView} title="에이전트 화면(뷰) 보기 — 오른쪽에 표시" onClick={() => setShowView((v) => !v)}>
+        // rc-desk-viewtoggle 유지 — 휴대폰 폭 숨김(@media) 과 .on 강조색은 chat.css 소유.
+        <Button type="button" variant="ghost" size="xs" className={cn(BAR_BTN, "rc-desk-viewtoggle gap-[5px] px-3 text-[11.5px] font-semibold text-[var(--rc-faint)]", showView && "on")}
+                aria-pressed={showView} title="에이전트 화면을 오른쪽에 보기" onClick={() => setShowView((v) => !v)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M13 4v16" />
           </svg>
           <span>화면</span>
-        </button>
+        </Button>
       )}
       {variant === "dock" && onCollapse && (
-        <button type="button" className="rc-tabs-collapse" aria-label="채팅 패널 접기" title="패널 접기(탭은 유지)" onClick={onCollapse}>
+        <Button type="button" variant="ghost" size="icon-sm" className={BAR_BTN} aria-label="채팅 패널 접기" title="패널 접기(탭은 유지)" onClick={onCollapse}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M13 5l7 7-7 7M4 5l7 7-7 7" />
           </svg>
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -1083,32 +1184,6 @@ export function ChatTabs({
 
   return (
     <div className={"rc-ws rc-tabs rc-tabs-" + variant + (split ? " rc-tabs-split" : "")}>
-      {menu && (() => {
-        const inG1 = g2set.has(menu.key);
-        const gtabs = inG1 ? group1 : group0;
-        const idx = gtabs.findIndex((t) => t.key === menu.key);
-        if (idx < 0) return null;
-        const items: TabMenuItem[] = [
-          { label: "닫기", run: () => closeTab(menu.key) },
-          { label: "다른 탭 닫기", run: () => closeOthers(menu.key), disabled: gtabs.length < 2 },
-          { label: "오른쪽 탭 닫기", run: () => closeToRight(menu.key), disabled: idx === gtabs.length - 1 },
-          "sep",
-          ...(split
-            ? ([
-                inG1
-                  ? { label: "왼쪽 그룹으로 이동", run: () => moveToGroup(menu.key, 0) }
-                  : { label: "오른쪽 그룹으로 이동", run: () => moveToGroup(menu.key, 1) },
-                { label: "분할 해제", run: unsplit },
-              ] as TabMenuItem[])
-            : ([{
-                label: "오른쪽으로 분할", run: () => moveToGroup(menu.key, 1), disabled: tabs.length < 2,
-                // disabled 만으로는 "왜 안 되는지"가 안 보인다 — hover 툴팁으로 조건을 말해준다.
-                title: tabs.length < 2 ? "대화 탭이 두 개 이상 열려 있어야 분할할 수 있어요" : undefined,
-              }] as TabMenuItem[])),
-        ];
-        return <TabMenu at={menu} items={items} onClose={() => setMenu(null)} />;
-      })()}
-
       {tabs.length === 0 ? (
         <>
           <div className="rc-desk-tabs">
@@ -1118,10 +1193,11 @@ export function ChatTabs({
           <div className="rc-desk-empty">
             <div className="rc-empty-ic" aria-hidden>✦</div>
             <div className="rc-empty-t">에이전트를 열어 시작하세요</div>
-            <div className="rc-desk-add-wrap">
-              <button type="button" className="rc-desk-add-big" onClick={(e) => togglePicker(e.currentTarget)}>보관함에서 열기</button>
-              {picking && <InboxDropdown principal={principal} existing={existing} onOpen={addTab} onClose={() => setPicking(false)} style={pickStyle} onMutated={onInboxMutated} />}
-            </div>
+            {picker(
+              <Button type="button" variant="outline" className="font-semibold text-[var(--rc-accent-strong)] hover:border-[var(--rc-accent)] hover:bg-[var(--rc-accent-soft)]">
+                대화 목록에서 열기
+              </Button>,
+            )}
           </div>
         </>
       ) : (
@@ -1134,8 +1210,10 @@ export function ChatTabs({
               {split && stripFor(1)}
               {actions}
             </div>
-            {/* row2 — 그룹별 활성 대화 이름 브레드크럼(더블클릭 rename, "칩 자리" 이름 유지) */}
-            {(activeTab0 || activeTab1) && (
+            {/* row2 — 그룹별 활성 대화 이름 브레드크럼(더블클릭 rename, "칩 자리" 이름 유지).
+                dock 에서는 두지 않는다 — 탭 줄이 이미 이름을 보여주고(더블클릭 rename 도 탭에서
+                된다), 패키지 화면의 탑바 밑에 머리가 두 줄이면 무겁다. desk 는 그대로 */}
+            {variant !== "dock" && (activeTab0 || activeTab1) && (
               <div className="rc-tabs-crumbs">
                 {activeTab0 && crumbCell(activeTab0, "crumb0", split ? { flex: leftBasis } : undefined)}
                 {split && <div className="rc-ghead-gap" aria-hidden />}

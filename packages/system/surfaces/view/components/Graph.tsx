@@ -10,12 +10,15 @@ import AddEdgeDialog, { type EdgePrefill } from "@/components/AddEdgeDialog";
 import HarnessDialog from "@/components/HarnessDialog";
 import ChannelDialog from "@/components/ChannelDialog";
 import ServiceDialog from "@/components/ServiceDialog";
+import { Button } from "@/components/ui/button";
 import { isOutward, type EdgeView, type Pkg, type Registry } from "@/lib/types";
 
 const W = 1180;
 const CARD_W = 200;
 const CARD_H = 96;
 const SMIN = 0.4;
+/** 처음 맞출 때의 하한 — 다 보이자고 0.59 까지 줄이면 글씨가 안 읽혔다(2026-08-27). 넘치면 끌어서 본다 */
+const FIT_MIN = 0.85;
 const SMAX = 2;
 const LOD_FAR = 0.7;
 const LAYOUT_KEY = "relay.graph.layout.v1";
@@ -203,9 +206,11 @@ export default function Graph({
     const y1 = Math.max(...pts.map((p) => p.y)) + CARD_H / 2 + 60;
     const vw = el.clientWidth;
     const vh = el.clientHeight;
-    const s = clamp(Math.min((vw - 64) / (x1 - x0), (vh - 64) / (y1 - y0), 1), SMIN, SMAX);
+    const s = clamp(Math.min((vw - 64) / (x1 - x0), (vh - 64) / (y1 - y0), 1), FIT_MIN, SMAX);
     setScale(s);
-    setPan({ x: (vw - (x1 - x0) * s) / 2 - x0 * s, y: (vh - (y1 - y0) * s) / 2 - y0 * s });
+    // 넘치면 가운데가 아니라 왼쪽 위부터 — 가운데 맞춤은 양끝이 잘려 첫 줄부터 못 읽는다
+    const cx = (vw - (x1 - x0) * s) / 2, cy = (vh - (y1 - y0) * s) / 2;
+    setPan({ x: Math.max(cx, 24) - x0 * s, y: Math.max(cy, 24) - y0 * s });
   }, [positions]);
 
   const fitted = useRef(false);
@@ -339,14 +344,15 @@ export default function Graph({
   return (
     <div className="rc-card graph-wrap gx-shell">
       <div className="gx-bar">
-        <b>배포 그래프</b>
+        <b>연결 지도</b>
         <span className="gx-counts">
-          {reg.packages.length} 패키지 · Edge {reg.grants.length}
+          {reg.packages.length}개 · {reg.grants.length ? `연결 ${reg.grants.length}` : "아직 연결 없음"}
         </span>
         <span className="gx-sp" />
-        <button className="rc-btn" onClick={() => setDialog({})}>+ 연결</button>
-        <button
-          className="rc-btn"
+        <Button variant="outline" size="sm" onClick={() => setDialog({})}>+ 연결</Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => {
             setSaved({});
             localStorage.removeItem(LAYOUT_KEY);
@@ -354,7 +360,7 @@ export default function Graph({
           }}
         >
           자동 배치
-        </button>
+        </Button>
       </div>
       <div className="gx-view" ref={viewRef} onPointerDown={bgDown} data-lod={lodFar ? "far" : "near"}>
         <div

@@ -34,6 +34,10 @@ export interface HostBridge {
   draftPublish(name: string, opts?: { version?: string }): unknown;
   draftDiscard(name: string): unknown;
   draftList(): unknown;
+  /** 기록 이력 — 화면의 [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록 */
+  draftHistory(name: string): unknown;
+  /** 기록 지점으로 되돌리기 — 파일만 그 모습으로, 이력은 그대로(HEAD 불변) */
+  draftRestore(name: string, hash: string): unknown;
   /** 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다(도는 판은 그대로) */
   draftBuild(name: string): unknown;
   /** 작업 사본의 동사 한 번 — 발행 전에 돌려보는 자리. 맥락(작업폴더·자격·서비스)은
@@ -45,6 +49,9 @@ export interface HostBridge {
   pack(name: string, deliverTo?: string): unknown;
   releaseList(name: string): unknown;
   releaseRollback(name: string, version: string): unknown;
+  /** 동사 이름 → 짧은 서술(meta.description 의 첫 마디). 화면이 슬러그 대신 이것을 그린다.
+   *  draft = 작업 사본의 코드에서 읽는다(설치본이 아니라) */
+  verbLabels(name: string, draft?: boolean): Promise<Record<string, string>>;
 }
 
 /** 누구로서 — 이 실행을 감싸는 신원. principal 은 권위 이음새의 답, agent 는 그 안의 세션 얼굴 */
@@ -443,12 +450,12 @@ export async function verbLabels(ledger: Ledger, pkg: string, agent: string): Pr
 }
 
 /** 서술의 첫 마디 — 카드 한 줄에 서는 길이로 자른다. 문장 전체는 대상 자리를 밀어낸다 */
-function shortLabel(description?: string): string | null {
+function shortLabel(description?: string, max = 24): string | null {
   const d = (description ?? "").trim();
   if (!d) return null;
   const head = d.split(/\s+—\s+|\n|(?<=[.。])\s/)[0].trim();
   const one = (head || d).replace(/\s+/g, " ");
-  return one.length > 24 ? one.slice(0, 23) + "…" : one;
+  return one.length > max ? one.slice(0, max - 1) + "…" : one;
 }
 
 /**
@@ -461,9 +468,33 @@ function shortLabel(description?: string): string | null {
 export async function scriptMeta(ledger: Ledger, pkg: string, name: string): Promise<ScriptMeta | null> {
   const rec = ledger.packages[pkg];
   if (!rec) return null;
-  const m = loadManifest(rec.path);
+  return scriptMetaAt(rec.path, loadManifest(rec.path), name);
+}
+
+/**
+ * 한 뿌리(설치본이든 작업 사본이든)의 동사 전부에 대한 짧은 서술. 패키지 화면의 "시킬 수 있는 일"
+ * 줄이 슬러그 대신 이것을 그린다 — verbLabels(세션용)와 같은 앎을 사람에게도 보낸다.
+ * 서술 없는 동사는 빠진다(부르는 쪽이 이름으로 떨어진다).
+ */
+export async function verbLabelsAt(root: string): Promise<Record<string, string>> {
+  let m: Manifest;
+  try {
+    m = loadManifest(root);
+  } catch {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const name of listScripts(root, m)) {
+    // 설명서의 목록은 한 줄에 하나라 칩(24자)보다 길게 둔다
+    const short = shortLabel((await scriptMetaAt(root, m, name))?.description, 60);
+    if (short) out[name] = short;
+  }
+  return out;
+}
+
+async function scriptMetaAt(root: string, m: Manifest, name: string): Promise<ScriptMeta | null> {
   if (!m.scripts) return null;
-  const file = path.join(rec.path, m.scripts.source, name + ".ts");
+  const file = path.join(root, m.scripts.source, name + ".ts");
   if (!fs.existsSync(file)) return null;
   let mod: Record<string, unknown>;
   try {

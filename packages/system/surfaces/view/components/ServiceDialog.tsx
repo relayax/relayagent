@@ -23,6 +23,10 @@ import {
   type ServiceStatusView,
 } from "@/lib/api";
 import type { Pkg } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 /** 3-상태 점 — 채널과 같은 어휘. 색이 상태의 축이다 */
 function statusOf(s: ServiceStatusView, note?: string): { dot: string; color: string; text: string } {
@@ -168,13 +172,15 @@ export default function ServiceDialog({
   }
 
   return (
-    <div className="gx-overlay" onClick={onClose}>
-      <div className="gx-modal" onClick={(e) => e.stopPropagation()}>
-        <h3>서비스 연결 · {pkg.manifest?.display_name ?? pkg.name}</h3>
-        <div className="gx-mbody">
-          {err ? <div className="gx-err">{err}</div> : null}
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>서비스 연결 · {pkg.manifest?.display_name ?? pkg.name}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          {err ? <p className="text-sm text-destructive">{err}</p> : null}
           {services.length === 0 ? (
-            <div className="gx-hint">이 패키지에는 자격이 필요한 서비스(services[].url · services[].api)가 없습니다.</div>
+            <p className="text-xs text-muted-foreground">이 패키지에는 자격이 필요한 서비스(services[].url · services[].api)가 없습니다.</p>
           ) : (
             <div className={`lv${busy ? " busy" : ""}`}>
               {services.map((s) => {
@@ -194,43 +200,44 @@ export default function ServiceDialog({
                     </div>
                     {expanded ? (
                       <div className="lv-in" style={{ flexDirection: "column", gap: 8 }}>
-                        <div className="gx-hint" style={{ font: "11px var(--rc-mono)" }}>{s.url}</div>
+                        <p className="text-xs text-muted-foreground font-mono">{s.url}</p>
                         {s.tools.length ? (
-                          <div className="gx-hint" style={{ font: "11px var(--rc-ui)" }}>
+                          <p className="text-xs text-muted-foreground">
                             여는 동사: {s.tools.join(" · ")}
-                          </div>
+                          </p>
                         ) : null}
 
                         {s.kind === "token" ? (
-                          <input
+                          <Input
                             type="password"
                             autoComplete="off"
                             spellCheck={false}
                             placeholder="토큰 붙여넣기"
                             value={token[s.name] ?? ""}
                             onChange={(e) => setToken((x) => ({ ...x, [s.name]: e.target.value }))}
-                            style={{ width: "100%", font: "12px var(--rc-mono)" }}
+                            className="font-mono text-xs"
                           />
                         ) : null}
 
                         {s.kind === "oauth" && s.client === "registered" ? (
-                          <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                            <span style={{ font: "11px var(--rc-ui)", color: "var(--rc-faint)" }}>
-                              등록된 앱의 client_id<span style={{ color: "var(--rc-err)" }}> *</span>
-                              <span style={{ color: "var(--rc-faint)" }}> · 이 서비스는 자동 등록(DCR)을 지원하지 않습니다</span>
-                            </span>
-                            <input
+                          <div className="flex flex-col gap-1.5">
+                            <Label htmlFor={`svc-${s.name}-client`} className="text-xs text-muted-foreground">
+                              등록된 앱의 client_id<span className="text-destructive"> *</span>
+                              <span className="text-muted-foreground"> · 이 서비스는 자동 등록(DCR)을 지원하지 않습니다</span>
+                            </Label>
+                            <Input
+                              id={`svc-${s.name}-client`}
                               autoComplete="off"
                               spellCheck={false}
                               value={clientId[s.name] ?? ""}
                               onChange={(e) => setClientId((x) => ({ ...x, [s.name]: e.target.value }))}
-                              style={{ width: "100%", font: "12px var(--rc-mono)" }}
+                              className="font-mono text-xs"
                             />
-                          </label>
+                          </div>
                         ) : null}
 
                         {s.help ? (
-                          <div className="gx-hint" style={{ font: "11px var(--rc-ui)" }}>
+                          <p className="text-xs text-muted-foreground">
                             {s.help.note}
                             {s.help.url ? (
                               <>
@@ -238,37 +245,38 @@ export default function ServiceDialog({
                                 <a href={s.help.url} target="_blank" rel="noreferrer">발급처 열기</a>
                               </>
                             ) : null}
-                          </div>
+                          </p>
                         ) : null}
 
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <div className="flex flex-wrap gap-1.5">
                           {s.kind === "token" ? (
-                            <button className="rc-btn accent" disabled={busy || !(token[s.name] ?? "").trim()} onClick={() => void connect(s)}>
+                            <Button size="sm" disabled={busy || !(token[s.name] ?? "").trim()} onClick={() => void connect(s)}>
                               연결 (저장·검증)
-                            </button>
+                            </Button>
                           ) : null}
                           {s.kind === "oauth" ? (
-                            <button
-                              className="rc-btn accent"
+                            <Button
+                              size="sm"
                               disabled={busy || s.oauth?.running || (s.client === "registered" && !(clientId[s.name] ?? "").trim())}
                               onClick={() => void authorize(s)}
                               title="브라우저가 열립니다 — 승인하면 자동으로 연결됩니다"
                             >
                               {s.hasCred ? "다시 인가" : "인가 시작"}
-                            </button>
+                            </Button>
                           ) : null}
-                          <button
-                            className="rc-btn"
+                          <Button
+                            variant="outline"
+                            size="sm"
                             disabled={busy || !s.hasCred || !s.verifiable}
                             onClick={() => void verify(s.name)}
                             title={s.verifiable ? "저장된 자격이 실제로 먹히는지 확인" : "auth.verify 미선언 — 기판이 판정할 수 없습니다"}
                           >
                             검증
-                          </button>
+                          </Button>
                           {canDisconnect ? (
-                            <button className="rc-btn" disabled={busy || !s.hasCred} onClick={() => void disconnect(s.name)}>
+                            <Button variant="outline" size="sm" disabled={busy || !s.hasCred} onClick={() => void disconnect(s.name)}>
                               연결 해제
-                            </button>
+                            </Button>
                           ) : null}
                         </div>
                       </div>
@@ -278,11 +286,11 @@ export default function ServiceDialog({
               })}
             </div>
           )}
-          <button className="rc-btn" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void load()}>
+          <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={() => void load()}>
             다시 점검
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

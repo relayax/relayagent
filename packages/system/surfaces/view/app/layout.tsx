@@ -1,5 +1,16 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import localFont from "next/font/local";
+import { cn } from "@/lib/utils";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+// 프리셋의 Inter 대신 Pretendard — 한글을 가지고, 인트라넷/무인 설치 빌드에서도 내려받지 않는다(self-host)
+const pretendard = localFont({
+  src: "../node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2",
+  variable: "--font-sans",
+  display: "swap",
+  weight: "45 920",
+});
 
 export const metadata: Metadata = {
   title: "Relay",
@@ -8,9 +19,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ko">
+    <html lang="ko" className={cn("font-sans", pretendard.variable)}>
       <body>
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
         {/* 콘솔도 여느 패키지 view 와 같은 한 줄이다 — /assets 로드 = 자동 마운트로
             URL(/pkg/system/view)의 system 에이전트 부유 위젯이 우측 하단에 뜬다.
             좌표는 위젯이 스스로 파싱하지 않는다(§2-6) — 기판이 주입한 __RELAY_CONTEXT 를 읽는다 */}

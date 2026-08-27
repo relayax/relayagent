@@ -1,17 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import type React from "react";
+import { useEffect, useId, useState } from "react";
 import type { Document } from "yaml";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { creatable, push, slugOk, type Made } from "@/lib/create";
 import { SECTIONS, schemaHint, unclaimedFiles, type SectionDef, type SectionItem } from "@/lib/sections";
 import type { Manifest } from "@/lib/types";
-import type { DraftChange } from "@/lib/studio";
+import { draftIconList, type DraftChange } from "@/lib/studio";
 
 // depth 2: 섹션 랜딩(항목 목록 또는 폼)과 항목 폼 + 파일 카드.
 // 폼의 정본은 relay.yaml 텍스트다 — 편집은 Document 패치로 들어가 사용자의 주석을 보존하고,
 // 결과 텍스트가 apply() 로 올라가 저장된다. 폼은 그 텍스트의 뷰일 뿐이다.
 
 export interface SectionCtx {
+  /** draft 이름 — 작업 사본의 자산 주소(/draft/<이름>/asset/…)를 만들 때 */
+  pkg: string;
   manifest: Manifest;
   text: string;
   files: string[];
@@ -28,6 +37,8 @@ export interface SectionCtx {
   seedHarness(source: string, entry: string): Promise<void>;
   /** 만든 뒤 — 그리로 데려가고 영수증을 남긴다. 팔레트와 섹션이 같은 뒷처리를 지난다 */
   made(m: Made): void;
+  /** 대표 아이콘 — 이모지 하나로 고른다(system draft-icon). 그림 파일과 선언을 한 번에 앉힌다 */
+  setIcon(emoji: string): Promise<void>;
 }
 
 /**
@@ -53,26 +64,37 @@ const HARNESS_TEMPLATES = ["claude-code", "codex", "pi", "kimi"];
 /** blur 시점에만 커밋하는 입력 — 키 입력마다 YAML 재직렬화가 도는 churn 을 막는다 */
 function Field({
   label,
+  hint,
+  k,
   value,
   placeholder,
   mono,
   onCommit,
 }: {
+  /** 사람 말 이름 — 이름만. 설명은 hint 로 내린다 */
   label: string;
+  /** 라벨 아래 한 줄 — 종전에는 "이름 — 설명" 으로 라벨에 붙어 있었다. 라벨이 두 줄로 접히면
+   *  어디까지가 이름이고 어디부터가 설명인지 안 보이고, 칸 세 개가 전부 같은 무게로 선다 */
+  hint?: string;
+  /** 문법 좌표 — 작게 병기한다. 팔레트·설명서와 같은 규칙: 얻는 것의 이름이 크고 문법이 작다 */
+  k?: string;
   value: string;
   placeholder?: string;
   mono?: boolean;
   onCommit: (v: string) => void;
 }) {
   const [v, setV] = useState(value);
+  const id = useId();
   useEffect(() => setV(value), [value]);
   return (
-    <label className="st-field">
-      <span>{label}</span>
-      <input
+    <div className="st-field" title={k ? `relay.yaml: ${k}` : undefined}>
+      <Label htmlFor={id}>{label}</Label>
+      {hint ? <p className="st-hintline">{hint}</p> : null}
+      <Input
+        id={id}
         value={v}
         placeholder={placeholder}
-        style={mono ? { fontFamily: "var(--rc-mono)", fontSize: 12 } : undefined}
+        className={mono ? "font-mono text-xs md:text-xs" : undefined}
         onChange={(e) => setV(e.target.value)}
         onBlur={() => {
           if (v !== value) onCommit(v);
@@ -81,7 +103,7 @@ function Field({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
       />
-    </label>
+    </div>
   );
 }
 
@@ -109,9 +131,9 @@ function FileCards({ item, ctx, missing }: { item: { files: string[] }; ctx: Sec
       {(missing ?? []).map((x) => (
         <div key={x.path} className="st-file missing">
           <span className="st-file-path">{x.path}</span>
-          <button className="rc-btn" onClick={x.make}>
+          <Button variant="outline" size="sm" onClick={x.make}>
             만들기
-          </button>
+          </Button>
         </div>
       ))}
     </div>
@@ -128,7 +150,7 @@ function ItemList({ def, items, ctx, onAdd, addLabel }: { def: SectionDef; items
             <span className="lv-t">{it.title}</span>
             {it.sub ? <span className="lv-s">{it.sub}</span> : null}
           </span>
-          {it.files.length ? <span className="rc-chip gray">{it.files.length} 파일</span> : null}
+          {it.files.length ? <Badge variant="secondary">{it.files.length} 파일</Badge> : null}
         </div>
       ))}
       {onAdd ? (
@@ -141,22 +163,152 @@ function ItemList({ def, items, ctx, onAdd, addLabel }: { def: SectionDef; items
   );
 }
 
+/** 손댈 일이 드문 필드를 접는다 — 값이 있으면 펼쳐 둔다(비어 있지 않은 것을 숨기면 안 된다) */
+function Advanced({ open, children }: { open?: boolean; children: React.ReactNode }) {
+  return (
+    <details className="st-adv" open={open}>
+      <summary>고급</summary>
+      {children}
+    </details>
+  );
+}
+
 function Hint({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
-  const hint = schemaHint(ctx.schema, def.yamlKey) ?? def.hint;
-  return <div className="st-hint">{hint}</div>;
+  // 사람 말(sections.ts)이 먼저다. 스키마의 description 은 문법 설명이라 개발자 말이고, 그것은
+  // relay.yaml 에디터의 lint 가 제 자리에서 보여 준다
+  const hint = def.hint || schemaHint(ctx.schema, def.yamlKey);
+  return (
+    <details className="st-hint fold">
+      <summary>이 묶음은?</summary>
+      {hint}
+    </details>
+  );
 }
 
 // ── 섹션별 캔버스 ─────────────────────────────────────────────────────────
+
+/** 코드포인트 이름(u1F4D2) → 이모지 글자. draft-icon 이 받는 것은 글자다 */
+function glyphEmoji(name: string): string {
+  return String.fromCodePoint(...name.slice(1).split("_u").map((h) => parseInt(h, 16)));
+}
+const glyphSrc = (name: string) => `/pkg/system/asset/assets/tossface/${name}.svg`;
+
+/** 갈래 — 이름이 없어 유니코드 구획으로 나눈다. 순서대로 첫 일치, 나머지는 "기타" */
+const ICON_GROUPS: { label: string; ranges: [number, number][] }[] = [
+  { label: "표정", ranges: [[0x1f600, 0x1f644], [0x1f910, 0x1f92f], [0x1f970, 0x1f97a], [0x1f9d0, 0x1f9d0], [0x2639, 0x263a], [0x1fae0, 0x1fae8]] },
+  { label: "사람", ranges: [[0x1f440, 0x1f450], [0x1f466, 0x1f487], [0x1f574, 0x1f57a], [0x1f645, 0x1f64f], [0x1f930, 0x1f939], [0x1f9b0, 0x1f9df], [0x1f4aa, 0x1f4aa], [0x1fac0, 0x1fac5], [0x1faf0, 0x1faf8], [0x261d, 0x261d], [0x270a, 0x270d]] },
+  { label: "동물·자연", ranges: [[0x1f300, 0x1f32c], [0x1f330, 0x1f344], [0x1f400, 0x1f43f], [0x1f980, 0x1f9ae], [0x1fab0, 0x1fabf], [0x2600, 0x2604], [0x26c4, 0x26c8], [0x2744, 0x2744], [0x1f7e0, 0x1f7eb]] },
+  { label: "음식", ranges: [[0x1f32d, 0x1f32f], [0x1f345, 0x1f37f], [0x1f950, 0x1f96f], [0x1f9c0, 0x1f9cb], [0x1fad0, 0x1fadb], [0x2615, 0x2615]] },
+  { label: "활동", ranges: [[0x1f3a0, 0x1f3cf], [0x1f3d4, 0x1f3df], [0x1f93a, 0x1f94f], [0x26bd, 0x26be], [0x26f3, 0x26fa], [0x1f6f7, 0x1f6fc], [0x1f397, 0x1f39f], [0x1f3f8, 0x1f3ff]] },
+  { label: "여행·장소", ranges: [[0x1f3e0, 0x1f3f0], [0x1f680, 0x1f6d7], [0x1f5fa, 0x1f5ff], [0x2708, 0x2708], [0x26ea, 0x26f2], [0x1f6e0, 0x1f6f6], [0x1f3d0, 0x1f3d3]] },
+  { label: "물건", ranges: [[0x1f4a0, 0x1f4ff], [0x1f500, 0x1f53d], [0x1f549, 0x1f573], [0x1f57b, 0x1f5f9], [0x1f9e0, 0x1f9ff], [0x1fa70, 0x1faaf], [0x1f6cb, 0x1f6df], [0x2702, 0x2707], [0x260e, 0x2614], [0x231a, 0x231b], [0x2328, 0x2328], [0x23f0, 0x23f3]] },
+  { label: "한국", ranges: [[0xe000, 0xf8ff]] },
+];
+function groupOf(name: string): string {
+  const cp = parseInt(name.slice(1).split("_")[0], 16);
+  return ICON_GROUPS.find((g) => g.ranges.some(([a, b]) => cp >= a && cp <= b))?.label ?? "기타";
+}
+const GROUP_LABELS = [...ICON_GROUPS.map((g) => g.label), "기타"];
+
+/** 아이콘 선택창 — 기판이 품은 Tossface 전부를 갈래별 격자로. 누르면 그것으로 정해진다 */
+function IconDialog({ current, onPick, onClose }: { current: string | null; onPick: (emoji: string) => Promise<void>; onClose: () => void }) {
+  const [all, setAll] = useState<string[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [tab, setTab] = useState("물건");
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    draftIconList().then((r) => setAll(r.glyphs)).catch((e) => setErr(String(e instanceof Error ? e.message : e)));
+  }, []);
+  const shown = all ? all.filter((g) => groupOf(g) === tab) : [];
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>아이콘 고르기</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-wrap gap-1">
+          {GROUP_LABELS.map((l) => (
+            <button
+              key={l}
+              type="button"
+              className={`rounded-md border px-2.5 py-1 text-xs ${tab === l ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"}`}
+              onClick={() => setTab(l)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        {err ? <div className="banner">{err}</div> : null}
+        <div className="grid max-h-[50vh] grid-cols-8 gap-1 overflow-y-auto p-1 sm:grid-cols-10">
+          {!all && !err ? <span className="col-span-full text-xs text-muted-foreground">불러오는 중…</span> : null}
+          {shown.map((g) => (
+            <button
+              key={g}
+              type="button"
+              disabled={busy != null}
+              aria-pressed={current === g}
+              className={`inline-flex aspect-square items-center justify-center rounded-md border hover:bg-accent disabled:opacity-50 ${current === g ? "border-primary ring-2 ring-primary/30" : "border-transparent"}`}
+              title={glyphEmoji(g)}
+              onClick={() => {
+                setBusy(g);
+                onPick(glyphEmoji(g)).then(onClose).catch(() => { /* 콘솔이 사유를 말했다 */ }).finally(() => setBusy(null));
+              }}
+            >
+              <img className="size-7" src={glyphSrc(g)} alt="" loading="lazy" />
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 아이콘 — 누르면 선택창. 그림 파일과 선언은 draft-icon 이 한 번에 앉힌다 */
+function IconField({ ctx }: { ctx: SectionCtx }) {
+  const m = ctx.manifest;
+  const [open, setOpen] = useState(false);
+  const [rev, setRev] = useState(0);
+  const current = m.icon ? `/draft/${encodeURIComponent(ctx.pkg)}/asset/${m.icon}?v=${rev}` : null;
+  // 지금 그림이 Tossface 의 어느 것인지는 파일이 말해 주지 않는다 — 선택창의 강조는 이름이 맞을 때만
+  return (
+    <div className="flex flex-col gap-1.5" title="relay.yaml: icon">
+      <Label className="text-xs text-muted-foreground">아이콘</Label>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="inline-flex size-12 items-center justify-center rounded-md border bg-background hover:bg-accent"
+          title="아이콘 고르기"
+          onClick={() => setOpen(true)}
+        >
+          {current ? <img className="size-8" src={current} alt="" /> : <span className="text-xs text-muted-foreground">없음</span>}
+        </button>
+        <Button variant="outline" size="sm" type="button" onClick={() => setOpen(true)}>
+          {current ? "바꾸기" : "고르기"}
+        </Button>
+      </div>
+      {open ? (
+        <IconDialog
+          current={null}
+          onPick={(emoji) => ctx.setIcon(emoji).then(() => setRev((r) => r + 1))}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 function IdentityView({ ctx }: { ctx: SectionCtx }) {
   const m = ctx.manifest;
   return (
     <div className="st-form">
-      <Field label="name (혈통, @scope/이름)" value={m.name ?? ""} mono placeholder="@local/my-agent" onCommit={(v) => ctx.apply((d) => set(d, ["name"], v))} />
-      <Field label="version" value={m.version ?? ""} mono placeholder="0.1.0" onCommit={(v) => ctx.apply((d) => set(d, ["version"], v))} />
-      <Field label="표시 이름" value={m.display_name ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["display_name"], v))} />
-      <Field label="카드 한 줄 설명" value={m.description ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["description"], v))} />
-      <Field label="icon (패키지 상대경로)" value={m.icon ?? ""} mono placeholder="assets/icon.svg" onCommit={(v) => ctx.apply((d) => set(d, ["icon"], v))} />
+      <IconField ctx={ctx} />
+      <Field label="이름" k="display_name" value={m.display_name ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["display_name"], v))} />
+      <Field label="한 줄 소개" k="description" value={m.description ?? ""} onCommit={(v) => ctx.apply((d) => set(d, ["description"], v))} />
+      <Advanced>
+        <Field label="고유 이름 (설치·배포에 쓰는 id)" k="name" value={m.name ?? ""} mono placeholder="@local/my-agent" onCommit={(v) => ctx.apply((d) => set(d, ["name"], v))} />
+        <Field label="버전" k="version" value={m.version ?? ""} mono placeholder="0.1.0" onCommit={(v) => ctx.apply((d) => set(d, ["version"], v))} />
+        <Field label="아이콘 파일" k="icon" value={m.icon ?? ""} mono placeholder="assets/icon.svg" onCommit={(v) => ctx.apply((d) => set(d, ["icon"], v))} />
+      </Advanced>
     </div>
   );
 }
@@ -169,24 +321,24 @@ function SurfacesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const [busy, make] = useMake(ctx);
   return (
     <>
-      <ItemList def={def} items={items} ctx={ctx} onAdd={() => setAdding(true)} addLabel="채널 어댑터" />
+      <ItemList def={def} items={items} ctx={ctx} onAdd={() => setAdding(true)} addLabel="채널 (슬랙·디스코드 …)" />
       {adding ? (
         <div className="lv-in">
-          <input placeholder="채널 이름 (예: discord)" value={chName} onChange={(e) => setChName(e.target.value)} autoFocus />
-          <button className="rc-btn accent" disabled={busy || !slugOk(chName)} onClick={() => make("channel", chName)}>
+          <Input placeholder="채널 이름 (예: discord)" value={chName} onChange={(e) => setChName(e.target.value)} autoFocus />
+          <Button size="sm" disabled={busy || !slugOk(chName)} onClick={() => make("channel", chName)}>
             추가
-          </button>
+          </Button>
         </div>
       ) : null}
       {!m.surfaces?.view ? (
-        <button className="rc-btn add" disabled={busy} onClick={() => make("view", "")}>
+        <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={() => make("view", "")}>
           + 이 앱의 화면
-        </button>
+        </Button>
       ) : null}
       {!m.surfaces?.components ? (
-        <button className="rc-btn add" disabled={busy} onClick={() => make("components", "")}>
+        <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={() => make("components", "")}>
           + 다른 앱 화면에 끼울 부품
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -199,12 +351,12 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     const item = { files: v ? ctx.files.filter((f) => f.startsWith(v.source + "/")) : [] };
     return (
       <div className="st-form">
-        <Field label="source (화면 소스 디렉토리)" value={v?.source ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "view", "source"], x))} />
-        <Field label="out (빌드 산출 디렉토리, 비우면 정적 서빙)" value={v?.out ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "view", "out"], x))} />
+        <Field label="소스 폴더" k="source" value={v?.source ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "view", "source"], x))} />
+        <Field label="빌드 결과 폴더" hint="비우면 소스 폴더를 그대로 냅니다" k="out" value={v?.out ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "view", "out"], x))} />
         <FileCards item={item} ctx={ctx} missing={v && !item.files.length ? [{ path: `${v.source}/index.html`, make: () => ctx.createFile(`${v.source}/index.html`, `<!doctype html><meta charset="utf-8"><title>view</title>`) }] : []} />
-        <button className="rc-btn" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "view"]))}>
-          view 선언 삭제
-        </button>
+        <Button variant="outline" size="sm" className="self-start st-remove" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "view"]))}>
+          화면 빼기
+        </Button>
       </div>
     );
   }
@@ -215,20 +367,22 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     const entry = c.out ? `${c.source}/${c.out}/index.js` : `${c.source}/index.js`;
     return (
       <div className="st-form">
-        <Field label="source (번들 소스 디렉토리)" value={c.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "source"], x))} />
-        <Field label="out (빌드 산출, 비우면 source 를 그대로 서빙)" value={c.out ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "out"], x))} />
-        <div className="st-hint">
-          {"계약은 수출 하나다 — export function mount(el, props): { unmount() }\n"}
-          {`진입점은 ${entry} 이고 그 파일 하나가 전부다(스타일 동봉). 번들은 자기 런타임을 안고 나온다 — 소비자에게 프레임워크를 요구하지 마라.`}
-        </div>
+        <Field label="소스 폴더" k="source" value={c.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "source"], x))} />
+        <Field label="빌드 결과 폴더" hint="비우면 소스 폴더를 그대로 냅니다" k="out" value={c.out ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "components", "out"], x))} />
+        {/* 다섯 줄짜리 계약 설명이 폼 한가운데 펼쳐져 있었다 — 칸에서 가장 무거운 덩어리가 설명이면
+            무엇을 고치는 화면인지가 안 보인다. 접어 두고, 알아야 할 때만 편다 */}
+        <details className="st-hint fold">
+          <summary>부품이 지켜야 할 것</summary>
+          {`내보내는 것은 하나입니다 — export function mount(el, props): { unmount() }\n진입점은 ${entry} 하나이고, 스타일도 그 안에 담깁니다.\n쓰는 쪽에 프레임워크를 요구하지 않도록, 필요한 런타임은 번들에 넣으세요.`}
+        </details>
         <FileCards
           item={item}
           ctx={ctx}
           missing={!ctx.files.some((f) => f.startsWith(c.source + "/")) ? [{ path: `${c.source}/index.js`, make: () => ctx.createFile(`${c.source}/index.js`, `export function mount(el, props = {}) {\n  el.textContent = props.title ?? "안녕하세요";\n  return { unmount() { el.textContent = ""; } };\n}\n`) }] : []}
         />
-        <button className="rc-btn" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "components"]))}>
-          components 선언 삭제
-        </button>
+        <Button variant="outline" size="sm" className="self-start st-remove" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "components"]))}>
+          부품 빼기
+        </Button>
       </div>
     );
   }
@@ -239,58 +393,54 @@ function SurfacesItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const item = { files: ctx.files.filter((f) => f.startsWith(ch.source + "/")) };
   return (
     <div className="st-form">
-      <Field label="source" value={ch.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "source"], x))} />
-      <Field label="entry" value={ch.entry} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "entry"], x))} />
-      <Field label="icon (배지 이미지, 선택)" value={ch.icon ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "icon"], x))} />
+      <Field label="어댑터 폴더" k="source" value={ch.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "source"], x))} />
+      <Field label="시작 파일" k="entry" value={ch.entry} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "entry"], x))} />
+      <Field label="배지 이미지 (선택)" k="icon" value={ch.icon ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["surfaces", "channels", idx, "icon"], x))} />
       <CredentialFields idx={idx} ch={ch} ctx={ctx} />
       <FileCards
         item={item}
         ctx={ctx}
         missing={!ctx.files.includes(`${ch.source}/${ch.entry}`) ? [{ path: `${ch.source}/${ch.entry}`, make: () => ctx.createFile(`${ch.source}/${ch.entry}`, `// ${name} 채널 어댑터\n`) }] : []}
       />
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["surfaces", "channels", idx]));
           ctx.openItem(null);
         }}
       >
-        채널 선언 삭제
-      </button>
+        채널 빼기
+      </Button>
     </div>
   );
 }
 
-function HarnessLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
+const HARNESS_LABEL: Record<string, string> = { "claude-code": "Claude", codex: "Codex", pi: "Pi", kimi: "Kimi" };
+
+/** 어떤 엔진으로 돌릴 수 있나 — 후보 목록·드롭다운·추가 버튼 대신 칩 하나로. 켜면 붙고, 켜진 것을 누르면 상세 */
+function HarnessLanding({ ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const m = ctx.manifest;
-  const items = def.items!(m, ctx.files);
   const have = new Set((m.harness?.variants ?? []).map((v) => v.name));
-  const left = HARNESS_TEMPLATES.filter((t) => !have.has(t));
-  const [tpl, setTpl] = useState(left[0] ?? "");
   const [busy, make] = useMake(ctx);
   return (
-    <>
-      <ItemList def={def} items={items} ctx={ctx} />
-      {left.length ? (
-        <div className="lv-in">
-          <select value={left.includes(tpl) ? tpl : left[0]} onChange={(e) => setTpl(e.target.value)}>
-            {left.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <button className="rc-btn accent" disabled={busy} onClick={() => make("harness", left.includes(tpl) ? tpl : left[0])}>
-            + 이 앱을 돌릴 다른 도구
-          </button>
+    <div className="st-form">
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs text-muted-foreground">돌릴 수 있는 엔진 — 누르면 붙고, 붙은 것을 누르면 자세히</Label>
+        <div className="st-picks">
+          {HARNESS_TEMPLATES.map((t) => (
+            <button key={t} type="button" className="st-pick" aria-pressed={have.has(t)} disabled={busy} title={have.has(t) ? `${t} — 자세히 보기` : `${t} 붙이기`} onClick={() => (have.has(t) ? ctx.openItem(t) : make("harness", t))}>
+              {HARNESS_LABEL[t] ?? t}
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="st-hint">네 가지 후보를 다 붙였습니다.</div>
-      )}
-      <div className="st-form" style={{ marginTop: 4 }}>
-        <Field label="workdir (세션 cwd 의 workspace 하위 상대경로)" value={m.harness?.workdir ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "workdir"], x))} />
+        <div className="st-picks-empty">실제로 어느 것으로 돌릴지는 설치한 쪽(설정)에서 고릅니다.</div>
       </div>
-    </>
+      <Advanced open={!!m.harness?.workdir}>
+        <Field label="대화가 서는 하위 폴더" k="workdir" value={m.harness?.workdir ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "workdir"], x))} />
+      </Advanced>
+    </div>
   );
 }
 
@@ -302,19 +452,23 @@ function HarnessItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const item = { files: ctx.files.filter((f) => f.startsWith(v.source + "/")) };
   return (
     <div className="st-form">
-      <Field label="source" value={v.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "source"], x))} />
-      <Field label="entry" value={v.entry ?? "run"} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "entry"], x))} />
-      <Field label="llm provider" value={v.llm?.provider ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "llm", "provider"], x))} />
+      <button type="button" className="st-back" onClick={() => ctx.openItem(null)}>‹ 엔진 목록</button>
+      <div className="st-picks-empty"><b>{HARNESS_LABEL[v.name] ?? v.name}</b> 어댑터 — 보통 손댈 일이 없습니다.</div>
+      <Field label="도구 어댑터 폴더" k="source" value={v.source} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "source"], x))} />
+      <Field label="시작 파일" k="entry" value={v.entry ?? "run"} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "entry"], x))} />
+      <Field label="모델 제공자" k="llm.provider" value={v.llm?.provider ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["harness", "variants", idx, "llm", "provider"], x))} />
       <FileCards item={item} ctx={ctx} />
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["harness", "variants", idx]));
           ctx.openItem(null);
         }}
       >
-        후보 삭제
-      </button>
+        이 엔진 빼기
+      </Button>
     </div>
   );
 }
@@ -327,12 +481,34 @@ function AgentsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
-        <input placeholder="에이전트 이름 (착지 = 패키지 짧은 이름)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("agent", name); setName(""); }}>
+        <Input placeholder="대화 상대 이름 (첫 번째는 패키지 이름과 같게)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button size="sm" disabled={busy || !slugOk(name)} onClick={() => { make("agent", name); setName(""); }}>
           추가
-        </button>
+        </Button>
       </div>
     </>
+  );
+}
+
+/** 여러 개 고르기 — 쉼표 입력 대신 칩. 목록에 없는 값(글롭 등)은 그대로 칩으로 보여 주고 뺄 수 있다 */
+function Picks({ value, options, onChange, empty }: { value: string[]; options: { id: string; label?: string }[]; onChange: (v: string[]) => void; empty: string }) {
+  const known = new Set(options.map((o) => o.id));
+  const extra = value.filter((v) => !known.has(v));
+  if (!options.length && !extra.length) return <div className="st-picks-empty">{empty}</div>;
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="st-picks">
+      {options.map((o) => (
+        <button key={o.id} type="button" className="st-pick" aria-pressed={value.includes(o.id)} onClick={() => toggle(o.id)} title={o.id}>
+          {o.label ?? o.id}
+        </button>
+      ))}
+      {extra.map((v) => (
+        <button key={v} type="button" className="st-pick" aria-pressed onClick={() => toggle(v)} title="누르면 뺍니다">
+          {v}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -341,41 +517,69 @@ function AgentItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const idx = (m.agents ?? []).findIndex((a) => a.name === id);
   const a = (m.agents ?? [])[idx];
   if (!a) return <div className="empty">없는 에이전트</div>;
-  const item = {
-    files: [
-      ...(a.persona && ctx.files.includes(a.persona) ? [a.persona] : []),
-      ...ctx.files.filter((f) => (a.skills ? f.startsWith(a.skills + "/") : false)),
-      ...ctx.files.filter((f) => (a.commands ? f.startsWith(a.commands + "/") : false)),
-    ],
-  };
-  const missing: { path: string; make: () => void }[] = [];
-  if (a.persona && !ctx.files.includes(a.persona)) {
-    missing.push({ path: a.persona, make: () => ctx.createFile(a.persona!, `당신은 ${a.name}입니다.\n`) });
-  }
+  const src = m.scripts?.source;
+  // 고를 수 있는 기능 — scripts.source 바로 아래 *.ts (도우미 파일은 동사가 아니다)
+  const verbs = src
+    ? ctx.files.filter((f) => f.startsWith(src + "/") && f.endsWith(".ts") && !f.slice(src.length + 1).includes("/")).map((f) => f.slice(src.length + 1, -3))
+    : [];
+  const others = (m.agents ?? []).filter((x) => x.name !== a.name).map((x) => ({ id: x.name }));
+  const personaOk = !!a.persona && ctx.files.includes(a.persona);
+  const extraFiles = [
+    ...ctx.files.filter((f) => (a.skills ? f.startsWith(a.skills + "/") : false)),
+    ...ctx.files.filter((f) => (a.commands ? f.startsWith(a.commands + "/") : false)),
+  ];
   return (
     <div className="st-form">
-      <Field label="persona (마크다운 파일)" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
-      <Field label="인사말 (선택 — 빈 대화의 첫 줄)" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
-      <Field label="skills 디렉토리 (선택)" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
-      <Field label="commands 디렉토리 (선택)" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
-      <Field label="dispatch (서브에이전트, 쉼표)" value={(a.dispatch ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], listField(x)))} />
-      <Field label="scripts scope (동사, 쉼표 — 접두 glob 허용)" value={(a.scripts ?? []).join(", ")} mono placeholder="log-*, report" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], listField(x)))} />
-      <div className="st-hint">스킬 추가: skills 디렉토리 선언 후 파일 카드에서 {"<스킬>"}/SKILL.md 를 만드세요.</div>
-      {a.skills ? (
-        <button className="rc-btn add" onClick={() => ctx.createFile(`${a.skills}/new-skill/SKILL.md`, `---\nname: new-skill\ndescription: 무엇을 하는 스킬인지 한 줄\n---\n\n# new-skill\n`)}>
-          + 스킬 스캐폴드
+      {/* 성격과 역할 글 — 이 에이전트의 핵심. 경로 카드가 아니라 "열기" 버튼 */}
+      {personaOk ? (
+        <button type="button" className="st-open" onClick={() => ctx.openFile(a.persona!)} title={a.persona}>
+          <span className="st-open-t">성격과 역할 글 열기</span>
+          <span className="st-open-s">누구인지, 무엇을 어떻게 하는지 적은 글 — 가운데 칸에서 고칩니다</span>
+        </button>
+      ) : a.persona ? (
+        <button type="button" className="st-open missing" onClick={() => ctx.createFile(a.persona!, `당신은 ${a.name}입니다.\n`)}>
+          <span className="st-open-t">성격과 역할 글 만들기</span>
+          <span className="st-open-s">아직 파일이 없습니다 — 누르면 만들어서 엽니다</span>
         </button>
       ) : null}
-      <FileCards item={item} ctx={ctx} missing={missing} />
-      <button
-        className="rc-btn"
+      <Field label="첫 인사" hint="빈 대화에 먼저 보이는 말" k="greeting" value={a.greeting ?? ""} placeholder="무엇을 도와드릴까요?" onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "greeting"], x))} />
+      <div className="flex flex-col gap-1.5" title="relay.yaml: agents[].scripts">
+        <Label className="text-xs text-muted-foreground">쓸 수 있는 기능 — 누르면 켜고 끕니다</Label>
+        <Picks
+          value={a.scripts ?? []}
+          options={verbs.map((v) => ({ id: v }))}
+          empty="아직 기능이 없습니다 — 기능 묶음의 ＋ 추가로 만드세요"
+          onChange={(v) => ctx.apply((d) => set(d, ["agents", idx, "scripts"], v))}
+        />
+      </div>
+      {others.length ? (
+        <div className="flex flex-col gap-1.5" title="relay.yaml: agents[].dispatch">
+          <Label className="text-xs text-muted-foreground">일을 넘길 수 있는 보조 에이전트</Label>
+          <Picks value={a.dispatch ?? []} options={others} empty="" onChange={(v) => ctx.apply((d) => set(d, ["agents", idx, "dispatch"], v))} />
+        </div>
+      ) : null}
+      <Advanced open={!!(a.skills || a.commands)}>
+        <Field label="성격 글 파일 경로" k="persona" value={a.persona ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "persona"], x))} />
+        <Field label="기술(스킬) 폴더" k="skills" value={a.skills ?? ""} mono placeholder={`agents/${a.name}/skills`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "skills"], x))} />
+        <Field label="명령 폴더" k="commands" value={a.commands ?? ""} mono placeholder={`agents/${a.name}/commands`} onCommit={(x) => ctx.apply((d) => set(d, ["agents", idx, "commands"], x))} />
+        {a.skills ? (
+          <Button variant="outline" size="sm" className="self-start" onClick={() => ctx.createFile(`${a.skills}/new-skill/SKILL.md`, `---\nname: new-skill\ndescription: 무엇을 하는 스킬인지 한 줄\n---\n\n# new-skill\n`)}>
+            + 기술 하나 만들기
+          </Button>
+        ) : null}
+        <FileCards item={{ files: extraFiles }} ctx={ctx} />
+      </Advanced>
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["agents", idx]));
           ctx.openItem(null);
         }}
       >
-        에이전트 선언 삭제 (파일은 남는다)
-      </button>
+        이 에이전트 빼기 (파일은 남습니다)
+      </Button>
     </div>
   );
 }
@@ -390,12 +594,12 @@ function ScriptsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       {src ? <ItemList def={def} items={items} ctx={ctx} /> : null}
       <div className="lv-in">
-        <input placeholder="동사 이름 (예: report-weekly)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("script", name); setName(""); }}>
+        <Input placeholder="기능 이름 (예: report-weekly)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button size="sm" disabled={busy || !slugOk(name)} onClick={() => { make("script", name); setName(""); }}>
           추가
-        </button>
+        </Button>
       </div>
-      {!src ? <div className="st-hint">첫 동사를 만들면 scripts.source 선언(scripts/)도 같이 생깁니다.</div> : null}
+      {!src ? <p className="text-xs text-muted-foreground">첫 기능을 만들면 기능 폴더(scripts/)도 같이 생깁니다.</p> : null}
     </>
   );
 }
@@ -407,7 +611,7 @@ function ScriptItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     if (src && ctx.files.includes(f)) ctx.openFile(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return <div className="empty">{f} 여는 중…</div>;
+  return <div className="empty">{ctx.files.includes(f) ? `${f} — 가운데 칸에서 고칩니다` : `${f} 없음`}</div>;
 }
 
 function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
@@ -419,15 +623,15 @@ function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
-        <input placeholder="서비스 이름" style={{ maxWidth: 160 }} value={name} onChange={(e) => setName(e.target.value)} />
+        <Input placeholder="자원 이름" style={{ maxWidth: 160 }} value={name} onChange={(e) => setName(e.target.value)} />
         <select value={form} onChange={(e) => setForm(e.target.value as never)}>
           <option value="process">프로세스</option>
           <option value="container">컨테이너</option>
-          <option value="url">원격 MCP</option>
+          <option value="url">바깥 도구 (원격)</option>
           <option value="dir">폴더</option>
         </select>
-        <button
-          className="rc-btn accent"
+        <Button
+          size="sm"
           disabled={busy || !slugOk(name)}
           onClick={() => {
             make(`service-${form}`, name);
@@ -435,7 +639,7 @@ function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
           }}
         >
           추가
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -445,6 +649,7 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const idx = (m.services ?? []).findIndex((s) => s.name === id);
   const s = (m.services ?? [])[idx];
+  const uid = useId();
   if (!s) return <div className="empty">없는 서비스</div>;
   const p = (k: string) => ["services", idx, k];
   const item = { files: ctx.files.filter((f) => (s.source ? f.startsWith(s.source + "/") : false)) };
@@ -452,40 +657,42 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     <div className="st-form">
       {s.url != null ? (
         <>
-          <Field label="url (원격 MCP 접점)" value={s.url} mono onCommit={(x) => ctx.apply((d) => set(d, p("url"), x))} />
-          <Field label="tools (쉼표)" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
-          <label className="st-field">
-            <span>auth.kind</span>
-            <select value={(s as any).auth?.kind ?? "none"} onChange={(e) => ctx.apply((d) => d.setIn([...p("auth"), "kind"], e.target.value))}>
-              <option value="none">none</option>
-              <option value="token">token</option>
-              <option value="oauth">oauth</option>
+          <Field label="원격 도구 주소" k="url" value={s.url} mono onCommit={(x) => ctx.apply((d) => set(d, p("url"), x))} />
+          <Field label="빌려 쓸 도구 (쉼표)" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${uid}-auth`} className="text-xs text-muted-foreground">로그인 방식</Label>
+            <select id={`${uid}-auth`} value={(s as any).auth?.kind ?? "none"} onChange={(e) => ctx.apply((d) => d.setIn([...p("auth"), "kind"], e.target.value))}>
+              <option value="none">없음</option>
+              <option value="token">토큰</option>
+              <option value="oauth">OAuth 로그인</option>
             </select>
-          </label>
+          </div>
           {(s as any).auth?.kind === "token" ? (
-            <Field label="auth.env (주입 환경변수 이름)" value={(s as any).auth?.env ?? ""} mono placeholder={`${s.name.toUpperCase().replace(/-/g, "_")}_TOKEN`} onCommit={(x) => ctx.apply((d) => set(d, [...p("auth"), "env"], x))} />
+            <Field label="토큰을 넣어 줄 환경변수 이름" k="auth.env" value={(s as any).auth?.env ?? ""} mono placeholder={`${s.name.toUpperCase().replace(/-/g, "_")}_TOKEN`} onCommit={(x) => ctx.apply((d) => set(d, [...p("auth"), "env"], x))} />
           ) : null}
         </>
       ) : s.dir != null ? (
-        <Field label="dir (상대 = 자기 소유, ~ = 설치 결재로 바인딩)" value={s.dir} mono onCommit={(x) => ctx.apply((d) => set(d, p("dir"), x))} />
+        <Field label="폴더" hint="상대경로면 이 앱의 것, ~ 로 시작하면 설치할 때 허락받습니다" k="dir" value={s.dir} mono onCommit={(x) => ctx.apply((d) => set(d, p("dir"), x))} />
       ) : (
         <>
-          <Field label="source (서비스 몸 디렉토리)" value={s.source ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("source"), x))} />
-          <Field label="entry (프로세스 형)" value={s.entry ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("entry"), x))} />
-          <Field label="dockerfile (컨테이너 형)" value={s.dockerfile ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("dockerfile"), x))} />
-          <Field label="port" value={s.port != null ? String(s.port) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("port"), x ? Number(x) : ""))} />
+          <Field label="프로그램 폴더" k="source" value={s.source ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("source"), x))} />
+          <Field label="시작 파일 (프로세스)" k="entry" value={s.entry ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("entry"), x))} />
+          <Field label="Dockerfile (컨테이너)" k="dockerfile" value={s.dockerfile ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("dockerfile"), x))} />
+          <Field label="포트" k="port" value={s.port != null ? String(s.port) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, p("port"), x ? Number(x) : ""))} />
         </>
       )}
       <FileCards item={item} ctx={ctx} />
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["services", idx]));
           ctx.openItem(null);
         }}
       >
-        서비스 선언 삭제
-      </button>
+        자원 빼기
+      </Button>
     </div>
   );
 }
@@ -499,14 +706,14 @@ function TriggersLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
-        <input placeholder="트리거 id (예: daily-digest)" value={id} onChange={(e) => setId(e.target.value)} />
+        <Input placeholder="이름 (예: daily-digest)" value={id} onChange={(e) => setId(e.target.value)} />
         <select value={kind} onChange={(e) => setKind(e.target.value as never)}>
           <option value="cron">정해진 시각에</option>
           <option value="event">사건이 나면</option>
         </select>
-        <button className="rc-btn accent" disabled={busy || !slugOk(id)} onClick={() => { make(`trigger-${kind}`, id); setId(""); }}>
+        <Button size="sm" disabled={busy || !slugOk(id)} onClick={() => { make(`trigger-${kind}`, id); setId(""); }}>
           추가
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -516,14 +723,16 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const idx = (m.triggers ?? []).findIndex((t) => t.id === id);
   const t = (m.triggers ?? [])[idx];
+  const uid = useId();
   if (!t) return <div className="empty">없는 트리거</div>;
   const kind = t.when?.event != null ? "event" : "cron";
   const thenKind = t.then?.script != null ? "script" : "agent";
   return (
     <div className="st-form">
-      <label className="st-field">
-        <span>when</span>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${uid}-when`} className="text-xs text-muted-foreground">언제</Label>
         <select
+          id={`${uid}-when`}
           value={kind}
           onChange={(e) =>
             ctx.apply((d) =>
@@ -531,24 +740,25 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
             )
           }
         >
-          <option value="cron">cron (시간)</option>
-          <option value="event">event (사건)</option>
+          <option value="cron">정해진 시각에</option>
+          <option value="event">사건이 나면</option>
         </select>
-      </label>
+      </div>
       {kind === "cron" ? (
         <>
-          <Field label="cron" value={t.when?.cron ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "cron"], x))} />
-          <Field label="tz" value={t.when?.tz ?? ""} mono placeholder="Asia/Seoul" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "tz"], x))} />
+          <Field label="시각" hint="cron 식 — 예: 0 9 * * * 는 매일 9시" k="cron" value={t.when?.cron ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "cron"], x))} />
+          <Advanced><Field label="시간대" k="tz" value={t.when?.tz ?? ""} mono placeholder="Asia/Seoul" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "tz"], x))} /></Advanced>
         </>
       ) : (
         <>
-          <Field label="event" value={t.when?.event ?? ""} mono placeholder="relay.package.installed" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "event"], x))} />
-          <Field label="debounce_ms" value={t.when?.debounce_ms != null ? String(t.when.debounce_ms) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "debounce_ms"], x ? Number(x) : ""))} />
+          <Field label="사건 이름" k="event" value={t.when?.event ?? ""} mono placeholder="relay.package.installed" onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "event"], x))} />
+          <Advanced open={t.when?.debounce_ms != null}><Field label="연달아 생기면 묶어서 기다릴 시간 (밀리초)" k="debounce_ms" value={t.when?.debounce_ms != null ? String(t.when.debounce_ms) : ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "when", "debounce_ms"], x ? Number(x) : ""))} /></Advanced>
         </>
       )}
-      <label className="st-field">
-        <span>then</span>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${uid}-then`} className="text-xs text-muted-foreground">무엇을</Label>
         <select
+          id={`${uid}-then`}
           value={thenKind}
           onChange={(e) =>
             ctx.apply((d) =>
@@ -556,38 +766,40 @@ function TriggerItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
             )
           }
         >
-          <option value="agent">agent (세션)</option>
-          <option value="script">script (headless 동사)</option>
+          <option value="agent">대화 상대를 깨운다</option>
+          <option value="script">기능 하나를 돌린다</option>
         </select>
-      </label>
+      </div>
       {thenKind === "agent" ? (
         <>
-          <label className="st-field">
-            <span>agent</span>
-            <select value={t.then?.agent ?? ""} onChange={(e) => ctx.apply((d) => d.setIn(["triggers", idx, "then", "agent"], e.target.value))}>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${uid}-agent`} className="text-xs text-muted-foreground">누구를</Label>
+            <select id={`${uid}-agent`} value={t.then?.agent ?? ""} onChange={(e) => ctx.apply((d) => d.setIn(["triggers", idx, "then", "agent"], e.target.value))}>
               {(m.agents ?? []).map((a) => (
                 <option key={a.name} value={a.name}>
                   {a.name}
                 </option>
               ))}
             </select>
-          </label>
-          <Field label="prompt" value={t.then?.prompt ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "prompt"], x))} />
-          <Field label="delivery (선톡 좌표 <채널>:<대화키>, 선택)" value={t.then?.delivery ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "delivery"], x))} />
-          <Field label="route (설치 화면 이동 경로, 선택)" value={t.then?.route ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "route"], x))} />
+          </div>
+          <Field label="깨울 때 건넬 말" k="prompt" value={t.then?.prompt ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "prompt"], x))} />
+          <Field label="결과를 보낼 곳" hint="채널이름:대화 — 비우면 안 보냅니다" k="delivery" value={t.then?.delivery ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "delivery"], x))} />
+          <Advanced open={!!t.then?.route}><Field label="열어 줄 화면 경로" k="route" value={t.then?.route ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "route"], x))} /></Advanced>
         </>
       ) : (
-        <Field label="script (동사 이름)" value={t.then?.script ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "script"], x))} />
+        <Field label="돌릴 기능" k="script" value={t.then?.script ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["triggers", idx, "then", "script"], x))} />
       )}
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["triggers", idx]));
           ctx.openItem(null);
         }}
       >
-        트리거 삭제
-      </button>
+        예약 빼기
+      </Button>
     </div>
   );
 }
@@ -600,10 +812,10 @@ function MissionsLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
-        <input placeholder="미션 이름" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="rc-btn accent" disabled={busy || !slugOk(name)} onClick={() => { make("mission", name); setName(""); }}>
+        <Input placeholder="미션 이름" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button size="sm" disabled={busy || !slugOk(name)} onClick={() => { make("mission", name); setName(""); }}>
           추가
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -616,17 +828,19 @@ function MissionItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   if (!ms) return <div className="empty">없는 미션</div>;
   return (
     <div className="st-form">
-      <Field label="이름" value={ms.name} onCommit={(x) => ctx.apply((d) => set(d, ["missions", idx, "name"], x))} />
-      <Field label="설명 (위임자가 읽는다)" value={ms.description ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["missions", idx, "description"], x))} />
-      <button
-        className="rc-btn"
+      <Field label="이름" k="name" value={ms.name} onCommit={(x) => ctx.apply((d) => set(d, ["missions", idx, "name"], x))} />
+      <Field label="설명" hint="일을 맡기는 쪽이 읽습니다" k="description" value={ms.description ?? ""} onCommit={(x) => ctx.apply((d) => set(d, ["missions", idx, "description"], x))} />
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["missions", idx]));
           ctx.openItem(null);
         }}
       >
-        미션 삭제
-      </button>
+        빼기
+      </Button>
     </div>
   );
 }
@@ -641,24 +855,24 @@ function EdgesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
     <>
       <ItemList def={def} items={items} ctx={ctx} />
       <div className="lv-in">
-        <input placeholder="@scope/name (provider 혈통)" value={provider} onChange={(e) => setProvider(e.target.value)} />
+        <Input placeholder="빌려 쓸 앱의 고유 이름 (@scope/name)" value={provider} onChange={(e) => setProvider(e.target.value)} />
         <select value={kind} onChange={(e) => setKind(e.target.value as never)}>
           <option value="tools">동사 쓰기</option>
           <option value="mission">일 맡기기</option>
           <option value="components">부품 끼우기</option>
         </select>
         {kind === "mission" ? (
-          <input placeholder="미션 이름" style={{ maxWidth: 150 }} value={mission} onChange={(e) => setMission(e.target.value)} />
+          <Input placeholder="미션 이름" style={{ maxWidth: 150 }} value={mission} onChange={(e) => setMission(e.target.value)} />
         ) : null}
-        <button
-          className="rc-btn accent"
+        <Button
+          size="sm"
           disabled={busy || !provider.trim() || (kind === "mission" && !slugOk(mission))}
           onClick={() => { make(`edge-${kind}`, provider, mission); setProvider(""); setMission(""); }}
         >
           추가
-        </button>
+        </Button>
       </div>
-      <div className="st-hint">선언은 신청이다 — 활성화(결재)는 콘솔 그래프에서 한다.</div>
+      <p className="text-xs text-muted-foreground">여기 적는 것은 신청입니다 — 허락은 설정의 연결 지도에서 합니다.</p>
     </>
   );
 }
@@ -667,6 +881,7 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const idx = Number(id);
   const e = (m.edges ?? [])[idx];
+  const uid = useId();
   if (!e) return <div className="empty">없는 edge</div>;
   // 소비물은 셋 중 정확히 하나다(스키마의 not.anyOf). 세 칸을 나란히 두면 문법이 금지한 조합을
   // 화면이 먼저 권하는 꼴이라, 배타를 라디오로 그린다 — 고르면 나머지 둘은 문서에서 지운다
@@ -682,33 +897,35 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
     });
   return (
     <div className="st-form">
-      <Field label="provider" value={e.provider} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "provider"], x))} />
-      <label className="st-field">
-        <span>소비물 (셋 중 하나)</span>
-        <select value={kind} onChange={(ev) => pick(ev.target.value as never)}>
-          <option value="tools">tools — 남의 동사를 부른다 (런타임 결재)</option>
-          <option value="mission">mission — a2a 위임을 보낸다 (런타임 결재)</option>
-          <option value="components">components — 남의 번들을 내 화면이 마운트한다 (설치 시점 결재)</option>
+      <Field label="빌려 쓸 앱" k="provider" value={e.provider} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "provider"], x))} />
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${uid}-kind`} className="text-xs text-muted-foreground">무엇을 빌리나 (하나만)</Label>
+        <select id={`${uid}-kind`} value={kind} onChange={(ev) => pick(ev.target.value as never)}>
+          <option value="tools">기능 — 그 앱의 기능을 부릅니다</option>
+          <option value="mission">일 맡기기 — 그 앱에 일을 넘깁니다</option>
+          <option value="components">화면 부품 — 그 앱의 부품을 내 화면에 끼웁니다</option>
         </select>
-      </label>
+      </div>
       {kind === "tools" ? (
-        <Field label="tools (쉼표)" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+        <Field label="빌려 쓸 기능 (쉼표)" k="tools" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
       ) : kind === "mission" ? (
-        <Field label="mission" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
+        <Field label="맡길 일" k="mission" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
       ) : (
-        <div className="st-hint">
-          {`결재되면 기판이 소비자 문서에 import map 을 심는다 — 화면은 import { mount } from "${e.provider}" 만 쓰고 주소를 조립하지 않는다.`}
-        </div>
+        <p className="text-xs text-muted-foreground">
+          {`정할 것이 없습니다. 승인되면 상대 화면에서 import { mount } from "${e.provider}" 로 바로 쓸 수 있고, 주소는 기판이 붙여 줍니다.`}
+        </p>
       )}
-      <button
-        className="rc-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start st-remove"
         onClick={() => {
           ctx.apply((d) => d.deleteIn(["edges", idx]));
           ctx.openItem(null);
         }}
       >
-        edge 삭제
-      </button>
+        빼기
+      </Button>
     </div>
   );
 }
@@ -724,47 +941,49 @@ function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { 
   const at = (i: number, k: string) => ["surfaces", "channels", idx, "credential", "fields", i, k];
   return (
     <div className="st-form">
-      <div className="rc-label">credential.fields — 연결 화면이 이 선언으로 칸을 그린다</div>
+      <div className="rc-label">로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다</div>
       {fields.map((f, i) => (
         <div key={i} className="item">
           <div className="bar">
-            <input
+            <Input
               value={f.key ?? ""}
               placeholder="key (비우면 자격이 문자열 하나)"
-              style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }}
+              className="font-mono text-xs md:text-xs"
               onChange={(e) => ctx.apply((d) => set(d, at(i, "key"), e.target.value))}
             />
-            <input value={f.label} placeholder="사람이 읽는 이름" onChange={(e) => ctx.apply((d) => d.setIn(at(i, "label"), e.target.value))} />
-            <button className="x" title="이 칸 빼기" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "channels", idx, "credential", "fields", i]))}>
+            <Input value={f.label} placeholder="사람이 읽는 이름" onChange={(e) => ctx.apply((d) => d.setIn(at(i, "label"), e.target.value))} />
+            <Button variant="ghost" size="icon-xs" className="flex-none text-muted-foreground" title="이 칸 빼기" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "channels", idx, "credential", "fields", i]))}>
               ×
-            </button>
+            </Button>
           </div>
-          <div className="bar" style={{ fontSize: 12, color: "var(--rc-soft)" }}>
+          <div className="bar text-xs text-muted-foreground">
             {(["secret", "list", "required"] as const).map((k) => (
-              <label key={k} style={{ display: "flex", alignItems: "center", gap: 5, flex: "none" }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={!!f[k]} onChange={(e) => ctx.apply((d) => (e.target.checked ? d.setIn(at(i, k), true) : d.deleteIn(at(i, k))))} />
+              <Label key={k} className="flex-none text-xs font-normal">
+                <Checkbox checked={!!f[k]} onCheckedChange={(checked) => ctx.apply((d) => (checked ? d.setIn(at(i, k), true) : d.deleteIn(at(i, k))))} />
                 {k}
-              </label>
+              </Label>
             ))}
           </div>
         </div>
       ))}
-      <button
-        className="rc-btn add"
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
         onClick={() => void ctx.apply((d) => push(d, ["surfaces", "channels", idx, "credential", "fields"], { key: "token", label: "토큰", secret: true, required: true }))}
       >
         + 자격 칸
-      </button>
+      </Button>
       {fields.length ? (
-        <div className="st-hint">
+        <p className="text-xs text-muted-foreground">
           {fields.every((f) => f.key)
             ? "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
             : fields.length === 1
               ? "key 없는 칸 하나 — 그 값이 곧 자격 문자열이다."
               : "key 있는 칸과 없는 칸을 섞으면 판정 실패다 — 전부 채우거나, 한 칸만 비우세요."}
-        </div>
+        </p>
       ) : (
-        <div className="st-hint">선언이 없으면 연결 화면은 원시 붙여넣기 칸으로 물러난다 — 제3자 어댑터가 선언 없이도 연결될 수 있어야 하기 때문이다.</div>
+        <p className="text-xs text-muted-foreground">칸을 정하지 않으면 연결 화면은 붙여넣기 칸 하나로 물러납니다.</p>
       )}
     </div>
   );
@@ -779,37 +998,38 @@ function RequiresView({ ctx }: { ctx: SectionCtx }) {
   return (
     <div className="st-form">
       <Field
-        label="os (쉼표 — darwin, linux, win32)"
+        label="운영체제" hint="쉼표로 나열 — darwin, linux, win32" k="os"
         value={(req?.os ?? []).join(", ")}
         mono
         onCommit={(x) => ctx.apply((d) => set(d, ["requires", "os"], listField(x)))}
       />
-      <div className="rc-label">binaries — 설치가 끝나면 목록 전부가 실재한다 (AND)</div>
+      <div className="rc-label">있어야 하는 명령줄 도구 — 전부 있어야 설치됩니다</div>
       {bins.map((b, i) => (
         <div key={b.name} className="st-file" style={{ cursor: "default" }}>
           <span className="st-file-path">{b.name}</span>
-          <button
-            className="rc-btn"
-            style={{ marginLeft: "auto" }}
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto"
             onClick={() => ctx.apply((d) => d.deleteIn(["requires", "binaries", i]))}
           >
             빼기
-          </button>
+          </Button>
         </div>
       ))}
       <div className="lv-in">
-        <input placeholder="바이너리 이름 (예: git)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button
-          className="rc-btn accent"
+        <Input placeholder="명령줄 도구 이름 (예: git)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button
+          size="sm"
           disabled={busy || !slugOk(name) || bins.some((b) => b.name === name.trim())}
           onClick={() => { make("requires-binary", name); setName(""); }}
         >
           추가
-        </button>
+        </Button>
       </div>
-      <div className="st-hint">
+      <p className="text-xs text-muted-foreground">
         manager + package 를 함께 적으면 기판이 직접 깐다(레시피). 이름만 적으면 없을 때 설치가 거부되고 install 안내가 뜬다 — 원문 에디터에서 붙이세요.
-      </div>
+      </p>
     </div>
   );
 }
@@ -824,30 +1044,30 @@ function HostMethodsView({ ctx }: { ctx: SectionCtx }) {
       {list.map((x, i) => (
         <div key={x} className="st-file" style={{ cursor: "default" }}>
           <span className="st-file-path">{x}</span>
-          <button className="rc-btn" style={{ marginLeft: "auto" }} onClick={() => ctx.apply((d) => d.deleteIn(["host_methods", i]))}>
+          <Button variant="outline" size="sm" className="ml-auto" onClick={() => ctx.apply((d) => d.deleteIn(["host_methods", i]))}>
             빼기
-          </button>
+          </Button>
         </div>
       ))}
       <div className="lv-in">
-        <input placeholder="host.draft_publish" value={v} onChange={(e) => setV(e.target.value)} style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }} />
-        <button
-          className="rc-btn accent"
+        <Input placeholder="host.draft_publish" value={v} onChange={(e) => setV(e.target.value)} className="font-mono text-xs md:text-xs" />
+        <Button
+          size="sm"
           disabled={busy || !/^host\.[A-Za-z0-9]+([._][A-Za-z0-9]+)*$/.test(v.trim()) || list.includes(v.trim())}
           onClick={() => { make("host-method", v); setV(""); }}
         >
           추가
-        </button>
+        </Button>
       </div>
-      <div className="st-hint">
+      <p className="text-xs text-muted-foreground">
         선언이 없으면 전체가 열린다(ring-0 결재가 유일한 경계). 하나라도 선언하면 목록 밖 메서드는 거부된다 — 좁히는 선언이지 여는 선언이 아니다.
-      </div>
+      </p>
     </div>
   );
 }
 
 function YamlOnly({ def }: { def: SectionDef }) {
-  return <div className="st-hint">이 섹션은 아직 전용 폼이 없다 — 개요의 relay.yaml 에디터에서 직접 선언하세요. 스키마 lint 가 문법을 잡아 준다.</div>;
+  return <p className="text-xs text-muted-foreground">이 부분은 아직 폼이 없습니다 — 고급 › 기타 파일에서 relay.yaml 을 열어 직접 적으세요. 문법은 편집기가 잡아 줍니다.</p>;
 }
 
 function UnclaimedView({ ctx }: { ctx: SectionCtx }) {
@@ -855,7 +1075,7 @@ function UnclaimedView({ ctx }: { ctx: SectionCtx }) {
   const changed = new Set(ctx.changes.map((c) => c.file));
   return (
     <>
-      <div className="st-hint">어떤 선언에도 잡히지 않은 파일. 매니페스트에서 도달 불가능한 파일은 설치본에서 존재하지 않는 것과 같다.</div>
+      <p className="text-xs text-muted-foreground">어느 항목에도 속하지 않은 파일. relay.yaml 이 가리키지 않는 파일은 설치본에 실리지 않습니다.</p>
       <div className="st-files">
         {extra.map((f) => (
           <div key={f} className="st-file" onClick={() => ctx.openFile(f)}>

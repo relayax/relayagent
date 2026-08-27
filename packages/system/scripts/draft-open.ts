@@ -74,7 +74,7 @@ export default async function (input: Input, ctx: any) {
         files[prefix + "index.html"] =
           `<!doctype html><meta charset="utf-8"><title>${m.display_name ?? input.name}</title>` +
           `<body style="font-family:sans-serif;padding:40px"><h1>${m.display_name ?? input.name}</h1>` +
-          `<p>${m.description ?? ""}</p><link rel="stylesheet" href="/assets/chat-app.css"><script type="module" src="/assets/chat-app.js"></script>`;
+          `<p>${m.description && !/^설명을 적어 주세요\.?$/.test(m.description) ? m.description : ""}</p><link rel="stylesheet" href="/assets/chat-app.css"><script type="module" src="/assets/chat-app.js"></script>`;
       }
     }
 

@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Graph from "@/components/Graph";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { edgesData } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { Material } from "@/lib/sections";
 import { draftBuild, draftRun, type DraftStatus } from "@/lib/studio";
 import type { Manifest, Registry } from "@/lib/types";
@@ -55,7 +61,7 @@ export default function Preview({ ctx, material }: { ctx: PreviewCtx; material: 
 function Head({ chip, url, children }: { chip: string; url?: string; children?: React.ReactNode }) {
   return (
     <div className="pv-head">
-      <span className="rc-chip">{chip}</span>
+      <Badge variant="secondary">{chip}</Badge>
       {url ? <span className="pv-url mono">{url}</span> : <span className="st-sp" />}
       {children}
     </div>
@@ -63,32 +69,33 @@ function Head({ chip, url, children }: { chip: string; url?: string; children?: 
 }
 
 function Note({ children, kind }: { children: React.ReactNode; kind?: "warn" }) {
-  return <div className={`st-hint${kind === "warn" ? " pv-warn" : ""}`}>{children}</div>;
+  return <p className={cn("text-xs text-muted-foreground whitespace-pre-wrap", kind === "warn" && "text-destructive")}>{children}</p>;
 }
 
 /** out 을 선언한 표면은 굽지 않으면 미리볼 것이 없다 — 굽기를 이 면이 직접 들고 있다 */
 function BuildButton({ ctx, onDone }: { ctx: PreviewCtx; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   return (
-    <button
-      className="rc-btn"
+    <Button
+      variant="outline"
+      size="sm"
       disabled={busy}
-      title="작업 사본을 미리보기 좌표로 굽습니다 — 도는 판은 그대로입니다"
+      title="작업 사본의 화면을 미리보기용으로 만듭니다 — 돌아가는 판은 그대로입니다"
       onClick={async () => {
         setBusy(true);
         try {
           const r = await draftBuild(ctx.pkg);
-          ctx.say("ok", r.out || "굽기 완료");
+          ctx.say("ok", r.out || "미리보기를 만들었습니다");
           onDone();
         } catch (e) {
-          ctx.say("err", `미리보기 굽기 실패: ${String(e instanceof Error ? e.message : e)}`);
+          ctx.say("err", `미리보기 만들기 실패: ${String(e instanceof Error ? e.message : e)}`);
         } finally {
           setBusy(false);
         }
       }}
     >
-      {busy ? "굽는 중…" : "미리보기 굽기"}
-    </button>
+      {busy ? "만드는 중…" : "미리보기 만들기"}
+    </Button>
   );
 }
 
@@ -107,7 +114,7 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
   if (!view) {
     return (
       <div className="pv">
-        <Head chip="그림 재료" />
+        <Head chip="미리보기" />
         <div className="empty">
           <span>view 표면이 선언되지 않았습니다.</span>
           <Note>선언하면 이 자리에 작업 사본의 화면이 뜹니다 — 발행 전에, 새 탭 없이.</Note>
@@ -123,7 +130,7 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
           <button aria-pressed={!narrow} onClick={() => setNarrow(false)}>넓게</button>
           <button aria-pressed={narrow} onClick={() => setNarrow(true)}>좁게</button>
         </div>
-        <button className="rc-btn" onClick={reload} title="다시 읽기">↻</button>
+        <Button variant="ghost" size="icon-sm" onClick={reload} title="다시 읽기">↻</Button>
         {view.out ? <BuildButton ctx={ctx} onDone={reload} /> : null}
       </Head>
       <div className="pv-body flush">
@@ -133,8 +140,8 @@ function FramePane({ ctx }: { ctx: PreviewCtx }) {
       </div>
       <div className="pv-foot">
         {view.out
-          ? `out 을 선언한 표면입니다 — 소스를 고친 뒤 [미리보기 굽기] 를 눌러야 이 프레임이 새 판을 냅니다.`
-          : `정적 소스라 굽지 않습니다 — 파일을 저장하면 이 프레임이 곧바로 새로 읽습니다.`}
+          ? `빌드가 필요한 화면입니다 — 소스를 고친 뒤 [미리보기 만들기] 를 눌러야 이 프레임이 새로 그려집니다.`
+          : `빌드 없는 화면이라 파일을 저장하면 이 프레임이 곧바로 새로 읽습니다.`}
       </div>
     </div>
   );
@@ -155,6 +162,7 @@ function MountPane({ ctx }: { ctx: PreviewCtx }) {
   const comp = ctx.manifest.surfaces?.components;
   const [text, setText] = useState(DEFAULT_PROPS);
   const [nonce, setNonce] = useState(0);
+  const propsId = useId();
   const parsed = useMemo(() => {
     try {
       return { ok: true as const, value: JSON.parse(text) };
@@ -191,17 +199,17 @@ function MountPane({ ctx }: { ctx: PreviewCtx }) {
   return (
     <div className="pv">
       <Head chip="자립 번들" url={`import { mount } from "${ctx.manifest.name ?? ctx.pkg}"`}>
-        <button className="rc-btn" onClick={() => setNonce((n) => n + 1)} title="다시 마운트">↻</button>
+        <Button variant="ghost" size="icon-sm" onClick={() => setNonce((n) => n + 1)} title="다시 마운트">↻</Button>
         {comp.out ? <BuildButton ctx={ctx} onDone={() => setNonce((n) => n + 1)} /> : null}
       </Head>
       <div className="pv-body">
         <div className="pv-mount">
           <iframe key={nonce + text} srcDoc={doc} title="마운트 미리보기" />
         </div>
-        <label className="st-field">
-          <span>시험용 props — 저작물이 아닙니다. 소비자가 넘길 값을 흔들어 봅니다</span>
-          <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={propsId} className="text-xs text-muted-foreground">시험용 props — 저작물이 아닙니다. 소비자가 넘길 값을 흔들어 봅니다</Label>
+          <Textarea id={propsId} rows={5} className="font-mono text-xs md:text-xs" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
+        </div>
         {!parsed.ok ? <Note kind="warn">JSON 아님: {parsed.error}</Note> : null}
         <Note>
           계약은 수출 하나입니다 — {"mount(el, props): { unmount() }"}. 번들은 자기 런타임을 안고 나오므로 이 프레임에는 아무 프레임워크도 깔려 있지 않습니다.
@@ -270,13 +278,13 @@ function CardsPane({ ctx }: { ctx: PreviewCtx }) {
               {(req.os ?? []).length ? (
                 <div className="st-file" style={{ cursor: "default" }}>
                   <span className="st-file-path">os: {(req.os ?? []).join(", ")}</span>
-                  <span className="rc-chip gray" style={{ marginLeft: "auto" }}>설치가 판정</span>
+                  <Badge variant="outline" className="ml-auto">설치가 판정</Badge>
                 </div>
               ) : null}
               {(req.binaries ?? []).map((b) => (
                 <div key={b.name} className="st-file" style={{ cursor: "default" }}>
                   <span className="st-file-path">{b.name}</span>
-                  <span className="rc-chip gray" style={{ marginLeft: "auto" }}>설치가 판정</span>
+                  <Badge variant="outline" className="ml-auto">설치가 판정</Badge>
                 </div>
               ))}
             </div>
@@ -311,18 +319,18 @@ function CredentialPane({ name, fields, help }: { name: string; fields: { key?: 
         {fields.length ? (
           <div className="st-form">
             {fields.map((f, i) => (
-              <label key={i} className="st-field">
-                <span>
+              <div key={i} className="flex flex-col gap-1.5">
+                <Label className="text-xs text-muted-foreground">
                   {f.label || "(이름 없는 칸)"}
                   {f.required ? " *" : ""}
                   {f.list ? " — 쉼표로 여럿" : ""}
-                </span>
-                <input type={f.secret ? "password" : "text"} placeholder={f.placeholder ?? (f.list ? "1234, 5678" : "")} readOnly />
-              </label>
+                </Label>
+                <Input type={f.secret ? "password" : "text"} placeholder={f.placeholder ?? (f.list ? "1234, 5678" : "")} readOnly />
+              </div>
             ))}
             <div className="detail-foot">
-              <button className="rc-btn accent" disabled>연결</button>
-              <button className="rc-btn" disabled>검증만</button>
+              <Button size="sm" disabled>연결</Button>
+              <Button variant="outline" size="sm" disabled>검증만</Button>
             </div>
           </div>
         ) : (
@@ -370,7 +378,7 @@ function WirePane({ ctx }: { ctx: PreviewCtx }) {
   return (
     <div className="pv">
       <Head chip="이 패키지의 안팎">
-        {pending ? <span className="rc-chip gray">결재 대기 {pending}</span> : <span className="rc-chip">전부 결재됨</span>}
+        {pending ? <Badge variant="outline">결재 대기 {pending}</Badge> : <Badge variant="secondary">전부 결재됨</Badge>}
       </Head>
       <div className="pv-body flush">
         <div className="pv-graph">
@@ -455,7 +463,7 @@ function TimePane({ ctx }: { ctx: PreviewCtx }) {
   if (!trig) {
     return (
       <div className="pv">
-        <Head chip="시간 재료" />
+        <Head chip="일정" />
         <div className="empty"><span>트리거가 없습니다.</span><Note>선언하면 언제 도는지가 여기 격자와 목록으로 뜹니다.</Note></div>
       </div>
     );
@@ -648,7 +656,7 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
   }, [ctx.pkg, agent?.persona, ctx.rev]);
 
   if (!agent) {
-    return <div className="pv"><Head chip="말 재료" /><div className="empty"><span>에이전트가 없습니다.</span></div></div>;
+    return <div className="pv"><Head chip="시연 대화" /><div className="empty"><span>에이전트가 없습니다.</span></div></div>;
   }
   const tools = derivedTools(ctx.manifest, agent.name, ctx.status.files);
 
@@ -656,9 +664,9 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
     <div className="pv">
       <Head chip="대화가 될 모습" url={`${agent.name} · draft`}>
         {ctx.status.installed ? (
-          <a className="rc-btn" href={`/pkg/${encodeURIComponent(ctx.pkg)}/view/`} target="_blank" rel="noreferrer" title="도는 판의 대화를 새 탭에서 엽니다">
+          <Button variant="outline" size="sm" render={<a href={`/pkg/${encodeURIComponent(ctx.pkg)}/view/`} target="_blank" rel="noreferrer" />} title="돌아가는 버전의 대화를 새 탭에서 엽니다">
             도는 판과 대화
-          </a>
+          </Button>
         ) : null}
       </Head>
       <div className="pv-body">
@@ -672,16 +680,16 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
           <span className="rc-label">선언에서 도출된 도구 {tools.length}개 — 이 세션이 보게 될 것</span>
           <div className="pv-chips">
             {tools.length ? (
-              tools.map((t) => <span key={t} className="rc-chip gray mono">{t}</span>)
+              tools.map((t) => <Badge key={t} variant="outline" className="font-mono">{t}</Badge>)
             ) : (
-              <span className="st-hint">scripts scope 도 dirs 도 edges 도 없습니다 — 이 세션은 말만 합니다.</span>
+              <p className="text-xs text-muted-foreground">scripts scope 도 dirs 도 edges 도 없습니다 — 이 세션은 말만 합니다.</p>
             )}
           </div>
         </div>
         <div className="pv-row">
           <span className="rc-label">페르소나 {agent.persona ? `· ${agent.persona}` : ""}</span>
           <div className="pv-persona">
-            {persona == null ? <span className="st-hint">페르소나 파일을 읽지 못했습니다.</span> : renderPersona(persona)}
+            {persona == null ? <p className="text-xs text-muted-foreground">페르소나 파일을 읽지 못했습니다.</p> : renderPersona(persona)}
           </div>
         </div>
         <Note kind="warn">
@@ -709,13 +717,14 @@ function RunPane({ ctx }: { ctx: PreviewCtx }) {
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<{ ok: boolean; ms: number; body: string } | null>(null);
   const picked = verb || (ctx.item && verbs.includes(ctx.item) ? ctx.item : verbs[0]) || "";
+  const uid = useId();
   const lastItem = useRef<string | null>(null);
   useEffect(() => {
     if (ctx.item && ctx.item !== lastItem.current) { lastItem.current = ctx.item; setVerb(""); setOut(null); }
   }, [ctx.item]);
 
   if (!src) {
-    return <div className="pv"><Head chip="동사 재료" /><div className="empty"><span>scripts 가 선언되지 않았습니다.</span></div></div>;
+    return <div className="pv"><Head chip="실행" /><div className="empty"><span>scripts 가 선언되지 않았습니다.</span></div></div>;
   }
 
   const run = async () => {
@@ -742,23 +751,23 @@ function RunPane({ ctx }: { ctx: PreviewCtx }) {
     <div className="pv">
       <Head chip="돌려보기" url={`${src}/${picked || "?"}.ts`} />
       <div className="pv-body">
-        <label className="st-field">
-          <span>동사</span>
-          <select value={picked} onChange={(e) => { setVerb(e.target.value); setOut(null); }}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${uid}-verb`} className="text-xs text-muted-foreground">동사</Label>
+          <select id={`${uid}-verb`} value={picked} onChange={(e) => { setVerb(e.target.value); setOut(null); }}>
             {verbs.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
-        </label>
-        <label className="st-field">
-          <span>input (JSON)</span>
-          <textarea rows={4} value={input} onChange={(e) => setInput(e.target.value)} spellCheck={false} />
-        </label>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${uid}-input`} className="text-xs text-muted-foreground">input (JSON)</Label>
+          <Textarea id={`${uid}-input`} rows={4} className="font-mono text-xs md:text-xs" value={input} onChange={(e) => setInput(e.target.value)} spellCheck={false} />
+        </div>
         <div className="detail-foot">
-          <button className="rc-btn accent" disabled={busy || !picked} onClick={() => void run()}>
+          <Button size="sm" disabled={busy || !picked} onClick={() => void run()}>
             {busy ? "도는 중…" : "돌려보기"}
-          </button>
+          </Button>
           {out ? (
             <span className="pv-receipt">
-              <span className={`rc-chip${out.ok ? "" : " err"}`}>{out.ms}ms</span>
+              <Badge variant={out.ok ? "secondary" : "destructive"}>{out.ms}ms</Badge>
               {out.ok ? " 통과" : " 실패"}
             </span>
           ) : (

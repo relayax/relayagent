@@ -86,6 +86,9 @@ type InjectedCoords = {
   /** base 가 명시 주입됐는가 — 자동 마운트 게이트의 판정 근거. 미주입 문서에서 마운트 문법을
    *  조립하는 대신 마운트를 포기해야 하므로(§2-6) "부재"와 "빈 문자열 주입"을 구분한다. */
   declared: boolean;
+  /** 이 문서는 작업 사본의 문(/draft/…)이다 — 세션을 작업 사본 위에 민팅하고, 설치본 대화와
+   *  섞지 않는다(마지막 세션 기억·이어받기·목록 전부 별도) */
+  draft: boolean;
 };
 
 /** 좌표 주입 2형(§2-6): ① 전역 __RELAY_CONTEXT.{base,root,baseFor,viewFor} — 기판이 서빙
@@ -99,7 +102,7 @@ export function injectedCoords(): InjectedCoords {
   const root = typeof c.root === "string" ? c.root : attrEl?.getAttribute("data-relay-root") ?? base;
   const baseFor = typeof c.baseFor === "function" ? c.baseFor : null;
   const viewFor = typeof c.viewFor === "function" ? c.viewFor : null;
-  return { base, root, baseFor, viewFor, declared: typeof c.base === "string" || attrEl != null };
+  return { base, root, baseFor, viewFor, declared: typeof c.base === "string" || attrEl != null, draft: c.draft === true };
 }
 
 /** desk 뷰 iframe 의 주소. 주입(viewFor)이 없으면 null — 클라이언트가 /i/<id>·/pkg/<pkg> 류
@@ -217,7 +220,7 @@ function wireSessionOf(ctx: RelayCtx): string | null {
   return wireSessionForId(ctx.conversationId);
 }
 
-const lastSessionKey = (instanceId: string) => "relay-chat-last-session:" + (instanceId || "default");
+const lastSessionKey = (instanceId: string) => "relay-chat-last-session:" + (instanceId || "default") + (injectedCoords().draft ? "@draft" : "");
 function rememberLastSession(instanceId: string, session: string): void {
   try { localStorage.setItem(lastSessionKey(instanceId), session); } catch { /* quota */ }
 }
@@ -268,7 +271,8 @@ async function resolveBoundSeed(ctx: RelayCtx): Promise<string | null> {
   if (!bind.agent || bind.sibling) return null;
   const r = await wireOf(ctx).session.list();
   if (isError(r)) return null;
-  const hit = (r.sessions ?? []).find((s) => !s.archived && (s.agent ?? "") === bind.agent && (s.param ?? "") === bind.param);
+  const draft = injectedCoords().draft;
+  const hit = (r.sessions ?? []).find((s) => !s.archived && !!s.draft === draft && (s.agent ?? "") === bind.agent && (s.param ?? "") === bind.param);
   if (!hit) return null;
   return adoptMinted(ctx, id, hit.session).session;
 }
@@ -285,9 +289,11 @@ export async function ensureWireSession(ctx: RelayCtx): Promise<Result<{ session
   const adopted = await resolveBoundSeed(ctx);
   if (adopted != null) return { session: adopted };
   const bind = displayBinding(id);
-  const r = await wireOf(ctx).session.create(
-    bind.agent ? { agent: bind.agent, ...(bind.param ? { param: bind.param } : {}) } : undefined,
-  );
+  const draft = injectedCoords().draft;
+  const r = await wireOf(ctx).session.create({
+    ...(bind.agent ? { agent: bind.agent, ...(bind.param ? { param: bind.param } : {}) } : {}),
+    ...(draft ? { draft: true } : {}),
+  });
   if (isError(r)) return r;
   const real = typeof r.session === "string" ? r.session : "";
   if (!real) return { error: { code: "E_NO_SESSION", message: "세션 발급 응답에 session 이 없습니다" } };
@@ -365,8 +371,8 @@ function isLlmNetworkError(text: string): boolean {
 
 function llmAuthGuide(): string {
   return (
-    "🔑 **Claude 자격이 만료되었거나 연결되어 있지 않습니다**\n\n" +
-    "하네스 자격을 다시 연결한 뒤 보내주세요 — 연결 방법은 이 기판의 콘솔(또는 `relay login`)이 안내합니다."
+    "**Claude 로그인이 끊겼어요**\n\n" +
+    "콘솔(또는 `relay login`)에서 다시 로그인한 뒤 보내 주세요."
   );
 }
 
@@ -375,20 +381,32 @@ function llmAuthGuide(): string {
 // 마운트별 동선(/connect 딥링크 등)은 그 기판의 콘솔이 안내한다(§2-6 마운트 문법 비조립).
 function llmNetworkGuide(): string {
   return (
-    "🔌 **LLM API 에 연결하지 못했습니다**\n\n" +
-    "기판이 API 에 닿지 못해 응답을 만들지 못했어요 — 자격이 연결되어 있지 않거나 만료됐을 수 있고, " +
-    "서버의 외부 네트워크(egress) 문제일 수도 있습니다. 연결 상태를 확인한 뒤 다시 보내주세요."
+    "**AI 서비스에 연결하지 못했어요**\n\n" +
+    "로그인이 끊겼거나 서버의 외부 네트워크에 문제가 있을 수 있어요. 연결 상태를 확인한 뒤 다시 보내 주세요."
   );
 }
 
 // friendlyTurnError — 배너에 실을 사람말. 벌거벗은 기계 코드가 그대로 채팅에 노출되지 않게
 // 계약 소유 코드(client-protocol §5.0-10)는 문장으로, 미등록 E_ 코드는 괄호 보존 문구로 감싼다.
+// 사유 없는 실패의 기본 문장 — 본문에는 싣지 않고 상태 칩(TurnStatusChip)이 대신 말한다.
+const GENERIC_TURN_ERROR = "응답을 만들지 못했어요";
 const TURN_ERROR_TEXT: Record<string, string> = {
-  E_DISCONNECTED: "연결이 잠시 끊겼어요 — 진행 중이던 턴은 서버에서 계속 실행됩니다. 잠시 후 대화를 다시 열어 확인해 주세요.",
-  E_NETWORK: "서버와 통신하지 못했어요 — 네트워크 상태를 확인하고 다시 시도해 주세요.",
-  E_NO_TURN: "진행 중인 턴을 찾지 못했어요 — 대화를 다시 불러온 뒤 시도해 주세요.",
-  E_PROTOCOL: "이 화면과 서버의 클라이언트 계약 세대가 달라요 — 새로고침으로 최신 화면을 받아주세요.",
+  E_DISCONNECTED: "연결이 잠시 끊겼어요. 진행 중이던 응답은 서버에서 계속 만들어져요. 잠시 후 대화를 다시 열어 확인해 주세요.",
+  E_NETWORK: "서버와 통신하지 못했어요. 네트워크 상태를 확인하고 다시 시도해 주세요.",
+  E_NO_TURN: "진행 중인 응답을 찾지 못했어요. 대화를 다시 불러온 뒤 시도해 주세요.",
+  E_PROTOCOL: "화면이 오래됐어요. 새로고침해 주세요.",
 };
+// appendErrorReason — 오류 턴의 사유를 본문 끝에 싣는다. 사유가 기본 문장뿐이면: 본문이 비어
+// 있을 땐 상태 칩이 그 문장을 대신 말하므로 싣지 않고, 이미 답이 진행된 턴이면 칩이 "오류로
+// 중단됨"만 말하게 되므로 사유가 전달되지 않았다는 사실 자체를 적는다 — 왜 멈췄는지 아무 말도
+// 없는 화면이 되지 않게(2026-08-27 피드백).
+function appendErrorReason(parts: any[], msg: string): void {
+  const m = (msg || "").trim();
+  const text = m && m !== GENERIC_TURN_ERROR ? m
+    : parts.length ? "오류 원인이 서버에서 전달되지 않았어요. 다시 시도해도 반복되면 서버 로그를 확인해 주세요."
+    : "";
+  if (text) parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + text });
+}
 function friendlyTurnError(text: string): string {
   const t = (text || "").trim();
   const mapped = TURN_ERROR_TEXT[t];
@@ -505,7 +523,7 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
 
 // ---------------- 대화 목록 (다중세션 헤더) ----------------
 
-export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string };
+export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string; param?: string };
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
@@ -527,8 +545,10 @@ export async function loadConversationsOf(instanceId: string, _principal: string
   if (base == null) return { conversations: [] };
   const r = await transportFor(base, injectedCoords().root || base).session.list();
   if (isError(r)) return { conversations: [] };
+  // 작업 사본의 문에서는 작업 사본 세션만, 설치본의 문에서는 설치본 세션만 — 두 판의 대화를 섞지 않는다
+  const onDraft = injectedCoords().draft;
   const conversations: ConversationRow[] = (Array.isArray(r.sessions) ? r.sessions : [])
-    .filter((s) => s && typeof s.session === "string" && s.session)
+    .filter((s) => s && typeof s.session === "string" && s.session && !!s.draft === onDraft)
     .map((s) => {
       if (typeof s.agent === "string" && s.agent) {
         _convAgent.set(s.session, { agent: s.agent, param: typeof s.param === "string" ? s.param : "" });
@@ -538,6 +558,8 @@ export async function loadConversationsOf(instanceId: string, _principal: string
     .map((s) => ({
       conversation_id: s.session,
       ...(typeof s.agent === "string" && s.agent ? { agent: s.agent } : {}),
+      // 작업 대상 — 위임 카드가 "이 위임의 대화" 를 찾을 때 (agent, param) 으로 맞춘다
+      ...(typeof s.param === "string" && s.param ? { param: s.param } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0
@@ -783,15 +805,40 @@ export async function loadModelOptions(): Promise<ModelOption[]> {
   if (!(await capsFor(base, root)).has("harness-models")) return _modelOptions;
   const r = await transportFor(base, root).harness.models();
   if (isError(r)) return _modelOptions;
-  const ids = (Array.isArray(r.value) ? r.value : []).filter((v): v is string => typeof v === "string" && isModelId(v));
+  const curated = curateModels(r.value);
+  if (curated.length > 0) _modelOptions = curated;
+  return _modelOptions;
+}
+
+/** 카탈로그 → 피커 항목(가족별 최신 1개). 서버가 최신순 정렬 — 가족별 첫 행이 최신. */
+function curateModels(value: unknown): ModelOption[] {
+  const ids = (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string" && isModelId(v));
   const byFamily = new Map<string, ModelOption>();
-  for (const id of ids) { // 서버가 최신순 정렬 — 가족별 첫 행이 최신
+  for (const id of ids) {
     const fam = familyOf(id);
     if (!fam || byFamily.has(fam)) continue;
     byFamily.set(fam, { id, label: labelOf(id) });
   }
-  if (byFamily.size > 0) _modelOptions = [...byFamily.values()];
-  return _modelOptions;
+  return [...byFamily.values()];
+}
+
+// 변형별 카탈로그 — 피커가 공급자에 호버만 해도 그 모델 목록을 보여주는 자리. 활성 하네스의
+// 정적 폴백(_modelOptions)과 섞지 않는다: 다른 하네스의 목록에 claude 폴백이 끼면 거짓말이다.
+const _optionsByVariant = new Map<string, ModelOption[]>();
+/** 선언 변형의 모델 카탈로그(`?variant=`, §5.5-29). null = 미도달(capability 없음·오류·빈 답). */
+export async function loadModelOptionsFor(variant: string): Promise<ModelOption[] | null> {
+  const hit = _optionsByVariant.get(variant);
+  if (hit) return hit;
+  const g = getCtx();
+  const base = baseOf(g);
+  const root = rootOf(g);
+  if (!(await capsFor(base, root)).has("harness-models")) return null;
+  const r = await transportFor(base, root).harness.models(variant);
+  if (isError(r)) return null;
+  const curated = curateModels(r.value);
+  if (curated.length === 0) return null;
+  _optionsByVariant.set(variant, curated);
+  return curated;
 }
 
 // contextWindowFor — 컨텍스트 미터의 분모(토큰) 휴리스틱 폴백. 구 카탈로그(max_input_tokens)
@@ -857,6 +904,18 @@ export async function loadHarnessVariants(): Promise<{ active: string | null; va
   return { active: v?.active ?? null, variants: Array.isArray(v?.variants) ? v.variants : [] };
 }
 
+/** 변형 미선언(단일 하네스) 기판의 하네스 이름 — capability harness-info 뒤. 피커 트리거가 "기본"
+ *  대신 무엇으로 도는지 한 단어("Claude")를 보이는 데 쓴다. null = 모름. */
+export async function loadHarnessName(): Promise<string | null> {
+  const g = getCtx();
+  const base = baseOf(g);
+  const root = rootOf(g);
+  if (!(await capsFor(base, root)).has("harness-info")) return null;
+  const r = await transportFor(base, root).harness.info();
+  if (isError(r)) return null;
+  return r.value?.name || null;
+}
+
 /** 변형 전환. 기판이 모델 오버라이드를 지운다(모델 어휘는 하네스 소속) — 호출부가 모델 표시를
  *  다시 읽어야 한다. 미선언 이름은 기판이 400 으로 거부한다. */
 export async function setHarnessVariant(
@@ -869,6 +928,20 @@ export async function setHarnessVariant(
   invalidateCaps();
   _modelOptions = MODEL_OPTIONS;
   return { ok: true, ready: r.ready ?? null };
+}
+
+/** 전환 + 모델 지정을 한 요청으로(§5.5-30/30-a) — 다른 공급자의 모델 줄을 바로 고른 경우.
+ *  두 요청으로 나누면 전환 뒤 첫 요청이 오버라이드를 지운 채 턴이 낄 수 있다. */
+export async function setHarnessAndModel(
+  ctx: RelayCtx,
+  harness: string,
+  model: string,
+): Promise<{ ok: boolean; known: boolean | null; ready: { ok: boolean; note: string } | null }> {
+  const r = await wireOf(ctx).harness.set({ harness, model: model || "" });
+  if (isError(r)) return { ok: false, known: null, ready: null };
+  invalidateCaps();
+  _modelOptions = MODEL_OPTIONS;
+  return { ok: true, known: r.known ?? null, ready: r.ready ?? null };
 }
 
 export async function setModel(ctx: RelayCtx, model: string): Promise<{ ok: boolean; known: boolean | null }> {
@@ -946,10 +1019,10 @@ export type SlashCommand = { name: string; description: string; kind: string };
 //   client-intercept(/clear·/effort·/model) = composer 가 전송 전 가로채 계약 동사로 끝냄(턴 0).
 //   pass-through(/compact) = 프롬프트 그대로 턴으로 전달 — 하네스가 커맨드로 실행.
 export const BUILTIN_COMMANDS: SlashCommand[] = [
-  { name: "clear", description: "새 세션 시작 — 에이전트 컨텍스트 초기화(채팅 히스토리는 유지)", kind: "builtin" },
-  { name: "compact", description: "세션 컨텍스트 압축 — 대화를 이어가며 토큰 사용량을 줄임", kind: "builtin" },
-  { name: "effort", description: "추론 강도 오버라이드 — /effort low|medium|high|xhigh|max|default", kind: "builtin" },
-  { name: "model", description: "모델 오버라이드 — /model fable|opus|sonnet|haiku|<model-id>|default", kind: "builtin" },
+  { name: "clear", description: "에이전트 기억 비우기 (대화 기록은 남아요)", kind: "builtin" },
+  { name: "compact", description: "기억 줄이기 · 대화를 이어가며 토큰 사용량을 줄여요", kind: "builtin" },
+  { name: "effort", description: "추론 강도 바꾸기 · /effort low|medium|high|xhigh|max|default", kind: "builtin" },
+  { name: "model", description: "모델 바꾸기 · /model fable|opus|sonnet|haiku|<model-id>|default", kind: "builtin" },
 ];
 
 // /model 별칭 폴백 — 카탈로그 로드 전(또는 미도달)용 정적 매핑. 로드 후엔 resolveModelAlias
@@ -984,18 +1057,18 @@ export async function executeBuiltin(ctx: RelayCtx, name: string, arg: string): 
   if (name === "clear") {
     // session.reset(§5.3-23) — 이력은 두고 하네스 대화 포인터만 끊는다.
     const sid = wireSessionOf(ctx);
-    if (sid == null) return "✓ 새 세션을 시작합니다 — 아직 시작 전인 대화라 초기화할 컨텍스트가 없어요";
+    if (sid == null) return "✓ 아직 시작 전인 대화라 비울 기억이 없어요";
     const r = await wireOf(ctx).session.reset(sid);
     return !isError(r)
-      ? "✓ 새 세션을 시작합니다 — 다음 메시지부터 컨텍스트가 초기화됩니다 (채팅 기록은 유지)"
-      : "세션 초기화 실패 — 서버 연결을 확인하세요";
+      ? "✓ 다음 메시지부터 기억을 비우고 시작해요 (대화 기록은 남아요)"
+      : "기억을 비우지 못했어요. 서버 연결을 확인해 주세요";
   }
   if (name === "effort") {
     const v = arg.toLowerCase();
     if (v === "") return "사용법: /effort low|medium|high|xhigh|max|default";
     const val = v === "default" || v === "clear" ? "" : v;
     if (val !== "" && !(EFFORT_LEVELS as readonly string[]).includes(val)) {
-      return `알 수 없는 레벨 "${arg}" — low|medium|high|xhigh|max|default 중 하나를 쓰세요`;
+      return `알 수 없는 레벨 "${arg}". low|medium|high|xhigh|max|default 중 하나를 쓰세요`;
     }
     const ok = await setEffort(ctx, val);
     notifyOverridesChanged();
@@ -1011,7 +1084,7 @@ export async function executeBuiltin(ctx: RelayCtx, name: string, arg: string): 
     if (!val) return "✓ Model → 기본값";
     // 저장은 됐지만 하네스가 모르는 id — 다음 턴이 실패한다(§5.5-30). 성공으로 접지 않는다.
     return r.known === false
-      ? `✓ Model → ${val} (저장됨) · ⚠ 이 하네스의 목록에 없는 id 라 다음 턴이 실패할 수 있습니다`
+      ? `✓ Model → ${val} (저장됨) · 목록에 없는 id 라 다음 응답이 실패할 수 있어요`
       : `✓ Model → ${val} (다음 응답부터)`;
   }
   return "";
@@ -1083,8 +1156,8 @@ function substrateTool(toolName: string): { icon: string; label: string } | null
   const rest = seg.slice(1);
   switch (seg[0]) {
     case "dir": return { icon: "▤", label: `${DIR_OP_LABEL[rest[1] ?? ""] ?? "폴더"} · ${rest[0]}` };
-    case "edge": return { icon: "⇄", label: `빌린 동사 · ${rest.join(" · ")}` };
-    case "a2a": return { icon: "❖", label: `위임 · ${rest.join(" · ")}` };
+    case "edge": return { icon: "⇄", label: `다른 에이전트 기능 · ${rest.join(" · ")}` };
+    case "a2a": return { icon: "❖", label: `맡긴 작업 · ${rest.join(" · ")}` };
     case "mcp": return { icon: "⚙", label: rest.join(" · ") };
     default: return null;
   }
@@ -1445,7 +1518,7 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       drive()
         .then((e) => { outcome.error = e; })
         .catch((e: any) => {
-          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || "턴 실행 실패") };
+          outcome.error = { code: String(e?.code || "E_NETWORK"), message: String(e?.message || e || GENERIC_TURN_ERROR) };
         })
         .finally(() => { finished = true; _liveTurns.delete(ctx.conversationId); wake(); });
 
@@ -1472,24 +1545,24 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
         // 다음 턴이 이어간다 → '압축 완료'로 봉합.
         if (isCompactPrompt(prompt) && cutClass) {
           meta.custom.ended = "ok";
-          if (parts.length === 0) parts.push({ type: "text", text: "🗜️ 컨텍스트를 압축했어요 — 이어서 대화하세요." });
+          if (parts.length === 0) parts.push({ type: "text", text: "기억을 줄였어요. 이어서 대화하세요." });
           yield { content: parts, status: { type: "complete", reason: "stop" }, metadata: meta };
           return;
         }
         meta.custom.ended = cutClass ? "cut" : "error";
         const msg = friendlyTurnError(driveError.message || driveError.code);
-        parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + "⚠️ " + msg });
+        appendErrorReason(parts, msg);
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;
       }
       if (!driveError && meta.custom.ended === "error") {
         // 봉투 error 이벤트로 종결된 턴 — 사유는 리듀서가 meta.error 에 보관했다.
-        const raw = (reducer.meta as { error?: string }).error || "턴 실행 실패";
+        const raw = (reducer.meta as { error?: string }).error || GENERIC_TURN_ERROR;
         const base = friendlyTurnError(String(raw).replace(/^turn failed:\s*ERROR:\s*/i, "").trim());
         // 자격(401) → 연결(refused) 순으로 분류한다. 여기는 실패 확정 경로라 오탐이 없다.
         const guide = isLlmAuthError(raw) ? llmAuthGuide() : isLlmNetworkError(raw) ? llmNetworkGuide() : "";
         const msg = guide ? base + "\n\n" + guide : base;
-        parts.push({ type: "text", text: (parts.length ? "\n\n" : "") + "⚠️ " + msg });
+        appendErrorReason(parts, msg);
         yield { content: parts, status: { type: "incomplete", reason: "error" }, metadata: meta };
         return;
       }

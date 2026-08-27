@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CREATABLES, GROUPS, blocked, slugOk, type CreateCtx, type Creatable, type Made } from "@/lib/create";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { Manifest } from "@/lib/types";
 
 // 만들 수 있는 것의 표면.
@@ -20,12 +24,15 @@ export default function Palette({
   ctx,
   onMade,
   onClose,
+  initial,
 }: {
   manifest: Manifest;
   files: string[];
   ctx: CreateCtx;
   onMade: (made: Made) => void;
   onClose: () => void;
+  /** 이미 고른 것 — 설정 패널의 [＋ 추가] 메뉴에서 왔다. 목록을 건너뛰고 그 항목의 질문으로 연다 */
+  initial?: Creatable | null;
 }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Creatable | null>(null);
@@ -85,6 +92,8 @@ export default function Palette({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manifest, files]);
 
+  useEffect(() => { if (initial) pick(initial); }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const needs = open?.needs;
   const choices = needs?.kind === "choice" ? (needs.choices?.(manifest, files) ?? []) : [];
   const needs2 = open?.needs2;
@@ -95,14 +104,14 @@ export default function Palette({
   return (
     <div className="pl" ref={box} role="dialog" aria-label="만들기">
       <div className="pl-top">
-        <input
+        <Input
           ref={search}
           className="pl-q"
           placeholder="무엇을 만들까요 — 부품, 하네스, 트리거…"
           value={q}
           onChange={(e) => { setQ(e.target.value); setOpen(null); }}
         />
-        <button className="rc-btn" onClick={onClose} title="닫기 (Esc)">✕</button>
+        <Button variant="ghost" size="icon-sm" onClick={onClose} title="닫기 (Esc)">✕</Button>
       </div>
 
       {open ? (
@@ -112,44 +121,44 @@ export default function Palette({
             <span className="pl-yaml mono">{open.yaml}</span>
           </div>
           <div className="pl-detail">{open.detail}</div>
-          <label className="st-field">
-            <span>{needs!.label}</span>
+          <div className="flex flex-col gap-1.5">
+            <Label>{needs!.label}</Label>
             {needs!.kind === "choice" ? (
               <select value={input} onChange={(e) => setInput(e.target.value)} autoFocus>
                 {choices.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             ) : (
-              <input
+              <Input
                 autoFocus
                 value={input}
                 placeholder={needs!.placeholder}
-                style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }}
+                className="font-mono text-xs"
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && valid) void run(open, input, input2); }}
               />
             )}
-          </label>
+          </div>
           {needs2 ? (
-            <label className="st-field">
-              <span>{needs2.label}</span>
-              <input
+            <div className="flex flex-col gap-1.5">
+              <Label>{needs2.label}</Label>
+              <Input
                 value={input2}
                 placeholder={needs2.placeholder}
-                style={{ fontFamily: "var(--rc-mono)", fontSize: 12 }}
+                className="font-mono text-xs"
                 onChange={(e) => setInput2(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && valid) void run(open, input, input2); }}
               />
-            </label>
+            </div>
           ) : null}
           {needs!.kind === "slug" && input.trim() && !ok1 ? (
             <div className="gx-err">영문 소문자·숫자·하이픈만, 40자까지. 한글 이름은 쓰지 않습니다.</div>
           ) : null}
           {err ? <div className="gx-err">{err}</div> : null}
           <div className="pl-ask-foot">
-            <button className="rc-btn" onClick={() => setOpen(null)}>뒤로</button>
-            <button className="rc-btn accent" disabled={!valid || busy} onClick={() => void run(open, input, input2)}>
+            <Button variant="outline" size="sm" onClick={() => setOpen(null)}>뒤로</Button>
+            <Button size="sm" disabled={!valid || busy} onClick={() => void run(open, input, input2)}>
               {busy ? "만드는 중…" : "만들기"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -176,7 +185,7 @@ export default function Palette({
                         <span className="pl-dt">{c.detail}</span>
                       </span>
                       <span className="pl-rt">
-                        {why ? <span className="rc-chip gray">{why}</span> : n ? <span className="rc-chip gray">{n}</span> : null}
+                        {why ? <Badge variant="outline">{why}</Badge> : n ? <Badge variant="outline">{n}</Badge> : null}
                         <span className="pl-yaml mono">{c.yaml}</span>
                       </span>
                     </button>

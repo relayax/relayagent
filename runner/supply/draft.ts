@@ -370,18 +370,75 @@ export function discardDraft(name: string): { removed: string } {
   return { removed: name };
 }
 
-export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean }[] {
+export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean; empty: boolean }[] {
   const root = packagesPath();
   if (!fs.existsSync(root)) return [];
   return fs
     .readdirSync(root, { withFileTypes: true })
     .filter((e) => e.isDirectory() && SLUG.test(e.name))
-    .map((e) => ({
-      name: e.name,
-      version: manifestVersion(path.join(root, e.name)),
-      changes: changes(path.join(root, e.name)).length,
-      installed: !!ledger.packages[e.name],
-    }));
+    .map((e) => {
+      const droot = path.join(root, e.name);
+      const n = changes(droot).length;
+      return {
+        name: e.name,
+        version: manifestVersion(droot),
+        changes: n,
+        installed: !!ledger.packages[e.name],
+        // 빈 초안 = 이름만 짓고 만 것: 기록하지 않은 변경이 없고 이력이 "draft open" 한 줄뿐.
+        // 홈이 카드 대신 한 줄로 접고 바로 버릴 수 있게 한다(2026-08-27). changes 0 만으로는
+        // 첫 판을 기록해 둔 초안(내용 있음)과 구분이 안 됐다
+        empty: n === 0 && isScaffoldOnly(droot),
+      };
+    });
+}
+
+function isScaffoldOnly(droot: string): boolean {
+  const r = git(droot, "log", "--format=%s", "-n", "2");
+  if (!r.ok) return false;
+  const lines = r.out.split("\n").filter(Boolean);
+  return lines.length === 1 && lines[0].startsWith("draft open");
+}
+
+/** 기록(커밋) 이력 — 최근 것부터. 화면의 [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록이다.
+ *  종전에는 기록을 남길 수는 있어도 그 지점으로 돌아가는 문이 화면에 없었다 — 약속만 있는 버튼이었다 */
+export function historyDraft(name: string): { commits: { hash: string; message: string; time: number }[] } {
+  assertSlug(name);
+  const droot = draftPath(name);
+  if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
+  const r = git(droot, "log", "--format=%H%x09%ct%x09%s", "-n", "50");
+  if (!r.ok || !r.out) return { commits: [] };
+  return {
+    commits: r.out
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        const [hash, ct, ...rest] = l.split("\t");
+        return { hash, message: rest.join("\t"), time: Number(ct) * 1000 };
+      }),
+  };
+}
+
+/**
+ * 기록 지점으로 되돌리기 — 작업 사본의 파일을 그 커밋의 모습으로 되돌린다. 이력은 지우지 않는다
+ * (HEAD 그대로): 되돌린 결과는 "기록하지 않은 변경" 으로 서고, 다시 기록하거나 적용하면 된다.
+ * 그 커밋 뒤에 생긴 추적 파일은 지운다 — 덮어쓰기만 하면 반쯤 되돌린 판이 된다. 한 번도 기록되지
+ * 않은(미추적) 파일은 그대로 둔다: 기록에 없던 것을 기판이 지우면 사용자가 잃는다.
+ */
+export function restoreDraft(name: string, hash: string): { restored: string; message: string } {
+  assertSlug(name);
+  const droot = draftPath(name);
+  if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
+  if (!/^[0-9a-f]{7,40}$/.test(hash ?? "")) throw new Error(`기록 지문 형식 위반: ${hash}`);
+  const probe = git(droot, "rev-parse", "--verify", `${hash}^{commit}`);
+  if (!probe.ok) throw new Error(`없는 기록: ${hash}`);
+  const full = probe.out;
+  const now = new Set(git(droot, "ls-files").raw.split("\n").filter(Boolean));
+  const then = new Set(git(droot, "ls-tree", "-r", "--name-only", full).raw.split("\n").filter(Boolean));
+  const co = git(droot, "checkout", full, "--", ".");
+  if (!co.ok) throw new Error(`되돌리기 실패: ${co.out}`);
+  for (const f of now) if (!then.has(f)) fs.rmSync(sealed(droot, f), { force: true });
+  git(droot, "add", "-A");
+  return { restored: full, message: git(droot, "log", "-1", "--format=%s", full).out };
 }
 
 function bumpPatch(v: string): string {

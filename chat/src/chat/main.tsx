@@ -23,8 +23,10 @@ import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { ChatApp } from "./Chat";
 import { Desk } from "./Desk";
+import { Home } from "./Home";
 import { ChatTabs, type OpenReq } from "./ChatTabs";
 import { getCtx, injectedCoords, type RelayCtx } from "./runtime";
+import "./tw.css";
 import "./chat.css";
 
 const errStyle = "padding:16px;color:#c0392b;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word";
@@ -50,8 +52,15 @@ function showError(label: string, detail: string) {
 window.addEventListener("error", (e) => showError("스크립트 오류", String((e as ErrorEvent).message || e) + "\n" + ((e as ErrorEvent).filename || "")));
 window.addEventListener("unhandledrejection", (e) => showError("Promise 거부", String((e as PromiseRejectionEvent).reason)));
 
+/** 위젯 Tailwind 의 울타리 — tw.css 규칙은 .rc-tw 자손에만 닿는다(chat-build.mjs). 모든 마운트
+ *  호스트가 여기를 지난다(포털은 ui/* 가 단다). 호스트가 준 원소에 클래스 하나를 보태는 것뿐이다. */
+function scoped<T extends HTMLElement>(host: T): T {
+  host.classList.add("rc-tw");
+  return host;
+}
+
 function render(host: HTMLElement, ctxOverrides?: Partial<RelayCtx>) {
-  const root = createRoot(host);
+  const root = createRoot(scoped(host));
   root.render(
     <ErrorBoundary>
       <ChatApp ctxOverrides={ctxOverrides} />
@@ -61,11 +70,23 @@ function render(host: HTMLElement, ctxOverrides?: Partial<RelayCtx>) {
 }
 
 function boot() {
+  // 홈(기판 "/" 문서 — 앱 런처). 런처를 그린 뒤 autoFloat 로 오른쪽 대화 패널도 세운다 —
+  // 홈의 "시작"이 쏘는 relay:chat-open 의 착지가 그 패널이다.
+  const hm = document.getElementById("relay-home");
+  if (hm) {
+    try {
+      createRoot(scoped(hm)).render(<ErrorBoundary><Home /></ErrorBoundary>);
+    } catch (e: any) {
+      hm.innerHTML = `<pre style="${errStyle}">홈 부팅 오류:\n${String(e?.stack || e).replace(/</g, "&lt;")}</pre>`;
+    }
+    autoFloat();
+    return;
+  }
   // 멀티 에이전트 데스크(기판 /desk 문서 — 탭 셸). #relay-desk 우선.
   const ws = document.getElementById("relay-desk");
   if (ws) {
     try {
-      createRoot(ws).render(<ErrorBoundary><Desk /></ErrorBoundary>);
+      createRoot(scoped(ws)).render(<ErrorBoundary><Desk /></ErrorBoundary>);
     } catch (e: any) {
       ws.innerHTML = `<pre style="${errStyle}">데스크 부팅 오류:\n${String(e?.stack || e).replace(/</g, "&lt;")}</pre>`;
     }
@@ -100,11 +121,16 @@ function boot() {
 // relayos 쌍둥이 크롬은 agent.tsx ChatChrome — 같은 wire 를 같은 규칙으로 착지한다.
 const FLOAT_CSS = `
 .rc-float-dock{position:fixed;right:20px;bottom:20px;z-index:2147483000}
-.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;font-size:22px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;display:inline-flex;align-items:center;justify-content:center;padding:0;box-shadow:0 6px 20px rgba(0,0,0,.18)}
 .rc-float-fab:hover{background:var(--rc-accent-strong,#115e59)}
 .rc-float-dock.open .rc-float-fab{display:none}
-.rc-float-panel{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);box-shadow:-10px 0 36px rgba(0,0,0,.10);display:none;flex-direction:column;overflow:hidden}
+.rc-float-panel{position:fixed;top:var(--rc-dock-top,0px);right:0;bottom:0;width:var(--rc-dock-w,380px);max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);display:none;flex-direction:column;overflow:hidden}
 .rc-float-dock.open .rc-float-panel{display:flex}
+.rc-float-grip{position:fixed;top:var(--rc-dock-top,0px);bottom:0;right:calc(var(--rc-dock-w,380px) - 4px);width:8px;cursor:col-resize;z-index:2147483001;display:none}
+.rc-float-dock.open .rc-float-grip{display:block}
+.rc-float-grip:hover,.rc-float-grip.on{background:rgba(13,148,136,.25)}
+body.rc-resizing{cursor:col-resize;user-select:none}
+body.rc-resizing iframe{pointer-events:none}
 `;
 
 function autoFloat() {
@@ -127,7 +153,10 @@ function autoFloat() {
   const fab = document.createElement("button");
   fab.type = "button";
   fab.className = "rc-float-fab";
-  fab.textContent = "✦";
+  // Relay 마크(assets/logo.svg 의 첫 path) — 버튼 채움색 위에 흰색으로.
+  fab.innerHTML =
+    '<svg width="26" height="16" viewBox="0 0 94 54" fill="currentColor" aria-hidden="true">' +
+    '<path transform="translate(0 -35.5776)" d="M67.0781 35.5776C81.9467 35.5779 94 47.6318 94 62.5005C93.9998 77.3689 81.9466 89.4221 67.0781 89.4224C59.903 89.4224 53.3842 86.6144 48.5586 82.0386C47.6928 81.2176 46.3072 81.2176 45.4414 82.0386C40.6158 86.6144 34.097 89.4224 26.9219 89.4224C12.0534 89.4221 0.000245323 77.3689 0 62.5005C3.24964e-07 47.6318 12.0533 35.5779 26.9219 35.5776C34.0969 35.5776 40.6158 38.3857 45.4414 42.9614C46.3071 43.7822 47.6929 43.7822 48.5586 42.9614C53.3842 38.3857 59.9031 35.5776 67.0781 35.5776Z"/></svg>';
   fab.setAttribute("aria-label", "채팅 열기");
   dock.appendChild(panel);
   dock.appendChild(fab);
@@ -136,13 +165,20 @@ function autoFloat() {
   // 도킹은 겹침이 아니라 **공간 예약**이다 — 열면 body 폭을 줄여 화면이 나란히 앉는다(org
   // 기판의 도킹 계약과 같은 결: 화면이 body 기준 폭(w-full/100%)이면 자연히 함께 줄어든다).
   // fixed 오버레이만 있으면 전폭 화면 위에 패널이 떠서 내용을 가린다 — 실사용 보고의 답.
-  const PANEL_W = 440;
+  // 패널 폭 — 왼쪽 가장자리를 끌어 조절하고 기억한다(relay-dock-w). 기본 380.
+  const DOCK_KEY = "relay-dock-w";
+  const MIN_W = 300, MAX_W = 720;
+  let PANEL_W = 380;
+  try { const v = Number(localStorage.getItem(DOCK_KEY)); if (v >= MIN_W && v <= MAX_W) PANEL_W = v; } catch { /* 무시 */ }
+  document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
   const prevBodyWidth = document.body.style.width;
   const prevBodyTransition = document.body.style.transition;
-  const reserve = (v: boolean) => {
+  const reserve = (v: boolean, animate = true) => {
     if (v && window.innerWidth > PANEL_W * 2) {
-      document.body.style.transition = "width .18s ease";
-      document.body.style.width = `calc(100% - ${PANEL_W}px)`;
+      document.body.style.transition = animate ? "width .18s ease" : "none";
+      // body 의 margin-left(전역 사이드바가 :root --relay-side 로 민 폭)까지 빼야 나란히 선다 —
+      // width 는 내용 폭이라 margin 을 모른 채 100% 를 재면 그만큼 패널 밑으로 들어간다
+      document.body.style.width = `calc(100% - ${PANEL_W}px - var(--relay-side, 0px))`;
     } else {
       document.body.style.width = prevBodyWidth;
       document.body.style.transition = prevBodyTransition;
@@ -169,10 +205,17 @@ function autoFloat() {
       onAllClosed: () => setOpen(false),
     });
   };
-  const setOpen = (v: boolean) => {
+  // 열림 상태도 기억한다(relay-dock-open) — 채팅을 열어 둔 채 다른 화면에 갔다 와도 그대로
+  // 열려 있어야 한다. 탭은 ChatTabs 가 이미 localStorage 로 복원하므로 패널만 다시 열면 된다.
+  const OPEN_KEY = "relay-dock-open";
+  const setOpen = (v: boolean, animate = true) => {
     opened = v;
     dock.classList.toggle("open", v);
-    reserve(v);
+    reserve(v, animate);
+    try { localStorage.setItem(OPEN_KEY, v ? "1" : "0"); } catch { /* 무시 */ }
+    // 페이지가 읽는 값 — 열린 도크의 폭(닫히면 0). 패키지 화면의 탑바가 이만큼 오른쪽으로 더 뻗어
+    // 도크 위를 덮는다(도크는 페이지가 준 --rc-dock-top 아래에서 시작한다)
+    document.documentElement.style.setProperty("--rc-dock-open-w", v ? PANEL_W + "px" : "0px");
     if (v && pendingScope && handle) {
       const req = pendingScope;
       pendingScope = null;
@@ -182,6 +225,40 @@ function autoFloat() {
   fab.addEventListener("click", () => {
     ensureMounted();
     setOpen(!opened);
+  });
+  // 이전 페이지에서 열어 둔 채였으면 즉시(애니메이션 없이) 다시 연다.
+  // 예외: 첫 방문 안내(Home.tsx GUIDE_KEY)가 뜰 홈 — 안내 뒤에 열린 패널이 흐려진 채 서 있었다(2026-08-27).
+  try {
+    const guidePending = !!document.getElementById("relay-home") && localStorage.getItem("relay-guide-v2") !== "1";
+    if (localStorage.getItem(OPEN_KEY) === "1" && !guidePending) { ensureMounted(); setOpen(true, false); }
+  } catch { /* 무시 */ }
+
+  // ── 폭 조절 — 패널 왼쪽 가장자리 드래그. 패널 **밖**(dock)에 둔다: 위젯의 React 루트가
+  // 패널 안을 통째로 소유해 첫 렌더에 기존 자식을 지우기 때문이다
+  const grip = document.createElement("div");
+  grip.className = "rc-float-grip";
+  grip.title = "끌어서 폭 조절";
+  dock.appendChild(grip);
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("on");
+    document.body.classList.add("rc-resizing");
+    const move = (ev: PointerEvent) => {
+      PANEL_W = Math.min(MAX_W, Math.max(MIN_W, Math.round(window.innerWidth - ev.clientX)));
+      document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
+      document.documentElement.style.setProperty("--rc-dock-open-w", PANEL_W + "px");
+      reserve(true, false);
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.classList.remove("on");
+      document.body.classList.remove("rc-resizing");
+      try { localStorage.setItem(DOCK_KEY, String(PANEL_W)); } catch { /* 무시 */ }
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
   });
 
   // ── prefill/send 중계(view-bridge §4-9·10) — 크롬은 React 위젯의 마운트 타이밍을 모른다:
@@ -302,7 +379,7 @@ export function mountTabs(el: HTMLElement, opts: RelayTabsMountOptions = {}) {
   const initial: OpenReq | undefined = opts.instanceId
     ? { instanceId: opts.instanceId, conversationId: opts.conversation, title: opts.title }
     : undefined;
-  const root = createRoot(el);
+  const root = createRoot(scoped(el));
   root.render(
     <ErrorBoundary>
       <ChatTabs

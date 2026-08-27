@@ -276,6 +276,12 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     메타(`agent`·`param`)로 되돌아오고, 기판은 대화의 페르소나 문맥에 "현재 작업 대상"으로
     반영한다(org 쌍둥이 — relayos `runtime/turn/claudedir.go` 의 param 주입. 목록이면 펴서
     알린다 — 단수 표현은 목록을 하나의 이름으로 오해하게 한다).
+    `draft: true`(additive, 2026-08-26)를 함께 실으면 세션이 **작업 사본 트리 위에** 선다 —
+    고친 에이전트를 적용 전에 써보는 대화다(페르소나·스킬·커맨드·동사가 전부 작업 사본에서
+    오고, 장부·도는 판은 그대로). 작업 사본이 없으면 `E_NO_DRAFT` 400. 행 메타에 `draft: true`
+    로 되돌아오며, 작업 사본의 문(`/draft/<pkg>/view/`)이 심는 `__RELAY_CONTEXT.draft` 를
+    본 위젯만 이 값을 싣고, 그 문에서는 작업 사본 세션만 목록·이어받기 대상이다(두 판의 대화를
+    섞지 않는다).
 23. **[현행 v1]** 세션 부속 동사 — 전부 `POST {base}/sessions/<id>/<op>`:
     | op | 요청 | 응답 |
     |---|---|---|
@@ -331,6 +337,10 @@ POST 2단)는 계약에 들이지 않는다: **시작은 POST /turns 하나다.*
     커맨드의 병합(client-wire.ts:800-803) — 병합은 기판 몫이다.]
     조회 동사 셋은 각각 동명 capability(`harness-info` · `harness-models` ·
     `harness-commands`, §7) 뒤에 있다 — 하나로 묶지 않는다.
+    `harness.models` 는 `?variant=<name>`(§5.5-30-a 의 이름)으로 활성이 아닌 선언 변형의
+    카탈로그도 답한다 — 조회일 뿐 전환이 아니다. 선언 밖 이름은 400 `E_BAD_REQUEST`.
+    *왜: 모델 피커가 공급자에 호버만 해도 그 모델 목록을 보여주려면, 전환하지 않고 묻는
+    문이 있어야 한다(2026-08-26).*
     *왜 동사 단위인가: 셋을 한 capability 로 묶으면 부분 구현 기판(현행 relayos:
     models·commands ○, info ×)이 §3-8 규율("선언해 놓고 501 은 위반") 아래 합법적으로
     선언할 방법이 없다. 하네스 어휘의 additive 성장(harness-protocol.md:8-9)과도 결이

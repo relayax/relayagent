@@ -24,8 +24,8 @@ test("서비스 이름이 라벨을 납치하지 않는다 — spreadsheets 안�
 
 test("분해가 짐작보다 먼저다 — 접두 분기가 부분일치에 가려지지 않는다", () => {
   assert.equal(stepMeta("mcp__notion__search", {}).label, "notion · search");
-  assert.equal(stepMeta("edge__offer-workbook__answers-read", {}).label, "빌린 동사 · offer-workbook · answers-read");
-  assert.equal(stepMeta("a2a__devteam__product-context", {}).label, "위임 · devteam · product-context");
+  assert.equal(stepMeta("edge__offer-workbook__answers-read", {}).label, "다른 에이전트 기능 · offer-workbook · answers-read");
+  assert.equal(stepMeta("a2a__devteam__product-context", {}).label, "맡긴 작업 · devteam · product-context");
 });
 
 test("네이티브 도구는 종전대로 짐작으로 뜬다 — 접두가 없으면 분해할 것이 없다", () => {

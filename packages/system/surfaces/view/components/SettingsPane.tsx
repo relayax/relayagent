@@ -7,7 +7,7 @@ import type { EdgeView, Registry } from "@/lib/types";
 
 // 관리의 자리. 사이드바가 쓰는 자리라면 여기는 다스리는 자리다 — 지도(그래프), 설치·권한·자격의
 // 조작 다이얼로그가 전부 이 안에 있다. 종전 콘솔(3열 홈)이 통째로 이리로 들어왔다
-export default function SettingsPane({ reg, edges, onChanged, onGuide }: { reg: Registry; edges: EdgeView[]; onChanged: () => void; onGuide: () => void }) {
+export default function SettingsPane({ reg, edges, onChanged }: { reg: Registry; edges: EdgeView[]; onChanged: () => void }) {
   const [sel, setSel] = useState<string | null>(null);
   const selected = reg.packages.find((p) => p.name === sel) ?? null;
 
@@ -26,9 +26,12 @@ export default function SettingsPane({ reg, edges, onChanged, onGuide }: { reg: 
     <section className="pane">
       <header className="pane-head">
         <h2>설정</h2>
-        <span className="meta">지도 · 설치와 버전 · 권한 대장 · 자격 · 하네스</span>
+        {/* 종전의 "지도 · 설치와 버전 · 권한 대장 · 자격 · 하네스" 는 메뉴처럼 보이는데 누를 수 없는 라벨이었고,
+            "터미널: relay draft <이름>" 은 일반 사용자에게 뜻이 없었다 — 둘 다 뺐다(2026-08-27). 터미널 안내는 README 에 있다 */}
+        <span className="meta">설치된 에이전트와 그 사이의 연결</span>
         <div className="right">
-          <button className="ob-open" type="button" title="사용 안내 다시 보기" onClick={onGuide}>안내</button>
+          {/* 사용 안내는 홈(기판 셸)에 산다 — 처음 닿는 자리가 거기라서. 여기서는 그 문으로 보낸다 */}
+          <a className="ob-open" href="/?guide=1" title="사용 안내 다시 보기">안내</a>
         </div>
       </header>
       <div className={`settings-body${selected ? " has-detail" : ""}${!selected && closing ? " detail-closing" : ""}`}>

@@ -106,10 +106,13 @@ export type TurnSendRequest = {
 
 export type SessionEntry = { session: string; label: string; updated: number; archived: boolean; pinned: boolean;
   /** §5.3-21 additive — 이 대화의 정체성(위임 세션 등): 에이전트와 작업 대상. 없으면 착지 */
-  agent?: string; param?: string };
+  agent?: string; param?: string;
+  /** 작업 사본 위 세션 — 고친 판을 적용 전에 써보는 대화 */
+  draft?: boolean };
 
-/** §5.3-22 additive — 민팅 시 대화 바인딩. param 은 agent 없이 설 수 없다(기판 판정). */
-export type SessionCreateRequest = { agent?: string; param?: string };
+/** §5.3-22 additive — 민팅 시 대화 바인딩. param 은 agent 없이 설 수 없다(기판 판정).
+ *  draft = 작업 사본 위에 민팅(기판이 그 나무로 세션을 세운다) */
+export type SessionCreateRequest = { agent?: string; param?: string; draft?: boolean };
 
 export type HistoryMessage = {
   role: "user" | "bot" | "sys";
@@ -136,6 +139,7 @@ export type HarnessInfo = {
 };
 export type HarnessModels = { ok: boolean; value: string[] };
 export type HarnessCommands = { ok: boolean; value: { name: string; description?: string; tty?: boolean }[] };
+/** {harness, model} 을 함께 실으면 전환 뒤 그 하네스의 모델로 앉는다(기판이 순서를 지킨다). */
 export type HarnessSetRequest = { model?: string; effort?: string; harness?: string };
 /** §5.5-30 — 기판은 해제("" 저장)를 null 로 되돌려주고, known 은 판정 불가(카탈로그 불달)면 null. */
 export type HarnessSetResult = { ok: boolean; model: string | null; effort: string | null; harness?: string | null;
@@ -502,6 +506,7 @@ export function createTransport(opts: TransportOptions) {
         post<{ session: string }>(base + "/sessions", {
           ...(init?.agent ? { agent: init.agent } : {}),
           ...(init?.param ? { param: init.param } : {}),
+          ...(init?.draft ? { draft: true } : {}),
         }),
 
       /** §5.3-23 — 빈 label = 자동 라벨 복귀. */
@@ -568,7 +573,8 @@ export function createTransport(opts: TransportOptions) {
       /** §5.5-29 — capability harness-info 뒤. */
       info: (): Promise<Result<HarnessInfo>> => get<HarnessInfo>(base + "/harness/info"),
       /** §5.5-29 — capability harness-models 뒤. */
-      models: (): Promise<Result<HarnessModels>> => get<HarnessModels>(base + "/harness/models"),
+      models: (variant?: string): Promise<Result<HarnessModels>> =>
+        get<HarnessModels>(base + "/harness/models" + (variant ? "?variant=" + encodeURIComponent(variant) : "")),
       /** §5.5-29 — capability harness-commands 뒤. */
       commands: (): Promise<Result<HarnessCommands>> => get<HarnessCommands>(base + "/harness/commands"),
       /** §5.5-30-a — capability harness-variants 뒤. 변형 선택은 설정이지 자격 행위가 아니다. */

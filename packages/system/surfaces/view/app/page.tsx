@@ -3,18 +3,21 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ChatNudge from "@/components/ChatNudge"; // 말풍선
-import Onboarding, { ONBOARD_KEY } from "@/components/Onboarding"; // 온보딩
+import { Button } from "@/components/ui/button";
 import PkgPane from "@/components/PkgPane";
 import SettingsPane from "@/components/SettingsPane";
 import { edgesData, fetchRegistry, fetchResidency, fetchShellNav, type ShellNav } from "@/lib/api";
-import type { Registry } from "@/lib/types";
+import { draftList, type DraftEntry } from "@/lib/studio";
+import type { Pkg, Registry } from "@/lib/types";
 
 // 콘솔 패키지의 화면 = 관리 앱. 사이드바도 홈(앱 런처)도 **여기 없다** — 둘 다 전역 셸의
 // 것이고 기판이 낸다(runner/runtime/shell.ts). 이 패키지는 그 셸 안에 앉는 여러 앱 중 하나이며,
 // 맡는 것은 다스리는 화면과 셸이 서빙할 문서가 없는 얼굴들이다:
 //   /                    설정 — 지도·설치와 버전·권한 대장·자격·하네스
-//   /?p=<설치이름>        상주 상태와 권한 화면(기판이 낼 문서가 없는 얼굴)
-//     &face=live|detail
+//   /?p=<설치이름>        상주 상태와 패키지 화면(기판이 낼 문서가 없는 얼굴)
+//     &face=            셸이 붙이는 얼굴 이름 — 지금은 읽지 않는다(상주 현황은 설명서 아래 접힌 섹션)
+//     &sec=&item=&file=   상세의 깊이 — 설명서 줄의 펼침(2층)과 열린 파일(3층). 스튜디오 규약 그대로
+// 설치 안 된 초안(만드는 중)도 /?p= 로 연다 — 장부에 없으면 draft 목록에서 찾아 합성한다.
 // 정적 발행(output: export)이라 동적 세그먼트 대신 쿼리가 정본이다(스튜디오와 같은 규약).
 const EMPTY: Registry = { packages: [], grants: [] };
 
@@ -30,25 +33,18 @@ function Console() {
   const router = useRouter();
   const sp = useSearchParams();
   const sel = sp.get("p");
-  const face = sp.get("face");
+  const view = useMemo(() => ({ sec: sp.get("sec"), item: sp.get("item"), file: sp.get("file") }), [sp]);
   const pane: "pkg" | "settings" = sel ? "pkg" : "settings";
 
   const [reg, setReg] = useState<Registry>(EMPTY);
   const [nav, setNav] = useState<ShellNav | null>(null);
   const [running, setRunning] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<DraftEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [onboard, setOnboard] = useState(false);
 
-  // 첫 실행 안내는 **자동으로 뜨지 않는다** — 이 화면은 더 이상 처음 닿는 자리가 아니다.
-  // 처음 닿는 자리는 셸 홈(기판이 내는 런처)이고, 안내의 문구도 그 IA 를 설명해야 한다.
-  // 그 이사가 끝날 때까지 안내는 아래 [안내] 버튼으로만 열린다(문구는 손대지 않았다).
-
-  const closeOnboard = useCallback((never: boolean) => {
-    if (never) localStorage.setItem(ONBOARD_KEY, "1");
-    setOnboard(false);
-  }, []);
-  const openGuide = useCallback(() => setOnboard(true), []);
+  // 첫 실행 안내는 셸 홈(기판이 내는 런처, runner/runtime/shell.ts)에 산다 — 처음 닿는 자리가
+  // 거기라서. 이 화면의 [안내] 는 그 문(/?guide=1)으로 가는 링크다.
 
   const load = useCallback(async () => {
     try {
@@ -70,6 +66,11 @@ function Console() {
     } catch {
       setRunning([]);
     }
+    try {
+      setDrafts((await draftList()).drafts);
+    } catch {
+      setDrafts([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -79,10 +80,29 @@ function Console() {
   }, [load]);
 
   const edges = useMemo(() => edgesData(reg), [reg]);
-  const selected = reg.packages.find((p) => p.name === sel) ?? null;
+  const installed = reg.packages.find((p) => p.name === sel) ?? null;
+  // 설치 안 된 초안 — 장부에 없지만 draft 는 있다. 빈 workspace 가 "초안" 의 표식이다
+  const selected: Pkg | null =
+    installed ??
+    (sel && drafts.some((d) => d.name === sel)
+      ? { name: sel, path: "", workspace: "", ring: null, model: null, harness: null, manifest: null, error: null }
+      : null);
   const item = nav?.items.find((i) => i.pkg === sel) ?? null;
 
-  const goFace = useCallback((f: string) => router.push(`/?p=${encodeURIComponent(sel ?? "")}&face=${f}`), [router, sel]);
+  // 상세의 깊이 이동 — p·face 는 지키고 sec·item·file 만 바꾼다 (스튜디오의 nav 와 같은 규칙)
+  const goView = useCallback(
+    (q: { sec?: string | null; item?: string | null; file?: string | null }) => {
+      const p = new URLSearchParams({ p: sel ?? "", face: "detail" });
+      const s = q.sec === undefined ? view.sec : q.sec;
+      const it = q.item === undefined ? view.item : q.item;
+      const f = q.file === undefined ? view.file : q.file;
+      if (s) p.set("sec", s);
+      if (s && it) p.set("item", it);
+      if (f) p.set("file", f);
+      router.push(`/?${p.toString()}`);
+    },
+    [router, sel, view],
+  );
 
   return (
     <div className="console">
@@ -96,8 +116,8 @@ function Console() {
             edges={edges}
             running={running}
             item={item}
-            face={face}
-            onFace={goFace}
+            view={view}
+            nav={goView}
             onChanged={() => void load()}
             onGone={() => { void load(); router.push("/"); }}
           />
@@ -107,7 +127,7 @@ function Console() {
             <div className="pane-body">
               <div className="rc-card pad">
                 <p className="hint">장부에 이 이름의 설치가 없습니다. 제거되었거나 주소가 낡았습니다.</p>
-                <div className="detail-foot"><a className="rc-btn" href="/">홈으로</a></div>
+                <div className="detail-foot"><Button variant="outline" size="sm" nativeButton={false} render={<a href="/" />}>홈으로</Button></div>
               </div>
             </div>
           </section>
@@ -115,11 +135,10 @@ function Console() {
           <div className="pane-body center"><span className="rc-ring" /></div>
         )
       ) : (
-        <SettingsPane reg={reg} edges={edges} onChanged={() => void load()} onGuide={openGuide} />
+        <SettingsPane reg={reg} edges={edges} onChanged={() => void load()} />
       )}
 
-      <Onboarding open={onboard} onClose={closeOnboard} /> {/* 온보딩 */}
-      {!onboard ? <ChatNudge /> : null} {/* 말풍선 */}
+      <ChatNudge /> {/* 말풍선 */}
     </div>
   );
 }

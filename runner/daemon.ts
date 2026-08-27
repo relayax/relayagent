@@ -11,17 +11,17 @@ import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
-import { runScript, runScriptFrom, scriptMeta, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
 import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
-import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath } from "./supply/draft.ts";
+import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath, historyDraft, restoreDraft } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
-import { shellNav, storeLatest, HOME_DOC, SHELL_JS } from "./runtime/shell.ts";
+import { shellNav, storeLatest, homeDoc, SHELL_JS } from "./runtime/shell.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
@@ -178,6 +178,14 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     },
     draftDiscard: (name) => discardDraft(name),
     draftList: () => listDrafts(getLedger()),
+    // 동사의 짧은 서술 — 설치본은 장부의 뿌리에서, 작업 사본은 draft 뿌리에서. 모듈을 import 만
+    // 하고 부르지 않는다(scriptMeta 와 같은 규율). 없는 이름은 빈 답
+    verbLabels: async (name, draft) => {
+      const root = draft ? draftPath(name) : getLedger().packages[name]?.path;
+      return root && fs.existsSync(root) ? verbLabelsAt(root) : {};
+    },
+    draftHistory: (name) => historyDraft(name),
+    draftRestore: (name, hash) => restoreDraft(name, hash),
     // 미리보기 굽기 — 작업 사본을 /draft/<이름>/ 좌표로 굽는다. 장부도 도는 판도 건드리지
     // 않는다: 산출은 작업 사본 안의 out/ 이고 그것은 스냅샷에서 빠지는 임시물이다
     draftBuild: (name) => buildDraft(name),
@@ -286,10 +294,10 @@ export function createApi(
         }
       }
       // 셸 홈 — 설치된 앱을 늘어놓는 런처. 앱 하나의 화면이 아니므로 패키지에 두지 않고
-      // 기판이 낸다(runtime/shell.ts HOME_DOC). 종전에는 여기서 콘솔 패키지로 302 했다
+      // 기판이 낸다(runtime/shell.ts homeDoc). 종전에는 여기서 콘솔 패키지로 302 했다
       if (p === "/" || p === "") {
         res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
-        return void res.end(HOME_DOC);
+        return void res.end(homeDoc(getLedger()));
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
 
@@ -306,7 +314,9 @@ export function createApi(
         res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
         return void res.end(SHELL_JS);
       }
-      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest()));
+      // 초안(작업 사본)도 함께 싣는다 — 발행 전 패키지가 어느 화면에도 안 보이면 만들다 만 것이
+      // 잃어버린 것처럼 보인다(스튜디오 시작 화면·홈이 "만드는 중" 으로 그린다)
+      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest(), listDrafts(getLedger())));
 
       // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.
       // 마운트 문법(/pkg/<pkg>·/)은 여기서만 해석되고 클라이언트는 base 주입으로 받는다(§2-6).
@@ -333,8 +343,8 @@ export function createApi(
 
       // 기판 소유 클라이언트 자산(채팅 위젯 번들). 패키지 view 가 아니라 기판이 서빙한다 —
       // 위젯은 하네스와의 연결지점이라 구현이 기판과 함께 움직여야 하기 때문.
-      // 번들은 릴리스 컷이 굽는다(chat/ chat-build.mjs → dist) — js 와 css 두 갈래다
-      const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css))$/);
+      // 번들은 릴리스 컷이 굽는다(chat/ chat-build.mjs → dist) — js · css · 글꼴(woff2) 세 갈래다
+      const asset = p.match(/^\/assets\/([a-z0-9-]+\.(?:js|css|woff2))$/);
       if (asset && req.method === "GET") {
         const file = path.join(ASSETS_DIR, asset[1]);
         if (!fs.existsSync(file)) {

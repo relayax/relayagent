@@ -15,22 +15,22 @@ import { RELAY_HOME, loadLedger, logLine, sessionDir, type Ledger } from "../sup
 import { loadManifest, listScripts, agentScriptScope, agentDirScope, type Manifest } from "../supply/manifest.ts";
 // edge 소비 집행(callEdgeTool)의 정본은 실행 옆이다 — 세션 문과 동사 문(ctx.edge)이
 // 같은 판정을 지나야 하므로 한 벌만 둔다
-import { runScript, scriptMeta, callEdgeTool, type HostBridge } from "./scripts.ts";
+import { runScript, runScriptFrom, scriptMeta, callEdgeTool, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, McpGateError, type McpIO, type McpToolInfo } from "./mcp.ts";
 // 폴더 문 — 감금·연산의 정본은 dirs.ts 한 곳이고, 동사 문(ctx.service)이 같은 벌을 쓴다
 import { dirCall, dirToolInfos, localDirIO, type DirIO } from "./dirs.ts";
-import { runSession, isSessionBusy, retireResident, localSessionIO, INTERRUPTED_MARK, type SessionIO } from "./harness.ts";
+import { runSession, isSessionBusy, retireResident, localSessionIO, sessionTreeOf, INTERRUPTED_MARK, type SessionIO } from "./harness.ts";
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, parseDirToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
 
 // 세션이 부를 수 있는 동사의 유일한 진리 — 목록(tools/list)과 집행(tools/call)이 같은 집합을
 // 봐야 한다. 목록에만 스코프를 걸면 이름을 아는 세션이 아무 동사나 부른다 (선언 = 캡 원칙 위반)
-function sessionScriptSet(ledger: Ledger, pkg: string, agent: string): Set<string> {
-  const rec = ledger.packages[pkg];
-  const m = loadManifest(rec.path);
+// root = 세션이 서는 나무(설치본 또는 작업 사본, harness.ts sessionTreeOf) — 목록과 집행이 같은 나무를 본다
+function sessionScriptSet(ledger: Ledger, pkg: string, agent: string, root: string = ledger.packages[pkg].path): Set<string> {
+  const m = loadManifest(root);
   const agentsInPlay = [agent, ...((m.agents ?? []).find((a) => a.name === agent)?.dispatch ?? [])];
-  const allScripts = listScripts(rec.path, m);
+  const allScripts = listScripts(root, m);
   const inScope = new Set<string>();
   for (const a of agentsInPlay) {
     const scope = agentScriptScope(m, a);
@@ -58,9 +58,9 @@ function sessionDirSet(ledger: Ledger, pkg: string, agent: string): Set<string> 
 // 서술·입력 형의 정본은 동사 자신이다 — 기판이 이름으로 문장을 지어내면 tools/list 가 세션에게
 // 아무것도 알려주지 못한다(이름을 두 번 읽는 셈). meta 를 수출한 동사는 그 서술과 JSON Schema 를
 // 싣고, 수출하지 않은 동사는 현행 그대로 자동 서술 + 개방 스키마(mcp.ts 폴백)로 선다.
-async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, agent: string): Promise<McpToolInfo[]> {
+async function sessionTools(ledger: Ledger, authority: Authority, pkg: string, agent: string, root: string = ledger.packages[pkg].path): Promise<McpToolInfo[]> {
   const tools: McpToolInfo[] = [];
-  for (const s of sessionScriptSet(ledger, pkg, agent)) {
+  for (const s of sessionScriptSet(ledger, pkg, agent, root)) {
     const meta = await scriptMeta(ledger, pkg, s);
     tools.push({ name: s, description: meta?.description ?? `${pkg} 패키지의 ${s} 동사`, inputSchema: meta?.input });
   }
@@ -286,8 +286,12 @@ export async function sweepPendingDeliveries(
 // handleMcp 의 io 기본값이 이 구현이라 1인 기판은 무변이고, 임베더는 같은 형의 자기 구현
 // (자기 도구 레지스트리·자기 권위 판정)을 꽂는다 — run.ts RunnerIO 와 같은 결.
 function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg: string, agent: string, callerSlot?: string | null, dirIO: DirIO = localDirIO(ledger)): McpIO {
+  // 작업 사본 위 세션이면 동사도 작업 사본의 것 — 고친 동사를 적용 전에 써보는 자리다. 그때는
+  // host 브리지를 주지 않는다(draftRun 과 같은 규율: 시험 삼아 도는 코드에 ring-0 권능을 주지 않는다)
+  const root = sessionTreeOf(pkg, callerSlot, ledger.packages[pkg].path);
+  const onDraft = root !== ledger.packages[pkg].path;
   return {
-    tools: () => sessionTools(ledger, authority, pkg, agent),
+    tools: () => sessionTools(ledger, authority, pkg, agent, root),
     call: async (name, args) => {
       const a2a = parseA2aToolName(name);
       const edge = parseEdgeToolName(name);
@@ -387,7 +391,8 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         return `위임이 ${timeoutS}초 안에 끝나지 않았습니다 — 서브에이전트는 세션 "↳ ${sub}" 에서 계속 돌고 있고, 완료되면 이 대화로 📬 배달됩니다. 결과를 기다리거나 재시도하지 말고, 사용자에게 진행 중임을 알리세요.`;
       }
       // 집행도 목록과 같은 스코프를 본다 — 이름을 아는 세션이 선언 밖 동사를 부르는 구멍의 답
-      if (!sessionScriptSet(ledger, pkg, agent).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
+      if (!sessionScriptSet(ledger, pkg, agent, root).has(name)) throw new Error(`E_SCOPE: ${agent} 세션 스코프 밖 동사: ${name}`);
+      if (onDraft) return await runScriptFrom(ledger, pkg, root, name, args, { principal: authority.principal(), agent }, null, authority);
       return await runScript(ledger, pkg, name, args, { principal: authority.principal(), agent }, host, authority);
     },
   };

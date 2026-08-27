@@ -12,7 +12,14 @@
 //  1. 앵커가 있으면 카드는 하나다.
 //  2. 그 하나가 tool 결과를 받아 닫힌다 — 답변·타임아웃·거절이 모두 이 한 경로다.
 //  3. ask 의 questions 가 tool.args 를 덮는다 — args 는 2KB 상한이라 긴 질문이 잘려 온다.
-//  4. 앵커 없는 봉투는 종전대로 자기 카드를 연다(구 어댑터 무영향 — additive 규율).
+//  4. 앵커가 없어도 카드는 하나다 (2026-08-27 재발: 아래 참조).
+//
+// 재발(2026-08-27): 같은 화면이 다시 났다. 고친 어댑터는 packages/system 에만 있고, 패키지는
+// 만들어질 때 그 사본을 한 번 받아 굳는다(runner/supply/draft.ts openDraft — dst 가 있으면
+// 복사를 건너뛴다). 이미 만들어진 패키지의 장부에는 앵커 없는 ask 가 그대로 찍힌다
+// (~/.relay/sessions/detail-page/… 실측). 그래서 "구 어댑터는 종전대로"가 예외가 아니라
+// 다수였고, 판정을 뒤집었다 — 앵커가 없으면 **열려 있는 질문 카드**에 앉는다. 대기 질문은
+// 한 번에 하나뿐이므로(어댑터가 두 번째를 거절한다) 그 카드는 하나로 확정된다.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadModule } from "./_load.mjs";
@@ -67,8 +74,28 @@ test("ask 의 questions 가 args 를 덮는다 — tool.args 는 2KB 에서 잘�
   assert.equal(card.args.questions[0].options[0].label, "A");
 });
 
-test("앵커 없는 봉투는 종전대로 자기 카드를 연다 — 구 어댑터 무영향", () => {
+test("앵커가 없어도 카드는 하나 — 굳은 옛 어댑터 사본에서도 유령이 안 선다", () => {
   const cards = askCards(reduceEnvelope(real(false)).parts);
-  assert.equal(cards.length, 2); // 이것이 고치기 전의 화면이었다
-  assert.deepEqual(cards.map((c) => c.toolCallId), [TOOL_ID, REQ_ID]);
+  assert.equal(cards.length, 1, "카드가 둘이면 같은 질문이 두 벌 뜬다");
+  assert.equal(cards[0].toolCallId, TOOL_ID);
+  assert.equal(cards[0].result, RESULT); // 그 하나가 tool 결과로 닫힌다
+  assert.equal(cards[0].args.questions.length, 2); // ask 의 온전한 questions 가 앉았다
+});
+
+test("답이 닫힌 질문에는 다음 ask 가 앉지 않는다 — 한 턴에 질문이 둘이면 카드도 둘", () => {
+  const T2 = "toolu_second";
+  const { parts } = reduceEnvelope([
+    { event: "tool", status: "start", id: TOOL_ID, name: "AskUserQuestion", args: JSON.stringify({ questions: QUESTIONS }) },
+    { event: "ask", id: REQ_ID, questions: QUESTIONS },
+    { event: "tool", status: "end", id: TOOL_ID, name: "AskUserQuestion", ok: true, result: RESULT },
+    { event: "tool", status: "start", id: T2, name: "AskUserQuestion", args: JSON.stringify({ questions: QUESTIONS }) },
+    { event: "ask", id: "req-2", questions: QUESTIONS },
+  ]);
+  assert.deepEqual(askCards(parts).map((c) => c.toolCallId), [TOOL_ID, T2]);
+});
+
+test("tool 카드가 아예 없으면 ask 가 자기 카드를 연다 — 중간 attach 재생", () => {
+  const cards = askCards(reduceEnvelope([{ event: "ask", id: REQ_ID, questions: QUESTIONS }]).parts);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].toolCallId, REQ_ID);
 });
