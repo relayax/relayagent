@@ -53,8 +53,6 @@ const TOK_ICON: Record<string, Key> = {
   surfaces: "faces", triggers: "when", harness: "engine", agents: "talk",
   scripts: "verbs", services: "dirs", edges: "links", missions: "missions",
 };
-/** 문단 머리의 작은 라벨 — 세 문단이 무엇에 답하는지. 문장은 그대로 두고 눈이 짚을 자리만 준다 */
-const PARA_LABEL: Record<string, string> = { meet: "만나는 곳", do: "하는 일", use: "쓰는 것" };
 
 const TOK_HINT: Record<string, string> = {
   surfaces: "사람이 여는 화면과 채널을 고칩니다",
@@ -380,11 +378,10 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
           <div className="ap-say">
             {say.map((para: Para) => (
               <div key={para.key} className="ap-para">
-                {PARA_LABEL[para.key] ? <span className="ap-para-l">{PARA_LABEL[para.key]}</span> : null}
                 <p className="ap-line">
                   {para.parts.map((x, i) =>
                     typeof x === "string" ? (
-                      <span key={i}>{x}</span>
+                      <span key={i} className={x === " · " ? "ap-sep" : undefined}>{x}</span>
                     ) : (
                       <button
                         key={i}

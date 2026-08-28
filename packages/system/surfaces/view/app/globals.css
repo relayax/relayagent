@@ -967,10 +967,8 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
    머리의 흐름 띠(웹 화면 → detail-page → 13가지 일 → pages · workbook)는 하루 만에 걷어냈다.
    칸에 설 것이 결국 선언의 id 라 사람에게 뜻이 없었고("detail-page 가 뭔데?"), 뜻이 있는 칸은
    아래 문장이 더 나은 말로 이미 하고 있었다. 같은 것을 더 나쁜 낱말로 되풀이하는 줄이었다. */
-.ap-say { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px 0; }
+.ap-say { display: flex; flex-direction: column; gap: 16px; padding: 4px 2px 0; }
 .ap-para { display: flex; flex-direction: column; gap: 3px; }
-/* 문단 머리 라벨 — 아주 작고 옅게. 문장이 주인이고 이것은 눈이 짚는 자리다 */
-.ap-para-l { font: 600 10.5px/1 var(--rc-sans); letter-spacing: 0.06em; color: var(--rc-faint); padding-left: 1px; }
 /* 낱말이 알약이라 밑줄 여유가 필요 없다 — 알약 높이(22px)가 글줄 안에 앉을 만큼만 띄운다 */
 .ap-line { margin: 0; font-size: 15px; line-height: 1.95; color: var(--rc-ink); letter-spacing: -0.01em; word-break: keep-all; }
 
@@ -983,6 +981,8 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
   background: var(--rc-well); border-radius: 7px; cursor: pointer;
   transition: background .12s ease, color .12s ease, transform .12s ease;
 }
+/* 알약과 알약 사이의 점 — 낱말이 면이 되었으니 점은 한 톤 물러선다 */
+.ap-sep { color: var(--rc-faint); font-size: 11px; margin: 0 1px; }
 .ap-tok .ds-ic { width: 13px; height: 13px; flex: none; color: var(--rc-soft); }
 .ap-tok:hover { background: var(--rc-line-strong); }
 .ap-tok:active { transform: translateY(1px); }
@@ -1044,7 +1044,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 
 /* 더 붙일 수 있는 것 — 문장 아래 한 묶음. 문단 사이에 끼우면 산문이 끊긴다 */
 .ap-adds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; padding-top: 14px; }
-.ap-adds > div { display: contents; }
+.ap-adds > div, .ap-adds .ap-addwrap.row { display: contents; padding: 0; }
 /* 알약에서 펼친 폼은 한 줄을 통째로 쓴다 */
 .ap-adds .ap-inline { flex: 1 0 100%; margin-top: 6px; }
 
