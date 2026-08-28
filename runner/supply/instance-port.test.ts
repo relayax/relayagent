@@ -13,7 +13,7 @@ process.env.USERPROFILE = process.env.HOME;
 process.env.RELAY_HOME = path.join(ROOT, "relay-home");
 delete process.env.RELAY_PORT;
 
-const { discoverApiPort, runningDaemonPid, runningDaemonPort, markDaemonStarting, markDaemonListening, clearDaemonMark, API_PORT } = await import("./ledger.ts");
+const { discoverApiPort, runningDaemonPid, runningDaemonPort, runningDaemonRunner, takeoverReason, markDaemonStarting, markDaemonListening, clearDaemonMark, API_PORT } = await import("./ledger.ts");
 const RUN = path.join(process.env.RELAY_HOME, "run");
 
 test("기록이 없으면 기본 4747 — 모듈 적재 시점의 판정도 같다", () => {
@@ -55,4 +55,22 @@ test("종료는 두 기록을 함께 지운다", () => {
   assert.ok(!fs.existsSync(path.join(RUN, "daemon.pid")));
   assert.ok(!fs.existsSync(path.join(RUN, "daemon.port")));
   assert.equal(discoverApiPort({}), 4747);
+});
+
+test("물려받을 이유 — 같은 판이면 없고(거부), 러너가 다르거나 판이 다르거나 기록이 없으면 있다", () => {
+  const mine = { dir: "/app/runner", version: "0.3.15" };
+  assert.equal(takeoverReason({ ...mine }, mine), null);
+  assert.match(takeoverReason(null, mine)!, /자리 기록이 없는 지난 판/);
+  assert.match(takeoverReason({ dir: "/checkout/runner", version: "0.3.15" }, mine)!, /다른 러너/);
+  assert.match(takeoverReason({ dir: "/app/runner", version: "0.3.14" }, mine)!, /옛 판 v0\.3\.14/);
+});
+
+test("러너 신원은 자리 기록과 함께 앉고 함께 지워진다 — 기록 없는 지난 판과 구별된다", () => {
+  markDaemonStarting();
+  assert.equal(runningDaemonRunner(), null); // 아직 문을 안 열었다 = 신원도 없다
+  markDaemonListening(4848, { dir: "/app/runner", version: "0.3.15" });
+  assert.deepEqual(runningDaemonRunner(), { dir: "/app/runner", version: "0.3.15" });
+  clearDaemonMark();
+  assert.equal(runningDaemonRunner(), null);
+  assert.ok(!fs.existsSync(path.join(RUN, "daemon.runner")));
 });
