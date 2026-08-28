@@ -63,10 +63,15 @@ assets/                 project logo
    Translation into a native CLI format belongs to the adapter in `packages/*/harness/<name>/`,
    never to the runner. Do not hardcode a model name, a vendor alias, or a CLI flag in `runner/`.
 6. **Minimal ground.** A session stands on one granted workspace folder. Extra folders are `dir`
-   services — the session *calls* them (`dir__<name>__*` tools, capped by `agents[].dirs`) instead of
-   standing on them, and never learns their paths. `~/.relay` is denied to every session, always, and
-   install refuses a `dir` grant that resolves inside it (the judgment lives in `supply/install.ts`,
-   not the manifest judge: `RELAY_HOME` is instance settings and the grammar must not know it).
+   services — reached only by the package's verbs (`ctx.service(<name>).call(…)`); a session never
+   touches a folder directly, sees no folder tools, and never learns a folder's path. `~/.relay` is
+   denied to every session, always, and install refuses a `dir` grant that resolves inside it (the
+   judgment lives in `supply/install.ts`, not the manifest judge: `RELAY_HOME` is instance settings
+   and the grammar must not know it).
+7. **A session sees verbs, nothing else.** The MCP door lists the agent's own verbs and the verbs it
+   borrows through granted edges. A service — folder, REST base, remote MCP, spawned body — is
+   consumed by a verb that wraps it, never handed to a session raw. The one explicit exception is
+   `edges[].agent_access: full`, which is opt-in, declared, and marked raw in the disclosure.
 
 ## Working on the runner
 

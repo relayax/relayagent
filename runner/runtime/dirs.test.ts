@@ -1,8 +1,8 @@
 // dir 문의 집행 — 선언이 캡이고, 감금은 기판의 몫이다.
 //
 // 이 축이 조용히 회귀하는 자리라 시험을 붙인다: 감금이 뚫리면 "폴더 하나"라고 고지한 선언이
-// 파일시스템 전체가 되고, 캡이 선언을 넘으면 판정이 광고가 된다. 세션 문(dir__*)과 동사
-// 문(ctx.service)이 같은 벌을 지나므로 여기서 막히는 것은 양쪽에서 막힌다.
+// 파일시스템 전체가 된다. 문은 동사 문(ctx.service) 하나다 — 세션에 폴더 도구(dir__*)를 세우던
+// 축은 2026-08-28 은퇴했고, 그것이 다시 서지 않는 것도 여기서 지킨다(서비스는 동사가 감싸서만 소비된다).
 //
 //   node --experimental-strip-types --test runner/runtime/dirs.test.ts
 import assert from "node:assert/strict";
@@ -19,8 +19,8 @@ process.env.RELAY_HOME = path.join(ROOT, "relay-home");
 
 const { runScript } = await import("./scripts.ts");
 const { handleMcp } = await import("./tools.ts");
-const { jail, dirCall, dirToolInfos } = await import("./dirs.ts");
-const { judge, loadManifest, agentDirScope, ManifestError } = await import("../supply/manifest.ts");
+const { jail, dirCall } = await import("./dirs.ts");
+const { judge, loadManifest, ManifestError } = await import("../supply/manifest.ts");
 const { localAuthority } = await import("../authority.ts");
 
 function mk(p: string): string {
@@ -51,7 +51,7 @@ fs.writeFileSync(
     "agents:",
     "  - name: orders",
     "    persona: AGENT.md",
-    "    dirs: [inbox]",
+    "    scripts: [get, ls]",
     "scripts:",
     "  source: scripts",
     "services:",
@@ -107,30 +107,17 @@ test("폴더 뿌리는 지울 수 없다 — 이 문이 사는 자리다", async
   await assert.rejects(() => dirCall(INBOX, "remove", { path: "." }), /뿌리는 지울 수 없습니다/);
 });
 
-test("도구는 연산 수만큼 서고, 서술에 실제 좌표가 실리지 않는다", () => {
-  const infos = dirToolInfos("inbox");
-  assert.deepEqual(infos.map((t) => t.name), ["dir__inbox__list", "dir__inbox__read", "dir__inbox__write", "dir__inbox__remove"]);
-  assert.ok(!JSON.stringify(infos).includes(INBOX), "도구 서술에 절대경로가 실렸다");
-});
-
-test("세션 스코프는 선언을 넘지 못한다 — 미선언 폴더는 도구가 되지 않는다", () => {
+test("판정은 은퇴한 agents[].dirs 를 처방과 함께 거부한다 — 조용히 무시하면 저작자는 도구가 서는 줄 안다", () => {
   const m = loadManifest(PKG);
-  assert.deepEqual(agentDirScope(m, "orders"), ["inbox"]);
-  const forged = { ...m, agents: [{ name: "orders", persona: "AGENT.md", dirs: ["inbox", "ghost"] }] };
-  assert.deepEqual(agentDirScope(forged as typeof m, "orders"), ["inbox"]);
-});
-
-test("판정은 없는 폴더를 가리키는 캡을 거부한다 — 선언이 실체를 적는다", () => {
-  const m = loadManifest(PKG);
-  const bad = { ...m, agents: [{ name: "orders", persona: "AGENT.md", dirs: ["ghost"] }] };
+  const bad = { ...m, agents: [{ name: "orders", persona: "AGENT.md", dirs: ["inbox"] }] };
   assert.throws(
-    () => judge(bad, PKG),
-    (e: unknown) => e instanceof ManifestError && e.issues.some((i) => i.includes("agents[orders].dirs 미선언 폴더: ghost")),
+    () => judge(bad as typeof m, PKG),
+    (e: unknown) => e instanceof ManifestError && e.issues.some((i) => i.includes("agents[orders].dirs 는 은퇴했습니다")),
   );
 });
 
 // ── 세션 문 — 에이전트가 실제로 보는 것 ──────────────────────────────────────
-// 동사 문과 같은 벌을 지나는지, 그리고 캡이 목록에만 걸리고 집행에 안 걸리는 구멍이 없는지.
+// 폴더는 동사가 감싸서만 닿는다: 세션의 목록에 폴더 도구가 없고, 이름을 알아도 열리지 않는다.
 
 /** 데몬의 응답 자리 — handleMcp 는 json(res, …) 로만 쓴다(writeHead + end) */
 function fakeRes(): { body: () => any; res: any } {
@@ -145,26 +132,18 @@ const mcp = async (method: string, params?: unknown): Promise<any> => {
   return body();
 };
 
-test("세션은 선언한 폴더를 도구로 본다 — 경로가 아니라 이름으로", async () => {
+test("세션의 목록에는 폴더 도구가 없다 — 보이는 것은 폴더를 감싼 동사뿐이다", async () => {
   const names = ((await mcp("tools/list")).result.tools as { name: string }[]).map((t) => t.name);
-  assert.deepEqual(
-    names.filter((n) => n.startsWith("dir__")),
-    ["dir__inbox__list", "dir__inbox__read", "dir__inbox__write", "dir__inbox__remove"],
-  );
+  assert.deepEqual(names.filter((n) => n.startsWith("dir__")), []);
+  assert.deepEqual(names.filter((n) => n === "get" || n === "ls").sort(), ["get", "ls"]);
 });
 
-test("세션 문과 동사 문이 같은 파일을 본다 — 문이 둘이어도 판정과 실체는 하나다", async () => {
+test("옛 이름을 알아도 폴더는 열리지 않는다 — 목록과 집행이 같은 집합을 본다", async () => {
   await run("put", { path: "note.txt", content: "한 줄" });
   const r = await mcp("tools/call", { name: "dir__inbox__read", arguments: { path: "note.txt" } });
-  assert.match(JSON.stringify(r.result), /한 줄/);
-});
-
-test("선언 밖 폴더는 이름을 알아도 열리지 않는다 — 목록과 집행이 같은 집합을 본다", async () => {
-  const r = await mcp("tools/call", { name: "dir__ghost__read", arguments: { path: "x" } });
-  assert.match(JSON.stringify(r.error ?? r.result), /E_SCOPE/);
-});
-
-test("세션도 폴더 밖으로는 못 나간다 — 감금은 문마다가 아니라 한 벌이다", async () => {
-  const r = await mcp("tools/call", { name: "dir__inbox__read", arguments: { path: "../outside/secret.txt" } });
-  assert.match(JSON.stringify(r.result ?? r.error), /폴더 밖 경로/);
+  assert.ok(r.error || r.result?.isError, "은퇴한 폴더 도구가 열렸다");
+  assert.doesNotMatch(JSON.stringify(r), /한 줄/);
+  // 같은 파일은 동사로는 닿는다
+  const via = await mcp("tools/call", { name: "get", arguments: { path: "note.txt" } });
+  assert.match(JSON.stringify(via.result), /한 줄/);
 });

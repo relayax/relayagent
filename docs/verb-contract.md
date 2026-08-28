@@ -40,12 +40,16 @@ exists because a verb returning file bodies inside JSON makes a list of rendered
 megabytes. It is not a grant and declares nothing: the view and the workspace belong to the same
 package.
 
-A `dir` service is for the folders **outside** that ground, and the split is between *standing* and
-*calling*: the workspace is where the agent stands (it is the cwd, and the harness's native file
-tools simply reach it), while a `dir` is something it calls. A session never learns a `dir`'s path —
-it sees tools, `dir__<name>__{list,read,write,remove}`, for the folders its agent declared in
-`agents[].dirs`. Handing the path to a session instead would invite it to bypass the door and walk
-the filesystem, and that path is nowhere at all on a substrate whose sessions live in pods.
+A `dir` service is for the folders **outside** that ground. The workspace is where the agent stands
+(it is the cwd, and the harness's native file tools simply reach it); a `dir` is something only the
+package's **verbs** reach, through `ctx.service(name).call(…)`, and the session reaches it only
+through those verbs. A session never sees a folder tool and never learns a `dir`'s path: handing
+either to a session would invite it to bypass the verbs and walk the filesystem on its own terms,
+and that path is nowhere at all on a substrate whose sessions live in pods. (Between 2026-08-25 and
+2026-08-28 a declared folder also stood in the session as raw tools, `dir__<name>__*`, capped by
+`agents[].dirs`. That was the one service a session consumed without a verb wrapping it — the shape
+this contract otherwise forbids — and it is retired; declaring `agents[].dirs` now fails validation
+with that prescription.)
 
 The manifest gives the declaration two meanings by path shape: a relative path is inside the package
 tree and owned by it, while a `~` path is a **request** — the install consent binds it, and the
@@ -72,7 +76,7 @@ does not have throws with a message naming the other:
 | `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). `fetch` throws. |
 | `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block — `<auth.scheme> <token>`, `Bearer` unless declared otherwise (Unsplash's `Client-ID`, for instance); same per-call resolution, same rotation. The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
 | `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. `fetch` throws. |
-| `dir` | A file door the substrate stands up itself: `call("list"\|"read"\|"write"\|"remove", args)`, dispatched in-process (no network hop). Paths in the arguments are relative to the folder and nothing else — an absolute path, a `..` climb, and a symlink pointing outward are all refused by one judgment. `fetch` throws. Until 2026-08-25 this row read *a folder is not a door* and returned the caller to `ctx.dir(name)`; once folders stood up as session tools, that exception had no ground left, and removing it is what makes the sentence above — one accessor for every form — true without an asterisk. The credential and identity axes are absent here on purpose: nothing goes out. |
+| `dir` | A file door the substrate stands up itself: `call("list"\|"read"\|"write"\|"remove", args)`, dispatched in-process (no network hop). Paths in the arguments are relative to the folder and nothing else — an absolute path, a `..` climb, and a symlink pointing outward are all refused by one judgment. `fetch` throws. Until 2026-08-25 this row read *a folder is not a door* and returned the caller to `ctx.dir(name)`; removing that exception is what makes the sentence above — one accessor for every form — true without an asterisk (the session-side folder tools that briefly accompanied it are retired again; see *Ground and folders*). The credential and identity axes are absent here on purpose: nothing goes out. |
 
 One accessor for every form is deliberate. Credential and identity are attached where the call is
 made; a second accessor for `source` bodies would be a second place to forget them, and the body most
@@ -122,6 +126,24 @@ stack and leave no cause behind.
 
 The session tool (`edge__<provider>__<tool>`) and `ctx.edge` are two entrances to **one**
 enforcement. Two entrances with two judgments is not a cap, it is a coincidence.
+
+`edges[].agent_access` (tools form only) says what the consumer's **agent** may touch through that
+edge. The default, `scripts-only`, means an edge tool always resolves to one of the provider's
+verbs — a service the provider declared is consumed only through a verb that wraps it, on both
+sides of the edge. `full` is the explicit opt-in for raw access: the remote-MCP tools the provider
+listed in `services[].url.tools` also stand in the consumer's session as `edge__<provider>__<tool>`,
+called with the provider's credential and the caller's identity, and the disclosure marks the edge
+as raw. A grant cannot open a raw-only tool to a `scripts-only` consumer — `relay grant` refuses it
+with the prescription — and a call that reaches one anyway fails `E_RAW_ACCESS`. When a verb and a
+raw tool share a name, the verb wins. The provider's own sessions never see those raw tools: a
+package consumes its own services through its verbs, always.
+
+A borrowed verb is advertised the way the provider's own session sees it: the consumer's
+`tools/list` carries the provider verb's `meta.description` and `meta.input` (see *Meta* below),
+suffixed with which package it belongs to. A name alone makes a verb callable but not usable — the
+session cannot know the argument shape of a verb it did not write. A provider whose manifest fails
+judgment does not take the consumer's tool list down with it: that tool stands by name, and the
+call itself is what fails loud.
 
 **Do not point `dir` at another package's folder.** That shortcut is what this door exists to
 remove, and it costs three things at once. The cap becomes the whole folder instead of a verb. The
@@ -179,7 +201,7 @@ export const meta = {
 
 | Key | Contract |
 |---|---|
-| `description` | What `tools/list` shows the session. Absent → the substrate synthesizes `<pkg> 패키지의 <verb> 동사`. |
+| `description` | What `tools/list` shows the session — the verb's own and any session that borrows it through an edge. Absent → the substrate synthesizes `<pkg> 패키지의 <verb> 동사` (`edge 소비: <provider> 의 <verb>` when borrowed). |
 | `input` | JSON Schema literal, published as the tool's `inputSchema`. Absent → the open schema `{type:"object", additionalProperties:true}`. |
 | `output` | Accepted and ignored for now: MCP 2025-03-26 `tools/list` has no `outputSchema` slot. |
 

@@ -4,7 +4,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { saveLedger, expandHome, workspacePath, RELAY_HOME, type Grant, type Ledger, type PkgOrigin } from "./ledger.ts";
-import { loadManifest, judge, activeHarness, disclosure, ManifestError, type Disclosure, type Manifest, type HarnessVariant } from "./manifest.ts";
+import { loadManifest, judge, activeHarness, disclosure, ManifestError, type Disclosure, type Manifest, type HarnessVariant, listScripts } from "./manifest.ts";
 import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, buildComponents, componentBundleUrl, componentOutDir, type BuildResult } from "../runtime/view.ts";
 import { conformHarness } from "./conform.ts";
@@ -50,7 +50,7 @@ function insideRelayHome(p: string): boolean {
 
 const HOME_DIR_REFUSAL = (where: string, p: string): string =>
   `${where}: 기판 장기(${RELAY_HOME}) 안쪽은 dir 로 열 수 없습니다: ${p} — 그 폴더에는 자격(vault)과 ` +
-  `장부의 시크릿이 삽니다. 세션은 그 폴더를 도구로 열 수 있으므로(dir__<이름>__*), 여기 구멍이 나면 ` +
+  `장부의 시크릿이 삽니다. 동사가 그 폴더를 ctx.service 로 열 수 있으므로, 여기 구멍이 나면 ` +
   `담장이 한 축에서만 서게 됩니다. 기판 상태는 판정을 지나는 동사로만 바뀝니다 — 필요한 것이 있으면 ` +
   `ring-0 결재를 받아 host 브리지 동사로 받으세요`;
 
@@ -745,6 +745,19 @@ export function addGrant(ledger: Ledger, g: Grant): void {
     const allowed = new Set(declared.flatMap((e) => e.tools ?? []));
     const over = g.tools.filter((t) => !allowed.has(t));
     if (over.length) throw new Error(`선언 캡 초과: tools ${over.join(", ")} (선언된 tools: ${[...allowed].join(", ") || "없음"})`);
+    // raw 전용 도구(provider 의 동사가 아니라 원격 MCP 서버의 도구)는 agent_access: full 이 있어야
+    // 결재된다. 결재 시점이 fail-loud 의 자리다 — 판정은 provider 를 모르고(미설치일 수 있다),
+    // 실행 시점은 이미 늦다(세션이 목록에 없는 도구를 찾는다)
+    const pm = loadManifest(provider.path);
+    const scripts = new Set(listScripts(provider.path, pm));
+    const raw = new Set((pm.services ?? []).flatMap((s) => ("url" in s && s.url != null ? s.tools ?? [] : [])));
+    const rawOnly = g.tools.filter((t) => !scripts.has(t) && raw.has(t));
+    if (rawOnly.length && !declared.some((e) => e.tools && e.agent_access === "full")) {
+      throw new Error(
+        `raw 도구 결재 불가: ${rawOnly.join(", ")} 는 ${lineage} 의 동사가 아니라 원격 MCP 서버의 도구입니다 — ` +
+        `에이전트가 raw 로 만지게 하려면 ${g.consumer} 의 edges 항목에 agent_access: full 을 선언하세요(기본 scripts-only)`,
+      );
+    }
   }
   if (g.components && !declared.some((e) => e.components === true)) {
     throw new Error(`선언 캡 초과: components (${g.consumer} 의 edges 에 components 선언 없음)`);
@@ -766,6 +779,28 @@ export function removeGrant(ledger: Ledger, g: Grant): void {
     (x) => !(x.consumer === g.consumer && x.provider === g.provider && x.mission === g.mission),
   );
   saveLedger(ledger);
+}
+
+/**
+ * 소비자가 이 provider 에 선언한 에이전트 접근 축 — tools 형 항목 중 하나라도 full 이면 full.
+ * 미선언 = scripts-only: raw 노출은 명시 opt-in 만이다(기본 반전 — relayos normalizeAgentAccess 와
+ * 같은 규율). 세션 문의 목록(tools.ts)과 집행(callEdgeTool)·결재(addGrant)가 같은 답을 본다.
+ */
+export function edgeAgentAccess(ledger: Ledger, consumer: string, provider: string): "scripts-only" | "full" {
+  const c = ledger.packages[consumer];
+  const p = ledger.packages[provider];
+  if (!c || !p) return "scripts-only";
+  let lineage: string;
+  try {
+    lineage = loadManifest(p.path).name;
+  } catch {
+    return "scripts-only";
+  }
+  const entries = (loadManifest(c.path).edges ?? []).filter((e) => {
+    const ref = String(e.provider ?? "");
+    return ref === provider || ref === lineage || bareRef(ref) === lineage;
+  });
+  return entries.some((e) => e.tools && e.agent_access === "full") ? "full" : "scripts-only";
 }
 
 export function resolveProvider(ledger: Ledger, ref: string): string | null {

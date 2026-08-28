@@ -626,7 +626,6 @@ function derivedTools(m: Manifest, agentName: string, files: string[]): string[]
       const re = new RegExp("^" + pat.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
       for (const v of verbs) if (re.test(v)) out.add(v);
     }
-    for (const d of a.dirs ?? []) for (const op of ["list", "read", "write", "remove"]) out.add(`dir__${d}__${op}`);
   }
   for (const e of m.edges ?? []) {
     const provider = e.provider.split("/").pop() ?? e.provider;
@@ -682,7 +681,7 @@ function AgentPane({ ctx }: { ctx: PreviewCtx }) {
             {tools.length ? (
               tools.map((t) => <Badge key={t} variant="outline" className="font-mono">{t}</Badge>)
             ) : (
-              <p className="text-xs text-muted-foreground">scripts scope 도 dirs 도 edges 도 없습니다 — 이 세션은 말만 합니다.</p>
+              <p className="text-xs text-muted-foreground">scripts scope 도 edges 도 없습니다 — 이 세션은 말만 합니다.</p>
             )}
           </div>
         </div>

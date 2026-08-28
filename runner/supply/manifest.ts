@@ -78,12 +78,14 @@ export interface Manifest {
     variants?: HarnessVariant[];
     workdir?: string;
   };
-  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; dirs?: string[]; default?: boolean }[];
+  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
-  edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean }[];
+  /** agent_access — tools 형에만. scripts-only(기본) = edge 도구는 언제나 provider 의 동사.
+   *  full = provider 가 services[].url.tools 에 선언한 원격 MCP 도구도 raw 로 선다(명시 opt-in) */
+  edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean; agent_access?: "scripts-only" | "full" }[];
   /** ring-0 host 브리지 게이트 선언 — host.* 캡. 미선언 = 전체(ring-0 결재가 경계) */
   host_methods?: string[];
   org?: unknown;
@@ -476,8 +478,6 @@ export function judge(m: Manifest, pkgPath?: string): void {
 
   const agents = m.agents ?? [];
   const agentNames = new Set<string>();
-  // 세션이 볼 수 있는 폴더의 후보 — 에이전트의 dirs 캡은 이 집합을 넘을 수 없다
-  const dirNames = new Set((m.services ?? []).filter((x) => "dir" in x && x.dir != null).map((x) => x.name));
   const scriptNames = pkgPath && m.scripts?.source ? listScripts(pkgPath, m) : null;
   const defaults = agents.filter((a) => a.default === true);
   if (defaults.length > 1) issues.push(`agents[].default 는 최대 1: ${defaults.map((a) => a.name).join(", ")}`);
@@ -511,15 +511,13 @@ export function judge(m: Manifest, pkgPath?: string): void {
       const hit = s.endsWith("*") ? scriptNames.some((n) => n.startsWith(s.slice(0, -1))) : scriptNames.includes(s);
       if (!hit) issues.push(`agents[${a.name}].scripts 실체 없음: ${s}`);
     }
-    // dir 캡 — 선언된 폴더만 가리킬 수 있다. 없는 이름은 설치 후 도구가 조용히 비는 자리라
-    // scripts 스코프와 같은 규율로 여기서 막는다(선언이 실체를 적는다)
-    for (const d of a.dirs ?? []) {
-      if (!dirNames.has(d)) {
-        issues.push(
-          `agents[${a.name}].dirs 미선언 폴더: ${d} — services[] 에 { name: ${d}, dir: <경로> } 를 선언하세요` +
-          `${dirNames.size ? ` (선언된 폴더: ${[...dirNames].join(", ")})` : ""}`,
-        );
-      }
+    // 은퇴한 축(2026-08-28) — 폴더를 세션 도구(dir__*)로 세우던 agents[].dirs. "서비스는 동사가
+    // 감싸서만 소비된다"는 계약의 유일한 예외였다. 조용히 무시하면 저작자는 도구가 서는 줄 안다
+    if ((a as { dirs?: unknown }).dirs != null) {
+      issues.push(
+        `agents[${a.name}].dirs 는 은퇴했습니다(2026-08-28) — 폴더는 세션 도구가 아니라 동사가 감쌉니다: ` +
+        `services[].dir 을 선언하고 그 폴더를 읽고 쓰는 동사를 agents[].scripts 에 넣으세요`,
+      );
     }
   }
   // 착지 없는 에이전트 패키지는 대화의 문이 없다 — 관례(짧은 이름)로도 명시(default: true)로도
@@ -622,6 +620,14 @@ export function judge(m: Manifest, pkgPath?: string): void {
     for (const t of e.tools ?? []) if (!SLUG.test(t)) issues.push(`edges[${e.provider}].tools 형식 위반: ${t}`);
     if (e.mission != null && (typeof e.mission !== "string" || !e.mission.trim())) issues.push(`edges[${e.provider}].mission: 비어 있지 않은 문자열만`);
     if (e.components != null && e.components !== true) issues.push(`edges[${e.provider}].components: true 만`);
+    // agent_access — raw 노출은 명시 opt-in 이고 미지값은 접지 않는다: 오타가 어느 쪽으로든 조용히
+    // 접히면 저작자의 선택이 무음 소실된다(relayos normalizeAgentAccess 와 같은 규율)
+    if (e.agent_access != null) {
+      if (e.agent_access !== "scripts-only" && e.agent_access !== "full") {
+        issues.push(`edges[${e.provider}].agent_access: scripts-only | full 만 (지금 ${String(e.agent_access)})`);
+      }
+      if (e.tools == null) issues.push(`edges[${e.provider}].agent_access 는 tools 형에만 — mission·components 에는 raw 도구 축이 없습니다`);
+    }
   }
 
   if (m.host_methods != null) {
@@ -678,16 +684,6 @@ export function agentScriptScope(m: Manifest, agent: string): ((s: string) => bo
   return (key) => exact.has(key) || prefixes.some((p) => key.startsWith(p));
 }
 
-/**
- * 이 에이전트가 세션 문에서 볼 수 있는 폴더. 미선언 = 없음이다 — dir 은 지금까지 세션 도구가
- * 아니었으므로 이 기본값은 회귀가 아니라 추가다. 선언된 dir 서비스 밖 이름은 여기서 걸러진다:
- * 캡이 선언을 넘으면 판정이 광고가 된다.
- */
-export function agentDirScope(m: Manifest, agent: string): string[] {
-  const declared = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
-  return ((m.agents ?? []).find((a) => a.name === agent)?.dirs ?? []).filter((d) => declared.has(d));
-}
-
 export function listScripts(pkgPath: string, m: Manifest): string[] {
   if (!m.scripts) return [];
   const dir = path.join(pkgPath, m.scripts.source);
@@ -726,8 +722,8 @@ export function declaredPaths(m: Manifest): DeclaredPath[] {
 }
 
 export interface Disclosure {
-  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더. 세션은 경로가 아니라
-   *  기판이 세운 도구(dir__<이름>__*)로 닿는다 — 딛는 땅(workspace)과 성격이 다르므로
+  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더. 세션은 경로도 폴더 도구도
+   *  받지 않고 그 폴더를 감싼 동사로만 닿는다 — 딛는 땅(workspace)과 성격이 다르므로
    *  고지서도 두 줄을 갈라 적는다 */
   folders: { name: string; path: string }[];
   /** services[].url(MCP 문) · services[].api(REST 베이스) — 밖으로 나가는 접점과 자격의 형태.
@@ -777,8 +773,9 @@ export function disclosure(m: Manifest): Disclosure {
   if (m.requires?.os?.length) host.push(`OS: ${m.requires.os.join(", ")}`);
   for (const b of m.requires?.binaries ?? []) host.push(b.name);
   for (const a of m.requires?.apps ?? []) host.push(`${a.name}.app`);
+  // raw 표시 — 고지가 "빌렸다"와 "에이전트가 raw 로 만진다"를 구분해야 한다(agent_access: full)
   const borrows = (m.edges ?? []).map((e) =>
-    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
+    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")}${e.agent_access === "full" ? " · raw" : ""})` : ""}`,
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
   const hostMethods = m.host_methods ?? [];
