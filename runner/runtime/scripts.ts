@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
 import { publicFields } from "./credential.ts";
@@ -12,6 +11,9 @@ import { resolveProvider, edgeAgentAccess } from "../supply/install.ts";
 import type { McpToolInfo } from "./mcp.ts";
 // dir 문의 집행 정본(dirs.ts) — 감금·연산은 한 벌이고, 그 문을 지나는 입구는 동사 문(ctx.service) 하나다
 import { dirCall, ensureDirRoot, resolveDirService } from "./dirs.ts";
+// 동사는 데몬 밖(패키지별 워커)에서 돈다 — 문(service·edge·dispatch·host)만 여기(makeCtx)로 되돌아온다
+import { runInWorker, metaInWorker } from "./script-pool.ts";
+import type { CtxSeed } from "./script-wire.ts";
 
 export interface HostBridge {
   registry(): unknown;
@@ -477,10 +479,39 @@ export async function runScriptFrom(
   const file = path.join(root, m.scripts.source, name + ".ts");
   if (!fs.existsSync(file)) throw new Error(`script 없음: ${name}`);
   const mtime = fs.statSync(file).mtimeMs;
-  const mod = await import(pathToFileURL(file).href + "?t=" + mtime);
-  if (typeof mod.default !== "function") throw new Error(`script 계약 위반(기본 수출 함수 아님): ${name}`);
+  // 판정·자격·신원은 여기(ctx)에 남고, 워커는 좌표(seed)만 받아 거울 ctx 를 세운다 — 동사의 문은
+  // 전부 이 ctx 로 되돌아온다(script-pool.ts serve). 동사 코드가 데몬 프로세스에서 도는 일은 없다:
+  // 그 안의 spawnSync·sleep·긴 계산은 자기 패키지의 워커만 붙든다(실측 2026-08-28 의 답)
   const ctx = makeCtx(ledger, pkg, caller, hostBridge, authority, io, [...chain, pkg]);
-  return await mod.default(input ?? {}, ctx);
+  return await runInWorker(root, pkg, name, file, mtime, input ?? {}, ctx, seedFor(ledger, pkg, m, ctx, io));
+}
+
+/** 워커가 동기로 알아야 하는 좌표 전부 — makeCtx 의 손잡이가 동기로 답하던 것(경로·주소)의 사본.
+ *  자격은 없다. 답을 두 벌 두지 않기 위해 값은 makeCtx 의 같은 규칙(resolveDirService·io.body)으로 푼다 */
+function seedFor(ledger: Ledger, pkg: string, m: Manifest, ctx: ScriptCtx, io: ServiceIO): CtxSeed {
+  const dirs: Record<string, string> = {};
+  const services: CtxSeed["services"] = {};
+  for (const s of m.services ?? []) {
+    if ("dir" in s && s.dir != null) {
+      dirs[s.name] = resolveDirService(ledger, pkg, m, s.name);
+      services[s.name] = { url: `dir://${s.name}` };
+    } else if ("api" in s && s.api != null) {
+      services[s.name] = { url: s.api };
+    } else if ("url" in s && s.url != null) {
+      services[s.name] = { url: s.url };
+    } else {
+      const src = s as Extract<ServiceDecl, { source: string }>;
+      const body = io.body(pkg, s.name, src.port ?? null);
+      services[s.name] = body ? { url: body.url } : { url: "", fault: `몸 주소 없음: ${s.name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다` };
+    }
+  }
+  const edges: Record<string, string> = {};
+  for (const name of Object.keys(ledger.packages)) edges[name] = name;
+  for (const e of m.edges ?? []) {
+    const resolved = resolveProvider(ledger, String(e.provider ?? ""));
+    if (resolved) edges[String(e.provider)] = resolved;
+  }
+  return { pkg, caller: ctx.caller, workspace: ctx.workspace, dirs, services, edges, host: ctx.host != null };
 }
 
 /**
@@ -566,13 +597,13 @@ async function scriptMetaAt(root: string, m: Manifest, name: string): Promise<Sc
   if (!m.scripts) return null;
   const file = path.join(root, m.scripts.source, name + ".ts");
   if (!fs.existsSync(file)) return null;
-  let mod: Record<string, unknown>;
+  // 모듈 최상위도 데몬에서 돌지 않는다 — 목록(tools/list)이 동사 모듈을 여는 자리도 워커다
+  let raw: unknown;
   try {
-    mod = await import(pathToFileURL(file).href + "?t=" + fs.statSync(file).mtimeMs);
+    raw = await metaInWorker(root, file, fs.statSync(file).mtimeMs);
   } catch {
     return null;
   }
-  const raw = mod.meta;
   if (!raw || typeof raw !== "object") return null;
   const meta = raw as Record<string, unknown>;
   // 미지 키는 무시하되 지우지는 않는다 — 무시는 "판정하지 않는다"이지 "없앤다"가 아니다.

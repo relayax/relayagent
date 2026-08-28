@@ -15,6 +15,23 @@ The default export *is* the verb: it takes the call arguments (`input`, always a
 substrate context (`ctx`), and returns JSON-serializable data. A file without a default export
 fails loudly when called. Everything else a verb exports is optional.
 
+**A verb runs in a worker thread, not in the daemon.** Each package tree (an installed release, or a
+draft under preview) gets one worker, started lazily and retired quietly after the tree is replaced.
+The verb's code — including its module top level, which `tools/list` imports to read `meta` — never
+executes on the daemon's event loop, so a synchronous child process, a busy loop, or a `process.exit`
+inside a verb stalls or kills only that package's worker; the daemon, its other packages, and every
+session keep running. Everything on `ctx` that judges, resolves a credential, or carries identity
+(`service(...).call/fetch/connected/fields`, `edge(...).call`, `dispatch`, `host.*`) is a door: the
+worker sends the request to the substrate, which executes it on the real `ctx` and answers. What the
+worker knows up front is coordinates only — `workspace`, the paths behind `ctx.dir(...)`, service
+URLs, resolved edge providers — and no credential ever enters the thread. `fetch` bodies cross as
+text or bytes (`string`, `Uint8Array`, `URLSearchParams`, `Blob`); a `Response` comes back with its
+status, headers and body intact. A verb may keep working after it returned (a background finish that
+knocks on `ctx` doors later); those doors stay open for an hour after the return, then refuse with a
+reason. A run that exceeds `RELAY_SCRIPT_TIMEOUT_S` (default 1800) is killed together with its worker
+and reported as such. A result that cannot cross the thread boundary — a function, a class instance
+— is refused with a reason: the contract is JSON-serializable data.
+
 `ctx`:
 
 | Field | Contract |
