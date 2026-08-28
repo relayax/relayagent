@@ -64,6 +64,10 @@ export interface ShellNav {
   studio: string;
   /** 발행 전 초안 — 장부에 없어 카드로는 서지 않는 것들 */
   drafts: { name: string; version: string | null; changes: number; href: string }[];
+  /** 연결 화면 — 설치된 것 전부의 자격 전경(이 콘솔의 /connections/ 페이지). 주소는 기판이 싣는다 */
+  connections: string;
+  /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격 */
+  attention: { credentials: number };
 }
 
 export async function fetchShellNav(): Promise<ShellNav> {
@@ -164,7 +168,8 @@ export function loginHarness(pkg: string, sw = false): Promise<{ launched: boole
 }
 
 // 채널 운영면 — 하네스 설정과 같은 기판 API 패턴. 저작(스튜디오)이 아니라 상태·자격·재기동
-/** 자격 형태 선언 — 값이 아니라 형태다(매니페스트 surfaces.channels[].credential) */
+/** 자격 입력 칸의 형태 — 값이 아니다. 채널 credential.fields 와 서비스 auth.fields 가 같은 어휘를 쓴다.
+ *  header 는 서비스 전용(그 칸의 값이 Authorization 으로 나간다) */
 export interface CredentialField {
   key?: string;
   label: string;
@@ -172,6 +177,7 @@ export interface CredentialField {
   secret?: boolean;
   list?: boolean;
   required?: boolean;
+  header?: boolean;
 }
 export interface CredentialDecl {
   fields: CredentialField[];
@@ -224,6 +230,10 @@ export interface ServiceStatusView {
   /** 문의 말 — url = MCP 문, api = REST 베이스. 도구 열이 빈 이유가 여기에 있다 */
   form: "url" | "api";
   kind: "none" | "token" | "oauth";
+  /** 없으면 주 기능이 서지 않는가(auth.required, 미선언 = true). 연결 화면이 "필요"와 "선택"을 가른다 */
+  required: boolean;
+  /** 입력 칸의 형태(auth.fields) — null 이면 토큰 문자열 한 칸(붙여넣기) */
+  fields: CredentialField[] | null;
   /** 선언 그대로의 안내 — 발급처 링크와 한 줄 설명. 화면이 이걸로 안내를 그린다 */
   help: { url?: string; note?: string } | null;
   /** oauth 의 client 축: "registered" 면 사람이 client_id 를 공급해야 한다(DCR 불가) */
@@ -239,9 +249,30 @@ export function serviceStatus(pkg: string): Promise<{ services: ServiceStatusVie
   return getJson(`/pkg/${encodeURIComponent(pkg)}/services`);
 }
 
-/** token 형 자격 저장만 — 유효 판정은 verify 소관 */
-export function connectService(pkg: string, service: string, token: string): Promise<{ ok: boolean }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/connect`, { token });
+/** token 형 자격 저장만 — 유효 판정은 verify 소관. 칸 선언(fields)이 있으면 칸별 값을, 없으면 토큰 문자열을 보낸다 —
+ *  조립은 기판이 한다(runtime/credential.ts — CLI 와 같은 한 벌). 필수 칸이 비면 400 + missing */
+export function connectService(pkg: string, service: string, payload: { token?: string; fields?: Record<string, string> }): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/connect`, payload);
+}
+
+// ── 자격 전경 — 전 패키지의 바깥 서비스·창구. 사이드바 배지와 같은 집계(/connections) ──────────
+
+export interface ConnectionsOverview {
+  packages: {
+    pkg: string;
+    label: string;
+    icon: string | null;
+    /** 판정 실패한 설치 — 목록에서 지우지 않고 사유를 싣는다 */
+    error: string | null;
+    services: ServiceStatusView[];
+    channels: ChannelStatusView[];
+  }[];
+  /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격 */
+  attention: number;
+}
+
+export function fetchConnections(): Promise<ConnectionsOverview> {
+  return getJson("/connections");
 }
 
 /** auth.verify 선언대로 실왕복 한 번 */

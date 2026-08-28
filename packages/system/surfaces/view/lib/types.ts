@@ -25,12 +25,46 @@ export interface ServiceDecl {
   tools?: string[];
   port?: number;
   disk?: string;
-  auth?: { kind?: string; env?: string };
+  auth?: ServiceAuth;
+}
+
+/** services[].auth — 값이 아니라 계약이다. 칸(fields)은 채널 credential.fields 와 같은 어휘에 header 하나가 더 있다 */
+export interface ServiceAuth {
+  kind?: string;
+  env?: string;
+  /** Authorization 접두 — 미선언 = Bearer */
+  scheme?: string;
+  /** 없으면 주 기능이 서지 않는가 — 미선언 = true. false 면 없어도 돌고 그 기능만 꺼진다 */
+  required?: boolean;
+  fields?: CredentialField[];
+  help?: { url?: string; note?: string };
+  verify?: { url: string; headers?: Record<string, string> };
+  client?: string;
 }
 
 /** 밖으로 나가는 두 형(url = MCP 문, api = REST 베이스)만 자격 축을 갖는다 — runner 의
  *  outwardService 와 같은 판정이다. source(몸)·dir(폴더)에는 auth 자리가 없다 */
 export const isOutward = (s: ServiceDecl): boolean => s.url != null || s.api != null;
+
+export type ServiceForm = "url" | "api" | "dir" | "container" | "process";
+
+/** 서비스 네 형(문법: source | url | api | dir)의 화면 이름 — source 는 dockerfile 유무로 컨테이너·프로그램
+ *  둘로 읽는다. 판정을 자리마다 삼항으로 다시 쓰면 한 형이 빠진다(2026-08-28: 지도와 상세가 api 형을
+ *  "process" 로 그렸다). 형을 묻는 자리는 전부 이 하나를 부른다 */
+export function serviceForm(s: ServiceDecl): ServiceForm {
+  if (s.url != null) return "url";
+  if (s.api != null) return "api";
+  if (s.dir != null) return "dir";
+  return s.dockerfile ? "container" : "process";
+}
+
+export const SERVICE_FORM_LABEL: Record<ServiceForm, string> = {
+  url: "바깥 도구",
+  api: "바깥 서비스",
+  dir: "폴더",
+  container: "컨테이너",
+  process: "프로그램",
+};
 
 export interface EdgeDecl {
   provider: string;
@@ -40,7 +74,8 @@ export interface EdgeDecl {
   components?: true;
 }
 
-/** 채널이 요구하는 자격의 **형태** — 값이 아니다. 화면이 이 선언으로 입력 칸을 그린다 */
+/** 자격 입력 칸 하나의 **형태** — 값이 아니다. 채널 credential.fields 와 서비스 auth.fields 가 같은 어휘를
+ *  쓰고, 화면이 이 선언으로 입력 칸을 그린다. header 만 서비스 전용이다(그 칸의 값이 Authorization 으로 나간다) */
 export interface CredentialField {
   key?: string;
   label: string;
@@ -48,6 +83,7 @@ export interface CredentialField {
   secret?: boolean;
   list?: boolean;
   required?: boolean;
+  header?: boolean;
 }
 
 export interface ChannelDecl {

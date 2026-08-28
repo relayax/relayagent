@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import Detail from "@/components/Detail";
 import Graph from "@/components/Graph";
@@ -30,6 +31,8 @@ export default function SettingsPane({ reg, edges, onChanged }: { reg: Registry;
             "터미널: relay draft <이름>" 은 일반 사용자에게 뜻이 없었다 — 둘 다 뺐다(2026-08-27). 터미널 안내는 README 에 있다 */}
         <span className="meta">설치된 에이전트와 그 사이의 연결</span>
         <div className="right">
+          {/* 자격 연결은 별도 화면(연결)이 소유한다 — 지도의 필을 눌러도 같은 폼이지만, 전 패키지의 전경은 그쪽이다 */}
+          <Link className="ob-open" href="/connections/" title="바깥 서비스와 창구의 자격을 한 자리에서">연결</Link>
           {/* 사용 안내는 홈(기판 셸)에 산다 — 처음 닿는 자리가 거기라서. 여기서는 그 문으로 보낸다 */}
           <a className="ob-open" href="/?guide=1" title="사용 안내 다시 보기">안내</a>
         </div>

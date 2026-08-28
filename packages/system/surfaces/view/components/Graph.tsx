@@ -11,7 +11,7 @@ import HarnessDialog from "@/components/HarnessDialog";
 import ChannelDialog from "@/components/ChannelDialog";
 import ServiceDialog from "@/components/ServiceDialog";
 import { Button } from "@/components/ui/button";
-import { isOutward, type EdgeView, type Pkg, type Registry } from "@/lib/types";
+import { isOutward, serviceForm, SERVICE_FORM_LABEL, type EdgeView, type Pkg, type Registry } from "@/lib/types";
 
 const W = 1180;
 const CARD_W = 200;
@@ -479,44 +479,52 @@ export default function Graph({
                       );
                     })()
                   : null}
-                {m?.surfaces?.channels?.length ? (
-                  <span
-                    className="gx-pill dep"
-                    title={`채널 ${m.surfaces.channels.map((c) => c.name).join(" · ")} · 클릭해 연결·상태`}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setChannelDlg(p);
-                    }}
-                  >
-                    {m.surfaces.channels.map((ch) =>
-                      ch.icon ? (
-                        <img key={ch.name} src={`/pkg/${encodeURIComponent(p.name)}/asset/${ch.icon}`} alt={ch.name} />
-                      ) : (
-                        <i key={ch.name}>{ch.name.slice(0, 1).toUpperCase()}</i>
-                      ),
-                    )}
-                  </span>
-                ) : null}
                 {(() => {
+                  // 오른쪽 필 둘 — 창구(채널)와 바깥 서비스. 성질이 다른 두 문이라 필도 둘이고 글리프도 다르다
+                  // (채널 = 동그라미·아이콘, 서비스 = 네모). 한 묶음(.gx-pills)에 나란히 세운다 — 종전엔 둘 다
+                  // right:8px 절대좌표라 둘 다 있는 패키지에서 포개졌다(2026-08-28)
+                  const chans = m?.surfaces?.channels ?? [];
                   // 자격 축이 있는 것은 밖으로 나가는 두 형(url·api)뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
                   const svcs = (m?.services ?? []).filter(
                     (sv) => isOutward(sv) && sv.auth != null && sv.auth.kind !== "none",
                   );
-                  if (!svcs.length) return null;
+                  if (!chans.length && !svcs.length) return null;
                   return (
-                    <span
-                      className="gx-pill dep"
-                      title={`서비스 ${svcs.map((sv) => sv.name).join(" · ")} · 클릭해 연결`}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setServiceDlg(p);
-                      }}
-                    >
-                      {svcs.map((sv) => (
-                        <i key={sv.name}>{sv.name.slice(0, 1).toUpperCase()}</i>
-                      ))}
+                    <span className="gx-pills">
+                      {chans.length ? (
+                        <span
+                          className="gx-pill dep ch"
+                          title={`창구(채널) ${chans.map((c) => c.name).join(" · ")} · 클릭해 연결·상태`}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChannelDlg(p);
+                          }}
+                        >
+                          {chans.map((ch) =>
+                            ch.icon ? (
+                              <img key={ch.name} src={`/pkg/${encodeURIComponent(p.name)}/asset/${ch.icon}`} alt={ch.name} />
+                            ) : (
+                              <i key={ch.name}>{ch.name.slice(0, 1).toUpperCase()}</i>
+                            ),
+                          )}
+                        </span>
+                      ) : null}
+                      {svcs.length ? (
+                        <span
+                          className="gx-pill dep svc"
+                          title={`바깥 서비스 ${svcs.map((sv) => `${sv.name}${sv.auth?.required === false ? "(선택)" : ""}`).join(" · ")} · 클릭해 연결`}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setServiceDlg(p);
+                          }}
+                        >
+                          {svcs.map((sv) => (
+                            <i key={sv.name}>{sv.name.slice(0, 1).toUpperCase()}</i>
+                          ))}
+                        </span>
+                      ) : null}
                     </span>
                   );
                 })()}
@@ -551,9 +559,9 @@ export default function Graph({
                 {services.length ? (
                   <div className="gx-stores">
                     {services.slice(0, 3).map((s) => (
-                      <div key={s.name} className="gx-store" title={`서비스 ${s.name} · ${s.url ? "url" : s.dir ? "dir" : s.dockerfile ? "container" : "process"}`}>
+                      <div key={s.name} className="gx-store" title={`서비스 ${s.name} · ${SERVICE_FORM_LABEL[serviceForm(s)]}`}>
                         <b>{s.name}</b>
-                        <span>{s.url ? "url" : s.dir ? "dir" : s.dockerfile ? "container" : "process"}</span>
+                        <span>{SERVICE_FORM_LABEL[serviceForm(s)]}</span>
                       </div>
                     ))}
                   </div>

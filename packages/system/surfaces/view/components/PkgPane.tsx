@@ -220,7 +220,8 @@ function useLiveStatus(pkg: Pkg, running: string[]): ItemStatus {
       }
       const st = svcs?.find((x) => x.name === id);
       if (!st) return null;
-      return st.kind === "none" || st.hasCred ? { label: "연결됨", on: true } : { label: "로그인 필요" };
+      // 서비스의 말은 "자격이 앉아 있는가" 다 — 채널의 "로그인/듣는 중" 과 어휘를 섞지 않는다. 필수·선택은 auth.required
+      return st.kind === "none" || st.hasCred ? { label: "연결됨", on: true } : { label: st.required ? "자격 없음 · 필요" : "자격 없음 · 선택" };
     }
     return null;
   };

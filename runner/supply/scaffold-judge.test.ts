@@ -68,6 +68,7 @@ const INPUT: Record<string, string> = {
   "service-process": "indexer",
   "service-container": "db",
   "service-url": "notion",
+  "service-api": "unsplash",
   "service-dir": "documents",
   "trigger-cron": "daily",
   "trigger-event": "on-install",

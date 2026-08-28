@@ -27,6 +27,10 @@ export interface ShellNav {
   drafts: { name: string; version: string | null; changes: number; empty: boolean; href: string }[];
   store: string | null;
   library: string | null;
+  /** 연결 화면 — 설치된 것 전부의 자격 전경(콘솔 페이지). 주소는 기판이 싣는다 */
+  connections: string;
+  /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격. 홈 배너와 사이드바 배지가 같은 수를 읽는다 */
+  attention: { credentials: number };
   brand?: { name: string; logo: string | null; accent: string | null };
 }
 

@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { approveGrant, channelStatus, short, type ChannelStatusView } from "@/lib/api";
-import type { EdgeView, Pkg } from "@/lib/types";
+import { approveGrant, channelStatus, serviceStatus, short, type ChannelStatusView, type ServiceStatusView } from "@/lib/api";
+import { isOutward, serviceForm, SERVICE_FORM_LABEL, type EdgeView, type Pkg } from "@/lib/types";
 
 function Rows({ children }: { children: React.ReactNode[] }) {
   if (!children.length) return <div className="row none">없음</div>;
@@ -25,6 +25,15 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
     channelStatus(pkg.name).then((r) => { if (live) setChans(r.channels); }).catch(() => { if (live) setChans([]); });
     return () => { live = false; };
   }, [pkg.name, m.surfaces?.channels?.length]);
+  // 바깥 서비스의 자격 상태 — 채널과 같은 결. 자격이 있는가·필수인가만 칩으로(값은 없다)
+  const [svcs, setSvcs] = useState<ServiceStatusView[] | null>(null);
+  const outwardCount = (m.services ?? []).filter(isOutward).length;
+  useEffect(() => {
+    if (!outwardCount) return;
+    let live = true;
+    serviceStatus(pkg.name).then((r) => { if (live) setSvcs(r.services); }).catch(() => { if (live) setSvcs([]); });
+    return () => { live = false; };
+  }, [pkg.name, outwardCount]);
 
   async function approve(e: EdgeView) {
     setError(null);
@@ -93,12 +102,23 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
       <section>
         <div className="rc-label">서비스</div>
         <Rows>
-          {(m.services ?? []).map((s) => (
-            <div className="row" key={s.name}>
-              <span className="grow">{s.name}</span>
-              <Badge variant="outline">{s.url ? "url" : s.dir ? "dir" : s.dockerfile ? "container" : "process"}</Badge>
-            </div>
-          ))}
+          {(m.services ?? []).map((s) => {
+            // 자격 칩은 밖으로 나가는 두 형에만 — 채널의 "연결됨/자격 없음" 과 같은 결이되 뜻은 다르다
+            // (채널 = 듣고 있다, 서비스 = 자격이 앉아 있다). 필수·선택은 auth.required 가 가른다
+            const st = isOutward(s) && s.auth?.kind && s.auth.kind !== "none" ? svcs?.find((x) => x.name === s.name) ?? null : undefined;
+            const chip: { variant: "secondary" | "outline"; label: string } | null =
+              st === undefined ? null
+                : st === null ? { variant: "outline", label: "확인 중" }
+                  : st.hasCred ? { variant: "secondary", label: "연결됨" }
+                    : { variant: "outline", label: st.required ? "자격 없음 · 필요" : "자격 없음 · 선택" };
+            return (
+              <div className="row" key={s.name}>
+                <span className="grow">{s.name}</span>
+                {chip ? <Badge variant={chip.variant}>{chip.label}</Badge> : null}
+                <Badge variant="outline">{SERVICE_FORM_LABEL[serviceForm(s)]}</Badge>
+              </div>
+            );
+          })}
         </Rows>
       </section>
 
