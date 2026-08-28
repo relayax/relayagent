@@ -16,7 +16,11 @@ runner/                 the substrate (CLI + daemon). Plain .ts, run with --expe
   daemon.ts             HTTP entry — Host/Origin guards, route table, boot/shutdown order
   runtime/              makes a seated package live. One file per executable declaration.
     harness.ts            harness.variants  — bundle, spawn, envelope, residents
-    scripts.ts            scripts.source    — the package backend (screen · agent · clock · peer call it)
+    scripts.ts            scripts.source    — the package backend (screen · agent · clock · peer call it);
+                          builds ctx (judgment · credential · identity) and hands the run to a worker
+    script-pool.ts        one worker thread per package tree; serves ctx doors the worker knocks on
+    script-worker.ts      where a verb actually runs — no credential, no judgment, only a mirror ctx
+    script-wire.ts        the message vocabulary between the two (types only)
     services.ts           services·channels — long-running child processes
     view.ts               surfaces.view     — build AND serve (one prefix predicate, one place)
     triggers.ts           triggers          — cron sweep and event fire

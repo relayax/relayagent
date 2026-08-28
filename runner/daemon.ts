@@ -12,6 +12,8 @@ import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortNam
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
 import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
 import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
+// 동사 워커 — 상주(retireResidents)와 같은 자리에서 은퇴한다: 뿌리가 바뀌면 옛 코드의 워커는 조용해진 뒤 내려간다
+import { retireScriptWorkers, retireAllScriptWorkers } from "./runtime/script-pool.ts";
 import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
@@ -104,6 +106,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
     install: async (dir, opts) => {
       const r = await installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
+      retireScriptWorkers(r.name);
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       getTicker()?.emit("relay.package.installed", { pkg: r.name });
@@ -147,6 +150,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       if (r.published && r.path && r.manifest) {
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
         retireResidents(name);
+        retireScriptWorkers(name);
         stopServices(name);
         const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
@@ -204,6 +208,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const l = getLedger();
       const r = await rollbackRelease(l, name, version);
       retireResidents(name);
+      retireScriptWorkers(name);
       stopServices(name);
       const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
       return { name: r.name, version: r.version, path: r.path, services: notes };
@@ -735,6 +740,7 @@ export function startDaemon(): void {
   const shutdown = (): void => {
     ticker?.stop();
     retireAllResidents();
+    retireAllScriptWorkers();
     stopAllRemotes();
     stopAll();
     fs.rmSync(pidFile, { force: true });
