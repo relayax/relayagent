@@ -82,6 +82,18 @@ a package that reaches outward reaches through one door, and the credential cont
 service it belongs to (`services[].auth`, vault coordinate `<pkg>/<service>`) — there is no second
 home for it to drift into.
 
+**A verb never sees the secret, but it can ask whether one is there.** `ctx.service(name).connected()`
+answers whether the credential the service's `auth` block calls for is in the vault (`kind: none`, or
+no `auth` at all, is always `true`); the `dir` and `source` forms have no credential axis and the call
+throws. This is the door for an optional credential — a service declared `auth.required: false` is one
+the package runs without, with only that feature off, and the verb decides by asking, not by receiving
+a 401. When the declaration shapes the input as keyed fields (`auth.fields`), the one marked
+`header: true` goes into `Authorization` and every field marked `secret` stays with the substrate; the
+rest — an account id, a repository name, settings that travel with the credential but are not secret —
+come back from `ctx.service(name).fields()`. People enter these on the console's connection screen
+(`/connect?p=<install>&s=<service>`); a package screen only points there and never draws a key input
+of its own.
+
 **Address resolution is injectable.** `ServiceIO.body(pkg, service, port)` returns
 `{url, authorization?}` or `null`, and the substrate's default answers loopback. An embedder whose
 bodies live at cluster addresses supplies its own implementation to `makeCtx` / `runScript` and

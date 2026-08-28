@@ -87,6 +87,24 @@ services:
         note: "본인 계정으로 API 토큰을 발급해 붙여넣으세요."
       verify:
         url: "https://erp.internal.example.com/api/me"
+  # api 형 + 입력 칸. 칸 어휘는 채널 credential.fields 와 같고, header 칸 하나만 Authorization 으로
+  # 나간다(scheme 이 접두). required: false = 없어도 돌고 그 기능만 꺼진다 — 연결 화면이 "선택" 으로
+  # 세우고 help.note 가 무엇이 켜지는지 말한다. 동사는 ctx.service("photos").connected() 로 묻고,
+  # 비밀 아닌 칸(app_id)은 ctx.service("photos").fields() 로 읽는다
+  - name: photos
+    api: https://api.unsplash.com
+    auth:
+      kind: token
+      scheme: Client-ID
+      required: false
+      fields:
+        - { key: access_key, label: Access Key, header: true }
+        - { key: app_id, label: Application ID }
+      help:
+        url: "https://unsplash.com/oauth/applications"
+        note: "없어도 무료 저장소로 동작합니다 — 연결하면 Unsplash 사진 검색이 켜집니다."
+      verify:
+        url: "https://api.unsplash.com/photos?per_page=1"
   - name: drive
     url: https://drive-mcp.example.com/mcp
     tools: [search, fetch]

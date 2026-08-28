@@ -26,12 +26,30 @@ export interface RequiresDecl {
 }
 
 /**
+ * 자격 입력 칸 하나 — 값이 아니라 형태다. 채널(surfaces.channels[].credential.fields)과 서비스
+ * (services[].auth.fields)가 같은 칸 어휘를 쓴다: 비밀값을 받는 칸의 모양은 그 비밀이 들어오는
+ * 문(채널)에 쓰이든 나가는 문(서비스)에 쓰이든 같기 때문이다. 문의 성질은 선언 자리가 가른다 —
+ * 채널은 어댑터가 자격 전체를 env 로 받고, 서비스는 기판이 그중 한 칸만 Authorization 으로
+ * 조립하며 동사는 비밀 칸을 영영 못 본다. header 가 서비스 전용인 이유가 그것이다.
+ */
+export interface CredentialField {
+  key?: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  list?: boolean;
+  required?: boolean;
+  /** services[].auth 전용 — 이 칸의 값이 Authorization 헤더로 나간다. key 있는 칸들 중 정확히 하나 */
+  header?: boolean;
+}
+
+/**
  * 자격 형태 선언(surfaces.channels[].credential) — 값이 아니라 형태다.
  * 화면이 이걸로 입력 칸을 그린다. 조립 규칙은 relay.manifest.yaml 의 주석이 정본이다:
  * 전부 key 있으면 JSON 객체, key 없는 것 하나뿐이면 문자열. 섞이면 판정 실패.
  */
 export interface CredentialDecl {
-  fields: { key?: string; label: string; placeholder?: string; secret?: boolean; list?: boolean; required?: boolean }[];
+  fields: CredentialField[];
   help?: { url?: string; note?: string };
 }
 
@@ -104,6 +122,12 @@ export interface AuthDecl {
   oauth_client?: unknown;
   /** org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시 */
   service?: string;
+  /** 없으면 이 패키지의 주 기능이 서지 않는 자격인가 — 미선언 = true. false 면 없어도 돌고 그 기능만
+   *  꺼진다(무엇이 켜지는지는 help.note 가 말한다). 연결 화면이 "필요"와 "선택"을 가르는 축 */
+  required?: boolean;
+  /** token 형의 입력 칸 형태 — 미선언 = 토큰 문자열 한 칸. key 있는 칸들이면 vault 에 JSON 으로 앉고
+   *  header 칸만 헤더로 나가며, 나머지 비밀 아닌 칸은 동사가 ctx.service(이름).fields() 로 읽는다 */
+  fields?: CredentialField[];
 }
 
 export interface TriggerDecl {
@@ -163,13 +187,88 @@ export function validCron(expr: string): boolean {
   });
 }
 
+// 판정기가 아는 auth 어휘의 전부 — kind 마다 닫힌집합이다. 미지 키는 거부한다(최상위·surfaces 와
+// 같은 규율). 조용히 받으면 "판정 통과 · 집행 없음" 이 생긴다 — 실사고(2026-08-28): 세 패키지가
+// token 형에 fields 를 적었고 판정은 통과했지만, 그 칸을 그리는 화면도 읽는 러너도 없었다
+const AUTH_KEYS: Record<string, Set<string>> = {
+  none: new Set(["kind"]),
+  token: new Set(["kind", "env", "scheme", "service", "help", "verify", "required", "fields"]),
+  oauth: new Set(["kind", "env", "client", "service", "oauth_client", "help", "verify", "required"]),
+};
+const FIELD_KEYS = new Set(["key", "label", "placeholder", "secret", "list", "required", "header"]);
+const FIELD_KEY = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * 자격 입력 칸 판정 — 채널 credential.fields 와 서비스 auth.fields 가 같은 한 벌을 지난다.
+ * 조립 규칙은 형태로 판정한다: 화면이 이 선언 하나로 자격을 조립하므로, 섞인 선언은 "무엇으로
+ * 조립되는지" 가 정해지지 않는다. 갈리는 축은 header 하나 — 서비스는 key 있는 칸 중 정확히
+ * 하나가 헤더로 나가야 하고(없으면 기판이 무엇을 Authorization 에 넣을지 모른다), 채널에는
+ * 그 축이 없다(어댑터가 자격 전체를 받는다).
+ */
+function judgeFields(fields: unknown, label: string, issues: string[], where: "channel" | "service"): void {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    issues.push(`${label}: 칸 목록(fields)은 비어 있지 않은 배열`);
+    return;
+  }
+  for (const f of fields as Record<string, unknown>[]) {
+    if (typeof f !== "object" || f == null) {
+      issues.push(`${label}: 칸은 객체({label, key?, secret?, required?, …})`);
+      continue;
+    }
+    for (const k of Object.keys(f)) {
+      if (!FIELD_KEYS.has(k)) {
+        issues.push(
+          k === "note"
+            ? `${label}: 칸에는 note 가 없습니다 — 칸의 설명은 label 에, 서비스의 안내(무엇이 켜지는지·발급처)는 auth.help.note 에 적으세요`
+            : `미지 ${label} 칸 키: ${k}`,
+        );
+      } else if (k === "header" && where === "channel") {
+        issues.push(`${label}: header 는 services[].auth 의 칸에서만 — 채널 어댑터는 자격 전체를 RELAY_CRED_<이름> 으로 받습니다`);
+      }
+    }
+    if (typeof f.label !== "string" || !f.label.trim()) issues.push(`${label}: 칸마다 label 필수`);
+    if (f.key != null && !FIELD_KEY.test(String(f.key))) issues.push(`${label}: key 형식 위반(소문자로 시작, 소문자·숫자·_): ${f.key}`);
+  }
+  const typed = fields as CredentialField[];
+  const keyed = typed.filter((f) => f.key != null);
+  const bare = typed.filter((f) => f.key == null);
+  if (keyed.length && bare.length) {
+    issues.push(`${label}: key 있는 필드와 없는 필드를 섞을 수 없습니다 — 전부 key(JSON 조립) 또는 key 없는 하나(문자열)`);
+  }
+  if (bare.length > 1) issues.push(`${label}: key 없는 필드는 하나뿐이어야 합니다 — 문자열 자격은 칸이 하나입니다`);
+  if (bare.some((f) => f.list)) issues.push(`${label}: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
+  const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
+  if (dupKey) issues.push(`${label}: key 중복: ${dupKey}`);
+  if (where === "service") {
+    const headers = keyed.filter((f) => f.header);
+    if (keyed.length && headers.length !== 1) {
+      issues.push(`${label}: key 있는 칸 중 정확히 하나에 header: true — 그 칸의 값이 Authorization 으로 나갑니다(지금 ${headers.length}개)`);
+    }
+    if (bare.some((f) => f.header)) issues.push(`${label}: key 없는 칸 하나면 그 값이 곧 토큰입니다 — header 표시는 key 있는 칸에만`);
+    if (headers.some((f) => f.list)) issues.push(`${label}: header 칸은 list 가 될 수 없습니다 — 헤더는 문자열 하나입니다`);
+  }
+}
+
 /** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다.
- *  where 는 어휘가 갈리는 유일한 축이다: scheme 은 헤더 조립의 말이라 헤더로 나가는 서비스 자격에만 뜻이 있다 */
+ *  where 는 어휘가 갈리는 유일한 축이다: scheme·fields·required 는 화면과 헤더의 말이라 서비스 자격에만 뜻이 있다 */
 function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], where: "service" | "llm" = "service"): void {
   if (!a) return;
   if (!["none", "token", "oauth"].includes(a.kind)) {
     issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
     return;
+  }
+  for (const k of Object.keys(a as unknown as Record<string, unknown>)) {
+    if (!AUTH_KEYS[a.kind].has(k)) issues.push(`미지 ${label} 키(${a.kind} 형): ${k}`);
+  }
+  if (a.required != null) {
+    if (where !== "service") issues.push(`${label}.required: services[].auth 에서만 — 연결 화면이 필수·선택을 가르는 축입니다`);
+    else if (typeof a.required !== "boolean") issues.push(`${label}.required: true | false`);
+  }
+  if (a.fields != null) {
+    // 소비자 없는 선언은 통과시키지 않는다 — llm 자격은 화면이 아니라 env 로 잇고, oauth 는 인가 흐름이 자격을 만든다
+    if (where !== "service") issues.push(`${label}.fields: services[].auth 에서만 — llm 자격은 화면이 아니라 env 로 잇습니다`);
+    else if (a.kind !== "token") issues.push(`${label}.fields: token 형에서만 — oauth 는 인가 흐름이 자격을 만듭니다`);
+    else judgeFields(a.fields, `${label}.fields`, issues, "service");
   }
   if (a.scheme != null) {
     // 소비자 없는 선언은 통과시키지 않는다 — 통과하면 "Client-ID 로 나간다" 가 광고가 된다
@@ -318,23 +417,12 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!c.source || !c.entry) issues.push(`channels[${c.name}]: source + entry 필수`);
     else mustExist(path.join(c.source, c.entry), `channels[${c.name}].entry`);
     if (c.icon) mustExist(c.icon, `channels[${c.name}].icon`);
-    // 조립 규칙은 형태로 판정한다 — 화면이 이 선언 하나로 자격을 조립하므로, 섞인 선언은
-    // "무엇으로 조립되는지" 가 정해지지 않는다. 애매한 채로 화면에 흘리지 않는다.
-    const fields = c.credential?.fields;
-    if (fields) {
-      const keyed = fields.filter((f) => f.key != null);
-      const bare = fields.filter((f) => f.key == null);
-      if (keyed.length && bare.length) {
-        issues.push(`channels[${c.name}].credential: key 있는 필드와 없는 필드를 섞을 수 없습니다 — 전부 key(JSON 조립) 또는 key 없는 하나(문자열)`);
+    // 칸 판정은 서비스 auth.fields 와 한 벌(judgeFields) — 채널에는 header 축만 없다
+    if (c.credential != null) {
+      for (const k of Object.keys(c.credential)) {
+        if (!["fields", "help"].includes(k)) issues.push(`미지 channels[${c.name}].credential 키: ${k}`);
       }
-      if (bare.length > 1) {
-        issues.push(`channels[${c.name}].credential: key 없는 필드는 하나뿐이어야 합니다 — 문자열 자격은 칸이 하나입니다`);
-      }
-      if (bare.some((f) => f.list)) {
-        issues.push(`channels[${c.name}].credential: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
-      }
-      const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
-      if (dupKey) issues.push(`channels[${c.name}].credential: key 중복: ${dupKey}`);
+      judgeFields(c.credential.fields, `channels[${c.name}].credential`, issues, "channel");
     }
   }
 

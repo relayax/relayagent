@@ -21,7 +21,9 @@ import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft
 import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
-import { shellNav, storeLatest, homeDoc, SHELL_JS } from "./runtime/shell.ts";
+import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime/shell.ts";
+import { serviceStatuses, channelStatuses, connectionsOverview } from "./runtime/connections.ts";
+import { assembleCredential } from "./runtime/credential.ts";
 import { logLine } from "./supply/ledger.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
@@ -36,32 +38,8 @@ const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
 // 서빙 정본은 번들 산출물이다 — 소스가 아니라 컷이 구운 dist 를 낸다(계획 §4-a)
 const ASSETS_DIR = path.join(RUNNER_DIR, "..", "chat", "dist");
 
-// 채널 로그에서 밖으로 나갈 문자열의 비밀을 지운다 — 토큰과 사용자 절대경로. fail-loud 하되
-// 자격은 외부에 노출하지 않는다는 계약(schema surfaces.channels '실패' 절)의 집행이다
-function scrubSecrets(s: string): string {
-  return s
-    .replace(/xox[a-z]-[A-Za-z0-9-]+/gi, "xox•-…")
-    .replace(/xapp-[A-Za-z0-9-]+/gi, "xapp-…")
-    .replace(/xoxe[.-][A-Za-z0-9.-]+/gi, "xoxe-…")
-    .replace(/\/(Users|home)\/[^\s"']+/g, "…");
-}
-
-// 채널 상태의 '최근 오류' — channels.jsonl 을 뒤에서부터 훑어 이 채널의 가장 최근 사건을 본다.
-// err(경고 제외) 또는 비정상 exit 이 최근이면 그 사연을, out/정상 exit 이 최근이면 건강(null)
-function channelLastError(pkg: string, channel: string): string | null {
-  const file = path.join(RELAY_HOME, "logs", "channels.jsonl");
-  if (!fs.existsSync(file)) return null;
-  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    let j: { pkg?: string; channel?: string; err?: string; out?: string; exit?: number | null };
-    try { j = JSON.parse(lines[i]); } catch { continue; }
-    if (j.pkg !== pkg || j.channel !== channel) continue;
-    if (j.err && !/ExperimentalWarning|trace-warnings/.test(j.err)) return scrubSecrets(j.err);
-    if (j.exit != null && j.exit !== 0) return `프로세스 종료 (exit ${j.exit})`;
-    if (j.out || j.exit === 0) return null; // 최근 사건이 건강하면 오류 없음
-  }
-  return null;
-}
+// 채널의 '최근 오류'와 비밀 지우기는 runtime/connections.ts 로 이사했다 — 패키지 단위 상태
+// (/pkg/…/channels)와 전 패키지 집계(/connections)가 같은 판정을 읽어야 해서다
 
 
 /** 데몬 자신의 오리진 — 상태를 바꾸는 요청의 Origin 화이트리스트(CSRF 판정). 데몬이 굽는
@@ -307,6 +285,17 @@ export function createApi(
       // 화면이 "이 패키지에 속한 키가 하나라도 있는가" 로 점을 켠다
       if (p === "/residency" && req.method === "GET") return void json(res, 200, { running: runningServices() });
 
+      // 자격 전경 한 방 — 전 패키지의 바깥 서비스·창구 자격 상태. 연결 화면(콘솔 페이지)의 본문이고
+      // 사이드바 배지·홈 배너가 같은 수를 읽는다. 채널과 서비스는 두 축으로 따로 실린다 — 성질이 다른
+      // 두 문을 한 목록으로 섞지 않는다. 값은 실리지 않는다(hasCred 뿐)
+      if (p === "/connections" && req.method === "GET") return void json(res, 200, await connectionsOverview(getLedger(), (k) => authority.credential(k)));
+      // 연결 딥링크 — 패키지 화면이 "연결하러 가기" 로 보내는 안정 주소. 콘솔의 설치 이름은 장부가 답하므로
+      // (consoleInstall) 패키지는 콘솔 페이지 주소를 조립하지 않는다. ?p=<패키지>&s=<서비스|채널> 은 그대로 넘긴다
+      if (p === "/connect" && req.method === "GET") {
+        res.writeHead(302, { location: consoleHref(getLedger(), "connections/") + url.search, "cache-control": "no-store" });
+        return void res.end();
+      }
+
       // 전역 셸 크롬(runtime/shell.ts) — 모든 view 문서에 주입되는 사이드바의 본체와 그 데이터.
       // 스크립트는 기판과 원자적으로 움직여야 한다(위젯 번들과 같은 사유): 캐시된 옛 크롬이
       // 새 nav 계약을 읽으면 조용히 갈라진다
@@ -316,7 +305,11 @@ export function createApi(
       }
       // 초안(작업 사본)도 함께 싣는다 — 발행 전 패키지가 어느 화면에도 안 보이면 만들다 만 것이
       // 잃어버린 것처럼 보인다(스튜디오 시작 화면·홈이 "만드는 중" 으로 그린다)
-      if (p === "/shell/nav" && req.method === "GET") return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest(), listDrafts(getLedger())));
+      if (p === "/shell/nav" && req.method === "GET") {
+        // 배지의 수는 연결 화면과 같은 집계(connections.ts)에서 온다 — 두 화면이 다른 수를 말하면 안 된다
+        const overview = await connectionsOverview(getLedger(), (k) => authority.credential(k));
+        return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest(), listDrafts(getLedger()), { credentials: overview.attention }));
+      }
 
       // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.
       // 마운트 문법(/pkg/<pkg>·/)은 여기서만 해석되고 클라이언트는 base 주입으로 받는다(§2-6).
@@ -449,15 +442,9 @@ export function createApi(
         const pkg = decodeURIComponent(chs[1]);
         const rec = l.packages[pkg];
         if (!rec) return void json(res, 404, { error: "미설치 패키지" });
-        const m = loadManifest(rec.path);
-        const channels = [];
-        for (const c of m.surfaces?.channels ?? []) {
-          const pid = channelPid(pkg, c.name);
-          // credential 은 **형태 선언**이라 그대로 나간다 — 값은 vault 에 있고 여기 실리지 않는다.
-          // 화면이 이 선언으로 입력 칸을 그린다(없으면 원시 붙여넣기로 물러난다).
-          channels.push({ name: c.name, icon: c.icon ?? null, running: pid != null, pid, hasCred: (await authority.credential(credKey(pkg, c.name))) != null, lastError: channelLastError(pkg, c.name), credential: c.credential ?? null });
-        }
-        return void json(res, 200, { channels });
+        // 판정은 connections.ts 한 벌 — 전 패키지 집계(/connections)와 같은 답이다. credential 은
+        // **형태 선언**이라 그대로 나가고 값은 실리지 않는다(hasCred 뿐)
+        return void json(res, 200, { channels: await channelStatuses(pkg, loadManifest(rec.path), (k) => authority.credential(k)) });
       }
 
       // connect(자격 저장) · verify(실왕복 판정) · restart(채널 하나 갈아타기) — relayos connections 3동사의 OSS 축소
@@ -496,29 +483,12 @@ export function createApi(
         const pkg = decodeURIComponent(svcs[1]);
         const rec = l.packages[pkg];
         if (!rec) return void json(res, 404, { error: "미설치 패키지" });
-        const m = loadManifest(rec.path);
-        const services = [];
-        for (const sv of m.services ?? []) {
-          // 자격 축이 있는 것은 밖으로 나가는 두 형뿐이다 — source(몸)·dir(폴더)에는 auth 자리가 없다
-          const out = outwardService(sv);
-          if (!out) continue;
-          const a = out.auth;
-          services.push({
-            name: sv.name,
-            url: out.base,
-            // 문의 말 — MCP 문(url)이냐 REST 베이스(api)냐. 도구 열이 빈 이유를 화면이 말할 수 있어야 한다
-            form: "url" in sv ? "url" : "api",
-            kind: a?.kind ?? "none",
-            // 선언 그대로 — 화면이 안내와 입력 칸을 그린다. 값은 실리지 않는다
-            help: a?.help ?? null,
-            client: a?.client ?? null,
-            verifiable: a?.verify?.url != null,
-            tools: "tools" in sv ? sv.tools ?? [] : [],
-            hasCred: (await authority.credential(credKey(pkg, sv.name))) != null,
-            oauth: a?.kind === "oauth" ? serviceOAuthStatus(pkg, sv.name) : null,
-          });
-        }
-        return void json(res, 200, { services, canDisconnect: typeof authority.deleteCredential === "function" });
+        // 판정은 connections.ts 한 벌 — 자격 축이 있는 두 형(url·api)만 서고, 칸 선언(fields)·필수 여부
+        // (required)·안내(help)는 선언 그대로 나간다. 값은 실리지 않는다(hasCred 뿐)
+        return void json(res, 200, {
+          services: await serviceStatuses(pkg, loadManifest(rec.path), (k) => authority.credential(k)),
+          canDisconnect: typeof authority.deleteCredential === "function",
+        });
       }
 
       const sop = p.match(/^\/pkg\/([^/]+)\/service\/([^/]+)\/(connect|verify|disconnect|oauth)$/);
@@ -541,9 +511,15 @@ export function createApi(
         if (sop[3] === "connect") {
           if (auth?.kind !== "token") return void json(res, 400, { error: `token 자격형이 아닙니다(${auth?.kind ?? "none"}) — oauth 는 인가 흐름으로` });
           const b = await readBody(req);
-          const token = String(b.token ?? "").trim();
-          if (!token) return void json(res, 400, { error: "빈 자격" });
-          await authority.setCredential(credKey(pkg, name), token); // 저장만 — 유효 판정은 verify 소관
+          // 칸 선언(auth.fields)이 있으면 칸별 값(fields)을, 없으면 토큰 문자열(token)을 받는다 — 조립은
+          // CLI(relay connect)와 같은 한 벌(credential.ts). 필수 칸이 비면 저장하지 않는다:
+          // 반쪽 자격이 앉으면 "연결됨" 인데 401 이 나는 상태가 된다
+          const values: Record<string, string> = {};
+          for (const [k, v] of Object.entries((b.fields ?? {}) as Record<string, unknown>)) values[k] = String(v ?? "");
+          if (b.token != null) values.token = String(b.token);
+          const r = assembleCredential(auth.fields, values);
+          if (!r.ok) return void json(res, 400, { error: `빈 칸: ${r.missing.join(", ")}`, missing: r.missing });
+          await authority.setCredential(credKey(pkg, name), r.value); // 저장만 — 유효 판정은 verify 소관
           return void json(res, 200, { ok: true });
         }
         if (sop[3] === "verify") {

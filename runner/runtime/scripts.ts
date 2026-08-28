@@ -3,9 +3,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
+import { publicFields } from "./credential.ts";
+import { credKey } from "../vault.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, listScripts, agentScriptScope, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { loadManifest, listScripts, agentScriptScope, type AuthDecl, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
 import { resolveProvider } from "../supply/install.ts";
 // dir 문의 집행 정본 — 세션 도구(dir__*)와 여기가 같은 감금·같은 연산을 지난다
 import { dirCall, ensureDirRoot, resolveDirService } from "./dirs.ts";
@@ -91,6 +93,18 @@ export interface ServiceHandle {
   call(tool: string, args: unknown): Promise<unknown>;
   /** api 형 — 선언된 base 접두 안쪽으로만 나가는 REST 요청. Authorization 은 기판이 붙인다 */
   fetch(path: string, init?: RequestInit): Promise<Response>;
+  /**
+   * 자격이 앉아 있는가 — 밖으로 나가는 두 형(url·api)의 답. auth 미선언·kind none 은 늘 true.
+   * auth.required: false 로 선언한 선택 자격의 동사가 "없으면 그 기능만 끈다" 를 판단하는 문이다 —
+   * 401 을 받아 보고 아는 것은 판단이 아니라 사고다. dir·source 형에는 자격 축이 없어 던진다
+   */
+  connected(): Promise<boolean>;
+  /**
+   * 연결 화면이 받은 칸 중 비밀이 아닌 것(services[].auth.fields 에서 header 도 secret 도 아닌 칸).
+   * 계정 번호·저장소 이름처럼 자격과 함께 움직이지만 비밀은 아닌 설정이 이 문으로 온다. header·
+   * secret 칸은 절대 실리지 않는다 — 자격이 동사의 손을 지나지 않는다는 약속의 칸 단위 집행이다
+   */
+  fields(): Promise<Record<string, string | string[]>>;
 }
 
 /** 결재된 provider 하나로 열린 문 — edges[] 선언 × grants 결재를 지난 것만 부를 수 있다 */
@@ -255,6 +269,15 @@ export function makeCtx(
       // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산은
       // 세션 도구(dir__*)와 같은 한 벌(dirs.ts)을 지난다 — 두 입구가 다른 답을 내면 캡이 아니라
       // 우연이다(edge 소비와 같은 규율). 자격·신원 축은 없다: 나가는 요청이 아니다.
+      // 자격 축이 없는 형(dir·source)의 connected/fields — 없는 축을 물으면 사유를 실어 되돌린다
+      const noAuthAxis = (form: string) => async (): Promise<never> => {
+        throw new Error(`${form} 형에는 자격 축이 없습니다: ${name} — connected()·fields() 는 밖으로 나가는 url·api 서비스의 문입니다`);
+      };
+      // 밖으로 나가는 두 형의 자격 문 — 값은 기판만 보고(헤더 조립), 동사는 있음/없음과 비밀 아닌 칸만 본다
+      const outwardAuth = (auth: AuthDecl | undefined) => ({
+        connected: async () => !auth || auth.kind === "none" || (await authority.credential(credKey(pkg, name))) != null,
+        fields: async () => publicFields(auth, await authority.credential(credKey(pkg, name))),
+      });
       if ("dir" in svc && svc.dir != null) {
         const root = ensureDirRoot(resolveDirService(ledger, pkg, m, name));
         return {
@@ -263,6 +286,8 @@ export function makeCtx(
           fetch: async () => {
             throw new Error(`폴더 문에는 fetch 가 없습니다: ${name} — 파일 연산은 ctx.service("${name}").call("read"|"list"|"write"|"remove", 인자)`);
           },
+          connected: noAuthAxis("dir"),
+          fields: noAuthAxis("dir"),
         };
       }
       // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
@@ -283,6 +308,7 @@ export function makeCtx(
             if (authHeader) headers.set("authorization", authHeader);
             return await fetch(target, { ...init, headers });
           },
+          ...outwardAuth(a.auth),
         };
       }
       // 신원(caller)은 남은 두 형에서 같은 규칙으로 실린다: 원격 몸이 "누구로서"를 모르면
@@ -294,12 +320,12 @@ export function makeCtx(
       };
       if ("url" in svc && svc.url != null) {
         const u = svc as Extract<ServiceDecl, { url: string }>;
-        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch };
+        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch, ...outwardAuth(u.auth) };
       }
       const src = svc as Extract<ServiceDecl, { source: string }>;
       const body = io.body(pkg, name, src.port ?? null);
       if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
-      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch };
+      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch, connected: noAuthAxis("source"), fields: noAuthAxis("source") };
     },
     // 남의 동사 — 선언(edges[])이 캡이고 결재(grants)가 승인이다. 판정은 세션 문과 같은
     // 한 벌(callEdgeTool)을 지난다. provider 는 edges[].provider 에 적은 참조 그대로 쓰면 된다

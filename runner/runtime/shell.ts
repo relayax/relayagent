@@ -25,7 +25,7 @@ import { fetchStoreIndex } from "../supply/registry.ts";
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
  *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. 설치 이름은 장부가 답한다
  *  (ledger.ts consoleInstall — 1인 기판 `system`, 임베더는 다를 수 있다) */
-const consoleHref = (ledger: Ledger, rest = ""): string => `/pkg/${encodeURIComponent(consoleInstall(ledger))}/view/${rest}`;
+export const consoleHref = (ledger: Ledger, rest = ""): string => `/pkg/${encodeURIComponent(consoleInstall(ledger))}/view/${rest}`;
 
 export type Face = "view" | "chat" | "live" | "parts";
 
@@ -85,6 +85,12 @@ export interface ShellNav {
   /** 스토어 내 서재 주소 — 새 판 배지의 업데이트 버튼이 여기로 간다. 설치 티켓은 서재가
    *  발급하므로(로그인 세션) 기판이 관문을 새로 만들지 않는다. store 와 같은 조건으로 null */
   library: string | null;
+  /** 연결 화면 — 설치된 것 전부의 자격 전경(바깥 서비스·창구). 콘솔 패키지의 페이지라 기판이
+   *  주소를 싣는다(consoleHref) — 사이드바도 패키지 화면의 딥링크(/connect)도 이 주소를 조립하지 않는다 */
+  connections: string;
+  /** 신경 쓸 수 — 사이드바 배지와 홈 배너. credentials = 필수인데 빈 서비스 자격 + 빈 채널 자격
+   *  (runtime/connections.ts attentionOf). 선택 자격의 빔은 세지 않는다 — 배지가 늘 켜져 있으면 아무도 안 본다 */
+  attention: { credentials: number };
   /** 크롬의 얼굴 — 이름·마크·강조색 셋만(additive, 2026-08-26). 미선언 = "Relay" 와 기본 색.
    *  임베더(조직 기판)가 자기 브랜딩을 싣는 자리다. 팔레트 전체는 열지 않는다 — 크롬은 남의
    *  토큰에 얹지 않는다는 규율(③)과 양립하는 최소 셋이다 */
@@ -156,7 +162,13 @@ export async function storeLatest(): Promise<Map<string, string> | undefined> {
 /** 사이드바와 런처가 그릴 전부. running = 지금 떠 있는 자식 키(<패키지>/<이름>),
  *  latest = 스토어 ref→최신 버전 (storeLatest — 미연결·미도착이면 undefined, 배지 전부 침묵),
  *  drafts = 작업 사본 목록 (listDrafts — 초안 띠와 "수정 중" 배지의 원천) */
-export function shellNav(ledger: Ledger, running: string[], latest?: Map<string, string>, drafts: DraftEntry[] = []): ShellNav {
+export function shellNav(
+  ledger: Ledger,
+  running: string[],
+  latest?: Map<string, string>,
+  drafts: DraftEntry[] = [],
+  attention: ShellNav["attention"] = { credentials: 0 },
+): ShellNav {
   const live = new Set(running.map((k) => k.split("/")[0]));
   const draftOf = new Map(drafts.map((d) => [d.name, d]));
   const items: ShellItem[] = [];
@@ -218,6 +230,8 @@ export function shellNav(ledger: Ledger, running: string[], latest?: Map<string,
     drafts: pending,
     store,
     library: store ? store + "library" : null,
+    connections: consoleHref(ledger, "connections/"),
+    attention,
   };
 }
 
@@ -277,6 +291,7 @@ if (window.matchMedia("(max-width: 900px)").matches) collapsed = true;
 var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
   store: '<path d="M3 5.5h10l-.7 7a1 1 0 0 1-1 .9H4.7a1 1 0 0 1-1-.9zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/>',
+  plug: '<path d="M6 2.5v3M10 2.5v3M4 5.5h8v2a4 4 0 0 1-8 0zM8 11.5v2"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   dl: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
@@ -335,6 +350,9 @@ var css = [
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .it .dt.edt{background:#2563eb}',
+// 연결 배지 — 신경 쓸 수(필수인데 빈 자격). 0 이면 그리지 않는다
+'#rlys .it .bd{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#dc2626;color:#fff;font-size:10.5px;font-weight:700;line-height:18px;text-align:center}',
+'#rlys.cl .it .bd{position:absolute;right:4px;top:2px;min-width:14px;height:14px;padding:0 3px;font-size:9px;line-height:14px}',
 '#rlys .rw{position:relative;display:flex;align-items:center}',
 // 손보기 연필 — 지금 열린 앱의 줄에만 늘 보인다. 호버도 메뉴도 없다(그 줄은 이미 와 있으니 잘못 눌러 이동할 일이 없다)
 '#rlys .rw .ed{position:absolute;right:6px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--relay-accent-deep);text-decoration:none}',
@@ -396,7 +414,7 @@ window.addEventListener("relay:shell-fold", function(ev){
 // 홈은 어느 패키지 위에도 서 있지 않다 — 홈 문서의 __RELAY_CONTEXT.instanceId 는 위젯의 API 좌표(콘솔)일 뿐이라
 // 그걸 현재 항목으로 읽으면 홈과 Relay 줄이 같이 켜진다
 function current(){
-  if (onHome()) return "";
+  if (onHome() || onConnections()) return "";
   try {
     var p = new URLSearchParams(location.search).get("p");
     if (p) return p;
@@ -405,6 +423,11 @@ function current(){
 }
 function onHome(){
   try { return location.pathname === "/" || location.pathname === ""; } catch (e) { return false; }
+}
+// 연결 화면은 콘솔 패키지의 페이지지만 어느 패키지 위에도 서 있지 않다 — ?p= 로 한 패키지를 골라 보여도
+// 켜지는 줄은 "연결" 이다(그 패키지 줄이 켜지면 그 앱을 열고 있는 것으로 읽힌다)
+function onConnections(){
+  try { return /\/view\/connections\/?$/.test(location.pathname); } catch (e) { return false; }
 }
 
 function item(href, iconHtml, label, opts){
@@ -418,7 +441,8 @@ function item(href, iconHtml, label, opts){
     // 얼굴(화면·대화…) 글리프는 두지 않는다 — 오른쪽 끝의 작은 아이콘은 버튼으로 읽히는데 눌러도 아무 일이 없다.
     // 종류는 title 과 홈 카드의 칩이 말한다
     // 수정 중(적용 안 한 변경)은 파란 점 — 홈 카드의 "수정 중" 칩과 같은 상태인데 사이드바에선 안 보였다(2026-08-27)
-    (opts.dot ? '<span class="dt" title="도는 중"></span>' : opts.edit ? '<span class="dt edt" title="수정 중 — 적용 안 한 변경이 있습니다"></span>' : "");
+    (opts.dot ? '<span class="dt" title="도는 중"></span>' : opts.edit ? '<span class="dt edt" title="수정 중 — 적용 안 한 변경이 있습니다"></span>' : "") +
+    (opts.badge ? '<span class="bd" title="연결이 필요한 자격 ' + esc(opts.badge) + '개">' + esc(opts.badge) + '</span>' : "");
   return a;
 }
 
@@ -500,6 +524,12 @@ function renderSide(nav, err){
   // 스토어 — 이 기판에 스토어 연결이 켜져 있을 때만 서버가 주소를 싣는다 (OSS 기본은 없음)
   if (nav && nav.store) {
     top.appendChild(item(nav.store, svg(ICONS.store), "스토어", { title: "스토어 — 에이전트 마켓플레이스" }));
+  }
+  // 연결 — 설치된 것 전부의 자격 전경. 홈·스토어처럼 어느 앱의 화면도 아니라 이 그룹에 선다.
+  // 배지는 신경 쓸 수(필수인데 빈 자격)만 — 선택 자격의 빔으로는 켜지지 않는다
+  if (nav && nav.connections) {
+    var need = nav.attention && nav.attention.credentials ? nav.attention.credentials : 0;
+    top.appendChild(item(nav.connections, svg(ICONS.plug), "연결", { on: onConnections(), title: "연결 — 바깥 서비스와 창구의 자격" + (need ? " · 필요 " + need : ""), badge: need }));
   }
   el.appendChild(top);
 
