@@ -482,10 +482,10 @@ export interface StagedRelease {
  * 재발행이 지우면 안 된다 (installPkg 처럼 레코드를 통째로 갈면 ring-0 이 조용히 증발한다).
  * 서비스 재기동은 데몬 소유라 여기서 하지 않는다 — 브리지가 publish 후 stop/start 를 잇는다.
  */
-export function publishDraft(ledger: Ledger, name: string, opts: { version?: string } = {}): PublishResult {
+export async function publishDraft(ledger: Ledger, name: string, opts: { version?: string } = {}): Promise<PublishResult> {
   const staged = stageRelease(name, opts);
   if ("published" in staged) return staged;
-  return { published: true, ...staged, ...landRelease(ledger, staged) };
+  return { published: true, ...staged, ...(await landRelease(ledger, staged)) };
 }
 
 /**
@@ -546,10 +546,10 @@ export function stageRelease(name: string, opts: { version?: string } = {}): Sta
  * 발행의 뒤 절반(1인 기판) — 장부 전환 + 하네스 재선출 + 표면 굽기. 장부 전환은 rec.path 만
  * 바꾼다 — ring, workspace, model, harness, dirBindings 는 결재·설정이라 재발행이 지우면 안 된다.
  */
-export function landRelease(
+export async function landRelease(
   ledger: Ledger,
   staged: StagedRelease,
-): { fresh: boolean; setup: PublishResult["setup"]; build: BuildResult | null } {
+): Promise<{ fresh: boolean; setup: PublishResult["setup"]; build: BuildResult | null }> {
   const { name, path: snapshot, manifest: m } = staged;
   const rec = ledger.packages[name];
   const fresh = !rec;
@@ -577,7 +577,7 @@ export function landRelease(
   // 굽는 것은 표면 **전부**다. 종전에는 view 만 구웠는데, components 를 선언한 패키지를
   // 스튜디오에서 발행하면 번들이 없는 스냅샷이 떠서 소비자 문서의 import 가 503 을 받았다 —
   // 설치·재빌드(buildSurfaces)와 발행이 서로 다른 것을 구운 자리다.
-  const build = buildSurfaces(name, snapshot, m) ?? null;
+  const build = (await buildSurfaces(name, snapshot, m)) ?? null;
   return { fresh, setup, build };
 }
 
@@ -588,12 +588,12 @@ export function landRelease(
  * 스냅샷에서 빠지는 임시물이라(buildOutSkip · publish 가 다시 굽는다) 도는 판을 오염시키지
  * 않는다. 장부도 건드리지 않는다 — 여기서는 아무것도 커밋되지 않는다.
  */
-export function buildDraft(name: string): { name: string; built: boolean; out: string } {
+export async function buildDraft(name: string): Promise<{ name: string; built: boolean; out: string }> {
   assertSlug(name);
   const root = draftPath(name);
   if (!fs.existsSync(root)) throw new Error(`없는 작업 사본: ${name}`);
   const m = loadManifest(root);
-  const r = buildSurfaces(name, root, m, draftViewBase(name));
+  const r = await buildSurfaces(name, root, m, draftViewBase(name));
   if (!r) return { name, built: false, out: "surfaces.{view,components}.out 미선언 — 굽지 않고 source 를 그대로 냅니다" };
   if (!r.ok) throw new Error(r.out);
   return { name, built: true, out: r.out };

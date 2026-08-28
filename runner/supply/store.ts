@@ -244,7 +244,7 @@ if (p === "/store/install/confirm" && req.method === "POST") {
   }
   prepared.delete(held.p.id);
   try {
-    const r = activatePrepared(getLedger(), held.p);
+    await activatePrepared(getLedger(), held.p);
     { installPage(res, 200, `${held.p.manifest.display_name ?? held.p.name} 설치 완료`, "이제 바로 쓸 수 있습니다.", true); return true; }
   } catch (e) {
     { installPage(res, 500, "설치에 실패했습니다", e instanceof Error ? e.message : String(e)); return true; }
@@ -422,7 +422,7 @@ if (p === "/install/activate" && req.method === "POST") {
   }
   prepared.delete(held.p.id);
   const l = getLedger();
-  const r = activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
+  const r = await activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
   stopServices(held.p.name); // 업데이트라면 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다
   const rio = runnerIO(l);
   const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest, rio), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest, rio)];

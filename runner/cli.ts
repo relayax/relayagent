@@ -142,7 +142,7 @@ async function main(): Promise<void> {
             break;
           }
         }
-        const r = activatePrepared(ledger, p, { ring0: has("ring0"), workspace: flag("workspace"), bindings: parseBindings() });
+        const r = await activatePrepared(ledger, p, { ring0: has("ring0"), workspace: flag("workspace"), bindings: parseBindings() });
         console.log(`${p.fresh ? "설치됨" : "업데이트됨"}: ${r.name} (${p.ref}@${p.version}, workspace: ${workspacePath(ledger, r.name)})`);
         if (r.setup && !r.setup.ok) console.error(`  하네스 setup 실패: ${r.setup.out}`);
         if (r.build) console.log(`  빌드됨: ${r.build.out}`);
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
         console.log(`설치됨(daemon): ${JSON.stringify(viaApi)}`);
         break;
       }
-      const r = installPkg(ledger, target, {
+      const r = await installPkg(ledger, target, {
         ring0: has("ring0"),
         name: flag("name"),
         workspace: flag("workspace"),
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
       const pkg = args[0];
       if (!pkg) throw new Error("사용법: relay build <패키지>");
       const viaApi = await tryApi(`/pkg/${encodeURIComponent(pkg)}/build`, {});
-      const r = (viaApi && !(viaApi as any).error ? viaApi : buildPkg(ledger, pkg)) as { ok: boolean; out: string };
+      const r = (viaApi && !(viaApi as any).error ? viaApi : await buildPkg(ledger, pkg)) as { ok: boolean; out: string };
       console.log(r.ok ? r.out : `빌드 실패:\n${r.out}`);
       process.exitCode = r.ok ? 0 : 1;
       break;
@@ -411,7 +411,7 @@ async function main(): Promise<void> {
       }
       if (r?.error) throw new Error(r.error);
       const { publishDraft } = await import("./supply/draft.ts");
-      const d = publishDraft(ledger, name, { version: flag("version") });
+      const d = await publishDraft(ledger, name, { version: flag("version") });
       console.log(d.published ? `발행됨: ${name}@${d.version} -> ${d.path} (데몬 꺼짐 — 서비스는 다음 기동 때 새 릴리스로 뜹니다)` : `발행 안 함: ${d.note}`);
       if (d.build) console.log(`  view ${d.build.ok ? "빌드됨" : "빌드 실패"}: ${d.build.out}`);
       break;
@@ -438,7 +438,7 @@ async function main(): Promise<void> {
       }
       if (r?.error) throw new Error(r.error);
       const { rollbackRelease } = await import("./supply/release.ts");
-      const d = rollbackRelease(ledger, name, version);
+      const d = await rollbackRelease(ledger, name, version);
       console.log(`롤백됨: ${name}@${d.version} -> ${d.path}`);
       break;
     }

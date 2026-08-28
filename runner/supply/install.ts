@@ -154,7 +154,7 @@ function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: 
   return { picked, out: reports.join("\n") };
 }
 
-export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}): InstallResult {
+export async function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}): Promise<InstallResult> {
   const abs = path.resolve(dir);
   const m = loadManifest(abs);
   const name = opts.name ?? path.basename(abs);
@@ -193,7 +193,7 @@ export function installPkg(ledger: Ledger, dir: string, opts: InstallOpts = {}):
   }
   // 결재는 해석의 결과다 — 장부 등재 뒤에 앉힌다(addGrant 는 consumer 의 장부 실재를 요구한다)
   recordComponentGrants(ledger, name, components);
-  const build = buildSurfaces(name, abs, m);
+  const build = await buildSurfaces(name, abs, m);
   return { name, manifest: m, setup, build };
 }
 
@@ -371,10 +371,10 @@ export function prepareArtifact(
  * 미리보기 굽기와 발행 굽기는 서로의 산출을 덮는다(작업 사본의 out 은 스냅샷에서 빠지는
  * 임시물이라 무해하다: buildOutSkip · publish 가 다시 굽는다).
  */
-export function buildSurfaces(pkg: string, dir: string, m: Manifest, base?: string): BuildResult | undefined {
-  const comp = buildComponents(dir, m);
+export async function buildSurfaces(pkg: string, dir: string, m: Manifest, base?: string): Promise<BuildResult | undefined> {
+  const comp = await buildComponents(dir, m);
   if (comp && !comp.ok) return comp;
-  const view = buildView(pkg, dir, m, base);
+  const view = await buildView(pkg, dir, m, base);
   if (view && !view.ok) return view;
   if (!comp && !view) return undefined;
   return { ok: true, out: [comp?.out, view?.out].filter(Boolean).join("\n") };
@@ -387,11 +387,11 @@ export function buildSurfaces(pkg: string, dir: string, m: Manifest, base?: stri
  * 업데이트는 rec.path 만 갈아 끼운다 — ring·workspace·model·harness 는 결재·설정이라 보존
  * (publishDraft 와 같은 계약).
  */
-export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts = {}): InstallResult {
+export async function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts = {}): Promise<InstallResult> {
   const m = p.manifest;
   judgeConform(p.dir, m);
   const components = resolveComponentEdges(ledger, m);
-  const build = buildSurfaces(p.name, p.dir, m);
+  const build = await buildSurfaces(p.name, p.dir, m);
   if (build && !build.ok) {
     throw new Error(`빌드 실패 — 설치를 중단합니다 (릴리스는 ${p.dir} 에 남아 있습니다):\n${build.out}`);
   }
@@ -434,13 +434,13 @@ export function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts 
   return { name: p.name, manifest: m, setup, build: build ?? undefined };
 }
 
-export function buildPkg(ledger: Ledger, name: string): BuildResult {
+export async function buildPkg(ledger: Ledger, name: string): Promise<BuildResult> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
   const components = resolveComponentEdges(ledger, m);
   recordComponentGrants(ledger, name, components); // 재빌드 자가치유 — addGrant 는 중복 무해
-  const build = buildSurfaces(name, rec.path, m);
+  const build = await buildSurfaces(name, rec.path, m);
   return build ?? { ok: true, out: "surfaces.{view,components}.out 미선언 — 빌드 없이 source 를 그대로 서빙합니다" };
 }
 

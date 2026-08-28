@@ -101,8 +101,8 @@ export interface ApiOptions {
 export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker | null, authority: Authority, service: ServiceIO = localServiceIO): HostBridge {
   return {
     registry: () => registryData(getLedger()),
-    install: (dir, opts) => {
-      const r = installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
+    install: async (dir, opts) => {
+      const r = await installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
@@ -143,7 +143,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
           fs.rmSync(env.file + ".sig", { force: true });
         }
       }
-      const r = publishDraft(l, name, opts);
+      const r = await publishDraft(l, name, opts);
       if (r.published && r.path && r.manifest) {
         // 서비스·상주는 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다. 실패해도 발행 자체는 유효
         retireResidents(name);
@@ -200,9 +200,9 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       };
     },
     releaseList: (name) => listReleases(getLedger(), name),
-    releaseRollback: (name, version) => {
+    releaseRollback: async (name, version) => {
       const l = getLedger();
-      const r = rollbackRelease(l, name, version);
+      const r = await rollbackRelease(l, name, version);
       retireResidents(name);
       stopServices(name);
       const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
@@ -370,12 +370,12 @@ export function createApi(
       }
       if (p === "/install" && req.method === "POST") {
         const b = await readBody(req);
-        const r = host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined, bindings: b.bindings && typeof b.bindings === "object" ? b.bindings : undefined });
+        const r = await host.install(String(b.path), { ring0: !!b.ring0, workspace: b.workspace ? String(b.workspace) : undefined, bindings: b.bindings && typeof b.bindings === "object" ? b.bindings : undefined });
         return void json(res, 200, r);
       }
       const buildRoute = p.match(/^\/pkg\/([^/]+)\/build$/);
       if (buildRoute && req.method === "POST") {
-        return void json(res, 200, host.build(decodeURIComponent(buildRoute[1])));
+        return void json(res, 200, await host.build(decodeURIComponent(buildRoute[1])));
       }
       if (p === "/validate" && req.method === "POST") {
         const b = await readBody(req);

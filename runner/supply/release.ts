@@ -42,7 +42,7 @@ export function listReleases(ledger: Ledger, name: string): { version: string; t
 }
 
 /** 이전 릴리스로 장부 재전환. 스냅샷은 이미 판정을 통과한 것이지만 손상 대비로 다시 판정한다 */
-export function rollbackRelease(ledger: Ledger, name: string, version: string): { name: string; version: string; path: string; manifest: Manifest } {
+export async function rollbackRelease(ledger: Ledger, name: string, version: string): Promise<{ name: string; version: string; path: string; manifest: Manifest }> {
   assertSlug(name);
   const snapshot = path.join(releasesPath(name), version);
   if (!fs.existsSync(snapshot)) throw new Error(`없는 릴리스: ${name}@${version}`);
@@ -51,7 +51,7 @@ export function rollbackRelease(ledger: Ledger, name: string, version: string): 
   const m = loadManifest(snapshot);
   rec.path = snapshot;
   saveLedger(ledger);
-  const build = buildView(name, snapshot, m);
+  const build = await buildView(name, snapshot, m);
   if (build && !build.ok) throw new Error(`롤백 빌드 실패: ${build.out}`);
   return { name, version, path: snapshot, manifest: m };
 }
