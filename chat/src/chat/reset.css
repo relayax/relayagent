@@ -8,7 +8,10 @@
 /* 호스트의 textarea:focus{outline…}(0,1,1)는 .outline-none(0,1,0)을 이긴다 — 속성+가상클래스(0,2,0)로 되받는다 */
 [data-slot="input"]:focus, [data-slot="textarea"]:focus, [data-slot="input-group-control"]:focus, button[data-slot]:focus { outline: none; }
 :where(button[data-slot]:disabled) { opacity: 1; }
-:where([data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"]) { font: 14px/1.6 var(--font-sans); border: 1px solid; }
+/* 떠 있는 조각(팝오버·메뉴·툴팁·다이얼로그)의 테두리는 컴포넌트의 ring-1 ring-foreground/10 이 그린다.
+   여기서 1px solid 를 주면 색이 없어 currentColor(= 거의 검정)로 굳는다(실사고: 대화함 메뉴에 검정 스트록).
+   호스트가 div 에 테두리를 주는 경우만 지우고, 선 긋기는 컴포넌트에 맡긴다 */
+:where([data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="tooltip-content"], [data-slot="dialog-content"]) { font: 14px/1.6 var(--font-sans); border: 0 solid; }
 [data-slot="item-description"], [data-slot="empty-description"], [data-slot="card-description"] { margin: 0; }
 /* 말풍선·마커·설명 안의 문단 — 브라우저 기본 p 여백(14px)이 한 줄 말풍선을 두 배로 키운다 */
 [data-slot="bubble-content"] p, [data-slot="marker-content"] p, [data-slot="questionnaire-description"] p { margin: 0; }

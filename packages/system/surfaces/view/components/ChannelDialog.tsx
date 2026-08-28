@@ -17,8 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 function statusOf(c: ChannelStatusView): { dot: string; color: string; text: string } {
   if (!c.hasCred) return { dot: "○", color: "var(--rc-faint)", text: "자격 없음 — 연결하세요" };
   if (c.lastError) return { dot: "●", color: "var(--rc-err)", text: c.lastError };
-  if (c.running) return { dot: "●", color: "#16a34a", text: `연결됨${c.pid ? ` · pid ${c.pid}` : ""}` };
-  return { dot: "●", color: "#d97706", text: "저장됨 · 미검증" };
+  if (c.running) return { dot: "●", color: "var(--rc-ok)", text: `연결됨${c.pid ? ` · pid ${c.pid}` : ""}` };
+  return { dot: "●", color: "var(--rc-warn)", text: "저장됨 · 미검증" };
 }
 
 export default function ChannelDialog({

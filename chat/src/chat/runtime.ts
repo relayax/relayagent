@@ -430,9 +430,41 @@ function friendlyTurnError(text: string): string {
  *  blocked = 앞선 요청이 도는 동안 문지기(§8-42-a)가 물린 발화 — 재전송 버튼 대신 기다리라는 안내가 선다. */
 export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[]; turnId?: string; blocked?: boolean };
 
+/** 사용자 턴의 재생 파트 — 실황(Composer.sendNow)이 싣는 것과 같은 형: 본문 텍스트가 앞이고
+ *  (UserMessage 가 content[0] 을 본문으로 읽는다) 이미지 첨부가 뒤따른다. */
+export type ReplayUserPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: string; filename?: string };
+
 export type ReplayMessage =
-  | { role: "user"; content: { type: "text"; text: string }[]; createdAt?: Date; turnId?: string }
+  | { role: "user"; content: ReplayUserPart[]; createdAt?: Date; turnId?: string }
   | { role: "assistant"; content: any[]; metadata?: { custom: TurnMeta }; createdAt?: Date; turnId?: string };
+
+/** 첨부 이름이 이미지인가 — 이력 재생과 첨부 칩이 같은 잣대를 쓴다. */
+export const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic)$/i;
+
+/** 이력 한 줄(role=user)의 재생 파트 — 텍스트 + 첨부 이미지 칩.
+ *
+ *  첨부는 기판이 이미 이력에 싣고 있었다(§5.3-24 messages[].files — harness.ts appendUser 가
+ *  user 행에 files 를 남긴다). 재생이 그 필드를 user 분기에서만 읽지 않아, 이미지를 보낸 대화는
+ *  **새로고침하면 첨부가 사라졌다**(2026-08-28). bot 행의 무대 산출물(meta.files)과 같은 규율 —
+ *  실황이 그린 것과 다시 연 화면이 같아야 한다.
+ *
+ *  이미지만 파트로 세우는 이유: 실황(Composer.sendNow)도 image/* 만 칩으로 그린다. 여기서만
+ *  더 그리면 방금 본 화면과 다시 연 화면이 갈린다.
+ *  toUrl 은 불투명 path → 화면에 붙일 URL(transport 소유) — 이 함수는 경로를 해석하지 않는다. */
+export function historyUserContent(m: { text?: unknown; files?: unknown }, toUrl: (path: string) => string): ReplayUserPart[] {
+  const content: ReplayUserPart[] = [{ type: "text", text: String(m.text ?? "") }];
+  if (!Array.isArray(m.files)) return content;
+  for (const f of m.files as { path?: unknown; name?: unknown }[]) {
+    const p = String(f?.path ?? "");
+    if (!p) continue;
+    const name = String(f?.name ?? "") || p.split("/").pop() || "image";
+    if (!IMAGE_NAME_RE.test(name)) continue;
+    content.push({ type: "image", image: toUrl(p), filename: name });
+  }
+  return content;
+}
 
 // ---------------- 이력 (history.get — §5.3-24) ----------------
 //
@@ -471,7 +503,7 @@ export async function loadHistory(ctx: RelayCtx): Promise<ReplayMessage[]> {
   for (const m of Array.isArray(r.messages) ? r.messages : []) {
     if (!m || typeof m.role !== "string" || typeof m.text !== "string") continue;
     if (m.role === "user") {
-      out.push({ role: "user", content: [{ type: "text", text: m.text }] });
+      out.push({ role: "user", content: historyUserContent(m, (p) => fileInlineUrl(ctx, p)) });
       continue;
     }
     // bot = 완료 턴, sys = 시스템 고지(오류 등) — 둘 다 assistant 말풍선으로 그린다.
@@ -507,6 +539,11 @@ export type InboxRow = {
   conversation_id: string;
   title?: string;
   last_started_at?: string;
+  /** 이 대화의 정체성(§5.3-21) — 위임 행이 "누가 · 무엇을" 을 사람 말로 말할 때 쓴다 */
+  agent?: string;
+  param?: string;
+  /** 기계가 판 슬롯인가(§5.3-25) — 목록은 이 축으로 위임 대화를 인스턴스 아래 접는다 */
+  origin?: "dispatch" | "mission";
 };
 
 export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
@@ -519,7 +556,15 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
   await Promise.all(ids.map(async (id) => {
     const info = await loadConversationsOf(id, ctx.principal);
     for (const c of info.conversations) {
-      rows.push({ instance: id, conversation_id: c.conversation_id, title: c.title, last_started_at: c.last_started_at });
+      rows.push({
+        instance: id,
+        conversation_id: c.conversation_id,
+        title: c.title,
+        last_started_at: c.last_started_at,
+        ...(c.agent ? { agent: c.agent } : {}),
+        ...(c.param ? { param: c.param } : {}),
+        ...(c.origin ? { origin: c.origin } : {}),
+      });
     }
   }));
   rows.sort((a, b) => Date.parse(b.last_started_at || "") - Date.parse(a.last_started_at || "") || 0);
@@ -528,7 +573,9 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
 
 // ---------------- 대화 목록 (다중세션 헤더) ----------------
 
-export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string; param?: string };
+export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string; param?: string;
+  /** §5.3-25 — 기판이 밝힌 슬롯 출신: 위임(dispatch)·미션 수신(mission). 사람의 대화는 없다 */
+  origin?: "dispatch" | "mission" };
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
@@ -565,6 +612,8 @@ export async function loadConversationsOf(instanceId: string, _principal: string
       ...(typeof s.agent === "string" && s.agent ? { agent: s.agent } : {}),
       // 작업 대상 — 위임 카드가 "이 위임의 대화" 를 찾을 때 (agent, param) 으로 맞춘다
       ...(typeof s.param === "string" && s.param ? { param: s.param } : {}),
+      // 사람이 연 대화인가 기계가 판 슬롯인가 — 판정은 기판 몫, 화면은 받아 접기만 한다
+      ...(s.origin === "dispatch" || s.origin === "mission" ? { origin: s.origin } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0
@@ -1334,6 +1383,11 @@ export async function loadAgents(ctx: RelayCtx): Promise<AgentEntry[]> {
  *  path 는 불투명 참조다 — 이스케이프만 하고 해석하지 않는다(transport 소유). */
 export function fileDownloadUrl(ctx: RelayCtx, path: string): string {
   return wireOf(ctx).file.url(String(path || ""), { dl: true });
+}
+
+/** 같은 파일을 **화면에 붙일** URL — 다운로드 처분(?dl=1) 없이. 재생된 첨부 이미지의 <img src>. */
+export function fileInlineUrl(ctx: RelayCtx, path: string): string {
+  return wireOf(ctx).file.url(String(path || ""));
 }
 
 function textOf(m: any): string {

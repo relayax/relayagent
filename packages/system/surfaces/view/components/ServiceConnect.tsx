@@ -27,14 +27,14 @@ import { Label } from "@/components/ui/label";
  *  프로세스가 떠 있다는 뜻이 아니다(그건 채널의 말) */
 export function serviceStatusOf(s: ServiceStatusView, note?: string): { dot: string; color: string; text: string } {
   if (s.kind === "none") return { dot: "○", color: "var(--rc-faint)", text: "자격이 필요 없는 서비스" };
-  if (s.oauth?.running) return { dot: "●", color: "#d97706", text: note ?? "브라우저에서 승인을 기다리는 중…" };
+  if (s.oauth?.running) return { dot: "●", color: "var(--rc-warn)", text: note ?? "브라우저에서 승인을 기다리는 중…" };
   if (!s.hasCred) {
     return s.required
       ? { dot: "○", color: "var(--rc-err)", text: note ?? "자격 없음 · 필요 — 없으면 이 앱의 주 기능이 서지 않습니다" }
       : { dot: "○", color: "var(--rc-faint)", text: note ?? "자격 없음 · 선택 — 없어도 돌고, 넣으면 그 기능이 켜집니다" };
   }
   if (s.oauth?.done && s.oauth.error) return { dot: "●", color: "var(--rc-err)", text: s.oauth.error };
-  return { dot: "●", color: "#16a34a", text: note ?? (s.verifiable ? "연결됨 · 검증 가능" : "연결됨 · 기판이 검증할 수 없는 서비스") };
+  return { dot: "●", color: "var(--rc-ok)", text: note ?? (s.verifiable ? "연결됨 · 검증 가능" : "연결됨 · 기판이 검증할 수 없는 서비스") };
 }
 
 export default function ServiceConnect({

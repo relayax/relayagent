@@ -9,7 +9,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useThread, useThreadRuntime } from "@assistant-ui/react";
 import type { RelayCtx, ModelOption, AgentEntry, SlashCommand, ActiveTurn, NavInstance } from "./runtime";
-import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, loadCommands, loadAgents, setAttachTurn, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, hasSteer, steerTurn,
+import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, fileInlineUrl, loadCommands, loadAgents, setAttachTurn, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, hasSteer, steerTurn,
   loadHarnessVariants,
   loadHarnessName,
   loadModelOptionsFor,
@@ -786,9 +786,15 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   const sendNow = (t: string, list: PendingAtt[]) => {
     setPendingAttachments(list.map(attToPayload));
     const content: any[] = [{ type: "text", text: t }];
-    // 사이드밴드 첨부는 dataUrl 이 없다(대용량 base64 를 안 안는 게 목적) — 프리뷰 스킵.
+    // 인라인 첨부는 dataUrl 이 곧 미리보기고, 사이드밴드(대용량)는 dataUrl 을 안 든다
+    // (base64 를 메모리에 안 안는 게 목적) — 대신 착지한 참조를 file URL 로 그린다. 이 폴백이
+    // 없으면 큰 이미지는 실황에선 안 보이다가 새로고침해야 나타난다(재생은 이력 files 를 그린다).
     // filename 은 assistant-ui 이미지 파트의 표준 밖 확장 — UserMessage 첨부 칩 라벨이 읽는다.
-    for (const a of list) if (a.mime.startsWith("image/") && a.dataUrl) content.push({ type: "image", image: a.dataUrl, filename: a.name });
+    for (const a of list) {
+      if (!a.mime.startsWith("image/")) continue;
+      const src = a.dataUrl || (a.path ? fileInlineUrl(ctx, a.path) : "");
+      if (src) content.push({ type: "image", image: src, filename: a.name });
+    }
     rt.append({ role: "user", content });
   };
 

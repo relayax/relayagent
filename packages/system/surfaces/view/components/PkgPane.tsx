@@ -115,20 +115,21 @@ export default function PkgPane({
     return () => { if (t) clearTimeout(t); };
   }, [pkg.name]);
 
+  const head = ghost
+    ? title?.draft ? `초안 v${title.draft}` : "미발행"
+    : title?.draft && title.draft !== title.live ? `초안 v${title.draft}` : null;
+
   return (
     <section className="pane pkg">
       <header className="pane-head">
         {/* 사이드바가 숨는 화면이라 나가는 문은 여기 하나다 — 셸 홈은 기판 주소라 <a> */}
         <Button variant="ghost" size="icon-sm" className="back" nativeButton={false} render={<a href="/" title="홈으로" />}>←</Button>
         {item?.icon ? <img className="p-ic" src={item.icon} alt="" /> : <span className="p-ic ltr">{(pkg.name[0] ?? "?").toUpperCase()}</span>}
-        <h2>{m?.display_name ?? title?.display ?? pkg.name}</h2>
-        {/* 머리에는 버전만 — "@haemin/detail-page@0.1.7" 같은 식별자 표기는 사람에게 뜻이 없다.
-            패키지 이름은 툴팁으로만 남긴다(ring-0 꼬리도 같은 이유로 뺐다) */}
-        <span className="meta" title={m?.name ?? pkg.name}>
-          {ghost
-            ? title?.draft ? `초안 v${title.draft}` : "미발행"
-            : `v${m?.version ?? "?"}${title?.draft && title.draft !== title.live ? ` · 초안 v${title.draft}` : ""}`}
-        </span>
+        {/* 이름 옆의 상시 버전은 뺐다 — 고치는 동안 "지금 몇 번째냐" 는 쓰이지 않고, 적용·되돌리기
+            대화창이 그때 버전을 보여준다. 식별자와 버전은 툴팁으로만 남긴다(2026-08-28) */}
+        <h2 title={`${m?.name ?? pkg.name}${m?.version ? ` · v${m.version}` : ""}`}>{m?.display_name ?? title?.display ?? pkg.name}</h2>
+        {/* 남는 것은 어긋남뿐이다: 아직 발행 전이거나, 작업 사본이 돌아가는 버전과 다를 때 */}
+        {head ? <span className="meta">{head}</span> : null}
         <span ref={setSlot} className="pane-actions" />
       </header>
 

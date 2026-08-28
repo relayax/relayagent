@@ -21,7 +21,7 @@ import { serviceAuthHeader } from "./oauth.ts";
 import { runScript, runScriptFrom, scriptMeta, callEdgeTool, mcpList, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
 import { runSession, isSessionBusy, retireResident, localSessionIO, sessionTreeOf, INTERRUPTED_MARK, type SessionIO } from "./harness.ts";
-import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, PARAM_SLUGS_RE } from "../protocol.ts";
+import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, PARAM_SLUGS_RE, SUB_SLOT_PREFIX } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
 
@@ -375,10 +375,10 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 2026-08-20) 그대로.
         const slot = param
           ? (PARAM_SLUGS_RE.test(param)
-              ? `sub-${sub}-${param.replace(/,/g, ".")}`
-              : `sub-${sub}-k${crypto.createHash("sha256").update(param).digest("hex").slice(0, 8)}`
+              ? `${SUB_SLOT_PREFIX}${sub}-${param.replace(/,/g, ".")}`
+              : `${SUB_SLOT_PREFIX}${sub}-k${crypto.createHash("sha256").update(param).digest("hex").slice(0, 8)}`
             ).slice(0, 64)
-          : `sub-${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
+          : `${SUB_SLOT_PREFIX}${sub}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 64);
         // 진행 중인 같은 대상 위임 위에 얹지 않는다 — runSession 의 직렬화가 튕기기 전에
         // 위임 어휘로 정직하게 알린다 (재시도 루프 방지: 완료는 어차피 📬 로 온다)
         if (isSessionBusy(pkg, slot)) {

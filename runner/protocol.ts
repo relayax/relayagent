@@ -19,7 +19,7 @@ export function a2aMissionMarker(mission: string, consumer?: string | null): str
  *  함께 쓴다 — 마커의 무-consumer 분기와 같은 결이다. 생산이 두 곳(도구 문의 진행 중 판정,
  *  브리지의 세션 개설)이라 문법은 여기 한 벌이어야 한다. 세션 id 문법(SLOT_RE)을 넘지 않게 접는다. */
 export function a2aMissionSlot(mission: string, consumer?: string | null): string {
-  return `mission-${consumer ? sanitizeToolSegment(consumer) : "ext"}-${sanitizeToolSegment(mission)}`.slice(0, 64);
+  return `${MISSION_SLOT_PREFIX}${consumer ? sanitizeToolSegment(consumer) : "ext"}-${sanitizeToolSegment(mission)}`.slice(0, 64);
 }
 
 // ── 업로드 착지 접두 (client-protocol.md §8-40) ──────────────────────────────
@@ -92,4 +92,21 @@ export const PARAM_SLUGS_RE = /^[a-z0-9-]+(,[a-z0-9-]+)*$/i;
 export function paramTargets(param: string): string[] {
   if (!param) return [];
   return PARAM_SLUGS_RE.test(param) ? param.split(",") : [param];
+}
+
+// ── 세션 origin (client-protocol.md §5.3-25) ─────────────────────────────────
+// 사람이 연 대화인가, 기계가 판 슬롯인가. 슬롯 이름은 기판 내부 문법이고(위 SLOT_RE 의 왜 —
+// 세션 id 는 계약상 불투명), 클라이언트가 접두를 스니핑하면 그 불투명성이 깨진다. 그래서 판정은
+// 여기 한 벌이고 계약에 나가는 것은 session.list 행의 origin 하나다. 화면은 이 축으로 위임
+// 세션을 사람의 대화 아래 접는다(보관함 피커).
+export const SUB_SLOT_PREFIX = "sub-";       // 서브에이전트 위임 (runtime/tools.ts)
+export const MISSION_SLOT_PREFIX = "mission-"; // a2a 미션 수신 (a2aMissionSlot)
+
+export type SessionOrigin = "dispatch" | "mission";
+
+/** 슬롯이 어디서 났는가 — 사람이 연 대화면 null. */
+export function slotOrigin(slot: string): SessionOrigin | null {
+  if (slot.startsWith(SUB_SLOT_PREFIX)) return "dispatch";
+  if (slot.startsWith(MISSION_SLOT_PREFIX)) return "mission";
+  return null;
 }

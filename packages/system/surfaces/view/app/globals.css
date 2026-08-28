@@ -15,6 +15,7 @@
   --rc-faint: oklch(0.708 0 0);
   --rc-line: var(--border);
   --rc-line-soft: oklch(0.955 0 0);
+  --rc-line-strong: oklch(0.87 0 0);   /* neutral-300 — 선보다 한 칸 진해야 하는 자리(빈 라디오 링 등) */
   --rc-ground: oklch(0.985 0 0);
   /* 화면을 얹는 바닥. --rc-ground 보다 한 단 어둡다 — 흰 화면이 흰 바탕에 묻히지 않게 */
   --rc-well: oklch(0.945 0 0);
@@ -23,8 +24,13 @@
   --rc-accent-strong: var(--foreground);
   --rc-accent-soft: var(--accent);
   --rc-ok: #059669;
+  --rc-warn: #b45309;                  /* amber-700 — 경고는 글자색만, 채움 없음 */
+  /* 빨강은 destructive 하나 — 배경·테두리도 같은 빨강 램프(red-50/200)에서 고른다.
+     옛 #fdf2f1(플랫UI 분홍)은 destructive 와 계열이 달라 나란히 놓이면 어긋났다 */
   --rc-err: var(--destructive);
-  --rc-err-bg: #fdf2f1;
+  --rc-err-bg: #fef2f2;
+  --rc-err-line: #fecaca;
+  --rc-danger: var(--rc-err);
   --rc-radius: var(--radius);
   --rc-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --rc-sans: var(--font-sans), "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", Roboto, sans-serif;
@@ -68,6 +74,7 @@ body {
   --rc-faint: oklch(0.708 0 0);
   --rc-line: var(--border);
   --rc-line-soft: oklch(0.955 0 0);
+  --rc-line-strong: oklch(0.87 0 0);   /* neutral-300 — 선보다 한 칸 진해야 하는 자리(빈 라디오 링 등) */
   --rc-ground: oklch(0.985 0 0);
   /* 화면을 얹는 바닥. --rc-ground 보다 한 단 어둡다 — 흰 화면이 흰 바탕에 묻히지 않게 */
   --rc-well: oklch(0.945 0 0);
@@ -76,8 +83,13 @@ body {
   --rc-accent-strong: var(--foreground);
   --rc-accent-soft: var(--accent);
   --rc-ok: #059669;
+  --rc-warn: #b45309;                  /* amber-700 — 경고는 글자색만, 채움 없음 */
+  /* 빨강은 destructive 하나 — 배경·테두리도 같은 빨강 램프(red-50/200)에서 고른다.
+     옛 #fdf2f1(플랫UI 분홍)은 destructive 와 계열이 달라 나란히 놓이면 어긋났다 */
   --rc-err: var(--destructive);
-  --rc-err-bg: #fdf2f1;
+  --rc-err-bg: #fef2f2;
+  --rc-err-line: #fecaca;
+  --rc-danger: var(--rc-err);
   --rc-radius: var(--radius);
   --rc-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --rc-sans: var(--font-sans), "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", Roboto, sans-serif;
@@ -102,6 +114,24 @@ body { margin: 0; background: var(--rc-ground); color: var(--rc-ink); font: 14px
 @layer base {
   select { font: 13px var(--rc-sans); color: var(--rc-ink); border: 1px solid var(--rc-line); border-radius: var(--radius); padding: 7px 10px; background: var(--rc-bg); outline: none; }
   select:focus { border-color: var(--ring); }
+}
+
+/* ── 스크롤바 — 콘솔 전체가 한 얼굴 ──────────────────────────────────────
+   면·목록·콘솔·차이(diff)까지 스크롤하는 상자가 워낙 많아, 상자마다 회색 기둥이 서면 화면이
+   기둥으로 갈린다(2026-08-28 피드백: "전체적으로 스크롤바가 너무 과함"). 규칙은 하나 —
+   트랙은 그리지 않고, 상자에 손이 닿는 동안만 알약이 뜬다(macOS 오버레이 방식).
+   webkit 의사요소만 쓴다: Chrome 은 scrollbar-width/-color 가 하나라도 있으면 의사요소를 무시한다.
+   위젯은 제 CSS(.rc-tw)로 같은 얼굴을 따로 낸다 — 명시도가 높아 여기 규칙을 덮는다. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+/* 알약은 안쪽으로 3px 물러나 앉는다(투명 테두리 + content-box) — 둥근 모서리와 글자를 비껴간다 */
+::-webkit-scrollbar-thumb { background: transparent; border: 3px solid transparent; border-radius: 999px; background-clip: content-box; }
+*:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--rc-ink) 22%, transparent); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* webkit 의사요소가 없는 브라우저(Firefox)만 표준 속성으로 같은 결을 낸다 */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  *:hover { scrollbar-color: color-mix(in srgb, var(--rc-ink) 22%, transparent) transparent; }
 }
 
 /* ── 콘솔 패키지의 화면 ────────────────────────────────────────────────────
@@ -213,12 +243,8 @@ body.rc-resizing iframe { pointer-events: none; }
 .pkg-cols.no-view .pkg-col.side { flex: 1; border-right: none; }
 .pkg-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--rc-bg); }
 .pkg-col.side .ds-x { grid-template-columns: 1fr; }
-.pkg-col.side .pane-body { padding: 14px; scrollbar-width: thin; scrollbar-color: transparent transparent; }
-.pkg-col.side .pane-body:hover { scrollbar-color: rgba(0,0,0,.08) transparent; }
-.pkg-col.side .pane-body::-webkit-scrollbar { width: 4px; }
-.pkg-col.side .pane-body::-webkit-scrollbar-track { background: transparent; }
-.pkg-col.side .pane-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
-.pkg-col.side .pane-body:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,.08); }
+/* 막대는 위 '스크롤바' 절이 콘솔 전체에 한 번에 준다 — 여기서는 여백만 */
+.pkg-col.side .pane-body { padding: 14px; }
 /* 결과면 — 폼 아래, 같은 칸 안 */
 
 /* ── 설정 패널(왼쪽 칸) — 두 갈래 · 섹션 카드 · 항목 줄 · ＋ 추가 ── */
@@ -266,7 +292,14 @@ body.rc-resizing iframe { pointer-events: none; }
 .ap-adv { color: var(--rc-soft); }
 /* 펼친 폼은 제 줄의 제목(왼쪽 30px)에 맞춰 선다 — 종전 24px 은 항목보다 왼쪽이라
    자식이 부모보다 바깥으로 나와 위계가 뒤집혀 보였다 */
-.ap-inline { margin: 4px 0 12px 18px; padding: 6px 0 6px 10px; border-left: 2px solid var(--rc-accent); }
+/* 펼친 폼 — 왼쪽 강조선에 매달린 모양이었다. 선 하나로는 어디까지가 그 폼인지 안 묶여서
+   내용이 여백에 흩어져 보였다(2026-08-28). 카드로 세운다: 옅은 테두리 · 둥근 모서리 · 안쪽 여백 */
+.ap-inline { margin: 8px 0 14px; padding: 14px; border: 1px solid var(--rc-line); border-radius: 12px;
+  background: var(--rc-bg); box-shadow: 0 1px 2px oklch(0 0 0 / .04); }
+/* 카드 안의 묶음은 테두리를 겹치지 않는다 — 채움만으로 나눈다(테두리 안의 테두리는 시끄럽다) */
+.ap-inline .st-verbl, .ap-inline .st-dirview-l, .ap-inline .st-persona-t {
+  border-color: transparent; background: var(--rc-ground);
+}
 .ap-inline .st-section { padding: 0; }
 /* 좁은 칸 안에서는 파일 줄도 입력칸과 같은 흰 상자였다 — 바탕을 눌러 칩으로 낮춘다 */
 .ap-inline .st-file { background: var(--rc-ground); border-color: transparent; }
@@ -276,7 +309,7 @@ body.rc-resizing iframe { pointer-events: none; }
 .ap-chev { transition: transform .15s; display: inline-block; }
 .ap-adv .ds-ic { color: var(--rc-faint); }
 .ap-links { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 8px 6px; border-top: 1px solid var(--rc-line-soft); margin-top: 6px; }
-.ap-danger .ap-sec-t { color: var(--rc-danger, #b91c1c); }
+.ap-danger .ap-sec-t { color: var(--rc-err); }
 .ap-danger .detail-foot { flex-wrap: wrap; padding: 4px 8px 0; }
 .ap-pending { display: flex; flex-wrap: wrap; gap: 6px; }
 /* 열린 폼 — 목록 대신, 위에 ‹ 돌아가기 */
@@ -405,15 +438,17 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 /* 섹션 폼 */
 .st-section { display: flex; flex-direction: column; gap: 12px; }
 .st-hint { font-size: 12px; color: var(--rc-soft); background: var(--rc-ground); border: 1px solid var(--rc-line-soft); border-radius: 8px; padding: 9px 12px; white-space: pre-wrap; }
-.st-form { display: flex; flex-direction: column; gap: 10px; }
-.st-field { display: flex; flex-direction: column; gap: 4px; }
-.st-field > span, .st-field > label { font-size: 11.5px; font-weight: 600; color: var(--rc-soft); }
+.st-form { display: flex; flex-direction: column; gap: 14px; }
+.st-field { display: flex; flex-direction: column; gap: 6px; }
+.st-field > span, .st-field > label { font-size: 12px; font-weight: 500; color: var(--rc-soft); }
 /* 라벨 아래 설명 한 줄 — 라벨보다 옅고 가볍다 */
 .st-hintline { margin: -2px 0 0; font-size: 11px; line-height: 1.45; color: var(--rc-faint); }
 /* 항목 폼 맨 아래의 "빼기" — 가장 안 쓰는 동작이 칸에서 가장 굵은 상자였다.
    글자 하나로 낮추고, 손을 대면 그때 위험한 색이 든다 */
-.st-remove { border-color: transparent !important; background: none !important; color: var(--rc-faint) !important; padding-left: 0; padding-right: 0; height: auto; }
-.st-remove:hover { color: var(--rc-err) !important; text-decoration: underline; }
+/* 빼기 — 조용하되 **버튼으로 보여야** 한다. 테두리까지 지웠더니 눌리는 것인지 딱지인지
+   구별이 안 됐다(2026-08-28). 위험한 색은 손이 갔을 때만 든다 */
+.st-remove { color: var(--rc-faint) !important; }
+.st-remove:hover { color: var(--rc-err) !important; border-color: var(--rc-err) !important; background: none !important; }
 .st-files { display: flex; flex-direction: column; gap: 4px; }
 .st-file { display: flex; align-items: center; gap: 8px; border: 1px solid var(--rc-line-soft); border-radius: 8px; padding: 7px 11px; cursor: pointer; background: var(--rc-bg); }
 .st-file:hover { border-color: var(--rc-accent); }
@@ -450,7 +485,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-bar b { font-size: 14px; }
 .gx-counts { font-size: 11px; color: var(--rc-faint); }
 .gx-sp { flex: 1; }
-.gx-view { position: relative; flex: 1; min-height: 0; overflow: hidden; background: rgba(247, 249, 249, 0.5); cursor: grab; }
+.gx-view { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--rc-ground); cursor: grab; }
 .gx-view:active { cursor: grabbing; }
 .gx-wrap { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .gx-svg { position: absolute; left: 0; top: 0; overflow: visible; }
@@ -506,14 +541,16 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-stores { margin-top: 3px; display: flex; flex-direction: column; gap: 2px; }
 .gx-store {
   display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap;
-  border: 1px solid color-mix(in srgb, var(--rc-ok) 30%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--rc-ok) 6%, transparent);
-  padding: 2px 6px; font-size: 10px; font-weight: 600; color: var(--rc-ok);
+  /* dir 그랜트는 상태가 아니라 선언이다 — 초록으로 칠하면 지도에서 "정상"으로 읽히고,
+     노드마다 칠해져 있어 화면에서 제일 시끄러운 면이 됐다(2026-08-27). 회색 램프로 돌린다 */
+  border: 1px solid var(--rc-line); border-radius: 6px; background: var(--rc-ground);
+  padding: 2px 6px; font-size: 10px; font-weight: 600; color: var(--rc-soft);
 }
 .gx-store b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
 .gx-store span { margin-left: auto; font-size: 8.5px; font-weight: 500; opacity: 0.8; }
 
 .gx-foot { margin-top: 1px; display: flex; gap: 4px; overflow: hidden; }
-.gx-chip { flex-shrink: 0; white-space: nowrap; border: 1px solid var(--rc-line); border-radius: 5px; background: rgba(247, 249, 249, 0.35); padding: 0 5px; font-size: 9px; font-weight: 600; line-height: 1.6; color: var(--rc-faint); }
+.gx-chip { flex-shrink: 0; white-space: nowrap; border: 1px solid var(--rc-line); border-radius: 5px; background: var(--rc-ground); padding: 0 5px; font-size: 9px; font-weight: 600; line-height: 1.6; color: var(--rc-faint); }
 
 .gx-port {
   position: absolute; right: -11px; top: 50%; transform: translateY(-50%);
@@ -595,7 +632,7 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .lv-s { font-size: 12px; color: var(--rc-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-ring {
   width: 18px; height: 18px; flex: 0 0 auto; border-radius: 50%;
-  border: 2px solid #c9ced3; position: relative; transition: border-color 120ms ease;
+  border: 2px solid var(--rc-line-strong); position: relative; transition: border-color 120ms ease;
 }
 .lv-row:hover .lv-ring { border-color: var(--rc-faint); }
 .lv-row.on .lv-ring { border-color: var(--rc-accent); }
@@ -682,18 +719,12 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .pv-receipt { font-size: 11.5px; color: var(--rc-faint); display: inline-flex; align-items: center; gap: 6px; }
 
 /* ── 팔레트 — 만들 수 있는 것의 표면 ──────────────────────────────────────
-   왼쪽 패널 안에 두면 overflow:auto 에 잘리므로 st-body 기준으로 띄운다.
+   다이얼로그 안에 산다(Palette.tsx 주석). 종전의 absolute 상자는 기준 삼을 positioned 조상이
+   없어 문서 왼쪽 위에 붙었다 — 탑바를 덮고 제 머리가 화면 밖으로 잘렸다.
    폭은 트리보다 넉넉히: 여기서 읽는 것은 이름이 아니라 **얻는 것**의 설명이다 */
-.pl {
-  position: absolute; top: 0; left: 0; z-index: 30; width: 440px; max-width: calc(100% - 24px);
-  max-height: 100%; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: var(--rc-radius);
-  box-shadow: 0 2px 6px rgba(22, 24, 27, .06), 0 22px 48px -18px rgba(22, 24, 27, .3);
-  animation: rc-rise .14s ease;
-}
-.pl-top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--rc-line); flex: none; }
-.pl-q { flex: 1; }
-.pl-list { overflow: auto; padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 12px; }
+.pl-dlg { width: 460px; max-width: calc(100vw - 32px); max-height: 82vh; gap: 14px; overflow: hidden; }
+.pl-q { flex: none; }
+.pl-list { overflow: auto; min-height: 0; margin: 0 -6px; padding: 0 6px 2px; display: flex; flex-direction: column; gap: 12px; }
 .pl-group { display: flex; flex-direction: column; gap: 3px; }
 .pl-group .rc-label { padding: 2px 4px 3px; }
 .pl-row {
@@ -709,11 +740,8 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .pl-dt { font-size: 11.5px; color: var(--rc-soft); line-height: 1.5; }
 .pl-rt { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex: none; }
 .pl-yaml { color: var(--rc-faint); font-size: 10.5px; white-space: nowrap; }
-.pl-ask { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .pl-ask-hd { display: flex; align-items: baseline; gap: 8px; }
-.pl-ask-hd b { font-size: 14px; }
 .pl-detail { font-size: 12px; color: var(--rc-soft); line-height: 1.6; background: var(--rc-ground); border-radius: 8px; padding: 9px 11px; }
-.pl-ask-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
 
 /* ── UX 정비(2026-08-26) — 안내 링크 · 트리 라벨 · ⋯ 메뉴 · 판정 행 · 초안 목록 · 기록 이력 · 적용 시트 ── */
 /* 온보딩은 홈(기판 셸)으로 옮겼다 — 설정의 [안내] 는 그 문으로 가는 링크다 */
@@ -775,10 +803,21 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .st-back { align-self: flex-start; border: none; background: none; padding: 0; font-size: 12px; color: var(--rc-faint); cursor: pointer; }
 .st-back:hover { color: var(--rc-ink); }
 .st-pick:disabled { opacity: .6; cursor: progress; }
-.ap-engine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 8px 5px 30px; }
-.ap-engine-l { font-size: 13px; }
-.ap-engine .st-picks { gap: 5px; }
-.ap-engine .st-pick { padding: 2px 9px; font: 12px var(--rc-sans); }
+/* 붙어 있는 엔진은 한 알에 두 손잡이다 — 본체(이걸로 돌린다)와 × (뺀다) */
+.ap-chip { display: inline-flex; align-items: stretch; }
+.ap-chip .st-pick { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0; padding-right: 7px; }
+.ap-chip-x {
+  border: 1px solid var(--rc-line); border-left: 0; border-radius: 0 999px 999px 0;
+  background: var(--rc-bg); padding: 0 8px 1px 4px; font: 13px var(--rc-sans); line-height: 1;
+  color: var(--rc-faint); cursor: pointer;
+}
+.ap-chip-x:hover { color: var(--rc-ink); border-color: var(--rc-accent); }
+.ap-chip:has(.st-pick[aria-pressed="true"]) .ap-chip-x { background: var(--rc-accent-soft); border-color: var(--rc-accent); }
+.ap-chip .st-pick:disabled { cursor: default; }
+/* 지금 도는 것을 다시 누를 일은 없다 — 누를 수 있게 보이지 않는다 */
+.ap-chip .st-pick[aria-pressed="true"] { cursor: default; }
+.ap-chip-x:disabled { opacity: .6; cursor: progress; }
+/* 칩 줄이 무엇을 하는지 — 세 가지 꼴을 한 줄로 읽힌다 */
 
 @theme inline {
   --font-heading: var(--font-sans);
@@ -868,3 +907,190 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
     @apply font-sans;
   }
 }
+/* ── 한눈 요약 · 흐름 묶음 (2026-08-28) ──────────────────────────────────────
+   목록을 다 읽어야 알 수 있던 것(화면이 있나 · 스스로 도나 · 몇 가지를 하나)을 칩으로 앞세우고,
+   섹션을 흐름 순서의 묶음으로 세운다. 칩은 그 섹션으로 데려가는 문이다 — 사실 나열이 아니다 */
+.ap-facts { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 2px; }
+.ap-fact { border: 1px solid var(--rc-line); border-radius: 999px; background: var(--rc-ground); padding: 2px 9px; font: 500 11.5px var(--rc-sans); color: var(--rc-soft); cursor: pointer; }
+.ap-fact:hover { border-color: var(--rc-accent); color: var(--rc-accent-strong); background: var(--rc-bg); }
+
+/* 묶음 이름 — 섹션 제목보다 한 단 위에서 "무엇을 묻는 자리인가" 를 말한다 */
+.ap-grp { padding: 12px 8px 2px; font: 600 11px var(--rc-sans); letter-spacing: .06em; color: var(--rc-faint); }
+.ap-group > .ap-sec:last-child { border-bottom: none; }
+.ap-group + .ap-group { border-top: 1px solid var(--rc-line-soft); }
+
+/* 섹션 제목 옆 한 줄 — 제목만으로 뜻이 안 서는 자리에만 */
+.ap-sec-d { font: 400 11.5px var(--rc-sans); color: var(--rc-faint); margin-left: 2px; }
+
+/* 비어 있는 섹션 — 점선 한 줄이 제자리를 지킨다. 제목은 남고 목록 자리에 [＋ … 붙이기] */
+.ap-sec-empty .ap-sec-t.plain span:first-of-type { color: var(--rc-soft); }
+.ap-addwrap.row { display: block; padding: 2px 8px; }
+.ap-none { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: 1px dashed var(--rc-line); border-radius: 10px; background: none; padding: 8px 10px; cursor: pointer; }
+.ap-none .ds-ic { flex: none; color: var(--rc-faint); }
+.ap-none-col { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ap-none-x { flex: none; font-size: 14px; line-height: 1; color: var(--rc-faint); }
+.ap-none:hover .ap-none-x { color: var(--rc-accent-strong); }
+.ap-none:hover { border-color: var(--rc-accent); background: var(--rc-hover); }
+.ap-none-t { font: 600 13px var(--rc-sans); color: var(--rc-soft); }
+.ap-none:hover .ap-none-t { color: var(--rc-accent-strong); }
+.ap-none-d { font-size: 11.5px; color: var(--rc-faint); line-height: 1.45; }
+
+/* 긴 목록 접기 — 기능 12개가 칸의 절반을 먹으면 그 아래 구조가 스크롤 밖으로 밀린다 */
+.ap-more-btn { display: block; margin: 2px 0 4px 30px; border: none; background: none; padding: 2px 0; font: 500 12px var(--rc-sans); color: var(--rc-faint); cursor: pointer; }
+.ap-more-btn:hover { color: var(--rc-accent-strong); }
+
+/* ── 무게 깎기 (2026-08-28) ───────────────────────────────────────────────────
+   같은 정보를 두 번 세지 않고(개수 뱃지 ↔ 목록), 늘 쓰지 않는 손잡이는 손이 갈 때만 보인다.
+   줄마다 [›] 와 [＋ 추가] 가 상시로 서 있으면 눈이 짚을 곳이 줄 수만큼 늘어난다 */
+.ap-n { font-size: 11px; font-weight: 600; color: var(--rc-faint); }
+.ap-item .ap-chev, .ap-sec-t .ap-chev { opacity: 0; transition: opacity .12s, transform .15s; }
+.ap-item:hover .ap-chev, .ap-item:focus-visible .ap-chev, .ap-item[aria-expanded="true"] .ap-chev,
+.ap-sec-t:hover .ap-chev, .ap-sec-t:focus-visible .ap-chev,
+.ap-sec-t:not(.fold)[aria-expanded="true"] .ap-chev,
+.ap-sec.folded .ap-sec-t .ap-chev { opacity: 1; }
+
+.ap-add-x { border: none; background: none; padding: 2px 6px; font: 400 15px var(--rc-sans); line-height: 1;
+  color: var(--rc-faint); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .12s; }
+.ap-sec:hover .ap-add-x, .ap-add-x:focus-visible, .ap-add-x[aria-expanded="true"] { opacity: 1; }
+.ap-add-x:hover { color: var(--rc-accent-strong); background: var(--rc-hover); }
+
+/* 묶음 이름은 질문 하나 — 섹션 제목보다 작고 옅게, 위에만 숨을 준다 */
+.ap-grp { padding: 14px 8px 2px; font: 600 11px var(--rc-sans); letter-spacing: .04em; color: var(--rc-faint); }
+
+/* ── 문장 패널 (2026-08-28) ──────────────────────────────────────────────────
+   왼쪽 칸은 목록이 아니라 **에이전트가 자기를 소개하는 세 문단**이다. 밑줄 그은 낱말이 곧
+   고치는 문이고, 없는 것은 점선 한 줄이 말한다. 머리의 흐름 띠는 같은 재료의 그림이다.
+   목록은 "무엇이 있나" 만 말하고 "어떻게 움직이나" 는 못 말한다 — 25줄을 다 읽어도 구조가
+   안 잡히던 이유다.
+
+   머리의 흐름 띠(웹 화면 → detail-page → 13가지 일 → pages · workbook)는 하루 만에 걷어냈다.
+   칸에 설 것이 결국 선언의 id 라 사람에게 뜻이 없었고("detail-page 가 뭔데?"), 뜻이 있는 칸은
+   아래 문장이 더 나은 말로 이미 하고 있었다. 같은 것을 더 나쁜 낱말로 되풀이하는 줄이었다. */
+.ap-say { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px 0; }
+.ap-para { display: flex; flex-direction: column; gap: 3px; }
+/* 문단 머리 라벨 — 아주 작고 옅게. 문장이 주인이고 이것은 눈이 짚는 자리다 */
+.ap-para-l { font: 600 10.5px/1 var(--rc-sans); letter-spacing: 0.06em; color: var(--rc-faint); padding-left: 1px; }
+/* 낱말이 알약이라 밑줄 여유가 필요 없다 — 알약 높이(22px)가 글줄 안에 앉을 만큼만 띄운다 */
+.ap-line { margin: 0; font-size: 15px; line-height: 1.95; color: var(--rc-ink); letter-spacing: -0.01em; word-break: keep-all; }
+
+/* 낱말 알약 — 선(밑줄) 대신 면. 글줄 안에 앉는 멘션처럼: 옅은 바닥 + 작은 아이콘 + 이름.
+   호버는 바닥이 한 단 내려가고, 열리면 잉크로 뒤집혀 "지금 여기를 고치는 중" 이 한눈에 보인다 */
+.ap-tok {
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline;
+  border: none; margin: 0 1px; padding: 1px 7px 1px 5px; line-height: 20px;
+  font: 500 13.5px/20px var(--rc-sans); color: var(--rc-ink);
+  background: var(--rc-well); border-radius: 7px; cursor: pointer;
+  transition: background .12s ease, color .12s ease, transform .12s ease;
+}
+.ap-tok .ds-ic { width: 13px; height: 13px; flex: none; color: var(--rc-soft); }
+.ap-tok:hover { background: var(--rc-line-strong); }
+.ap-tok:active { transform: translateY(1px); }
+.ap-tok[aria-expanded="true"] { background: var(--rc-ink); color: var(--rc-bg); }
+.ap-tok[aria-expanded="true"] .ds-ic { color: var(--rc-bg); opacity: .8; }
+.ap-tok:focus-visible { outline: 2px solid var(--rc-accent); outline-offset: 2px; }
+
+/* 없는 것 — 작은 점선 알약이 한 줄로 흐른다. 문장보다 작고 옅어 "있는 것" 을 덮지 않는다 */
+.ap-plus {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px dashed var(--rc-line-strong); border-radius: 999px; background: none;
+  padding: 3px 10px 3px 8px; font: 500 12px/1.4 var(--rc-sans); color: var(--rc-soft); cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.ap-plus > span[aria-hidden] { font-size: 12px; color: var(--rc-faint); }
+.ap-plus:hover { border-style: solid; border-color: transparent; background: var(--rc-well); color: var(--rc-ink); }
+.ap-plus:hover > span[aria-hidden] { color: var(--rc-ink); }
+.ap-plus[aria-expanded="true"] { border-style: solid; border-color: transparent; background: var(--rc-ink); color: var(--rc-bg); }
+.ap-plus[aria-expanded="true"] > span[aria-hidden] { color: var(--rc-bg); }
+
+/* 발 — 문장으로 못 줄이는 것(성격 글, 엔진 고르기)만. 옅은 글자 링크 한 줄 */
+.ap-foot 
+/* cron 고르개 — 다섯 칸의 문법 대신 주기·요일·시각. 고른 것을 그 자리에서 되읽어 준다 */
+.st-cron { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.st-cron select, .st-cron input[type="time"] {
+  border: 1px solid var(--rc-line); border-radius: 8px; background: var(--rc-bg);
+  padding: 5px 8px; font: 400 13px var(--rc-sans); color: var(--rc-ink); min-width: 0;
+}
+.st-cron select:focus-visible, .st-cron input:focus-visible { outline: 2px solid var(--rc-accent); outline-offset: 1px; }
+.st-cron-n { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--rc-soft); }
+.st-cron-n input {
+  width: 62px; border: 1px solid var(--rc-line); border-radius: 8px; background: var(--rc-bg);
+  padding: 5px 8px; font: 400 13px var(--rc-sans); color: var(--rc-ink);
+}
+.st-cron-say { margin: 2px 0 0; font-size: 12.5px; color: var(--rc-accent-strong); font-weight: 500; }
+
+/* 묶음(글로브)으로 켜진 낱개 — 켜짐이되 낱개로는 못 끈다. 채움 없이 점선 테두리로 구분한다 */
+.st-pick.covered { background: var(--rc-ground); border-style: dashed; color: var(--rc-soft); cursor: default; opacity: 1; }
+
+/* 폴더 칸 — 경로는 가는 곳이다. 읽기 전용 칸 + [열기], 고치기는 고급 아래 */
+/* 폴더 — 누른 사람이 궁금한 것은 경로가 아니라 **안에 무엇이 있나** 다. 경로는 문장에서 이미
+   눌러서 왔으므로 되풀이하지 않는다: 폼이 그 낱말을 다시 내놓으면 눌러서 얻은 것이 없다 */
+.st-dirview { display: flex; flex-direction: column; gap: 8px; }
+.st-dirview-h { margin: 0; font-size: 13px; font-weight: 500; color: var(--rc-ink); }
+.st-dirview-l { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px;
+  border: 1px solid var(--rc-line); border-radius: 10px; padding: 6px 4px; background: var(--rc-ground); }
+.st-dirview-l li { display: flex; align-items: center; gap: 8px; padding: 3px 8px; min-width: 0; }
+.st-dirview-l li.more { font-size: 11.5px; color: var(--rc-faint); }
+.st-dirview-n { flex: 1; min-width: 0; font: 400 12px var(--rc-mono); color: var(--rc-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-dirview-b { flex: none; font-size: 11px; color: var(--rc-faint); font-variant-numeric: tabular-nums; }
+.st-dirview-a { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 빼기 확인 — 무엇이 멈추고 무엇이 남는지 먼저 말한다 */
+.st-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--rc-line); border-radius: 10px; padding: 10px 12px; background: var(--rc-ground); }
+.st-confirm p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--rc-soft); }
+.st-confirm-b { display: flex; gap: 6px; }
+.st-hintline.warn { color: var(--rc-err); }
+
+/* 더 붙일 수 있는 것 — 문장 아래 한 묶음. 문단 사이에 끼우면 산문이 끊긴다 */
+.ap-adds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; padding-top: 14px; }
+.ap-adds > div { display: contents; }
+/* 알약에서 펼친 폼은 한 줄을 통째로 쓴다 */
+.ap-adds .ap-inline { flex: 1 0 100%; margin-top: 6px; }
+
+/* 쓸 수 있는 기능 — 상태 한 줄이 먼저, 칩은 고치겠다고 할 때만 */
+.st-verbs, .st-persona { display: flex; flex-direction: column; gap: 6px; }
+/* 제목 줄 — 라벨 왼쪽, 버튼 오른쪽. 높이를 고정해 카드 안의 세로 리듬이 흔들리지 않게 한다 */
+.st-verbs-h, .st-persona-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.st-verbs-s { margin: 0; font-size: 13px; color: var(--rc-ink); }
+.st-verbs-g { margin: 4px 0 0; font-size: 11.5px; color: var(--rc-faint); }
+.st-verbl { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 1px;
+  border: 1px solid var(--rc-line); border-radius: 10px; background: var(--rc-ground); }
+.st-verbl-r { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  border: none; background: none; padding: 5px 8px; border-radius: 7px; cursor: pointer; font: inherit; color: inherit; }
+.st-verbl-r:hover:not(:disabled) { background: var(--rc-hover); }
+.st-verbl-r:disabled { cursor: default; }
+.st-verbl-c { flex: none; width: 13px; font-size: 12px; color: var(--rc-accent-strong); }
+.st-verbl-t { flex: 1; min-width: 0; font: 400 13px/1.5 var(--rc-sans); color: var(--rc-ink); }
+.st-verbl-r[aria-pressed="false"] .st-verbl-t { color: var(--rc-faint); }
+.st-verbl-i { flex: none; font: 400 11px var(--rc-mono); color: var(--rc-faint); }
+
+/* 성격과 역할 — 문이 아니라 글. 앞 몇 줄로 "이게 뭐 하는 애인지" 를 먼저 알아본다 */
+.st-persona-t { margin: 0; font-size: 13px; line-height: 1.65; color: var(--rc-soft);
+  border: 1px solid var(--rc-line); border-radius: 10px; padding: 10px 12px; background: var(--rc-ground);
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* 접힌 상태의 기능 미리보기 — 개수만으로는 무엇을 할 수 있나가 안 보인다 */
+.st-verbs-p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--rc-faint); }
+
+/* 카드 안의 라벨 — 폼(.st-field > label)과 같은 무게. 엔진 카드가 이것을 쓴다 */
+.ap-lab { font-size: 12px; font-weight: 500; color: var(--rc-soft); }
+/* 붙었지만 아직 적용 전 — 꺼진 것이 아니라 "아직" 이다. 점선으로 구분한다(covered 와 같은 관용구) */
+.st-pick.pending { border-style: dashed; color: var(--rc-faint); background: none; }
+
+/* 목록 행 오른쪽의 빼기 — 고르는 자리와 **떨어져** 있어야 한다. 칩 반쪽으로 붙어 있을 때는
+   고르려다 빼는 일이 났다. 손이 갈 때만 보인다 */
+.st-verbl li { display: flex; align-items: center; gap: 2px; }
+.st-verbl li > .st-verbl-r { flex: 1; min-width: 0; }
+.st-verbl-x { flex: none; border: none; background: none; width: 26px; height: 26px; border-radius: 7px;
+  font-size: 15px; line-height: 1; color: var(--rc-faint); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.st-verbl li:hover .st-verbl-x, .st-verbl-x:focus-visible { opacity: 1; }
+.st-verbl-x:hover { color: var(--rc-err); background: var(--rc-hover); }
+.st-verbl-x:disabled { opacity: .4; cursor: progress; }
+.st-verbl-r[aria-pressed="true"] .st-verbl-t { font-weight: 600; }
+
+
+/* 성격 글의 첫 줄 — 이 에이전트가 자기를 말하는 문장. 문장 블록보다 옅게 두어 서두로 읽힌다 */
+.ap-lead { display: block; width: 100%; text-align: left; border: none; background: none; padding: 0 2px 10px;
+  font: 400 13px/1.65 var(--rc-sans); color: var(--rc-soft); cursor: pointer;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ap-lead:hover, .ap-lead[aria-expanded="true"] { color: var(--rc-accent-strong); }

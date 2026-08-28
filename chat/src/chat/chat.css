@@ -1,4 +1,4 @@
-/* relay-chat — builder-ux 프로토타입 룩 (teal 억양 · 쿨그레이 램프 · 흰 카드 rounded-xl).
+/* relay-chat — 중립 램프(neutral) · 흰 카드 rounded-xl. 포인트 색은 파랑 하나(--rc-link)뿐이고,
    작업 스텝은 카드 박스가 아니라 "조용한 타임라인"(아이콘 + 헤어라인 커넥터 + 옅은 라벨)로,
    내레이션 산문은 진한 잉크로 대비시킨다. Self-contained — 인트라넷 iframe/전체 페이지/씬클라
    side pane 어디서든 단독 동작. */
@@ -11,6 +11,7 @@
   --rc-faint: #a3a3a3;
   --rc-line: #e5e5e5;
   --rc-line-soft: #f0f0f0;
+  --rc-line-strong: #d4d4d4;     /* neutral-300 — 스크롤 썸처럼 선보다 한 칸 진해야 하는 자리 */
   --rc-ground: #fafafa;
   --rc-hover: #f5f5f5;
   --rc-accent: #262626;          /* neutral-800 — shadcn 프리셋 b1Z5aAfsu(neutral) primary */
@@ -18,8 +19,13 @@
   --rc-accent-soft: rgba(0, 0, 0, 0.06);
   --rc-ok: #059669;              /* emerald-600 */
   --rc-ok-bg: #d1fae5;           /* emerald-100 */
-  --rc-err: #c0392b;
-  --rc-err-bg: #fdf2f1;
+  --rc-warn: #b45309;            /* amber-700 — 경고는 글자색만, 채움 없음 */
+  /* 빨강은 하나다 — shadcn destructive(tw.css)를 그대로 빌린다. 과거엔 #c0392b(플랫UI)·
+     #dc2626·#b3352b·#d65745 넷이 각자 살았다(2026-08-27 정리). --rc-danger 는 옛 별칭. */
+  --rc-err: var(--destructive);
+  --rc-err-bg: #fef2f2;          /* red-50 */
+  --rc-err-line: #fecaca;        /* red-200 */
+  --rc-danger: var(--rc-err);
   /* 누를 수 있는 글자 하나만 쓰는 색 — 본문 잉크와 확실히 갈리게(피드백 2026-08-27:
      "누를 수 있는 텍스트는 색이 다르거나 티가 났으면"). 포인트 색은 이 파랑 하나다. */
   --rc-link: #2563eb;            /* blue-600 */
@@ -87,63 +93,21 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
   flex: 0 0 auto;
 }
 .rc-head .rc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-ok); flex: 0 0 auto; }
-.rc-head .rc-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 턴 실행 중엔 teal 펄스(livedot) — 전역 "일하는 중" 신호 */
+
+/* 턴 실행 중엔 잉크 펄스(livedot) — 전역 "일하는 중" 신호 */
 .rc-head .rc-dot.rc-dot-run { background: var(--rc-accent); animation: rc-pulse 1.8s ease-out infinite; }
 
-/* ── 헤더: 연결 상태 표시 + 대화 전환 (agent-package-layout.md §4) ─────────── */
-/* 도킹 바인딩의 스레드 키(param) 배지 — 에이전트 이름 옆 */
-.rc-head .rc-head-param {
-  flex: 0 1 auto; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; font-weight: 600; color: var(--rc-accent-strong);
-  background: var(--rc-accent-soft); border-radius: 6px; padding: 2px 7px;
-}
 .rc-head .rc-head-sp { flex: 1 1 auto; }
 /* 헤더 아이콘 버튼(대화 목록·접기) — 텍스트 톤, hover 램프 */
 /* 헤더 버튼은 shadcn Button(ghost·icon-xs) — 여기선 색과 flex 만. hover 배경은 변형이 칠한다 */
 .rc-head .rc-head-btn { color: var(--rc-faint); cursor: pointer; flex: 0 0 auto; }
 .rc-head .rc-head-btn:hover { color: var(--rc-soft); }
 .rc-sess { position: relative; flex: 0 0 auto; }
-.rc-sess-item {
-  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-  border: none; background: transparent; cursor: pointer; border-radius: 7px;
-  padding: 7px 9px; font-size: 12.5px; color: var(--rc-ink);
-}
-.rc-sess-item:hover { background: var(--rc-hover); }
-.rc-sess-item.on { font-weight: 600; background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
-.rc-sess-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-sess-time { flex: 0 0 auto; font-size: 11px; color: var(--rc-faint); font-variant-numeric: tabular-nums; }
-.rc-sess-new {
-  width: 100%; justify-content: flex-start; text-align: left; cursor: pointer; height: auto;
-  margin-top: 2px; padding: 7px 9px; font-size: 12.5px; font-weight: 600;
-  color: var(--rc-accent-strong); border-top: 1px solid var(--rc-line);
-  border-radius: 0 0 7px 7px;
-}
-.rc-sess-new:hover { background: var(--rc-accent-soft); }
-.rc-sess-note { padding: 8px 9px; font-size: 11.5px; color: var(--rc-faint); }
-.rc-sess-err { color: var(--rc-danger, #dc2626); }
-
-/* 행 hover 액션(이름변경·삭제) — 평소엔 숨기고 hover/focus 시 노출(VS Code 세션 목록 패리티) */
-.rc-sess-acts { display: none; flex: 0 0 auto; gap: 2px; align-items: center; }
-.rc-sess-item:hover .rc-sess-acts,
-.rc-sess-item:focus-within .rc-sess-acts { display: inline-flex; }
-.rc-sess-item:hover .rc-sess-time,
-.rc-sess-item:focus-within .rc-sess-time { display: none; } /* 시간 자리를 액션이 대체 — 행 폭 유지 */
-/* 행 액션은 shadcn Button(ghost) — 색만 */
-.rc-sess-act { cursor: pointer; color: var(--rc-faint); }
-.rc-sess-act:hover { color: var(--rc-soft); }
-.rc-sess-danger { color: var(--rc-danger, #dc2626); font-weight: 600; line-height: 1.2; }
-.rc-sess-danger:hover { background: rgba(220, 38, 38, 0.08); color: var(--rc-danger, #dc2626); }
-
-/* 이름 편집 행 — 인라인 input(Enter=저장, Esc=취소) */
-.rc-sess-edit { cursor: default; }
-.rc-sess-input { flex: 1 1 auto; min-width: 0; font-size: 12.5px; }
-.rc-sess-confirm { cursor: default; }
 
 
 /* ── running status — 턴 내내 살아있는 내레이션 한 줄 ────────────────────── */
 .rc-running-tx { font-weight: 500; animation: rc-running-shimmer 1.6s ease-in-out infinite; font-variant-numeric: tabular-nums; }
-/* 라이브 토큰 티커 — 생성 중 ↓(teal), 업로드 단계 ↑(회색). 숫자 폭 고정으로 떨림 방지 */
+/* 라이브 토큰 티커 — 생성 중 ↓(잉크), 업로드 단계 ↑(회색). 숫자 폭 고정으로 떨림 방지 */
 .rc-running-tok {
   font-size: 11px; font-weight: 600; color: var(--rc-accent);
   font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -161,33 +125,18 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   padding: 18px 16px 0; display: flex; flex-direction: column; gap: 18px;
 }
-.rc-log::-webkit-scrollbar { width: 10px; }
-.rc-log::-webkit-scrollbar-thumb { background: #dfe2e6; border-radius: 6px; border: 3px solid var(--rc-bg); }
-
+/* 막대 자리는 늘 비워 둔다 — 첫 메시지가 넘치는 순간 글이 10px 밀리지 않게.
+   막대 얼굴 자체는 아래 '스크롤바' 절이 위젯 전체에 한 번에 준다. */
+.rc-log { scrollbar-gutter: stable; }
 
 /* ── 빈 시작 화면 + 스타터 칩 ────────────────────────────────────────────── */
 .rc-empty-ic { font-size: 24px; color: var(--rc-accent); opacity: 0.75; }
 .rc-empty-t { font-size: 14px; font-weight: 500; color: var(--rc-soft); }
-.rc-starter { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 2px; max-width: 340px; }
-.rc-starter-chip {
-  border: 1px solid var(--rc-line); background: var(--rc-bg); border-radius: 999px;
-  padding: 5px 12px; font: 12px var(--rc-mono); color: var(--rc-soft); cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-.rc-starter-chip:hover { color: var(--rc-accent); border-color: color-mix(in srgb, var(--rc-accent) 40%, transparent); background: var(--rc-accent-soft); }
 
 /* ── messages ────────────────────────────────────────────────────────────── */
 .rc-msg { display: flex; flex-direction: column; gap: 8px; max-width: 100%; animation: rc-rise 0.18s ease-out; }
 .rc-user { align-items: flex-end; }
-/* wake 재진입 칩 — 주입 프롬프트(기계 자기지시)를 말풍선 대신 시스템 이벤트로 표시 */
-.rc-wake { align-items: center; }
-.rc-wake-chip {
-  font-size: 12px; color: var(--rc-faint);
-  background: var(--rc-ground); border: 1px solid var(--rc-line, rgba(128,128,128,.18));
-  border-radius: 999px; padding: 3px 12px; max-width: 90%;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.rc-wake-time { opacity: .8; }
+/* wake 재진입 눈금은 shadcn Marker(separator)가 그린다 — Messages.tsx. 여기엔 규칙이 없다 */
 /* 첨부 이미지는 썸네일 크기로 */
 .rc-log img, .rc-msg img, .rc-md img {
   max-width: 260px; max-height: 280px; width: auto; height: auto;
@@ -223,21 +172,10 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
 /* 스트리밍 중 blinking caret — 마지막 블록 끝에 */
 .rc-md.rc-streaming > :last-child::after {
   content: ""; display: inline-block; width: 2px; height: 1em;
-  background: rgba(22, 24, 27, 0.6); margin-left: 2px; vertical-align: -0.15em;
+  background: var(--rc-accent); margin-left: 2px; vertical-align: -0.15em;
   animation: rc-blink 0.9s step-end infinite;
 }
 
-/* per-turn usage footer */
-.rc-meta { display: flex; gap: 10px; align-items: center; font-size: 11px; color: var(--rc-faint); padding-top: 2px; }
-.rc-meta span { white-space: nowrap; }
-.rc-meta span + span::before { content: "·"; margin-right: 10px; color: var(--rc-line); }
-
-/* ── 턴 종료 상태 칩 — 완료 / 중지됨 / 오류 / 미완료(끊김) ───────────────── */
-/* 실행 모델 배지 — 이 턴이 실제로 돈 모델(툴팁 = 원본 id·effort) */
-.rc-ts-model {
-  padding: 1px 6px; border: 1px solid var(--rc-line); border-radius: 999px;
-  font: 10px/1.4 var(--rc-sans); font-weight: 600; color: var(--rc-faint); white-space: nowrap;
-}
 
 /* ── 스텝 타임라인 (레퍼런스: 보더리스, 아이콘 + 커넥터 + 옅은 라벨) ─────── */
 .rc-step { position: relative; }
@@ -261,7 +199,7 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
   white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow: auto;
   color: var(--rc-soft);
 }
-.rc-step-res { color: #3d444d; }
+.rc-step-res { color: var(--rc-ink); }
 /* Thought 행 — 사고는 이탤릭 회색으로 */
 .rc-think-tx { font-size: 12.5px; line-height: 1.55; color: var(--rc-faint); font-style: italic; white-space: pre-wrap; word-break: break-word; border-left-color: var(--rc-line-soft); }
 /* 스트리밍 중 사고 미리보기 — 꼬리 3줄 클램프, 옅은 이탤릭(다음 스텝에서 접힌 행으로 수렴) */
@@ -288,27 +226,50 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
 /* 입력 카드는 shadcn InputGroup(Composer.tsx) — 테두리·포커스 링·줄 배치는 유틸리티가 진다.
    슬래시/@ 목록은 Popover+Command, 모델은 DropdownMenu — body 포털이라 여기 자리 규칙이 없다. */
 /* 포털된 팝오버·메뉴의 포지셔너(z-50)를 도킹 패널(.rc-float-dock, z 2147483000 — main.tsx) 위로.
-   포지셔너는 ui 컴포넌트가 클래스를 고정해 파일 쪽에서 못 올리므로 :has 로 그 상자를 집는다. */
-div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-content"]), div:has(> [data-slot="dropdown-menu-sub-content"]) { z-index: 2147483001; }
+   포지셔너는 ui 컴포넌트가 클래스를 고정해 파일 쪽에서 못 올리므로 :has 로 그 상자를 집는다.
+   body 로 포털되는 상자는 **하나도 빠짐없이** 여기 적어야 한다 — 빠지면 열리긴 하는데 패널 뒤라
+   사람 눈에는 "안 뜬다"로 보인다(실사고 2026-08-27: 탭 우클릭 메뉴가 이 목록에 없었다). */
+div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-content"]), div:has(> [data-slot="dropdown-menu-sub-content"]),
+div:has(> [data-slot="context-menu-content"]), div:has(> [data-slot="context-menu-sub-content"]), div:has(> [data-slot="tooltip-content"]) { z-index: 2147483001; }
+/* ── 스크롤바 — 위젯 안의 모든 막대가 한 얼굴 ─────────────────────────────
+   떠 있는 판이든 대화 로그든 규칙은 하나다: 트랙은 그리지 않고, 판에 손이 닿는 동안만 알약이 뜬다
+   (macOS 오버레이 방식 — ScrollArea 의 얹힌 막대와 같은 결). 상시 서 있는 회색 기둥은 내용보다
+   먼저 눈에 띈다(실사고 2026-08-28: 상대 고르기 메뉴의 기둥, 대화 로그의 기본 회색 막대).
+   webkit 의사요소만 쓴다: Chrome 은 scrollbar-width/-color 가 하나라도 있으면 의사요소를 통째로
+   무시한다 — 그래서 위젯 안에서는 scrollbar-thin 류 유틸리티를 붙이지 않는다.
+   위젯이 만든 노드에만 — .rc-tw 안으로 가둔다(호스트 문서의 막대는 건드리지 않는다). */
+:is(.rc-tw, .rc-tw *)::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(.rc-tw, .rc-tw *)::-webkit-scrollbar-track { background: transparent; }
+/* 알약은 안쪽으로 3px 물러나 앉는다(투명 테두리 + content-box) — 둥근 모서리와 글자를 비껴간다 */
+:is(.rc-tw, .rc-tw *)::-webkit-scrollbar-thumb {
+  background: transparent; border: 3px solid transparent; border-radius: 999px; background-clip: content-box;
+}
+:is(.rc-tw, .rc-tw *):hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rc-ink) 22%, transparent); background-clip: content-box;
+}
+/* 스트리밍을 따라 스스로 흐르는 동안에는 뜨지 않는다 — 사람이 미는 스크롤만 막대를 부른다 */
+:is(.rc-tw, .rc-tw *)[data-autoscrolling]:hover::-webkit-scrollbar-thumb { background: transparent; }
+/* webkit 의사요소가 없는 브라우저(Firefox)만 표준 속성으로 같은 결을 낸다 */
+@supports not selector(::-webkit-scrollbar) {
+  :is(.rc-tw, .rc-tw *) { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  :is(.rc-tw, .rc-tw *):hover { scrollbar-color: color-mix(in srgb, var(--rc-ink) 22%, transparent) transparent; }
+}
 /* 다이얼로그(z-50)도 같은 이유로 — 콘솔·위젯 어느 쪽이 띄우든 모달은 도킹 패널 위에 서야 한다.
-   실사고(2026-08-27): 스튜디오 '이전 판으로' 가 패널 뒤로 잘렸다. 배경막도 함께 올려 패널까지 가린다 */
-[data-slot="dialog-overlay"], [data-slot="dialog-content"] { z-index: 2147483001; }
+   실사고(2026-08-27): 스튜디오 '이전 판으로' 가 패널 뒤로 잘렸다. 배경막도 함께 올려 패널까지 가린다.
+
+   [data-slot] 을 한 번 더 적는 이유(2026-08-28): 이 규칙은 **써 놓고도 한 번도 이긴 적이 없다**.
+   특이성이 유틸리티 .z-50 과 같아(0,1,0) 순서로 겨루는데, 번들에서 유틸리티가 뒤에 온다 —
+   그래서 모달은 계속 z-50 으로 서서 도킹 패널(2147483000)과 패키지 탑바 아래에 깔렸다.
+   위 팝오버 규칙이 멀쩡한 건 `div:has(…)` 라 특이성이 한 칸 높아서지 순서 덕이 아니다.
+   값도 2147483003 으로 올린다: 패키지 화면 탑바가 2147483002 로 도크 위까지 뻗기 때문에
+   (globals.css .pane.pkg > .pane-head) 2147483001 로는 탑바를 못 덮는다 — 모달이 화면
+   일부만 가리면 배경막이 반쯤 칠하다 만 것처럼 보인다. */
+[data-slot="dialog-overlay"][data-slot], [data-slot="dialog-content"][data-slot] { z-index: 2147483003; }
 
 /* 모델 버튼의 자리 — 진행 중 턴 안내(.rc-model-notice)가 이 상자를 기준으로 뜬다 */
 .rc-model { position: relative; display: inline-flex; align-items: center; color: var(--rc-faint); }
 .rc-save-err { margin-left: 5px; color: var(--rc-err); font-weight: 600; }
-.rc-model-menu {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; min-width: 150px;
-  padding: 4px; border: 1px solid var(--rc-line); border-radius: 10px;
-  background: var(--rc-bg); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
-  display: flex; flex-direction: column; gap: 1px;
-}
-.rc-model-item {
-  text-align: left; padding: 6px 9px; font: 12px/1.2 var(--rc-sans); color: var(--rc-ink);
-  background: none; border: 0; border-radius: 7px; cursor: pointer; white-space: nowrap;
-}
-.rc-model-item:hover { background: var(--rc-hover); }
-.rc-model-item.on { font-weight: 600; background: var(--rc-accent-soft); color: var(--rc-accent-strong); }
+
 .rc-model-loading { opacity: 0.5; pointer-events: none; }
 /* 체크 아이콘(Trace.CheckIcon) — 공용 */
 .rc-pick-check { flex: none; color: var(--rc-accent-strong); }
@@ -332,11 +293,11 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
   width: 12px; height: 12px; border-radius: 50%;
   background:
     radial-gradient(closest-side, var(--rc-bg) 55%, transparent 56%),
-    conic-gradient(currentColor var(--rc-ctx-pct, 0%), rgba(152, 161, 170, 0.25) 0);
+    conic-gradient(currentColor var(--rc-ctx-pct, 0%), var(--rc-line) 0);
 }
 .rc-ctx-lb { font-weight: 600; }
-.rc-ctx.warm { color: #c9a44a; }
-.rc-ctx.hot { color: #d65745; }
+.rc-ctx.warm { color: var(--rc-warn); }
+.rc-ctx.hot { color: var(--rc-err); }
 .rc-ctx-wrap { position: relative; display: inline-flex; }
 .rc-ctx-tip {
   position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 40;
@@ -382,11 +343,11 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 /* 첨부 거절/실패 인라인 배너 — sandbox 에서 alert 가 무음 증발하는 자리의 대체 */
 .rc-att-error {
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; border: 1px solid #f0c8c4; border-radius: 8px;
-  background: #fdf1f0; color: #b3352b;
+  padding: 6px 8px; border: 1px solid var(--rc-err-line); border-radius: 8px;
+  background: var(--rc-err-bg); color: var(--rc-err);
 }
 .rc-att-error-tx { flex: 1; min-width: 0; font: 12px/1.4 var(--rc-sans); word-break: break-all; }
-.rc-att-error-x { flex: 0 0 auto; cursor: pointer; color: #b3352b; font-size: 15px; }
+.rc-att-error-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-err); font-size: 15px; }
 
 /* drag-and-drop overlay */
 .rc-drop {
@@ -403,63 +364,10 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
   .rc-md.rc-streaming > :last-child::after { animation: none; }
 }
 
-/* ── 다중 대화 탭 스트립(인트라넷) ───────────────────────────────────────── */
-.rc-app { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--rc-bg); }
-.rc-app > .rc-root { flex: 1 1 auto; min-height: 0; height: auto; }
 
-.rc-strip {
-  display: flex; align-items: stretch; flex: 0 0 auto; height: 34px; padding: 0 4px;
-  border-bottom: 1px solid var(--rc-line); background: var(--rc-bg);
-  overflow-x: auto; overflow-y: hidden;
-}
-.rc-strip::-webkit-scrollbar { height: 0; }
 .rc-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 190px; }
-.rc-tab-btn, .rc-tab-syn {
-  display: flex; align-items: center; gap: 6px; max-width: 175px; height: 34px;
-  background: none; border: 0; cursor: pointer; padding: 0 8px;
-  font: 12px var(--rc-sans); color: var(--rc-faint); white-space: nowrap;
-}
-.rc-tab-btn:hover, .rc-tab-syn:hover { color: var(--rc-soft); }
-.rc-tab .rc-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rc-faint); flex: 0 0 auto; }
-.rc-tab .rc-tab-lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-tab.on { border-bottom: 2px solid var(--rc-accent); margin-bottom: -1px; }
-.rc-tab.on .rc-tab-btn { color: var(--rc-accent); font-weight: 600; }
-.rc-tab.on .rc-tab-dot { background: var(--rc-accent); }
-.rc-tab-x {
-  background: none; border: 0; cursor: pointer; color: var(--rc-faint);
-  font-size: 11px; padding: 0 6px 0 0; line-height: 1; opacity: 0.55;
-}
-.rc-tab-x:hover { opacity: 1; color: var(--rc-err); }
-.rc-tab-edit {
-  border: 1px solid var(--rc-accent); border-radius: 6px; padding: 1px 6px; margin: 0 4px; width: 120px;
-  font: 12px var(--rc-sans); color: var(--rc-ink); background: var(--rc-bg); outline: none;
-}
-.rc-strip-add { position: relative; display: flex; align-items: center; flex: 0 0 auto; }
-.rc-strip-plus {
-  background: none; border: 0; cursor: pointer; color: var(--rc-faint);
-  font-size: 16px; line-height: 1; padding: 0 8px; height: 34px;
-}
-.rc-strip-plus:hover { color: var(--rc-accent); }
-.rc-strip-menu {
-  position: absolute; top: 34px; right: 0; z-index: 30; min-width: 180px; max-height: 280px; overflow-y: auto;
-  background: var(--rc-bg); border: 1px solid var(--rc-line); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); padding: 4px;
-}
-.rc-strip-item {
-  display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
-  padding: 7px 10px; border-radius: 7px; font: 12.5px var(--rc-sans); color: var(--rc-ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.rc-strip-item:hover { background: var(--rc-hover); }
-.rc-strip-sep { height: 1px; background: var(--rc-line); margin: 4px 6px; }
 
-/* ── 대화함(전 인스턴스) — rc-sess-menu 재사용 + 출처 칩 ── */
-.rc-inbox-src {
-  flex-shrink: 0; font-size: 10px; font-weight: 650; line-height: 1.6;
-  padding: 0 6px; border-radius: 9999px; max-width: 96px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background: rgba(22,24,29,.07); color: rgba(22,24,29,.65);
-}
+.rc-tab.on { border-bottom: 2px solid var(--rc-accent); margin-bottom: -1px; }
 
 /* ── 헤더 대상 칩(지금 누구와 말하는가) ── */
 .rc-head-target { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; }
@@ -514,11 +422,7 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 /* 뱃지: unread=안 본 결과 점(여기, 정지) · ask 는 shadcn Badge(ChatTabs.tsx). 실행 중엔 뱃지 없음. */
 .rc-desk-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
 .rc-desk-badge.unread { width: 7px; height: 7px; border-radius: 50%; background: var(--rc-accent); }
-.rc-desk-add {
-  border: 0; background: none; color: var(--rc-soft); cursor: pointer; font-size: 18px; line-height: 1;
-  padding: 0 12px; height: 100%;
-}
-.rc-desk-add:hover { background: var(--rc-hover); color: var(--rc-ink); }
+
 /* 화면 토글은 shadcn Button(ghost) — 여기엔 켜짐 강조색과 아래 휴대폰 폭 숨김만 남는다. */
 .rc-desk-viewtoggle.on { color: var(--rc-accent-strong); }
 /* 보관함 피커는 shadcn Popover + Item(ChatTabs.tsx InboxPicker) — 여기엔 룰이 없다. */
@@ -529,7 +433,7 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 .rc-desk-pane .rc-root { height: 100%; }
 .rc-desk-view { min-width: 0; background: var(--rc-ground); }
 .rc-desk-view iframe { width: 100%; height: 100%; border: 0; display: block; }
-/* 드래그 구분선 — 6px 히트영역, 가운데 1px 헤어라인(hover/drag 시 teal 2px) */
+/* 드래그 구분선 — 6px 히트영역, 가운데 1px 헤어라인(hover/drag 시 잉크 2px) */
 .rc-desk-resizer { flex: 0 0 6px; cursor: col-resize; position: relative; background: transparent; z-index: 5; }
 .rc-desk-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--rc-line); }
 .rc-desk-resizer:hover::after { background: var(--rc-accent); width: 2px; }
@@ -538,15 +442,12 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 .rc-desk-body.dragging iframe { pointer-events: none; }
 .rc-desk-body.dragging .rc-desk-resizer::after { background: var(--rc-accent); width: 2px; }
 .rc-desk-empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--rc-soft); position: relative; }
-/* ── 휴대폰 폭 — desk 우측 뷰 패널은 공간이 없어 접고 그 토글도 함께 숨긴다.
-   전송/취소/첨부 버튼은 터치 타깃 기준(≥40px)까지 살짝 키운다. ── */
+/* ── 휴대폰 폭 — desk 우측 뷰 패널은 공간이 없어 접고 그 토글도 함께 숨긴다. ── */
 @media (max-width: 720px) {
   .rc-desk-view { display: none; }
   .rc-desk-viewtoggle { display: none; }
-  .rc-send, .rc-cancel, .rc-attach { width: 36px; height: 36px; }
-  /* 작은 아이콘 버튼도 터치 타깃 승격 — 첨부 제거·대기 취소·헤더 버튼.
-     (탭 닫기 × 는 겹쳐 뜨는 absolute 라 여기서 display 를 건드리면 항상 보이고 자리가 틀어진다 — 제외.) */
-  .rc-att-x, .rc-queued-x, .rc-head-btn {
+  /* 헤더 아이콘 버튼은 터치 타깃(≥32px)으로 승격 */
+  .rc-head-btn {
     min-width: 32px; min-height: 32px;
     display: inline-flex; align-items: center; justify-content: center;
   }
@@ -554,17 +455,11 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 
 /* ── 터치 기기(hover 없음) — hover 전용 상호작용을 상시/탭 도달 가능으로 승격 ── */
 @media (hover: none) {
-  /* 대화 목록 액션(이름변경·삭제) — hover 로만 나타나면 터치에서 영구 도달 불가. */
-  .rc-sess-acts { display: inline-flex; }
-  .rc-sess-time { display: none; }
   /* 스텝 타임라인 펼침 카랫 — 펼칠 수 있다는 발견성만이라도 상시 노출. */
   .rc-step-caret { opacity: 0.6; }
   /* 컨텍스트 미터 — 첫 탭은 툴팁만(armed), 둘째 탭이 compact(Chat.tsx 2-탭 가드와 짝). */
   .rc-ctx-wrap.rc-armed .rc-ctx-tip { display: flex; }
-  /* Effort 5단 — 작은 점으로는 옆 단계를 오탭한다. 히트영역만 키우고 시각은 유지. */
-  .rc-effort-step { min-width: 28px; min-height: 32px; }
 }
-
 
 /* 마크다운 넓은 표 — 표 자체가 가로 스크롤을 갖고, 로그 전체는 가로 고정. */
 .rc-md table { display: block; overflow-x: auto; max-width: 100%; }
@@ -583,8 +478,6 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rc-tabs-crumb-name:hover { background: var(--rc-hover); }
-/* 도킹 변형 — 탭 바가 좁아 화면 토글은 숨고(뷰는 이미 옆), 탭 최대폭 축소 */
-.rc-tabs-dock .rc-desk-tab { max-width: 200px; }
 
 /* ── 탭 DnD 순서 이동 · 우클릭 메뉴 · 채팅 2분할(탭 그룹) ─────────────────── */
 .rc-desk-tab.drag { opacity: .45; }
@@ -595,7 +488,7 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 /* 그룹 헤드 — [‹][탭 스트립][›] 한 묶음. 폭은 인라인(flex-basis %)이 정한다. */
 .rc-tab-ghead { display: flex; align-items: stretch; min-width: 0; }
 /* overflow 좌우 이동 화살표(‹ ›)는 shadcn Button(ghost·icon-xs) — 넘칠 때만 TabStrip 이 그린다. */
-/* 분할 시 비포커스 그룹의 활성 탭 — teal 대신 옅은 밑줄(어느 그룹이 입력 대상인지 구분) */
+/* 분할 시 비포커스 그룹의 활성 탭 — 잉크 대신 옅은 밑줄(어느 그룹이 입력 대상인지 구분) */
 .rc-tabs-split .rc-tab-ghead:not(.focus) .rc-desk-tab.on { box-shadow: inset 0 -2px 0 var(--rc-faint); font-weight: 500; }
 /* 그룹 경계 정렬 스페이서(헤드·크럼 행) — 본문 스플리터(6px)와 같은 자리에 헤어라인 */
 .rc-ghead-gap { flex: 0 0 6px; position: relative; }
@@ -611,4 +504,9 @@ div:has(> [data-slot="popover-content"]), div:has(> [data-slot="dropdown-menu-co
 /* ── 사용자 메시지 첨부 — 가로 칩 행 + 클릭 라이트박스 ────────────────────── */
 
 /* 예시 칩은 shadcn Button(outline·xs·rounded-full) — 새로고침 칩의 옅은 색만 */
-.rc-empty-more { color: var(--rc-faint, #8a939c); }
+.rc-empty-more { color: var(--rc-faint); }
+
+/* 홈 바닥 폭 — 이 아래로는 줄이지 않고 문서가 가로로 스크롤한다.
+   창을 좁히면 620px 칼럼이 끝없이 눌려 글자가 한두 자씩 끊겼다(2026-08-28).
+   휴대폰은 대상이 아니다(2026-08-28 판단) — 바닥은 데스크톱에서 창을 끌어 줄일 때의 하한이다. */
+.rc-home { min-width: 320px; }

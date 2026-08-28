@@ -361,12 +361,12 @@ function faultDoc(title: string, body: string, hint?: string): string {
  :root{color-scheme:light dark}
  body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;
       font:14px/1.7 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;
-      background:#f5f6f7;color:#16181b;padding:28px;box-sizing:border-box}
+      background:#fafafa;color:#171717;padding:28px;box-sizing:border-box}
  main{max-width:460px;text-align:center}
  h1{margin:0 0 10px;font-size:15px;font-weight:600}
- p{margin:0 0 8px;font-size:13px;color:#5c6570}
- code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#eef0f2;border-radius:5px;padding:2px 6px}
- @media (prefers-color-scheme:dark){body{background:#14181b;color:#e8ecef}p{color:#9aa5ad}code{background:#232c31}}
+ p{margin:0 0 8px;font-size:13px;color:#737373}
+ code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;border-radius:5px;padding:2px 6px}
+ @media (prefers-color-scheme:dark){body{background:#171717;color:#e5e5e5}p{color:#a3a3a3}code{background:#262626}}
 </style></head><body><main>
 <h1>${esc(title)}</h1><p>${esc(body)}</p>${hint ? `<p><code>${esc(hint)}</code></p>` : ""}
 </main></body></html>`;
@@ -620,9 +620,9 @@ function chatFallbackDoc(pkg: string, m: Manifest, api: string, fav: string, dra
   return injectShell(`<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="${esc(fav)}">
-<title>${esc(m.display_name ?? pkg)}${draft ? " · 고친 판" : ""}</title>
+<title>${esc(m.display_name ?? pkg)}${draft ? " · 작업 사본" : ""}</title>
 <link rel="stylesheet" href="/assets/chat-app.css">
-<style>html,body{height:100%;margin:0;background:#f5f6f7}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
+<style>html,body{height:100%;margin:0;background:#fafafa}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
 </head><body><div id="chat"></div>
 ${viewContextTag(pkg, api, draft)}<script>window.RELAY_CHAT_MANUAL=1;</script>
 <script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
@@ -673,7 +673,7 @@ function serveViewFile(file: string, mount: ViewMount, res: http.ServerResponse)
     res.writeHead(500, { "content-type": MIME[".html"], "cache-control": "no-store" });
     return void res.end(injectShell(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>view 판정 실패: ${esc(pkg)}</title>
-<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
+<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f5f5f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
 </head><body>
 <h1>이 화면은 자기 자산을 데몬 루트로 가리킵니다</h1>
 <p>발행물이 <code>${esc(base)}</code> 접두사 없이 구워져, 아래 자산이 서빙되지 않습니다:</p>
@@ -693,7 +693,7 @@ function serveViewFile(file: string, mount: ViewMount, res: http.ServerResponse)
     res.writeHead(503, { "content-type": MIME[".html"], "cache-control": "no-store" });
     return void res.end(injectShell(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>다른 좌표로 구워진 발행물: ${esc(pkg)}</title>
-<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f2f3f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
+<style>body{font:14px/1.7 ui-monospace,monospace;margin:40px auto;max-width:760px;color:#111}code{background:#f5f5f5;padding:1px 4px;border-radius:3px}li{margin:2px 0}</style>
 </head><body>
 <h1>이 발행물은 다른 자리에서 구워졌습니다</h1>
 <p>지금 보고 있는 자리는 <code>${esc(mount.base)}</code> 인데, 문서가 부르는 자산은 다른 마운트를 가리킵니다:</p>

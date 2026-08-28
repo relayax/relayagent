@@ -6,7 +6,7 @@ import { loadModule } from "./_load.mjs";
 const m = await loadModule("home-model.ts");
 const item = (o) => ({ pkg: "p", label: "P", description: "", version: "1", icon: null, face: "view", faces: ["view"], href: "/", view: null, detail: "/", resident: false, ring0: false, error: null, update: null, editing: false, ...o });
 
-test("todoOf — 수정 중·새 판·오류만 남고 멀쩡한 앱은 빠진다", () => {
+test("todoOf — 수정 중·새 버전·오류만 남고 멀쩡한 앱은 빠진다", () => {
   const items = [item({ pkg: "ok" }), item({ pkg: "ed", editing: true }), item({ pkg: "up", update: "2.0" }), item({ pkg: "er", error: "x" })];
   assert.deepEqual(m.todoOf(items).map((i) => i.pkg), ["ed", "up", "er"]);
   assert.equal(m.updateCount(items), 1);
@@ -23,7 +23,7 @@ test("examplesAt — 묶음이 끝에서 처음으로 돌고 음수도 안전", 
 test("문구 — 아바타 글자·초안 한 줄·빈 상태", () => {
   assert.equal(m.initialOf("  relay"), "R");
   assert.equal(m.initialOf(""), "?");
-  assert.equal(m.draftLine(0), "첫 판 기록됨 · 아직 적용 전");
+  assert.equal(m.draftLine(0), "첫 버전 만듦 · 아직 적용 전");
   assert.equal(m.draftLine(4), "바뀐 파일 4개");
   assert.equal(m.describe("설명을 적어 주세요."), null);
   assert.equal(m.describe("  "), null);
@@ -39,9 +39,9 @@ test("splitDrafts — 바뀐 파일 0 인 초안은 빈 초안으로 따로", ()
   assert.deepEqual(r.empty.map((x) => x.name), ["a", "c"]);
 });
 
-test("cardAction — 오류 > 새 판 > 수정 중 순으로 칩·버튼·목적지가 하나씩", () => {
-  assert.deepEqual(m.cardAction(item({ editing: true, detail: "/d" }), null), { status: "editing", chip: "수정 중", label: "수정", href: "/d" });
-  assert.deepEqual(m.cardAction(item({ editing: true, update: "2.0", detail: "/d" }), "/lib"), { status: "update", chip: "새 판 2.0", label: "업데이트", href: "/lib" });
+test("cardAction — 오류 > 새 버전 > 수정 중 순으로 칩·버튼·목적지가 하나씩(수정 중은 칩 없음)", () => {
+  assert.deepEqual(m.cardAction(item({ editing: true, detail: "/d" }), null), { status: "editing", chip: null, label: "수정", href: "/d" });
+  assert.deepEqual(m.cardAction(item({ editing: true, update: "2.0", detail: "/d" }), "/lib"), { status: "update", chip: "새 버전 2.0", label: "업데이트", href: "/lib" });
   assert.equal(m.cardAction(item({ update: "2.0", detail: "/d" }), null).href, "/d");
   assert.equal(m.cardAction(item({ error: "x", update: "2.0", detail: "/d" }), "/lib").status, "error");
 });

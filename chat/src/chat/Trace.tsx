@@ -369,8 +369,8 @@ export function TurnStatusChip() {
     : kind === "error" ? (hasContent ? "오류로 중단됨" : "응답을 만들지 못했어요")
     : "응답이 끊겼어요";
   const tone = kind === "cancel" ? "text-foreground/70"
-    : kind === "error" ? "text-[#d65745] font-medium"
-    : "text-[#c9a44a] font-medium";
+    : kind === "error" ? "text-[var(--rc-err)] font-medium"
+    : "text-[var(--rc-warn)] font-medium";
   // 실패·끊김에는 바로 다시 보낼 길을 붙인다 — 같은 메시지를 새 가지로 재실행한다(assistant-ui reload).
   // 스레드가 실행 중이거나 마지막 메시지가 아니면 프리미티브가 스스로 비활성화한다.
   // 라이브에서 끊긴 턴(meta.turnId 있음)은 같은 reload 가 재전송이 아니라 재관찰로 간다(runtime _cutTurns) —

@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { DownloadIcon, FileTextIcon, ImageIcon, TriangleAlertIcon } from "lucide-react";
-import { fileDownloadUrl } from "./runtime";
+import { fileDownloadUrl, IMAGE_NAME_RE } from "./runtime";
 import { useRelayCtx } from "./ctx";
 import { resultText, fmtSize, type AnyPart } from "./parts";
 import {
@@ -15,10 +15,10 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 
-/** 파일명으로 미디어 아이콘 고르기 — 이미지 확장자면 ImageIcon, 나머지는 문서 아이콘. */
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic)$/i;
+/** 파일명으로 미디어 아이콘 고르기 — 이미지 확장자면 ImageIcon, 나머지는 문서 아이콘.
+ *  잣대(IMAGE_NAME_RE)는 이력 재생과 공유한다 — 한쪽만 바꾸면 재생된 첨부와 아이콘이 갈린다. */
 function FileIcon({ name }: { name: string }) {
-  return IMAGE_EXT.test(name) ? <ImageIcon /> : <FileTextIcon />;
+  return IMAGE_NAME_RE.test(name) ? <ImageIcon /> : <FileTextIcon />;
 }
 
 /** 다운로드 한 장 — 카드 전체가 다운로드 링크(AttachmentTrigger 가 `<a download>` 로 렌더).
@@ -114,21 +114,20 @@ export function StageFiles({ paths }: { paths: readonly string[] }) {
 /** 사용자 메시지의 이미지 파트(+저작 시 실은 filename 확장) — 첨부 칩·라이트박스가 소비. */
 export type UserImagePart = { type: "image"; image: string; filename?: string };
 
-/** 첨부 이미지 칩 — [썸네일][파일명][실측 W×H]. 클릭 = 라이트박스(크게 보기). */
+/** 첨부 이미지 칩 — [썸네일][파일명] 한 줄. 클릭 = 라이트박스(크게 보기).
+ *  실측 W×H 는 칩에서 뺐다(2026-08-28): "하하" 한 마디에 두 줄짜리 칩이 붙으면 첨부가 말보다
+ *  무거워 보인다. 치수는 크게 보기에서만 — 거기선 실제로 궁금한 정보다. */
 export function AttOpenChip({ part, onOpen }: { part: UserImagePart; onOpen: () => void }) {
-  const [dim, setDim] = useState("");
   const name = part.filename || "image";
   return (
     <Attachment size="xs" className="max-w-[240px] min-w-0 cursor-zoom-in">
       <AttachmentMedia variant="image">
         {/* 전역 .rc-bubble img(260px 썸네일 규칙)가 이기지 못하게 크기는 인라인으로 못 박는다 */}
         <img src={part.image} alt="" aria-hidden
-             style={{ width: "100%", height: "100%", maxWidth: "none", maxHeight: "none", objectFit: "cover", borderRadius: 0 }}
-             onLoad={(e) => { const im = e.currentTarget; if (im.naturalWidth) setDim(im.naturalWidth + "×" + im.naturalHeight); }} />
+             style={{ width: "100%", height: "100%", maxWidth: "none", maxHeight: "none", objectFit: "cover", borderRadius: 0 }} />
       </AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle>{name}</AttachmentTitle>
-        {dim && <AttachmentDescription>{dim}</AttachmentDescription>}
       </AttachmentContent>
       <AttachmentTrigger onClick={onOpen} title={(part.filename || "이미지") + " — 클릭해서 크게 보기"} aria-label={(part.filename || "이미지") + " 크게 보기"} />
     </Attachment>
@@ -137,17 +136,34 @@ export function AttOpenChip({ part, onOpen }: { part: UserImagePart; onOpen: () 
 
 /** 이미지 라이트박스 — Dialog(body 포털). 우상단 X·배경 클릭·Escape 닫기는 Dialog 가 맡는다.
  *  마운트 = 열림(Messages 가 조건부로 그린다) — 닫힘 신호만 onClose 로 올린다.
- *  Dialog 의 배경은 옅은 블러라 캡션·닫기 버튼은 스스로 어두운 바탕을 깐다. */
+ *
+ *  두 가지를 라이트박스에서만 다르게 잡는다(2026-08-28):
+ *  ① 뒷배경은 짙게(overlayClassName) — 전역 dialog 의 bg-black/10 은 흰 화면 위에서 거의 티가
+ *     안 나, 53×68 같은 작은 첨부를 열면 "모달"이 아니라 화면 한복판에 떠 있는 흰 조각으로 읽혔다.
+ *  ② 최소 240×240 + object-contain — 원본 크기 그대로 띄우면 작은 이미지는 손톱만 하게 뜬다.
+ *     contain 이라 작은 건 비율 유지한 채 키우고, 큰 건 예전대로 원본/뷰포트 상한을 따른다. */
 export function ImageLightbox({ src, name, onClose }: { src: string; name?: string; onClose: () => void }) {
+  const [dim, setDim] = useState("");
+  // border-0 인 이유: 위젯 CSS 가 body 로 포탈되는 팝업(popover·dropdown·tooltip·dialog)에
+  // `border: 1px solid` 를 준다(preflight 를 안 싣는 대가 — 색은 currentColor). 배경이 있는
+  // 창에선 평범한 테두리지만, 배경 없는 이 창에선 사진과 캡션을 두르는 **검은 사각 선**으로
+  // 남는다(2026-08-28). 전역 규칙은 다른 팝업이 쓰므로 여기서만 끈다.
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="flex w-auto max-w-[min(1400px,94vw)] flex-col items-center gap-2 bg-transparent p-0 ring-0 shadow-none sm:max-w-[min(1400px,94vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:right-2 [&_[data-slot=dialog-close]]:rounded-full [&_[data-slot=dialog-close]]:bg-black/55 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/75"
+        overlayClassName="bg-black/55"
+        className="flex w-auto max-w-[min(1400px,94vw)] flex-col items-center gap-2 border-0 bg-transparent p-0 ring-0 shadow-none sm:max-w-[min(1400px,94vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:right-2 [&_[data-slot=dialog-close]]:rounded-full [&_[data-slot=dialog-close]]:bg-black/55 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/75"
         aria-label={name || "이미지 크게 보기"}
       >
         <DialogTitle className="sr-only">{name || "이미지 크게 보기"}</DialogTitle>
-        <img src={src} alt={name || ""} className="block h-auto max-h-[86vh] w-auto max-w-full rounded-[10px] bg-white shadow-[0_12px_48px_rgba(0,0,0,0.5)]" />
-        {name && <div className="max-w-[90vw] truncate rounded-full bg-black/60 px-3 py-1 text-xs text-white">{name}</div>}
+        <img src={src} alt={name || ""}
+             onLoad={(e) => { const im = e.currentTarget; if (im.naturalWidth) setDim(im.naturalWidth + "×" + im.naturalHeight); }}
+             className="block h-auto max-h-[86vh] w-auto max-w-full min-h-[240px] min-w-[240px] rounded-[10px] bg-white object-contain shadow-[0_12px_48px_rgba(0,0,0,0.5)]" />
+        {(name || dim) && (
+          <div className="max-w-[90vw] truncate rounded-full bg-black/60 px-3 py-1 text-xs text-white">
+            {name}{dim ? <span className="text-white/60">{name ? " · " : ""}{dim}</span> : null}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

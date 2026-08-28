@@ -41,8 +41,11 @@ function MessageScrollerViewport({
   return (
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
+      // 막대 얼굴은 여기서 정하지 않는다 — chat.css 의 '스크롤바' 절이 위젯 전체에 한 번에 준다.
+      // scrollbar-* 유틸리티(scrollbar-width/-color)를 붙이면 Chrome 이 그 절의 webkit 의사요소를
+      // 통째로 무시하고 기본 회색 막대를 상시 그린다(실사고 2026-08-28). 자리 비움(gutter)만 CSS 쪽에.
       className={cn(
-        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent",
+        "size-full min-h-0 min-w-0 scroll-fade-b overflow-y-auto overscroll-contain contain-content",
         className
       )}
       {...props}

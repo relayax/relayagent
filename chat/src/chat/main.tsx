@@ -29,7 +29,7 @@ import { getCtx, injectedCoords, type RelayCtx } from "./runtime";
 import "./tw.css";
 import "./chat.css";
 
-const errStyle = "padding:16px;color:#c0392b;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word";
+const errStyle = "padding:16px;color:var(--rc-err,#dc2626);font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { err: unknown }> {
   state = { err: null as unknown };
@@ -38,7 +38,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { err: unknown }>
   render() {
     if (this.state.err) {
       const e = this.state.err as any;
-      return <pre style={{ padding: 16, color: "#c0392b", font: "12px/1.5 ui-monospace,Menlo,monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{"relay-chat 렌더 오류:\n" + String(e?.stack || e?.message || e)}</pre>;
+      return <pre style={{ padding: 16, color: "var(--rc-err, #dc2626)", font: "12px/1.5 ui-monospace,Menlo,monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{"relay-chat 렌더 오류:\n" + String(e?.stack || e?.message || e)}</pre>;
     }
     return this.props.children;
   }
@@ -121,14 +121,17 @@ function boot() {
 // relayos 쌍둥이 크롬은 agent.tsx ChatChrome — 같은 wire 를 같은 규칙으로 착지한다.
 const FLOAT_CSS = `
 .rc-float-dock{position:fixed;right:20px;bottom:20px;z-index:2147483000}
-.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#0f766e);color:#fff;display:inline-flex;align-items:center;justify-content:center;padding:0;box-shadow:0 6px 20px rgba(0,0,0,.18)}
-.rc-float-fab:hover{background:var(--rc-accent-strong,#115e59)}
+.rc-float-fab{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;background:var(--rc-accent,#262626);color:#fff;display:inline-flex;align-items:center;justify-content:center;padding:0;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.rc-float-fab:hover{background:var(--rc-accent-strong,#171717)}
 .rc-float-dock.open .rc-float-fab{display:none}
-.rc-float-panel{position:fixed;top:var(--rc-dock-top,0px);right:0;bottom:0;width:var(--rc-dock-w,380px);max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e6e9ec);display:none;flex-direction:column;overflow:hidden}
+.rc-float-panel{position:fixed;top:var(--rc-dock-top,0px);right:0;bottom:0;width:var(--rc-dock-w,380px);max-width:96vw;background:var(--rc-bg,#fff);border-left:1px solid var(--rc-line,#e5e5e5);display:none;flex-direction:column;overflow:hidden}
 .rc-float-dock.open .rc-float-panel{display:flex}
-.rc-float-grip{position:fixed;top:var(--rc-dock-top,0px);bottom:0;right:calc(var(--rc-dock-w,380px) - 4px);width:8px;cursor:col-resize;z-index:2147483001;display:none}
+.rc-float-grip{position:fixed;top:var(--rc-dock-top,0px);bottom:0;right:calc(var(--rc-dock-w,380px) - 4px);width:8px;cursor:col-resize;z-index:2147483001;display:none;background:transparent}
 .rc-float-dock.open .rc-float-grip{display:block}
-.rc-float-grip:hover,.rc-float-grip.on{background:rgba(13,148,136,.25)}
+/* 잡는 자리는 8px 인데 보이는 건 경계선 한 줄뿐 — 데스크 리사이저(.rc-desk-resizer)와 같은 문법.
+   색은 중립 잉크다: 포인트 색(파랑)은 누를 수 있는 글자만 쓴다 */
+.rc-float-grip::after{content:"";position:absolute;top:0;bottom:0;left:3px;width:2px;background:transparent}
+.rc-float-grip:hover::after,.rc-float-grip.on::after{background:var(--rc-accent,#262626)}
 body.rc-resizing{cursor:col-resize;user-select:none}
 body.rc-resizing iframe{pointer-events:none}
 `;
@@ -173,8 +176,14 @@ function autoFloat() {
   document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
   const prevBodyWidth = document.body.style.width;
   const prevBodyTransition = document.body.style.transition;
+  /** 예약이 설 만한 폭인가 — 패널 폭의 두 배는 남아야 화면과 채팅이 나란히 앉는다.
+   *  그보다 좁으면 패널은 겹침으로 떨어진다. 그때는 예약 폭(--rc-dock-open-w)도 0 이어야 한다:
+   *  패키지 화면의 탑바가 그 값만큼 오른쪽으로 더 뻗는데(globals.css .pane.pkg > .pane-head),
+   *  예약이 없는 폭에서 뻗으면 문서가 도크 폭만큼 통째로 가로 스크롤한다(2026-08-28). */
+  const roomy = () => window.innerWidth > PANEL_W * 2;
   const reserve = (v: boolean, animate = true) => {
-    if (v && window.innerWidth > PANEL_W * 2) {
+    const on = v && roomy();
+    if (on) {
       document.body.style.transition = animate ? "width .18s ease" : "none";
       // body 의 margin-left(전역 사이드바가 :root --relay-side 로 민 폭)까지 빼야 나란히 선다 —
       // width 는 내용 폭이라 margin 을 모른 채 100% 를 재면 그만큼 패널 밑으로 들어간다
@@ -183,6 +192,8 @@ function autoFloat() {
       document.body.style.width = prevBodyWidth;
       document.body.style.transition = prevBodyTransition;
     }
+    // 페이지가 읽는 값 — 예약이 실제로 선 폭(겹침이거나 닫혔으면 0)
+    document.documentElement.style.setProperty("--rc-dock-open-w", on ? PANEL_W + "px" : "0px");
   };
   // getCtx 는 boot 시점 1회 — 주입 좌표(__RELAY_CONTEXT)는 번들 로드 전에 서 있다(§2-6).
   const ctx = getCtx();
@@ -213,15 +224,20 @@ function autoFloat() {
     dock.classList.toggle("open", v);
     reserve(v, animate);
     try { localStorage.setItem(OPEN_KEY, v ? "1" : "0"); } catch { /* 무시 */ }
-    // 페이지가 읽는 값 — 열린 도크의 폭(닫히면 0). 패키지 화면의 탑바가 이만큼 오른쪽으로 더 뻗어
-    // 도크 위를 덮는다(도크는 페이지가 준 --rc-dock-top 아래에서 시작한다)
-    document.documentElement.style.setProperty("--rc-dock-open-w", v ? PANEL_W + "px" : "0px");
     if (v && pendingScope && handle) {
       const req = pendingScope;
       pendingScope = null;
       handle.openTab(req);
     }
   };
+  // 창 폭이 바뀌면 예약을 다시 잰다 — 열 때 한 번만 재면, 넓은 창에서 열고 좁힌 화면은 예약을
+  // 그대로 들고 있어 본문 폭이 음수가 되고(가로 스크롤), 좁은 창에서 열고 넓힌 화면은 영영
+  // 겹침으로 남는다. 창을 끌어 줄이는 것이 데스크톱의 실제 사용이다(2026-08-28).
+  let resizeT: ReturnType<typeof setTimeout> | null = null;
+  window.addEventListener("resize", () => {
+    if (resizeT) clearTimeout(resizeT);
+    resizeT = setTimeout(() => { resizeT = null; reserve(opened, false); }, 120);
+  });
   fab.addEventListener("click", () => {
     ensureMounted();
     setOpen(!opened);
@@ -247,7 +263,6 @@ function autoFloat() {
     const move = (ev: PointerEvent) => {
       PANEL_W = Math.min(MAX_W, Math.max(MIN_W, Math.round(window.innerWidth - ev.clientX)));
       document.documentElement.style.setProperty("--rc-dock-w", PANEL_W + "px");
-      document.documentElement.style.setProperty("--rc-dock-open-w", PANEL_W + "px");
       reserve(true, false);
     };
     const up = () => {

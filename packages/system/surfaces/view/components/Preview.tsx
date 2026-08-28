@@ -80,7 +80,7 @@ function BuildButton({ ctx, onDone }: { ctx: PreviewCtx; onDone: () => void }) {
       variant="outline"
       size="sm"
       disabled={busy}
-      title="작업 사본의 화면을 미리보기용으로 만듭니다 — 돌아가는 판은 그대로입니다"
+      title="작업 사본의 화면을 미리보기용으로 만듭니다 — 돌아가는 버전은 그대로입니다"
       onClick={async () => {
         setBusy(true);
         try {
@@ -182,7 +182,7 @@ function MountPane({ ctx }: { ctx: PreviewCtx }) {
 <style>
   :root{color-scheme:light}
   body{margin:0;padding:14px;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;background:#fff;color:#16181b}
-  #err{white-space:pre-wrap;font:12px/1.6 ui-monospace,monospace;color:#c0392b;background:#fdf2f1;border-radius:8px;padding:10px}
+  #err{white-space:pre-wrap;font:12px/1.6 ui-monospace,monospace;color:var(--rc-err,#dc2626);background:var(--rc-err-bg,#fef2f2);border-radius:8px;padding:10px}
   #err:empty{display:none}
 </style>
 <div id="root"></div><div id="err"></div>
