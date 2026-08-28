@@ -795,8 +795,8 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
     // sessionPath 인 이유: 삭제가 살림을 먼저 만들면 안 된다(없는 세션의 삭제가 빈 디렉토리를 남긴다)
     removeSession: (pkg, slot) => fs.rmSync(sessionPath(pkg, slot), { recursive: true, force: true }),
 
-    harnessQuery: (pkg, verb, variant) => {
-      const r = harnessVerb(getLedger(), pkg, verb, variant);
+    harnessQuery: async (pkg, verb, variant) => {
+      const r = await harnessVerb(getLedger(), pkg, verb, variant);
       let value: unknown;
       try {
         value = JSON.parse(r.out);
@@ -806,7 +806,7 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
       return { ok: r.ok, value };
     },
 
-    harnessCapabilities: (pkg) => {
+    harnessCapabilities: async (pkg) => {
       const rec = getLedger().packages[pkg];
       if (!rec) return null;
       let m: Manifest;
@@ -828,14 +828,14 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
       if (hit && hit.mtime === mtime) return hit.caps;
       let caps: string[] = [];
       try {
-        const j = JSON.parse(harnessVerb(getLedger(), pkg, "info").out || "{}");
+        const j = JSON.parse((await harnessVerb(getLedger(), pkg, "info")).out || "{}");
         if (Array.isArray(j.capabilities)) caps = j.capabilities.filter((c: unknown): c is string => typeof c === "string");
       } catch { /* info 불달 — 어댑터 capability 없음으로 판정(선언 못 하는 것이 정직) */ }
       capsCache.set(entry, { mtime, caps });
       return caps;
     },
 
-    setHarnessConfig: (pkg, patch) => {
+    setHarnessConfig: async (pkg, patch) => {
       const l = getLedger();
       const rec = l.packages[pkg];
       if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
@@ -846,7 +846,7 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
       // 아무 말도 안 하면 다음 턴이 실패할 때까지 "왜 안 되지" 가 남는다(실사고: 네이티브
       // 바이너리가 빠진 codex 로 전환 → 무신호)
       if (patch.harness) {
-        const r = setHarness(l, pkg, patch.harness);
+        const r = await setHarness(l, pkg, patch.harness);
         ready = { ok: r.setup.ok, note: r.setup.out.split("\n").slice(0, 2).join(" · ") };
       }
       if ("model" in patch) rec.model = patch.model ?? undefined;

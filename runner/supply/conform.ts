@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { spawnEntrySync } from "../spawn.ts";
+import { runCommand, runEntry } from "../spawn.ts";
 import { loadManifest, type HarnessVariant } from "./manifest.ts";
 import type { Ledger } from "./ledger.ts";
 
@@ -22,16 +21,16 @@ const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "task
  * setup 은 실패해도(도구 미설치) 계약 위반이 아니다: 실패 시 사유를 내는지만 본다.
  * 세션 봉투 자체는 LLM 자격이 필요해 여기서 돌리지 않는다 — 조건부 검사는 추후 세션 스모크가 맡는다.
  */
-export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResult {
+export async function conformHarness(pkgPath: string, v: HarnessVariant): Promise<ConformResult> {
   // cwd 를 임시 무대로 옮기므로 entry 는 절대경로여야 한다
   const entry = path.resolve(pkgPath, v.source, v.entry);
   const checks: ConformResult["checks"] = [];
   // 오염 검사의 무대: 모든 동사를 임시 cwd 에서 돌리고 마지막에 잔여물을 본다
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
   const run = (args: string[], env?: NodeJS.ProcessEnv) =>
-    spawnEntrySync(entry, args, { encoding: "utf8", timeout: 20_000, cwd: tmp, ...(env ? { env } : {}) });
+    runEntry(entry, args, { timeout: 20_000, cwd: tmp, ...(env ? { env } : {}) });
 
-  const info = run(["info"]);
+  const info = await run(["info"]);
   let verbs: string[] = [];
   try {
     const j = JSON.parse(info.stdout || "");
@@ -59,7 +58,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
     checks.push({ verb: "info", ok: false, note: "JSON 아님 — {name, provider, verbs} 를 내야 합니다" });
   }
 
-  const setup = run(["setup"]);
+  const setup = await run(["setup"]);
   const setupOut = ((setup.stdout ?? "") + (setup.stderr ?? "")).trim();
   checks.push({
     verb: "setup",
@@ -67,7 +66,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
     note: setup.status === 0 ? "준비됨" : setupOut ? `미준비 사유를 냄: ${setupOut.split("\n")[0]}` : "실패했는데 사유가 없습니다 — 조용한 실패 금지",
   });
 
-  const models = run(["models"]);
+  const models = await run(["models"]);
   try {
     const arr = JSON.parse(models.stdout || "");
     const ok = Array.isArray(arr) && arr.length > 0 && arr.every((x) => typeof x === "string");
@@ -89,7 +88,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
     if (val == null || /(API_KEY|_TOKEN|SECRET|AUTHORIZATION|CREDENTIAL)/i.test(k)) continue;
     scrubbedEnv[k] = val;
   }
-  const scrub = run(["models"], scrubbedEnv);
+  const scrub = await run(["models"], scrubbedEnv);
   try {
     const arr = JSON.parse(scrub.stdout || "");
     const dated = Array.isArray(arr) ? arr.filter((x) => typeof x === "string" && /\d{8}/.test(x)) : [];
@@ -105,7 +104,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
     checks.push({ verb: "models(자격 스크럽)", ok: false, note: "자격 없이 JSON 배열이 아님" });
   }
 
-  const cmds = run(["commands"]);
+  const cmds = await run(["commands"]);
   try {
     const arr = JSON.parse(cmds.stdout || "");
     const ok = Array.isArray(arr) && arr.every((x) => x && typeof x.name === "string");
@@ -114,7 +113,7 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
     checks.push({ verb: "commands", ok: false, note: "JSON 배열이 아님 (없으면 [])" });
   }
 
-  const bogus = run(["__no_such_verb__"]);
+  const bogus = await run(["__no_such_verb__"]);
   checks.push({
     verb: "미지 동사",
     ok: bogus.status !== 0,
@@ -149,13 +148,12 @@ export function conformHarness(pkgPath: string, v: HarnessVariant): ConformResul
  * 어댑터는 외부 연결 없이 자기 서술 JSON 한 줄을 내고 0 으로 종료해야 한다.
  * 자격·네트워크가 필요한 착신·발신 왕복은 여기서 못 본다 — 리뷰와 스모크가 맡는다.
  */
-export function conformChannel(pkgPath: string, c: { name: string; source: string; entry: string }): ConformResult {
+export async function conformChannel(pkgPath: string, c: { name: string; source: string; entry: string }): Promise<ConformResult> {
   const entry = path.resolve(pkgPath, c.source, c.entry);
   const checks: ConformResult["checks"] = [];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
   // 채널 entry 는 하네스(실행 파일)와 달리 기판이 node 로 스폰하는 계약이다 — run.ts startChannels 와 동일 스폰
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", entry], {
-    encoding: "utf8",
+  const r = await runCommand(process.execPath, ["--experimental-strip-types", entry], {
     timeout: 15_000,
     cwd: tmp,
     env: { ...process.env, RELAY_CONFORM: "1", RELAY_NAME: "conform", RELAY_CHANNEL: c.name, RELAY_API: "http://127.0.0.1:0", RELAY_TOKEN: "conform" },
@@ -186,23 +184,22 @@ export function conformChannel(pkgPath: string, c: { name: string; source: strin
  * 돌려 {ok, note} 를 내는지 본다. 상주 프로세스는 건드리지 않는다 — throwaway 스폰이다.
  * 미구현 어댑터(검증 문 없이 상주로 흐름)는 15초 timeout 으로 판정 없음(null)으로 강등된다.
  */
-export function verifyChannel(
+export async function verifyChannel(
   pkgPath: string,
   c: { name: string; source: string; entry: string },
   cred: string | null,
-): { ok: boolean; note: string } {
+): Promise<{ ok: boolean; note: string }> {
   if (!cred) return { ok: false, note: "자격 없음 — 먼저 연결하세요" };
   const entry = path.resolve(pkgPath, c.source, c.entry);
   const credEnv = `RELAY_CRED_${c.name.toUpperCase().replace(/-/g, "_")}`;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-verify-"));
   try {
-    const r = spawnSync(process.execPath, ["--experimental-strip-types", entry], {
-      encoding: "utf8",
+    const r = await runCommand(process.execPath, ["--experimental-strip-types", entry], {
       timeout: 15_000,
       cwd: tmp,
       env: { ...process.env, RELAY_VERIFY: "1", RELAY_NAME: "verify", RELAY_CHANNEL: c.name, RELAY_API: "http://127.0.0.1:0", RELAY_TOKEN: "verify", [credEnv]: cred },
     });
-    if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+    if (r.timedOut) {
       return { ok: false, note: "검증 문(RELAY_VERIFY) 미구현 — 저장은 됐으나 유효 여부를 확인할 수 없습니다" };
     }
     const lines = String(r.stdout ?? "").trim().split("\n").filter(Boolean);
@@ -215,12 +212,12 @@ export function verifyChannel(
   }
 }
 
-export function conformPkg(ledger: Ledger, name: string): ConformResult[] {
+export async function conformPkg(ledger: Ledger, name: string): Promise<ConformResult[]> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  return [
+  return await Promise.all([
     ...(m.harness?.variants ?? []).map((v) => conformHarness(rec.path, v)),
     ...(m.surfaces?.channels ?? []).map((c) => conformChannel(rec.path, c)),
-  ];
+  ]);
 }

@@ -5,7 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { API_URL, RELAY_HOME, loadLedger, saveLedger, packagesPath, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
-import { spawnEntry, spawnEntrySync } from "../spawn.ts";
+import { spawnEntry, spawnEntrySync, runEntry } from "../spawn.ts";
 // 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
 import { verbLabels } from "./scripts.ts";
 import { binaryEnv } from "../supply/binaries.ts";
@@ -422,7 +422,7 @@ function trackAsk(key: string, event: string): void {
 
 // serve 선언 조회 — info 는 어댑터 프로세스 1회 비용이라 mtime 캐시로 어댑터당 한 번만 돈다
 const serveCache = new Map<string, { mtime: number; serves: boolean }>();
-function harnessServes(entry: string, envForInfo: NodeJS.ProcessEnv): boolean {
+async function harnessServes(entry: string, envForInfo: NodeJS.ProcessEnv): Promise<boolean> {
   let mtime: number;
   try {
     mtime = fs.statSync(entry).mtimeMs;
@@ -433,7 +433,7 @@ function harnessServes(entry: string, envForInfo: NodeJS.ProcessEnv): boolean {
   if (hit && hit.mtime === mtime) return hit.serves;
   let serves = false;
   try {
-    const r = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env: envForInfo });
+    const r = await runEntry(entry, ["info"], { timeout: 15_000, env: envForInfo });
     const j = JSON.parse(r.stdout || "{}");
     serves = Array.isArray(j.verbs) && j.verbs.includes("serve");
   } catch { /* info 불달 — 상주 없이 턴마다 프로세스로 */ }
@@ -894,7 +894,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     // (rec.* 만 보면 /model 로 바꾼 턴이 낡은 상주를 재사용해 조용히 옛 모델로 돈다)
     .update([tree, agent, variant.name, model ?? "", effort ?? "", cred, personaSig].join("\u0000"))
     .digest("hex").slice(0, 16);
-  const resident = !input.interactive && residentsEnabled && harnessServes(entry, env);
+  const resident = !input.interactive && residentsEnabled && (await harnessServes(entry, env));
 
   await authority.audit("sessions", { pkg: input.pkg, agent, slot, mode: input.interactive ? "tty" : resident ? "resident" : "auto" });
 
