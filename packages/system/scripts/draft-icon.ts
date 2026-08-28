@@ -46,7 +46,7 @@ export default async function (input: Input, ctx: any) {
 
   // relay.yaml 의 icon 선언 — 이미 있으면 그 경로에 쓰고, 없으면 name: 다음 줄에 앉힌다.
   // yaml 을 수입하지 않는다(동사는 의존이 없다는 계약, draft.ts openDraft 참조) — 최상위 한 줄만 다룬다
-  const manifest = ctx.host.draftRead(input.name, "relay.yaml") as { content: string; hash: string };
+  const manifest = (await ctx.host.draftRead(input.name, "relay.yaml")) as { content: string; hash: string };
   const lines = manifest.content.split("\n");
   let icon = "assets/icon.svg";
   const at = lines.findIndex((l) => /^icon:\s*\S/.test(l));
@@ -59,6 +59,6 @@ export default async function (input: Input, ctx: any) {
   }
   const files: Record<string, string> = { [icon]: svg };
   if (at < 0) files["relay.yaml"] = lines.join("\n");
-  const r = ctx.host.draftWrite(input.name, files, [], { "relay.yaml": manifest.hash });
+  const r = await ctx.host.draftWrite(input.name, files, [], { "relay.yaml": manifest.hash });
   return { ...(r as object), icon, emoji: input.emoji, glyph: file };
 }
