@@ -1,0 +1,38 @@
+<!--
+  연결 안내 배너 — 무빌드 화면(index.html)에 그대로 붙이는 조각.
+  화면은 키를 받지 않는다. 기판에 상태를 묻고, 없으면 그 기능 자리에 안내와 딥링크를 그린다.
+  딥링크는 /connect 하나다 — 콘솔 페이지 주소를 화면이 조립하지 않는다.
+-->
+<section id="stock">
+  <div id="connect-banner" hidden style="display:flex;gap:10px;align-items:center;padding:10px 12px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;font-size:13px">
+    <span aria-hidden="true">🔌</span>
+    <p style="margin:0;flex:1"></p>
+    <a style="font-weight:600;white-space:nowrap">연결하러 가기 →</a>
+  </div>
+  <input id="stockq" placeholder="스톡 검색어" />
+  <button id="stockbtn">스톡 담기</button>
+</section>
+
+<script type="module">
+  const ctx = window.__RELAY_CONTEXT;            // { base, root, instanceId } — 기판이 심는다
+  const banner = document.getElementById("connect-banner");
+  const btn = document.getElementById("stockbtn");
+
+  async function refresh() {
+    // 값은 오지 않는다 — hasCred·required·help 만. 자격이 필요 없는(kind none) 서비스는 늘 켜진 것으로 본다
+    const { services } = await (await fetch(`${ctx.base}/services`, { cache: "no-store" })).json();
+    const s = services.find((x) => x.name === "unsplash");
+    const missing = !!s && s.kind !== "none" && !s.hasCred;
+    banner.hidden = !missing;
+    if (missing) {
+      banner.querySelector("p").textContent = s.help?.note ?? `${s.name} 을 연결하면 이 기능이 켜집니다`;
+      banner.querySelector("a").href = `/connect?p=${encodeURIComponent(ctx.instanceId)}&s=${encodeURIComponent(s.name)}`;
+    }
+    // 선택 자격이면 기능을 끄지 않고 대체 경로(동사가 안다)로 두어도 된다. 필수면 버튼을 잠근다
+    btn.disabled = missing && s.required;
+  }
+
+  refresh();
+  // 연결 화면에서 잇고 돌아오면 다시 묻는다 — 신호는 없고, 다시 물어보면 된다
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+</script>
