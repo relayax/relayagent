@@ -59,7 +59,7 @@ relay install packages/system --ring0   # 以 ring-0 安装管理外壳
 relay daemon                          # API、服务、触发器、控制台
 ```
 
-守护进程监听 `http://127.0.0.1:4747`(端口可用 `RELAY_PORT` 更改)。控制台在 `/pkg/system/view/`,创作 playground 在 `/pkg/system/view/playground.html`。这个控制台本身就是 system 包的 view:基板上运行的第一件智能体软件。
+守护进程默认监听 `http://127.0.0.1:4747`(可用 `RELAY_PORT` 选择其他端口),并把端口写入 `RELAY_HOME/run/daemon.port`;CLI 跟随这条记录,因此检出只需知道 home。控制台在 `/pkg/system/view/`,创作 playground 在 `/pkg/system/view/playground.html`。这个控制台本身就是 system 包的 view:基板上运行的第一件智能体软件。
 
 与基板对话:
 
@@ -131,7 +131,8 @@ my-package/
 | `~/Relay/` | 可见的地面:默认 workspace(`~/Relay/<名称>`) |
 | `~/Relay/packages/<名称>/` | 编辑层:带 git 历史的工作副本(工作室与 agent-builder 写在这里)。创作是本产品的中心,因此它发生在人能打开的地方——正在运行的版本留在 `releases/`,手够不到。 |
 | `~/Relay/.stage/` | 聊天与会话之间的文件交换台 |
-| `.env`(检出根目录) | 实例设置:`RELAY_HOME`(默认 `~/.relay`)、`RELAY_PORT`(默认 4747)。shell 环境变量总是优先。参见 [.env.example](.env.example) |
+| `.env`(检出根目录) | 实例设置:`RELAY_HOME`(默认 `~/.relay`)、`RELAY_PORT`(仅在需要*选择*端口时 — CLI 跟随正在运行的守护进程)。shell 环境变量总是优先。参见 [.env.example](.env.example) |
+| `~/.relay/run/daemon.{pid,port}` | 正在运行的守护进程的 pid 与端口 — 启动时写入,CLI 跟随,关闭时删除 |
 | `127.0.0.1:4747` | 守护进程 API 与控制台(默认端口) |
 
 ## 贡献

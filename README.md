@@ -59,7 +59,7 @@ relay install packages/system --ring0   # the management shell, as ring-0
 relay daemon                          # API, services, triggers, console
 ```
 
-The daemon listens on `http://127.0.0.1:4747` (change with `RELAY_PORT`). The console lives at `/pkg/system/view/`, the authoring playground at `/pkg/system/view/playground.html`. That console is itself the system package's view: the first piece of agent software running on the substrate.
+The daemon listens on `http://127.0.0.1:4747` by default (`RELAY_PORT` picks another) and records its port in `RELAY_HOME/run/daemon.port`; the CLI follows that record, so a checkout only needs to know the home. The console lives at `/pkg/system/view/`, the authoring playground at `/pkg/system/view/playground.html`. That console is itself the system package's view: the first piece of agent software running on the substrate.
 
 Talk to the substrate:
 
@@ -131,7 +131,8 @@ At the root of these six principles sits one premise: **everything can be expres
 | `~/Relay/` | visible ground: default workspaces (`~/Relay/<name>`) |
 | `~/Relay/packages/<name>/` | edit layer: git-backed working copies (the Studio and agent-builder write here). Authoring is the point of this product, so it happens where you can open it — the running edition stays in `releases/`, out of reach. |
 | `~/Relay/.stage/` | file exchange stage between chat and sessions |
-| `.env` (checkout root) | instance settings: `RELAY_HOME` (default `~/.relay`), `RELAY_PORT` (default 4747). Real shell env always wins. See [.env.example](.env.example) |
+| `.env` (checkout root) | instance settings: `RELAY_HOME` (default `~/.relay`), `RELAY_PORT` (only to *choose* a port — the CLI follows the running daemon). Real shell env always wins. See [.env.example](.env.example) |
+| `~/.relay/run/daemon.{pid,port}` | the running daemon's pid and port — written at start, followed by the CLI, removed at shutdown |
 | `127.0.0.1:4747` | daemon API and console (default port) |
 
 ## Contributing

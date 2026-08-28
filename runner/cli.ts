@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, workspacePath } from "./supply/ledger.ts";
+import { API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, workspacePath, homeId, runningDaemonPort } from "./supply/ledger.ts";
 import { installPkg, removePkg, validateDir, registryData } from "./supply/install.ts";
 import { startDaemon } from "./daemon.ts";
 import { runSession } from "./runtime/harness.ts";
@@ -13,7 +13,34 @@ import { localAuthority } from "./authority.ts";
 
 const [, , cmd, ...args] = process.argv;
 
+/**
+ * 데몬에 넘길지 판정 — **같은 홈의 문**일 때만이다.
+ *
+ * 포트는 인스턴스의 정체가 아니라 홈의 부속이다(ledger.ts). 그래서 이 주소에 선 문이 내 홈의 것이라는
+ * 보장이 없다: 다른 홈의 기판이 그 포트를 잡고 있을 수 있고, 그때 넘기면 **남의 인스턴스에 설치·발행이
+ * 앉는다**. 문이 자기 홈을 말하므로(/instance) 한 번 물어 대조하고, 다르면 넘기지 않는다 —
+ * 부르는 쪽은 자기 홈의 장부에 직접 쓴다(그것이 이 명령의 대상이다).
+ *
+ * 답이 없으면(데몬 꺼짐) null 로 물러난다 — 종전과 같다.
+ */
+async function daemonHome(): Promise<{ ok: boolean; home?: string }> {
+  try {
+    const res = await fetch(API_URL + "/instance", { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return { ok: false };
+    const d = (await res.json()) as { home?: string };
+    return d.home === homeId() ? { ok: true } : { ok: false, home: d.home };
+  } catch {
+    return { ok: false }; // 데몬 꺼짐 · 구 데몬(/instance 없음) — 어느 쪽이든 넘기지 않는다
+  }
+}
+
 async function tryApi(path: string, body: unknown): Promise<unknown | null> {
+  const who = await daemonHome();
+  if (!who.ok) {
+    // 남의 홈이 그 포트를 잡고 있으면 조용히 지나치지 않는다 — 사람이 두 인스턴스를 헷갈린 자리다
+    if (who.home) console.error(`주의: ${API_URL} 은 다른 기판입니다(home ${who.home}). 이 명령은 내 홈(${RELAY_HOME})에 직접 적용합니다`);
+    return null;
+  }
   try {
     const res = await fetch(API_URL + path, {
       method: "POST",
@@ -199,6 +226,10 @@ async function main(): Promise<void> {
     }
 
     case "ls": {
+      // 어느 기판을 보고 있는가를 먼저 말한다 — 한 기계에 인스턴스가 둘일 수 있어(데스크톱과 체크아웃),
+      // 목록만 내면 "왜 화면에 없지" 가 된다. 포트는 홈의 기록을 따라간다(ledger.ts discoverApiPort)
+      const port = runningDaemonPort();
+      console.log(`기판: ${RELAY_HOME}\t${port ? `데몬 도는 중 http://127.0.0.1:${port}` : "데몬 꺼짐"}`);
       const data = registryData(ledger) as { packages: { name: string; manifest: { name: string; version: string } | null; workspace: string; ring: number | null; error: string | null }[]; grants: unknown[] };
       for (const p of data.packages) {
         console.log(`${p.name}\t${p.manifest ? `${p.manifest.name}@${p.manifest.version}` : "(판정 실패)"}\tworkspace=${p.workspace}${p.ring === 0 ? "\tring-0" : ""}${p.error ? "\t" + p.error : ""}`);

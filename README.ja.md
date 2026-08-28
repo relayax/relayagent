@@ -59,7 +59,7 @@ relay install packages/system --ring0   # 管理シェルを ring-0 で
 relay daemon                          # API、サービス、トリガー、コンソール
 ```
 
-デーモンは `http://127.0.0.1:4747` で待ち受けます(ポートは `RELAY_PORT` で変更)。コンソールは `/pkg/system/view/`、オーサリング playground は `/pkg/system/view/playground.html`。このコンソール自体が system パッケージの view です。基板の上で動く最初のエージェントソフトウェアというわけです。
+デーモンはデフォルトで `http://127.0.0.1:4747` を待ち受け(`RELAY_PORT` で別のポートを選べます)、自分のポートを `RELAY_HOME/run/daemon.port` に書きます。CLI はその記録に従うので、チェックアウトはホームだけ知っていれば済みます。コンソールは `/pkg/system/view/`、オーサリング playground は `/pkg/system/view/playground.html`。このコンソール自体が system パッケージの view です。基板の上で動く最初のエージェントソフトウェアというわけです。
 
 基板と話す:
 
@@ -131,7 +131,8 @@ my-package/
 | `~/Relay/` | 見える地面:デフォルト workspace(`~/Relay/<名前>`) |
 | `~/Relay/packages/<名前>/` | 編集レイヤー: git 履歴を持つ作業コピー(スタジオと agent-builder がここに書く)。オーサリングはこの製品の中心なので、人が開ける場所で行われる——動いている版は `releases/` に残り、手が届かない。 |
 | `~/Relay/.stage/` | チャットとセッションの間のファイル交換ステージ |
-| `.env`(チェックアウト直下) | インスタンス設定:`RELAY_HOME`(デフォルト `~/.relay`)、`RELAY_PORT`(デフォルト 4747)。シェルの環境変数が常に優先。[.env.example](.env.example) 参照 |
+| `.env`(チェックアウト直下) | インスタンス設定:`RELAY_HOME`(デフォルト `~/.relay`)、`RELAY_PORT`(ポートを*選ぶ*ときだけ — CLI は動いているデーモンに従う)。シェルの環境変数が常に優先。[.env.example](.env.example) 参照 |
+| `~/.relay/run/daemon.{pid,port}` | 動いているデーモンの pid とポート — 起動時に書き、CLI が従い、終了時に消す |
 | `127.0.0.1:4747` | デーモン API とコンソール(デフォルトポート) |
 
 ## コントリビュート
