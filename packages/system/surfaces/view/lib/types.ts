@@ -9,8 +9,6 @@ export interface AgentDecl {
   commands?: string;
   dispatch?: string[];
   scripts?: string[];
-  /** 세션에서 여는 폴더 — services[] 의 dir 선언 이름. 하나가 도구 넷이 된다. 미선언 = 안 보인다 */
-  dirs?: string[];
 }
 
 export interface ServiceDecl {
@@ -22,6 +20,7 @@ export interface ServiceDecl {
   source?: string;
   dockerfile?: string;
   entry?: string;
+  /** url 형 — 이 서버의 도구 중 다른 앱에 raw 로 빌려줄 수 있는 것(제공자 쪽 캡). 내 에이전트는 동사로만 쓴다 */
   tools?: string[];
   port?: number;
   disk?: string;
@@ -72,6 +71,9 @@ export interface EdgeDecl {
   mission?: string;
   /** 제공자의 자립 번들을 이 패키지 화면이 마운트한다 — true 만. tools·mission 과 배타 */
   components?: true;
+  /** tools 형에만. scripts-only(기본) = 빌리는 것은 제공자의 동사뿐. full = 제공자가 url 서비스 tools 에
+   *  열어 둔 raw 도구까지 이 앱의 세션에 선다(명시 opt-in, 고지서에 raw 로 표시) */
+  agent_access?: "scripts-only" | "full";
 }
 
 /** 자격 입력 칸 하나의 **형태** — 값이 아니다. 채널 credential.fields 와 서비스 auth.fields 가 같은 어휘를
@@ -163,5 +165,7 @@ export interface EdgeView {
   ref: string;
   tools?: string[];
   mission?: string;
+  /** 선언의 접근 축 — full 이면 raw 도구까지(화면이 raw 를 표시한다) */
+  agent_access?: "scripts-only" | "full";
   granted: boolean;
 }

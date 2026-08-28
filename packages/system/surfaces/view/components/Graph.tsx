@@ -32,6 +32,8 @@ interface Line {
   granted: boolean;
   tools?: string[];
   mission?: string;
+  /** 소비자가 raw 도구까지 선언했다(agent_access: full) — 지도가 라벨에 적는다 */
+  raw?: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -162,7 +164,7 @@ export default function Graph({
     const out: Line[] = [];
     for (const e of edges) {
       if (!e.provider || e.provider === e.consumer) continue;
-      out.push({ a: e.consumer, b: e.provider, k: e.mission ? "a2a" : "mcp", granted: e.granted, tools: e.tools, mission: e.mission });
+      out.push({ a: e.consumer, b: e.provider, k: e.mission ? "a2a" : "mcp", granted: e.granted, tools: e.tools, mission: e.mission, raw: e.agent_access === "full" });
     }
     for (const g of reg.grants) {
       if (g.consumer === g.provider) continue;
@@ -417,7 +419,7 @@ export default function Graph({
               const len = Math.hypot(x2 - x1, y2 - y1) || 1;
               const nx = (-(y2 - y1) / len) * pairOffsets[i];
               const ny = ((x2 - x1) / len) * pairOffsets[i];
-              const text = l.k === "a2a" ? `${l.mission} 위임` : `${(l.tools ?? [])[0] ?? "mcp"}${(l.tools?.length ?? 0) > 1 ? `+${l.tools!.length - 1}` : ""} 조회`;
+              const text = l.k === "a2a" ? `${l.mission} 위임` : `${(l.tools ?? [])[0] ?? "mcp"}${(l.tools?.length ?? 0) > 1 ? `+${l.tools!.length - 1}` : ""} 조회${l.raw ? " · raw" : ""}`;
               return (
                 <div
                   key={`lb${i}`}

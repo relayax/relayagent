@@ -119,3 +119,17 @@ test("describe — 동사 서술이 있으면 서술을 크게, 이름을 작게
   const rows = describe({}, { ...base, scripts: ["save", "list"], verbLabels: { save: "일기 저장" } });
   assert.deepEqual(byKey(rows, "verbs").items, [{ text: "일기 저장", sub: "save" }, { text: "list" }]);
 });
+
+test("describe — raw 도구까지 빌리는 edge 는 따로 말한다", () => {
+  const rows = describe({}, {
+    ...base,
+    edges: [
+      { consumer: "diary", provider: "erp", ref: "@local/erp", tools: ["search"], agent_access: "full", granted: true },
+      { consumer: "diary", provider: "calendar", ref: "@local/calendar", tools: ["list"], granted: true },
+    ],
+  });
+  assert.deepEqual(byKey(rows, "links").items, [
+    { text: "erp의 도구를 빌려 씀 (raw 도구까지)", sub: "search" },
+    { text: "calendar의 도구를 빌려 씀", sub: "list" },
+  ]);
+});

@@ -660,7 +660,7 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       {s.url != null ? (
         <>
           <Field label="원격 도구 주소" k="url" value={s.url} mono onCommit={(x) => ctx.apply((d) => set(d, p("url"), x))} />
-          <Field label="빌려 쓸 도구 (쉼표)" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
+          <Field label="남에게 raw 로 빌려줄 수 있는 도구 (쉼표)" hint="이 서버의 도구 중 다른 앱의 에이전트가 raw 로 만져도 되는 것. 내 에이전트는 이 도구를 직접 보지 않고 동사가 ctx.service(이름).call(도구, 인자) 로 감싸서 씁니다. 상대 앱은 edges 에 agent_access: full 을 선언해야 열립니다" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
           <AuthEditor idx={idx} s={s} ctx={ctx} />
         </>
       ) : s.api != null ? (
@@ -888,6 +888,7 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       d.deleteIn(["edges", idx, "tools"]);
       d.deleteIn(["edges", idx, "mission"]);
       d.deleteIn(["edges", idx, "components"]);
+      d.deleteIn(["edges", idx, "agent_access"]); // tools 형에만 있는 축 — 형이 바뀌면 같이 지운다
       if (k === "components") d.setIn(["edges", idx, "components"], true);
       else if (k === "mission") d.setIn(["edges", idx, "mission"], "");
       else d.setIn(["edges", idx, "tools"], []);
@@ -904,7 +905,30 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
         </select>
       </div>
       {kind === "tools" ? (
-        <Field label="빌려 쓸 기능 (쉼표)" k="tools" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+        <>
+          <Field label="빌려 쓸 기능 (쉼표)" k="tools" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${uid}-access`} className="text-xs text-muted-foreground">에이전트가 만지는 것</Label>
+            {/* raw 는 명시 opt-in — 기본(미선언)은 그 앱의 동사뿐이다. 미선언과 scripts-only 를 한 값으로
+                그린다: 문서에 기본값을 적어 두면 뜻은 같은데 diff 만 생긴다 */}
+            <select
+              id={`${uid}-access`}
+              value={e.agent_access === "full" ? "full" : "scripts-only"}
+              onChange={(ev) =>
+                ctx.apply((d) => {
+                  if (ev.target.value === "full") d.setIn(["edges", idx, "agent_access"], "full");
+                  else d.deleteIn(["edges", idx, "agent_access"]);
+                })
+              }
+            >
+              <option value="scripts-only">그 앱의 동사만 (기본)</option>
+              <option value="full">그 앱이 열어 둔 raw 도구까지 (full)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              raw 는 그 앱이 url 서비스의 tools 에 열어 둔 원격 MCP 도구를 내 에이전트가 직접 만지는 것입니다. 허락 화면에 raw 로 표시되고, 없으면 raw 전용 기능은 허락 자체가 거부됩니다.
+            </p>
+          </div>
+        </>
       ) : kind === "mission" ? (
         <Field label="맡길 일" k="mission" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
       ) : (

@@ -164,7 +164,7 @@ export default function ServiceConnect({
     <div className={`lv-in${busy ? " busy" : ""}`} style={{ flexDirection: "column", gap: 8 }}>
       {err ? <p className="text-sm text-destructive">{err}</p> : null}
       <p className="text-xs text-muted-foreground font-mono">{s.url}</p>
-      {s.tools.length ? <p className="text-xs text-muted-foreground">여는 동사: {s.tools.join(" · ")}</p> : null}
+      {s.tools.length ? <p className="text-xs text-muted-foreground">남에게 raw 로 빌려줄 수 있는 도구: {s.tools.join(" · ")}</p> : null}
 
       {s.kind === "token" && keyed
         ? s.fields!.map((f) => (

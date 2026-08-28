@@ -94,7 +94,7 @@ export function edgesData(reg: Registry): EdgeView[] {
       const granted = reg.grants.some(
         (g) => g.consumer === p.name && g.provider === provider && (e.mission ? g.mission === e.mission : true),
       );
-      out.push({ consumer: p.name, provider, ref: e.provider, tools: e.tools, mission: e.mission, granted });
+      out.push({ consumer: p.name, provider, ref: e.provider, tools: e.tools, mission: e.mission, agent_access: e.agent_access, granted });
     }
   }
   return out;

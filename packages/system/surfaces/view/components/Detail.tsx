@@ -168,6 +168,7 @@ export default function Detail({ pkg, edges, onChanged, onClose }: { pkg: Pkg; e
                 {e.ref}
                 {e.mission ? " · " + e.mission : ""}
                 {e.tools?.length ? " · " + e.tools.join(",") : ""}
+                {e.agent_access === "full" ? " · raw" : ""}
               </span>
               {e.granted ? (
                 <Badge variant="secondary">활성</Badge>

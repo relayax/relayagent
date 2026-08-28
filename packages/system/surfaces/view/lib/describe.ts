@@ -148,7 +148,10 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
     items: [
       ...(m.services ?? []).filter((s) => s.url != null || s.api != null).map((s) => ({ text: s.name, sub: s.url ?? s.api })),
       ...ctx.edges.map((e) => ({
-        text: e.mission ? `${ctx.labelOf(e.provider ?? e.ref)}에 일을 맡김` : `${ctx.labelOf(e.provider ?? e.ref)}의 도구를 빌려 씀`,
+        // raw 는 따로 말한다 — "빌렸다"와 "에이전트가 raw 로 만진다"는 고지가 갈라야 하는 두 사실이다
+        text: e.mission
+          ? `${ctx.labelOf(e.provider ?? e.ref)}에 일을 맡김`
+          : `${ctx.labelOf(e.provider ?? e.ref)}의 도구를 빌려 씀${e.agent_access === "full" ? " (raw 도구까지)" : ""}`,
         sub: e.mission ?? e.tools?.join(", "),
       })),
     ],
