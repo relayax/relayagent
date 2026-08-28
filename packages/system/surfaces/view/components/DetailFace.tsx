@@ -376,8 +376,9 @@ export default function DetailFace({
           ) : null}
         </AgentPanel>
 
+        {/* 한 소비자가 tools·components 두 선언으로 오면 edge 도 둘이다 — 앱 이름은 한 번만 */}
         {users.length ? (
-          <p className="hint">이 앱을 쓰는 앱: {users.map((e) => label(e.consumer)).join(", ")} — 지우면 함께 멈춥니다</p>
+          <p className="hint">이 앱을 쓰는 앱: {[...new Set(users.map((e) => e.consumer))].map(label).join(", ")} — 지우면 함께 멈춥니다</p>
         ) : null}
 
         {editing ? <DraftConsole draft={draft} nav={nav} /> : null}

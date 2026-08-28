@@ -42,8 +42,8 @@ export default async function (input: Input, ctx: any) {
 
   if (m) {
     // 스캐폴드는 새 이름에만. 있는 draft 나 설치본 위에 매니페스트를 덮으면 편집 이력이 증발한다
-    const drafts = ctx.host.draftList() as { name: string }[];
-    const installed = (ctx.host.registry() as any).packages.some((p: any) => p.name === input.name);
+    const drafts = (await ctx.host.draftList()) as { name: string }[];
+    const installed = ((await ctx.host.registry()) as any).packages.some((p: any) => p.name === input.name);
     if (drafts.some((d) => d.name === input.name) || installed) {
       throw new Error(`이미 있는 대상입니다: ${input.name} — manifest 없이 열어 draft-write 로 고치세요`);
     }
@@ -95,6 +95,6 @@ export default async function (input: Input, ctx: any) {
   }
 
   // relay.yaml 은 기판이 매니페스트 객체로부터 적는다 — 이 동사는 yaml 을 모른다
-  const opened = ctx.host.draftOpen(input.name, { files, seedHarness, ...(m ? { manifest: m } : {}) });
-  return { ...(opened as object), ...(ctx.host.draftRead(input.name) as object) };
+  const opened = await ctx.host.draftOpen(input.name, { files, seedHarness, ...(m ? { manifest: m } : {}) });
+  return { ...(opened as object), ...((await ctx.host.draftRead(input.name)) as object) };
 }
