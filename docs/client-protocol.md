@@ -271,7 +271,7 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
 ### 5.3 세션과 이력
 
 21. **[현행 v1]** `session.list` = `GET {base}/sessions`
-    → `{sessions: [{session, label, updated, archived, pinned, agent?, param?}]}`.
+    → `{sessions: [{session, label, updated, archived, pinned, agent?, param?, origin?}]}`.
     `agent`·`param`(additive, 2026-08-20) = 이 대화의 정체성 — 위임(agent_dispatch)이 만든
     세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 org param 축의 쌍둥이("빌더인데
     무엇의 빌더인가") — slug 목록(`[a-z0-9-]` csv, 쉼표 무공백)일 때만 목록으로 해석하고,
@@ -282,6 +282,12 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
     *왜 행에 싣나: 화면의 스레드 문법(`agent-<이름>:~<id>`)은 `:` `~` 를 쓰는데 기판 발급
     세션 id 는 그 문자를 실을 수 없는 기판이 있다(OSS 는 디렉토리명이다). 이름에 정체성을
     싣는 규약은 그래서 이식 불가였고, 메타가 정본이 된다.*
+    `origin`(additive, 2026-08-28) = **사람이 연 대화가 아닌, 기계가 판 슬롯**임을 밝힌다 —
+    `"dispatch"`(서브에이전트 위임 `agent_dispatch`) · `"mission"`(a2a 미션 수신). 사람이 연
+    대화는 이 필드가 없다. 판정 자체는 슬롯 문법(`sub-…`·`mission-…`)이지만 그건 기판 내부
+    어휘라(:22 — 세션 id 는 불투명) 클라이언트가 접두를 스니핑하면 안 되고, 판정 정본은
+    runner/protocol.ts `slotOrigin` 한 벌이다. 화면은 이 축으로 위임 세션을 사람의 대화와
+    같은 무게로 늘어놓는 대신 인스턴스 아래 접는다(보관함 피커 — 2026-08-28).
     정렬: 고정 우선, 그 안에서 최근순(runner/runtime/wire.ts:459 현행 유지). 라벨 우선순위
     (사용자 label > auto-label > 첫 발화, client-wire.ts:437-449)는 기판 내부 규칙이다 —
     클라이언트는 `label` 을 그대로 그린다.

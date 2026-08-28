@@ -9,12 +9,12 @@ import EditorPanel from "@/components/EditorPanel";
 import Palette from "@/components/Palette";
 import SectionView from "@/components/SectionView";
 import { Button } from "@/components/ui/button";
-import { approveGrant, callScript, removePkg } from "@/lib/api";
+import { approveGrant, callScript, removePkg, setHarnessActive } from "@/lib/api";
 import { describe, scriptNamesFromFiles, scriptNamesFromTree } from "@/lib/describe";
-import { creatable, type Creatable } from "@/lib/create";
+import { creatable, removeHarness, type Creatable } from "@/lib/create";
 import { landingAgent } from "@/lib/faces";
 import { SECTIONS } from "@/lib/sections";
-import { draftList } from "@/lib/studio";
+import { draftList, draftReadFile } from "@/lib/studio";
 import type { EdgeView, Pkg, Registry } from "@/lib/types";
 import { useDraft, type Nav, type View } from "@/lib/useDraft";
 
@@ -68,9 +68,6 @@ export default function DetailFace({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [palette, setPalette] = useState(false);
-  // 작업 사본이 있는지 아직 모르는 동안(첫 조회) 머리를 비워 둔다 — 여기서 무엇이든 그리면
-  // 이미 사본이 있는 패키지에서 버튼이 한 번 번쩍이고 [적용]로 갈린다
-  const [probed, setProbed] = useState(false);
   // [＋ 추가] 메뉴에서 고른 종류 — 팔레트가 이것의 질문으로 바로 연다
   const [pickedKind, setPickedKind] = useState<Creatable | null>(null);
   // 설치본의 동사 이름 — 설치본 트리에서. draft 가 열리면 draft 의 파일 목록이 대신한다
@@ -86,24 +83,45 @@ export default function DetailFace({
     return () => { on = false; };
   }, [pkg.name, editing, draft.rev]);
 
+  // 착지 에이전트의 성격 글 첫 줄 — 이 에이전트가 자기를 말하는 문장이다. 요약하지 않고 그대로 낸다
+  const [personaLead, setPersonaLead] = useState<string>("");
+  const personaFile = (m.agents ?? []).find((a) => a.name === landingAgent(m))?.persona;
+  useEffect(() => {
+    let on = true;
+    if (!editing || !personaFile) { setPersonaLead(""); return; }
+    void draftReadFile(pkg.name, personaFile)
+      .then((r) => {
+        if (!on) return;
+        // 성격 글은 **에이전트에게 하는 지시문**이라 2인칭이다("당신은 …입니다"). 그대로 내면
+        // 화면이 보는 사람에게 말을 거는 꼴이 된다. 그 첫 문장은 이름표일 뿐이라 걷고,
+        // 실제 서술이 시작되는 다음 문장부터 낸다(2026-08-28)
+        const body = (r.content ?? "")
+          .split("\n").map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#") && !l.startsWith("---"))
+          .join(" ")
+          .replace(/^당신은\s.*?입니다[.!]?\s*/, "")
+          .trim();
+        setPersonaLead(body.split(/(?<=[.!?])\s+/).slice(0, 2).join(" "));
+      })
+      .catch(() => { if (on) setPersonaLead(""); });
+    return () => { on = false; };
+  }, [pkg.name, personaFile, editing, draft.rev]);
+
   const label = useCallback((name: string) => reg.packages.find((p) => p.name === name)?.manifest?.display_name ?? name, [reg]);
 
   // 들어올 때: 초안이거나 이미 draft 가 있으면 연다. 없으면 설치본을 보여주고, 줄을 누를 때 연다
   useEffect(() => {
     let on = true;
-    setProbed(false);
     if (ghost) {
-      void draft.open().finally(() => { if (on) setProbed(true); });
+      void draft.open();
       return;
     }
     void draftList()
       .then((r) => {
         if (!on) return;
-        // 사본이 있으면 열린 뒤에야 안다 — 열기 전에 세우면 그 사이가 곧 번쩍임이다
-        if (r.drafts.some((d) => d.name === pkg.name)) return draft.open().finally(() => { if (on) setProbed(true); });
-        setProbed(true);
+        if (r.drafts.some((d) => d.name === pkg.name)) return draft.open();
       })
-      .catch(() => { if (on) setProbed(true); });
+      .catch(() => { /* 사본 목록을 못 읽으면 설치본을 보여준다 — 줄을 누르면 그때 연다 */ });
     void callScript<{ tree: string[] }>("pkg-read", { name: pkg.name })
       .then((r) => { if (on) setLiveScripts(scriptNamesFromTree(r.tree ?? [], pkg.manifest?.scripts?.source)); })
       .catch(() => { if (on) setLiveScripts([]); });
@@ -166,6 +184,23 @@ export default function DetailFace({
   // 항목·섹션 누름 — draft 가 없으면 열고 나서 간다(설치본 사본)
   // 엔진 칩 — 켜면 팔레트의 harness 레시피로 붙이고, 끄면 그 후보를 뺀다(어댑터 파일은 남는다)
   const [engineBusy, setEngineBusy] = useState(false);
+  // 지금 도는 엔진 — 장부의 값이라 작업 사본과 무관하다. 전환은 즉시 반영되므로 응답으로 앞선다
+  const [active, setActive] = useState<string | null>(pkg.harness);
+  useEffect(() => { setActive(pkg.harness); }, [pkg.harness]);
+  // 설치본에 선 엔진들 — 장부가 아는 이름만 활성으로 고를 수 있다(사본에만 있으면 적용이 먼저다)
+  const liveEngines = (pkg.manifest?.harness?.variants ?? []).map((v) => v.name);
+  // 장부에 고른 값이 없거나 그 이름이 사라졌으면 첫 변형이 돈다 — 실행이 그렇게 고른다
+  // (supply/manifest.ts activeHarness). 화면이 그 규칙을 모르면 "아무것도 안 켜진" 줄이 뜬다
+  const running = active && liveEngines.includes(active) ? active : liveEngines[0] ?? null;
+  const activateEngine = (name: string) => {
+    if (engineBusy || name === running) return;
+    setEngineBusy(true);
+    setError(null);
+    void setHarnessActive(pkg.name, name)
+      .then((r) => { setActive(r.active); onChanged(); })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setEngineBusy(false));
+  };
   const toggleEngine = (template: string) => {
     if (engineBusy) return;
     setEngineBusy(true);
@@ -174,8 +209,7 @@ export default function DetailFace({
       .then(() => {
         const ctx = draft.ctx;
         if (!ctx) throw new Error("작업 사본이 아직 없습니다");
-        const idx = (ctx.manifest.harness?.variants ?? []).findIndex((v) => v.name === template);
-        if (idx >= 0) { ctx.apply((d) => d.deleteIn(["harness", "variants", idx])); return; }
+        if ((ctx.manifest.harness?.variants ?? []).some((v) => v.name === template)) return removeHarness(ctx, template);
         return creatable("harness").make(ctx, template).then((made) => draft.onMade(made));
       })
       .catch(() => {})
@@ -221,7 +255,7 @@ export default function DetailFace({
                 </Button>
               </>
             ) : (
-              <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" type="button" onClick={() => setConfirming(true)} title="설치를 지웁니다 — 돌아가는 판과 데이터 폴더가 함께 사라집니다">이 패키지 제거</Button>
+              <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10" type="button" onClick={() => setConfirming(true)} title="설치를 지웁니다 — 돌아가는 버전과 데이터 폴더가 함께 사라집니다">이 패키지 제거</Button>
             )}
           </div>
   ) : null;
@@ -230,22 +264,27 @@ export default function DetailFace({
   // 한 번 더 말하는 카드였다. 고친 것은 [적용] 뒤 가운데 칸에서 본다
   // 상태 칩은 머리(탑바)에 — 버전 옆에서 "돌아가는 판 vs 작업 사본" 이 한 줄에 읽힌다
   // 상태는 글 한 줄 — 칩 두 개가 버튼처럼 보였다. 빌더가 돌면 그 말이 앞선다
-  const status = editing ? (
+  const status = (
     <span
       className={`head-status${draft.changedCount ? " on" : ""}`}
-      title={draft.agentBusy ? "이 패키지의 빌더 대화에서 턴이 돌고 있습니다 — 끝나면 화면이 새 내용을 반영합니다" : draft.changedCount ? "고친 것이 있지만 아직 돌아가는 판에 적용되지 않았습니다" : undefined}
+      title={draft.agentBusy ? "이 패키지의 빌더 대화에서 턴이 돌고 있습니다 — 끝나면 화면이 새 내용을 반영합니다" : draft.changedCount ? "고친 것이 있지만 아직 돌아가는 버전에 적용되지 않았습니다" : undefined}
     >
       {draft.agentBusy ? "빌더 작업 중…" : draft.changedCount ? "아직 적용 안 됨" : "변경 없음"}
     </span>
-  ) : null;
+  );
+  // 머리는 한 얼굴이다 — 사본이 있든 없든 같은 줄이 선다. [고치기] 도 ↗ 도 두지 않는다:
+  // 줄·[＋ 추가]·엔진 칩이 이미 사본을 열고, "새 탭에서 열기" 는 ⋯ 안과 적용 결과창에 있다.
+  // 상태에 따라 버튼이 생겼다 사라지면 사람은 자기가 눌러서 사라졌다고 읽는다(2026-08-28) —
+  // 사본을 버렸을 때가 바로 그랬다. 이제 줄은 남고, 사본에 매인 것만 눌리지 않는다
   const actions = actionsSlot
     ? createPortal(
-        editing ? (
+        (
           <>
           {status}
           <DraftActions
             pkg={pkg.name}
             draft={draft}
+            installed={!ghost}
             onDiscarded={() => {
               if (ghost) onGone();
               else {
@@ -256,13 +295,7 @@ export default function DetailFace({
             }}
           />
           </>
-        ) : probed ? (
-          // [고치기] 는 두지 않는다 — 줄·[＋ 추가]·엔진 칩이 이미 눌리면 사본을 연다.
-          // 아무 데도 데려가지 않는 문이라, 사본이 이미 있는 패키지에서는 번쩍이기만 했다(2026-08-27)
-          <Button variant="outline" size="icon-sm" nativeButton={false} render={<a href={`/pkg/${encodeURIComponent(pkg.name)}/view/`} target="_blank" rel="noreferrer" title="지금 돌아가고 있는 버전의 화면을 새 탭에서 엽니다" />}>
-            ↗
-          </Button>
-        ) : null,
+        ),
         actionsSlot,
       )
     : null;
@@ -319,13 +352,19 @@ export default function DetailFace({
           danger={foot}
           onPick={pickKind}
           onAsk={ask}
+          personaLead={personaLead}
           onEngine={toggleEngine}
           engineBusy={engineBusy}
+          activeEngine={running}
+          liveEngines={liveEngines}
+          onActivate={activateEngine}
           status={liveStatus}
+          labelOf={label}
+          scripts={editing ? scriptNamesFromFiles(draft.status!.files, m.scripts?.source) : liveScripts}
         >
           {editing && view.sec && draft.ctx ? (
             <>
-              <SectionView sec={view.sec} item={view.item} ctx={draft.ctx} />
+              <SectionView sec={view.sec} item={view.item} ctx={draft.ctx} verbLabels={verbLabels} />
             </>
           ) : editing && view.sec ? (
             <div className="empty"><span className="rc-ring" /></div>

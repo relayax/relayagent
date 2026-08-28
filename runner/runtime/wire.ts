@@ -17,7 +17,7 @@ import { RELAY_HOME, packagesPath, sessionDir, sessionPath, saveLedger, type Led
 import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
 import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
-import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX } from "../protocol.ts";
+import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX, slotOrigin, type SessionOrigin } from "../protocol.ts";
 import type { Authority } from "../authority-contract.ts";
 
 /** 클라이언트 프로토콜 버전 — §9-47-3 의 컷부터 발효. 하네스 봉투 protocol(현재 3)과 별개 축 */
@@ -89,6 +89,10 @@ export interface SessionRow {
   param?: string;
   /** 작업 사본 위 세션 — 고친 판을 적용 전에 써보는 대화. 설치본 대화 목록과 섞이지 않게 표시한다 */
   draft?: boolean;
+  /** 사람이 연 대화가 아닌, 기계가 판 슬롯(§5.3-25 additive) — 위임(dispatch)·미션 수신(mission).
+   *  판정은 슬롯 문법이지만 그건 기판 내부 어휘라(SLOT_RE 의 왜) 계약에는 이 축만 나간다.
+   *  사람이 연 대화는 이 필드가 없다 — 목록은 그것으로 위임 세션을 접는다. */
+  origin?: SessionOrigin;
 }
 
 /** 개설 시점의 대화 바인딩(§5.3-22) — 판정을 통과한 값만 온다 */
@@ -745,10 +749,12 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
         }
         const rowAgent = meta(dir, "agent");
         const rowParam = meta(dir, "param");
+        const origin = slotOrigin(e.name);
         rows.push({
           session: e.name,
           ...(rowAgent ? { agent: rowAgent } : {}),
           ...(rowParam ? { param: rowParam } : {}),
+          ...(origin ? { origin } : {}),
           ...(fs.existsSync(path.join(dir, "draft")) ? { draft: true } : {}),
           label: label || e.name,
           updated: fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs,

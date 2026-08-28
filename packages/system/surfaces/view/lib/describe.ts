@@ -23,7 +23,11 @@ export function cronToKorean(expr: string): string | null {
   const every = (x: string) => (/^\*\/\d+$/.test(x) ? Number(x.slice(2)) : null);
   if (every(min) != null && hour === "*" && dow === "*") return `${every(min)}분마다`;
   if (min === "0" && every(hour) != null && dow === "*") return `${every(hour)}시간마다`;
-  if (!/^\d+$/.test(min) || !/^\d+$/.test(hour)) return null;
+  if (!/^\d+$/.test(min)) return null;
+  // 매시 N분 — 고르개가 만들 수 있는 식이므로 번역표도 알아야 한다. 둘이 어긋나면 방금 만든
+  // 예약이 목록에서 "30 * * * *" 날식으로 떠서, 만든 사람이 자기가 만든 것을 못 알아본다
+  if (hour === "*" && dow === "*") return Number(min) === 0 ? "매시 정각" : `매시 ${Number(min)}분`;
+  if (!/^\d+$/.test(hour)) return null;
   const m = Number(min), h = Number(hour);
   if (m > 59 || h > 23) return null;
   const at = hourWord(h, m);
@@ -32,6 +36,61 @@ export function cronToKorean(expr: string): string | null {
   if (/^[0-6]$/.test(dow)) return `매주 ${DAY[Number(dow)]}요일 ${at}`;
   return null;
 }
+
+/**
+ * cron 을 사람이 고를 수 있는 것으로 — **읽기(cronToKorean)의 역방향**이다.
+ *
+ * "0 9 * * 1" 을 손으로 쓸 수 있는 사람만 예약을 만들 수 있었다. 다섯 칸의 문법은 이 화면에서
+ * 가장 어려운 것이었고, 그나마 힌트가 "cron 식 — 예: 0 9 * * * 는 매일 9시" 한 줄이었다.
+ * 고르개가 다루는 것은 cronToKorean 이 **번역할 수 있는 것과 정확히 같은 집합**이다 — 고른 것이
+ * 곧 화면의 사람 말이 되고, 번역표 밖의 식(0 9 * * 1,3,5)은 고르개를 못 세우고 날식으로 남는다.
+ */
+export type CronEvery = "day" | "weekday" | "week" | "hour" | "minutes" | "hours";
+export interface CronPick {
+  every: CronEvery;
+  /** week — 0(일) ~ 6(토) */
+  dow?: number;
+  hour?: number;
+  min?: number;
+  /** minutes · hours — N 분/시간마다 */
+  n?: number;
+}
+
+export function buildCron(p: CronPick): string {
+  const m = p.min ?? 0, h = p.hour ?? 9;
+  switch (p.every) {
+    case "day": return `${m} ${h} * * *`;
+    case "weekday": return `${m} ${h} * * 1-5`;
+    case "week": return `${m} ${h} * * ${p.dow ?? 1}`;
+    case "hour": return `${m} * * * *`;
+    case "minutes": return `*/${p.n ?? 10} * * * *`;
+    case "hours": return `0 */${p.n ?? 3} * * *`;
+  }
+}
+
+/** 고르개로 세울 수 있는 식인가. 아니면 null — 그때는 날식 칸이 정본이다 */
+export function parseCron(expr: string): CronPick | null {
+  const f = expr.trim().split(/\s+/);
+  if (f.length !== 5) return null;
+  const [min, hour, dom, mon, dow] = f;
+  if (dom !== "*" || mon !== "*") return null;
+  const every = (x: string) => (/^\*\/\d+$/.test(x) ? Number(x.slice(2)) : null);
+  if (every(min) != null && hour === "*" && dow === "*") return { every: "minutes", n: every(min)! };
+  if (min === "0" && every(hour) != null && dow === "*") return { every: "hours", n: every(hour)! };
+  if (!/^\d+$/.test(min)) return null;
+  const m = Number(min);
+  if (m > 59) return null;
+  if (hour === "*" && dow === "*") return { every: "hour", min: m };
+  if (!/^\d+$/.test(hour)) return null;
+  const h = Number(hour);
+  if (h > 23) return null;
+  if (dow === "*") return { every: "day", hour: h, min: m };
+  if (dow === "1-5") return { every: "weekday", hour: h, min: m };
+  if (/^[0-6]$/.test(dow)) return { every: "week", dow: Number(dow), hour: h, min: m };
+  return null;
+}
+
+export const DOW_LABEL = DAY.map((d, i) => ({ v: i, label: `${d}요일` }));
 
 /** pkg-read 의 들여쓴 트리에서 scripts.source 바로 아래 *.ts 의 이름. 하위 폴더는 동사가 아니다 */
 export function scriptNamesFromTree(tree: string[], source: string | undefined): string[] {
@@ -179,4 +238,214 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
 
   const optional = new Set<Row["key"]>(["engine", "needs", "host", "org", "files"]);
   return editing ? rows : rows.filter((r) => r.items.length || !optional.has(r.key));
+}
+
+// ── 한눈 요약 ────────────────────────────────────────────────────────────────
+// "이 에이전트가 어떤 구조로 어떻게 구성되어 있고 무슨 일을 할 수 있나" 를 3초에 읽히게 하는
+// 재료다. 목록을 다 읽어야 알 수 있던 것(화면이 있나 · 스스로 도나 · 몇 가지를 하나)을 칩
+// 몇 개로 앞세운다. 칩은 그 섹션으로 데려가는 문이기도 하므로 sec 을 함께 낸다.
+
+const CHANNEL: Record<string, string> = { slack: "슬랙", discord: "디스코드", telegram: "텔레그램", kakao: "카카오톡", line: "라인" };
+export function channelLabel(name: string): string {
+  return CHANNEL[name.toLowerCase()] ?? name;
+}
+
+/** agents[].scripts 는 글로브를 받는다(set-* 처럼). 실제 동사 이름에 맞춰 편 것 */
+export function matchScripts(patterns: string[] | undefined, all: string[]): string[] {
+  if (!patterns?.length) return [];
+  const res = patterns.map((p) => new RegExp("^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").split("*").join(".*") + "$"));
+  return all.filter((s) => res.some((r) => r.test(s)));
+}
+
+/** 자동 실행 한 줄이 실제로 무엇을 부르는가 — then 의 대상. **이름만** 낸다: "깨우기 · 실행" 같은
+ *  동사는 화살표(→)가 이미 말하고 있어 글자만 늘렸다(2026-08-28) */
+export function triggerTarget(t: { then?: { agent?: string; script?: string } }): string | null {
+  if (t.then?.script) return t.then.script;
+  if (t.then?.agent) return t.then.agent;
+  return null;
+}
+
+/** 도우미 줄의 부제 — "기능 2" 는 무엇의 2인지 말하지 않았다 */
+export function agentSub(a: { scripts?: string[]; dispatch?: string[]; dirs?: string[] }, allScripts: string[]): string | undefined {
+  const parts = [
+    matchScripts(a.scripts, allScripts).length ? `기능 ${matchScripts(a.scripts, allScripts).length}개` : null,
+    a.dispatch?.length ? `도우미 ${a.dispatch.length}명` : null,
+    a.dirs?.length ? `폴더 ${a.dirs.length}개` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+export interface Fact { text: string; sec: string; title?: string }
+
+/**
+ * 머리의 요약 칩 — 흐름 순서다(어디서 만나나 → 언제 도나 → 몇 가지를 하나 → 누구와 무엇을 쓰나).
+ * 없는 것은 칩을 내지 않는다: "없음" 칩이 늘어서면 있는 것이 묻힌다.
+ */
+export function facts(m: Manifest, ctx: { scripts: string[]; landing: string | null; edges: EdgeView[] }): Fact[] {
+  const out: Fact[] = [];
+  if (m.surfaces?.view) out.push({ text: "웹 화면", sec: "surfaces" });
+  else if (ctx.landing) out.push({ text: "대화만", sec: "agents" });
+
+  const chans = m.surfaces?.channels ?? [];
+  if (chans.length) out.push({ text: chans.map((c) => channelLabel(c.name)).join("·"), sec: "surfaces" });
+
+  const trg = m.triggers ?? [];
+  if (trg.length) {
+    const first = trg[0].when?.cron ? cronToKorean(trg[0].when.cron) : trg[0].when?.event ? `${trg[0].when.event} 이 생기면` : null;
+    out.push({ text: first ? `${first} 자동${trg.length > 1 ? ` 외 ${trg.length - 1}` : ""}` : `자동 실행 ${trg.length}개`, sec: "triggers" });
+  }
+
+  if (ctx.scripts.length) out.push({ text: `기능 ${ctx.scripts.length}개`, sec: "scripts" });
+
+  const helpers = (m.agents ?? []).filter((a) => a.name !== ctx.landing);
+  if (helpers.length) out.push({ text: `도우미 ${helpers.length}명`, sec: "agents", title: helpers.map((a) => a.name).join(", ") });
+
+  const dirs = (m.services ?? []).filter((s) => s.dir != null);
+  if (dirs.length) out.push({ text: `폴더 ${dirs.length}개`, sec: "services", title: dirs.map((s) => s.dir).join(", ") });
+
+  if (ctx.edges.length) out.push({ text: `다른 앱 ${new Set(ctx.edges.map((e) => e.provider ?? e.ref)).size}개`, sec: "edges" });
+  if ((m.missions ?? []).length) out.push({ text: `빌려주는 일 ${m.missions!.length}개`, sec: "missions" });
+
+  return out;
+}
+
+// ── 문장 ────────────────────────────────────────────────────────────────────
+// 왼쪽 패널의 정본. 목록이 아니라 **에이전트가 자기를 소개하는 다섯 줄**이고, 밑줄 그은 낱말이
+// 곧 고치는 문이다. 목록은 "무엇이 있나"만 말하고 "어떻게 움직이나"는 못 말한다 — 항목을 다
+// 읽어도 구조가 안 잡히던 이유다(2026-08-28).
+//
+// **조사 규칙**: 값이 들어가는 자리 뒤에는 받침을 따지는 조사(로/으로 · 을/를 · 와/과 · 이/가)를
+// 절대 두지 않는다. 값은 "슬랙"일 수도 "organizer"일 수도 있어 받침 판정이 성립하지 않는다
+// (로마자는 한국어 발음이 따로다 — organizer 는 "오거나이저"로 끝나 받침이 없다). 그래서 값 뒤에는
+//   ① 받침과 무관한 조사(에서 · 에 · 의 · 도), 또는
+//   ② 고정 명사(엔진 · 도우미 · 폴더 · 일)
+// 만 온다. "Claude 엔진으로", "organizer 도우미와", "memos 폴더에", "5가지 일을" — 조사가 붙는
+// 말은 전부 이쪽이 고정어다.
+
+/** 문장 속의 누를 수 있는 낱말 — 누르면 그 선언의 폼이 이 문장 아래로 펼쳐진다 */
+export interface Tok {
+  t: string;
+  sec: string;
+  item?: string | null;
+  /** 낱말이 **값이 아니라 붙박이 이름**이다("성격과 역할"). 조사 규칙은 값에만 걸린다 —
+   *  값은 "슬랙"일지 "organizer"일지 모르지만, 붙박이 이름은 내가 쓴 그 글자 그대로다 */
+  fixed?: boolean;
+}
+/** 없는 것 — 문단 아래 점선 한 줄. "붙일 수 있다"를 말하는 자리다 */
+export interface Add { sec: string; label: string }
+export interface Para { key: string; parts: (string | Tok)[]; adds: Add[] }
+
+const ENGINE_LABEL: Record<string, string> = { "claude-code": "Claude", codex: "Codex", pi: "Pi", kimi: "Kimi" };
+export function engineLabel(name: string): string {
+  return ENGINE_LABEL[name] ?? name;
+}
+
+/** 낱말들을 " · " 로 잇는다 — 값과 값 사이라 조사가 끼지 않는다 */
+function join(toks: Tok[]): (string | Tok)[] {
+  const out: (string | Tok)[] = [];
+  toks.forEach((t, i) => { if (i) out.push(" · "); out.push(t); });
+  return out;
+}
+
+/** 바깥 서비스가 닿는 곳 — 사람이 아는 것은 선언 이름이 아니라 이 호스트다.
+ *  주소가 아니면(템플릿·환경변수) null 이고, 그때만 선언 이름으로 물러선다 */
+function hostOf(url: string): string | null {
+  try { return new URL(url).host || null; } catch { return null; }
+}
+
+export function sentences(m: Manifest, ctx: DescribeCtx): Para[] {
+  const out: Para[] = [];
+
+  // ① 어디서 만나고 언제 움직이나
+  const doors: Tok[] = [];
+  if (m.surfaces?.view) doors.push({ t: "웹 화면", sec: "surfaces", item: "view" });
+  for (const c of m.surfaces?.channels ?? []) doors.push({ t: channelLabel(c.name), sec: "surfaces", item: `channel:${c.name}` });
+  if (!doors.length && ctx.landing) doors.push({ t: "대화", sec: "agents", item: ctx.landing });
+  const times: Tok[] = (m.triggers ?? []).map((t) => ({
+    t: t.when?.cron ? (cronToKorean(t.when.cron) ?? t.when.cron) : `${t.when?.event ?? t.id}`,
+    sec: "triggers",
+    item: t.id,
+  }));
+  // 깨움이 대화의 문이 아니라 도우미를 직접 부르는 앱이 흔하다(아침 브리핑의 briefer). "알아서
+  // 움직입니다" 는 그것을 감췄다 — 누가 깨는지가 이 문장에서 가장 알고 싶은 것이다(2026-08-28).
+  // 깨우는 도우미가 하나로 정해질 때만 이름을 낸다. 여럿이거나 동사만 부르면 종전 문구로 물러선다
+  const woken = [...new Set((m.triggers ?? []).map((t) => t.then?.agent).filter((a): a is string => !!a && a !== ctx.landing))];
+  const wake: (string | Tok)[] = woken.length === 1
+    ? ["에 ", { t: woken[0]!, sec: "agents", item: woken[0]! }, " 도우미를 깨웁니다."]
+    : ["에 알아서 움직입니다."];
+  const meetParts: (string | Tok)[] =
+    doors.length && times.length ? [...join(doors), "에서 만나고, ", ...join(times), ...wake]
+    : doors.length ? [...join(doors), "에서 만납니다."]
+    : times.length ? [...join(times), ...wake]
+    : ["아직 만날 곳이 없습니다."];
+  out.push({
+    key: "meet",
+    parts: meetParts,
+    adds: ([
+      ...(m.surfaces?.view || (m.surfaces?.channels ?? []).length ? [] : [{ sec: "surfaces", label: "웹 화면이나 슬랙으로 만나기" }]),
+      ...(times.length ? [] : [{ sec: "triggers", label: "정해진 때 알아서 움직이기" }]),
+    ]),
+  });
+
+  // ② 누가 무엇을 하나
+  // 엔진은 **하나**다. harness.variants 는 후보 목록이고 실제로 도는 것은 그중 하나뿐이라,
+  // 넷을 나열하면 "넷으로 동시에 돈다" 는 틀린 말이 된다. 게다가 낱말 넷이 전부 같은 카드를
+  // 여는 문이어서, 밑줄 넷이 서로 다른 목적지처럼 보였다(2026-08-28). 후보는 그 카드가 보여준다.
+  const variants = m.harness?.variants ?? [];
+  const activeName = ctx.activeHarness && variants.some((v) => v.name === ctx.activeHarness) ? ctx.activeHarness : variants[0]?.name;
+  const engines: Tok[] = activeName ? [{ t: engineLabel(activeName), sec: "harness", item: activeName }] : [];
+  const helpers: Tok[] = (m.agents ?? []).filter((a) => a.name !== ctx.landing).map((a) => ({ t: a.name, sec: "agents", item: a.name }));
+  const verb: Tok | null = ctx.scripts.length ? { t: `${ctx.scripts.length}가지 일`, sec: "scripts" } : null;
+  const doParts: (string | Tok)[] = [];
+  if (engines.length) doParts.push(...join(engines), (verb || helpers.length) ? " 엔진으로 돌아가고, " : " 엔진으로 돌아갑니다.");
+  if (helpers.length) doParts.push(...join(helpers), verb ? " 도우미와 함께 " : " 도우미를 둡니다.");
+  if (verb) doParts.push(verb, "을 합니다.");
+  if (!doParts.length) doParts.push("아직 할 수 있는 일이 없습니다.");
+  out.push({
+    key: "do",
+    parts: doParts,
+    adds: ([
+      ...(verb ? [] : [{ sec: "scripts", label: "시키면 하는 일 만들기" }]),
+      ...(engines.length ? [] : [{ sec: "harness", label: "돌릴 엔진 고르기" }]),
+      ...(helpers.length || !verb ? [] : [{ sec: "agents", label: "일 나눌 도우미 두기" }]),
+    ]),
+  });
+
+  // ③ 자기 자신 — 말투와 역할. 이 자리에 "성격과 역할은 따로 글로 적어 두었습니다" 같은
+  // **파일 정리 상태**를 적어 두었었다: 사람에게 아무 쓸모가 없는 문장이다. 성격 글은 요약할
+  // 것이 아니라 **그 글 자체가 답**이라, 화면이 첫 줄을 그대로 낸다(AgentPanel personaLead).
+
+  // ④ 무엇을 쓰나 · 주고받나
+  // 폴더와 바깥 서비스는 **이름이 아니라 실체**로 부른다. services[].name 은 도구 이름을 짓는
+  // 손잡이(dir__memos__read)이지 사람이 아는 것이 아니다 — "memos" 는 매니페스트 안에서만 뜻이
+  // 있고, 사람이 아는 것은 파인더에서 여는 그 폴더(~/Relay/memo)와 닿는 그 서버다(2026-08-28).
+  const dirs: Tok[] = (m.services ?? []).filter((s) => s.dir != null).map((s) => ({ t: s.dir!, sec: "services", item: s.name }));
+  const outward: Tok[] = (m.services ?? [])
+    .filter((s) => s.url != null || s.api != null)
+    .map((s) => ({ t: hostOf(s.url ?? s.api!) ?? s.name, sec: "services", item: s.name }));
+  const seen = new Set<string>();
+  const providers: Tok[] = [];
+  for (const e of ctx.edges) {
+    const name = e.provider ?? e.ref;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    providers.push({ t: ctx.labelOf(name), sec: "edges", item: name });
+  }
+  const useParts: (string | Tok)[] = [];
+  if (dirs.length) useParts.push(...join(dirs), " 폴더를 읽고 씁니다. ");
+  if (outward.length) useParts.push(...join(outward), "에 연결합니다. ");
+  if (providers.length) useParts.push(...join(providers), "의 기능을 빌려 씁니다. ");
+  if ((m.missions ?? []).length) useParts.push({ t: `${m.missions!.length}가지 일`, sec: "missions" }, "을 다른 앱에 빌려줍니다.");
+  if (!useParts.length) useParts.push("쓰는 폴더나 연결이 없습니다.");
+  out.push({
+    key: "use",
+    parts: useParts,
+    adds: ([
+      ...(dirs.length ? [] : [{ sec: "services", label: "읽고 쓸 폴더 두기" }]),
+      ...(providers.length ? [] : [{ sec: "edges", label: "다른 앱의 기능 빌려오기" }]),
+      ...((m.missions ?? []).length ? [] : [{ sec: "missions", label: "다른 앱에 일 빌려주기" }]),
+    ]),
+  });
+
+  return out;
 }

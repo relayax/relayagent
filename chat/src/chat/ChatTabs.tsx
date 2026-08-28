@@ -31,7 +31,7 @@
  *   · localStorage: tabs/active 는 종전 키 그대로, split 키는 구 "splitKey 문자열" → 신
  *     JSON({keys,active,pct}) 을 모두 읽는다(마이그레이션).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { ChatApp, OpenConversationCtx, PaneTargetCtx, type DeskTurnStatus, type PaneTarget } from "./Chat";
 import {
   loadInbox, loadInstances, renameConversation, deleteConversation, loadConversationTitle,
@@ -194,19 +194,51 @@ const tabOf = (r: InboxRow): Tab => ({
   title: r.title || "", // 서버 제목 없으면 빈 값 — labelOf 가 표시, 자동 제목이 채운다
 });
 
-/** 보관함 피커 행 — 전 인스턴스 최근 대화(loadInbox) + 대화 없는 에이전트의 "기본 대화"(nav 합성). */
-async function loadPickerRows(principal: string): Promise<InboxRow[]> {
+/** 피커 한 줄. display = 화면에 세울 이름(설치 이름 id 는 툴팁에만) — 화면 축이라 wire 행
+ *  (InboxRow)에 얹지 않고 여기서만 단다. */
+export type PickerRow = InboxRow & { display?: string };
+
+/** 인스턴스 하나의 묶음 — 사람이 연 대화와, 그 아래 접히는 위임.
+ *  묶음 순서는 rows 순서(최근순)를 그대로 따른다 — 활발한 것이 위. */
+export type PickerGroup = { instance: string; display: string; convs: PickerRow[]; subs: PickerRow[] };
+
+export function groupRows(rows: PickerRow[]): PickerGroup[] {
+  const out: PickerGroup[] = [];
+  const by = new Map<string, PickerGroup>();
+  for (const r of rows) {
+    let g = by.get(r.instance);
+    // 머리에 세우는 이름은 사람이 붙인 이름(display) — 설치 이름(id)은 툴팁에만 남는다.
+    if (!g) { g = { instance: r.instance, display: r.display || r.instance, convs: [], subs: [] }; by.set(r.instance, g); out.push(g); }
+    // origin = 기판이 밝힌 "기계가 판 슬롯"(§5.3-25). 슬롯 이름은 불투명이라 여기서 접두를 보지 않는다.
+    if (r.origin) g.subs.push(r);
+    else g.convs.push(r);
+  }
+  return out;
+}
+
+/** 위임 행의 이름 — 기계 라벨("↳ agent-builder · detail-page")의 화살표를 떼고 사람 말로.
+ *  묶음이 이미 "맡긴 일"이라고 말했으므로 행은 누가·무엇을만 남긴다. 사용자가 이름을 바꿨으면
+ *  그 이름이 정본이다(라벨 우선순위는 기판 몫 — §5.3-21). */
+export function subLabel(r: PickerRow): string {
+  const t = (r.title || "").replace(/^↳\s*/, "").trim();
+  if (t) return t;
+  if (r.agent) return r.param ? `${r.agent} · ${r.param}` : r.agent;
+  return r.conversation_id;
+}
+
+/** 보관함 피커 행 — 전 인스턴스의 **대화**만(loadInbox).
+ *  대화가 없는 에이전트는 여기 서지 않는다: 대화함은 대화를 세는 자리고, 아직 말 걸어본 적 없는
+ *  에이전트를 여는 문은 이미 둘(사이드바 · 작성창의 상대 고르기)이다. 셋째 목록으로 겹쳐 놓으면
+ *  "대화 없음"이 목록의 대부분을 차지해 정작 대화가 밀린다(2026-08-28 사용자 지적). */
+async function loadPickerRows(principal: string): Promise<PickerRow[]> {
   const ctx = { instanceId: "", principal, conversationId: "", title: "" } as RelayCtx;
-  const rows = await loadInbox(ctx).catch(() => [] as InboxRow[]);
-  let navIds: string[] = [];
+  const rows: PickerRow[] = await loadInbox(ctx).catch(() => []);
+  // 설치 이름(id) 대신 화면에 세울 이름 — 런처·사이드바가 부르는 그 이름이다(NavInstance.pkg = display_name).
   try {
     // 열거는 instances.list 계약 동사(§5.6 — capability enumerate)로 — 구 /api/portal/nav 은퇴.
-    navIds = (await loadInstances()).map((i) => i.id).filter(Boolean);
-  } catch { /* 열거 실패 — 최근 대화만 */ }
-  const have = new Set(rows.map((r) => r.instance));
-  // 대화 없는 에이전트의 시드 행 — 서버 세션은 첫 발화가 민팅한다(지연 민팅, §5.3-22).
-  // seedConversation 은 마지막 민팅 세션이 있으면 그 id, 없으면 로컬 드래프트를 준다.
-  for (const id of navIds) if (!have.has(id)) rows.push({ instance: id, conversation_id: seedConversation(id), title: id });
+    const shown = new Map((await loadInstances()).filter((i) => i.pkg).map((i) => [i.id, i.pkg] as const));
+    for (const r of rows) { const d = shown.get(r.instance); if (d) r.display = d; }
+  } catch { /* 열거 실패 — 설치 이름으로 선다 */ }
   return rows;
 }
 
@@ -225,7 +257,9 @@ function InboxPicker({
   onOpen: (t: Tab) => void;
   onMutated: (instanceId: string, conversationId: string, title: string | null) => void;
 }) {
-  const [rows, setRows] = useState<InboxRow[] | null>(null);
+  const [rows, setRows] = useState<PickerRow[] | null>(null);
+  // 펼친 위임 묶음(인스턴스 id) — 기본은 접힘. 열 때마다 초기화한다.
+  const [openSubs, setOpenSubs] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -235,17 +269,22 @@ function InboxPicker({
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    setRows(null); setEditing(null); setConfirming(null);
+    setRows(null); setEditing(null); setConfirming(null); setOpenSubs(new Set());
     loadPickerRows(principal).then((r) => { if (alive) setRows(r); });
     return () => { alive = false; };
   }, [open, principal]);
   useEffect(() => { if (editing) editRef.current?.select(); }, [editing]);
 
   const close = () => onOpenChange(false);
+  const toggleSubs = (instance: string) => setOpenSubs((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(instance)) next.add(instance);
+    return next;
+  });
   const ctxOf = (r: InboxRow): RelayCtx => ({ instanceId: r.instance, principal, conversationId: r.conversation_id, title: r.title || r.instance });
   const label = (r: InboxRow) => (r.title ? r.title : isLocalConversation(r.conversation_id) ? "기본 대화" : r.conversation_id);
   // 시드 = 미민팅 로컬 드래프트 — 서버에 아직 없으니 삭제 버튼을 감춘다.
-  const isSeed = (r: InboxRow) => isLocalConversation(r.conversation_id);
+  const isSeed = (r: PickerRow) => isLocalConversation(r.conversation_id);
 
   const saveRename = async (r: InboxRow, value: string) => {
     if (busy) return;
@@ -270,6 +309,71 @@ function InboxPicker({
 
   // 행 공통 — 한 줄(줄바꿈 없음)·12.5px. Item 의 [a]:hover 는 앵커 전용이라 hover 배경을 직접 준다.
   const ROW = "flex-nowrap gap-2 rounded-[7px] px-2 py-1.5 text-[12.5px]";
+  const groups = rows === null ? [] : groupRows(rows);
+
+  /** 대화 한 줄 — 이름(또는 편집·삭제확인) + 우측(시간/열림 ↔ 액션).
+   *  인스턴스 이름은 묶음 머리가 이미 말했으므로 행에서는 배지를 다시 세우지 않는다. */
+  const renderRow = (r: PickerRow, opts?: { indent?: boolean; text?: string }) => {
+    const k = keyOf(r.instance, r.conversation_id);
+    const pad = opts?.indent ? " pl-6" : "";
+    if (editing === k) {
+      return (
+        <Item key={k} size="xs" className={ROW + pad}>
+          <Input ref={editRef} className="h-7 flex-1 px-2 text-[12.5px] md:text-[12.5px] border-[var(--rc-accent)]" defaultValue={r.title || ""} placeholder={label(r)} maxLength={120} disabled={busy}
+                 onKeyDown={(e) => {
+                   if (e.key === "Enter") { e.preventDefault(); void saveRename(r, (e.target as HTMLInputElement).value); }
+                   if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setEditing(null); }
+                 }} />
+          <ItemActions>
+            <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="저장" aria-label="이름 저장" disabled={busy}
+                    onClick={() => void saveRename(r, editRef.current?.value ?? "")}>✓</Button>
+          </ItemActions>
+        </Item>
+      );
+    }
+    if (confirming === k) {
+      return (
+        <Item key={k} size="xs" className={ROW + pad}>
+          <ItemContent className="min-w-0">
+            <ItemTitle className="w-full font-normal text-[12.5px]">"{opts?.text ?? label(r)}" 삭제?</ItemTitle>
+          </ItemContent>
+          <ItemActions className="gap-1">
+            <Button type="button" variant="destructive" size="xs" className="h-6 px-2 font-semibold" disabled={busy} onClick={() => void doDelete(r)}>{busy ? "삭제 중…" : "삭제"}</Button>
+            <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-[var(--rc-faint)]" disabled={busy} onClick={() => setConfirming(null)}>취소</Button>
+          </ItemActions>
+        </Item>
+      );
+    }
+    const isOpen = existing.has(k);
+    const go = () => { if (!isOpen) onOpen(tabOf(r)); close(); };
+    return (
+      <Item key={k} role="menuitem" tabIndex={0} size="xs"
+            className={cn(ROW + pad, "cursor-pointer hover:bg-muted focus-visible:bg-muted")}
+            title={r.instance + " · " + r.conversation_id}
+            onClick={go}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}>
+        <ItemContent className="min-w-0">
+          <ItemTitle className="w-full font-normal text-[12.5px]">{opts?.text ?? label(r)}</ItemTitle>
+        </ItemContent>
+        {/* 우측 = 시간(평소) ↔ 액션(hover/focus, 터치 기기는 상시) — 같은 자리를 나눠 써 행 폭을 유지. */}
+        <ItemActions className="shrink-0 gap-0.5">
+          {isOpen
+            ? <Badge variant="secondary" className="group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">열림</Badge>
+            : r.last_started_at && (
+              <span className="text-[11px] tabular-nums text-muted-foreground group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">{relTime(r.last_started_at)}</span>
+            )}
+          <span className="hidden items-center gap-0.5 group-hover/item:inline-flex group-focus-within/item:inline-flex [@media(hover:none)]:inline-flex">
+            <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="이름 바꾸기" aria-label="이름 바꾸기"
+                    onClick={(e) => { e.stopPropagation(); setConfirming(null); setEditing(k); }}>✎</Button>
+            {!isSeed(r) && (
+              <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="대화 삭제" aria-label="대화 삭제"
+                      onClick={(e) => { e.stopPropagation(); setEditing(null); setConfirming(k); }}>🗑</Button>
+            )}
+          </span>
+        </ItemActions>
+      </Item>
+    );
+  };
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -282,77 +386,40 @@ function InboxPicker({
           ) : rows.length === 0 ? (
             <Empty className="gap-1 p-4">
               <EmptyHeader className="gap-1">
-                <EmptyTitle className="text-[13px]">열 수 있는 에이전트가 없어요</EmptyTitle>
-                <EmptyDescription className="text-[11.5px]">에이전트를 설치하면 여기에 보여요</EmptyDescription>
+                <EmptyTitle className="text-[13px]">아직 대화가 없어요</EmptyTitle>
+                <EmptyDescription className="text-[11.5px]">에이전트에게 말을 걸면 여기에 쌓여요</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
             // max-h 는 루트(flex 열)에 — 뷰포트(overflow:scroll)가 그 안에서 줄어들며 스크롤한다.
             <ScrollArea className="flex max-h-[60vh] flex-col">
               <ItemGroup role="menu" className="gap-0.5 has-data-[size=xs]:gap-0.5">
-                {rows.map((r) => {
-                  const k = keyOf(r.instance, r.conversation_id);
-                  const isOpen = existing.has(k);
-                  if (editing === k) {
-                    return (
-                      <Item key={k} size="xs" className={ROW}>
-                        <Input ref={editRef} className="h-7 flex-1 px-2 text-[12.5px] md:text-[12.5px] border-[var(--rc-accent)]" defaultValue={r.title || ""} placeholder={label(r)} maxLength={120} disabled={busy}
-                               onKeyDown={(e) => {
-                                 if (e.key === "Enter") { e.preventDefault(); void saveRename(r, (e.target as HTMLInputElement).value); }
-                                 if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setEditing(null); }
-                               }} />
-                        <ItemActions>
-                          <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="저장" aria-label="이름 저장" disabled={busy}
-                                  onClick={() => void saveRename(r, editRef.current?.value ?? "")}>✓</Button>
-                        </ItemActions>
-                      </Item>
-                    );
-                  }
-                  if (confirming === k) {
-                    return (
-                      <Item key={k} size="xs" className={ROW}>
-                        <ItemContent className="min-w-0">
-                          <ItemTitle className="w-full font-normal text-[12.5px]">"{label(r)}" 삭제?</ItemTitle>
-                        </ItemContent>
-                        <ItemActions className="gap-1">
-                          <Button type="button" variant="destructive" size="xs" className="h-6 px-2 font-semibold" disabled={busy} onClick={() => void doDelete(r)}>{busy ? "삭제 중…" : "삭제"}</Button>
-                          <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-[var(--rc-faint)]" disabled={busy} onClick={() => setConfirming(null)}>취소</Button>
-                        </ItemActions>
-                      </Item>
-                    );
-                  }
-                  const go = () => { if (!isOpen) onOpen(tabOf(r)); close(); };
+                {groups.map((g) => {
+                  const subsOpen = openSubs.has(g.instance);
                   return (
-                    <Item key={k} role="menuitem" tabIndex={0} size="xs"
-                          className={cn(ROW, "cursor-pointer hover:bg-muted focus-visible:bg-muted")}
-                          title={r.instance + " · " + r.conversation_id}
-                          onClick={go}
-                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); go(); } }}>
-                      <ItemMedia>
-                        <Badge variant="secondary" className="h-4 max-w-24 px-1.5 text-[10px] font-semibold [&>*]:truncate">
-                          <span className="truncate">{r.instance}</span>
-                        </Badge>
-                      </ItemMedia>
-                      <ItemContent className="min-w-0">
-                        <ItemTitle className="w-full font-normal text-[12.5px]">{label(r)}</ItemTitle>
-                      </ItemContent>
-                      {/* 우측 = 시간(평소) ↔ 액션(hover/focus, 터치 기기는 상시) — 같은 자리를 나눠 써 행 폭을 유지. */}
-                      <ItemActions className="shrink-0 gap-0.5">
-                        {isOpen
-                          ? <Badge variant="secondary" className="group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">열림</Badge>
-                          : r.last_started_at && (
-                            <span className="text-[11px] tabular-nums text-muted-foreground group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">{relTime(r.last_started_at)}</span>
-                          )}
-                        <span className="hidden items-center gap-0.5 group-hover/item:inline-flex group-focus-within/item:inline-flex [@media(hover:none)]:inline-flex">
-                          <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="이름 바꾸기" aria-label="이름 바꾸기"
-                                  onClick={(e) => { e.stopPropagation(); setConfirming(null); setEditing(k); }}>✎</Button>
-                          {!isSeed(r) && (
-                            <Button type="button" variant="ghost" size="icon-xs" className={ROW_ACT} title="대화 삭제" aria-label="대화 삭제"
-                                    onClick={(e) => { e.stopPropagation(); setEditing(null); setConfirming(k); }}>🗑</Button>
-                          )}
-                        </span>
-                      </ItemActions>
-                    </Item>
+                    <Fragment key={g.instance}>
+                      {/* 묶음 머리 = 인스턴스 이름 한 번. 행마다 반복되던 배지의 자리다. */}
+                      <div className="truncate px-2 pt-2 pb-0.5 text-[10.5px] font-semibold text-muted-foreground" title={g.instance}>{g.display}</div>
+                      {g.convs.map((r) => renderRow(r))}
+                      {g.subs.length > 0 && (
+                        <>
+                          {/* 위임은 사람이 연 대화가 아니라 에이전트가 판 대화다 — 기본은 접어 두고,
+                              펼치면 "누가 · 무엇을" 로 한 줄씩. */}
+                          <Item role="menuitem" tabIndex={0} size="xs" aria-expanded={subsOpen}
+                                className={cn(ROW, "cursor-pointer text-muted-foreground hover:bg-muted focus-visible:bg-muted")}
+                                onClick={() => toggleSubs(g.instance)}
+                                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); toggleSubs(g.instance); } }}>
+                            <ItemContent className="min-w-0">
+                              <ItemTitle className="w-full font-normal text-[12px] text-muted-foreground">에이전트에게 맡긴 일 {g.subs.length}개</ItemTitle>
+                            </ItemContent>
+                            <ItemActions className="shrink-0">
+                              <span className="text-[10px] text-muted-foreground">{subsOpen ? "▾" : "▸"}</span>
+                            </ItemActions>
+                          </Item>
+                          {subsOpen && g.subs.map((r) => renderRow(r, { indent: true, text: subLabel(r) }))}
+                        </>
+                      )}
+                    </Fragment>
                   );
                 })}
               </ItemGroup>
@@ -510,7 +577,9 @@ function TabStrip({
                 <Button type="button" variant="ghost" size="icon-xs" className="rc-desk-close h-auto" aria-label="탭 닫기"
                         onClick={(e) => { e.stopPropagation(); onClose(t.key); }}>×</Button>
               </ContextMenuTrigger>
-              <ContextMenuContent className="min-w-44">
+              {/* 메뉴는 커서 아래로 편다 — 기본값(오른쪽)은 좁은 도킹 패널에서 왼쪽으로 뒤집혀
+                  탭 스트립을 덮는다. 브라우저·VSCode 우클릭 메뉴와 같은 방향. */}
+              <ContextMenuContent className="min-w-44" side="bottom" align="start" alignOffset={0} sideOffset={2}>
                 <TabMenuItems items={menuItemsOf(t.key)} />
               </ContextMenuContent>
             </ContextMenu>

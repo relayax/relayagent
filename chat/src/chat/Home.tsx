@@ -5,11 +5,12 @@
  * 이전). 콘솔 뷰·채팅 위젯이 shadcn 인데 홈만 손 CSS 라 같은 번들의 shadcn 화면으로 옮겼다.
  * 사이드바는 그대로 shell.ts 에 산다 — 모든 패키지 문서에 주입되는 크롬이라 React 번들에
  * 의존시키지 않는다. 문구·동선은 종전과 같다:
- *   · 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 relay:chat-open {send}
- *     로 콘솔 에이전트의 대화에 보내지고(같은 번들의 autoFloat 가 착지), 빌더 위임이 시작되면
+ *   · 말로 만들기 — 이 제품의 대표 동선이 첫 화면에서 시작된다. 문장은 relay:chat-open
+ *     {conversation, send} 로 콘솔 에이전트의 **새 대화**에 보내지고(같은 번들의 autoFloat 가
+ *     착지 — 좌표가 있어 새 탭이 선다), 빌더 위임이 시작되면
  *     위젯이 그 탭을 연다. 별도의 "패키지 만들기" 버튼은 없다 — 불러오기는 사이드바 [+] 메뉴에만, 스토어는
  *     예시 칩 아래 옅은 글자 링크 한 줄이라 처음 온 사람이 고를 것이 "말하기" 하나로 보인다.
- *   · 진행 중 카드 — 지금 신경 쓸 것(수정 중·새 판·오류·초안)만. 판정은 home-model.ts.
+ *   · 진행 중 카드 — 지금 신경 쓸 것(수정 중·새 버전·오류·초안)만. 판정은 home-model.ts.
  *   · 사용 안내 — 첫 방문에 한 번, 이후엔 ?guide=1(콘솔 설정의 [안내]).
  * 사이드바의 [새로 만들기]는 relay:home-ask 를 쏘고, 다른 문서에서는 /#new 로 온다.
  * 목록은 relay:turn(settled)·relay:nav-refresh·탭 복귀마다 다시 읽는다 — 사이드바와 같은 조건.
@@ -24,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { fetchNav, type ShellItem, type ShellNav } from "./nav";
+import { siblingThread } from "./routematch";
 import { cardAction, describe, draftLine, examplesAt, initialOf, isEmptyNav, splitDrafts, todoOf, updateCount, type CardAction, type DraftRef } from "./home-model";
 
 const ASK_EVENT = "relay:home-ask";
@@ -98,8 +100,13 @@ function Ask({ nav }: { nav: ShellNav }) {
   const submit = () => {
     const t = text.trim();
     if (!t) { focus(); return; }
-    // 같은 번들의 autoFloat 가 착지한다(view-bridge §4-8) — 종전의 RelayChat 대기 루프는 불요
-    window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: { send: t } }));
+    // 같은 번들의 autoFloat 가 착지한다(view-bridge §4-8) — 종전의 RelayChat 대기 루프는 불요.
+    // 좌표를 실어 보낸다: 홈은 페이지 슬롯을 선언하지 않아(relay:scope 없음) 좌표 없는 send 는
+    // "지금 활성인 탭" — 대개 마지막에 보던 무관한 에이전트의 대화 — 로 들어갔다(2026-08-28).
+    // 홈의 한 문장은 언제나 **새 대화 하나**다: sibling 스레드를 민팅해 새 탭으로 착지시킨다
+    // (인스턴스 축은 크롬 자신의 좌표=콘솔로 해석된다, §4-8). 지연 민팅이라 첫 발화 직전에야
+    // 서버 세션이 생기고, 탭 이름은 그 첫 문장에서 자동으로 붙는다.
+    window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: { conversation: siblingThread("main"), send: t } }));
     setText("");
   };
   const pick = (sentence: string) => {
@@ -127,7 +134,7 @@ function Ask({ nav }: { nav: ShellNav }) {
           className="min-h-[58px] resize-none border-0 bg-transparent px-0.5 py-0 text-[14.5px] leading-[1.55] shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-[14.5px]"
         />
         <div className="flex items-center justify-end gap-2">
-          {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스·"수정 중" 칩 셋뿐. 나머지는 neutral */}
+          {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스 둘뿐. 나머지는 neutral */}
           <Button type="submit" size="sm" className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
         </div>
       </form>
@@ -181,7 +188,7 @@ function Progress({ nav }: { nav: ShellNav }) {
         </div>
       ) : null}
       {ups && nav.library ? (
-        // 새 판 요약 배너 — 개수만 말한다. 실행은 각 카드의 버튼(설치 동의 관문이 판마다 선다)
+        // 새 버전 요약 배너 — 개수만 말한다. 실행은 각 카드의 버튼(설치 동의 관문이 버전마다 선다)
         <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3.5 py-2 text-xs">
           <b className="font-semibold">업데이트 {ups}개</b> · 카드에서 받을 수 있어요
           <span className="flex-1" />
@@ -194,7 +201,7 @@ function Progress({ nav }: { nav: ShellNav }) {
         <p className="mx-auto my-5 max-w-[620px] px-5 text-center text-[13px] text-muted-foreground">진행 중인 것이 없어요. 에이전트는 왼쪽 목록에서 골라 쓰세요.</p>
       )}
       {any ? (
-        <div className="grid gap-3 px-5 py-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))" }}>
+        <div className="mx-auto grid max-w-[1240px] gap-4 px-5 py-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(248px, 100%), 1fr))" }}>
           {todo.map((it) => <ItemCard key={it.pkg} it={it} library={nav.library} />)}
           {live.map((df) => <DraftCard key={df.name} df={df} />)}
         </div>
@@ -206,7 +213,10 @@ function Progress({ nav }: { nav: ShellNav }) {
 
 // preflight 가 없어 border 색은 매번 명시한다(border-border) — 기본값 currentColor 는 검정 테두리가 된다
 // 색은 neutral 하나 — 상태는 채움색이 아니라 칩의 테두리/글자로만 가른다(오류만 붉게). 호버도 테두리 한 단계
-const cardClass = "gap-2.5 rounded-xl border border-border px-4 py-3.5 shadow-none ring-0 transition-colors hover:border-foreground/30 [--card-spacing:0px]";
+const cardClass = "gap-2.5 rounded-xl border border-border px-5 py-4 shadow-none ring-0 transition-colors hover:border-foreground/30 [--card-spacing:0px]";
+// 설명 줄 — 글자가 테두리에 닿고 두 줄이 붙어 있어 답답했다(2026-08-27). 줄간격을 넓히고
+// 두 줄 자리(min-h)도 그만큼 늘린다 — 설명이 한 줄이어도 카드 아랫줄은 서로 맞아야 한다
+const descClass = "m-0 line-clamp-2 min-h-[3.2em] text-[12.5px] leading-[1.6]";
 const chip = "rounded-md px-1.5 py-0 text-[11px] font-semibold";
 
 // 카드 전체가 링크다. 버튼은 두지 않는다 — 카드가 곧 그 초안/앱이고 누르면 고치러 가는 것이 이 격자의
@@ -217,7 +227,7 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
   const desc = describe(it.description);
   return (
     <Card className={cn(cardClass, "group/hc")}>
-      <a href={act.href} className="flex flex-col gap-2 text-inherit no-underline">
+      <a href={act.href} className="flex flex-col gap-2.5 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
           <span className="flex size-[30px] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-[13px] font-bold text-muted-foreground">
             {it.icon ? <img src={it.icon} alt="" className="block size-[30px] object-cover" /> : initialOf(it.label)}
@@ -228,10 +238,12 @@ function ItemCard({ it, library }: { it: ShellItem; library: string | null }) {
           {it.resident ? <span className="size-[7px] shrink-0 rounded-full bg-emerald-500" title="도는 중" /> : null}
         </CardHeader>
         <CardContent className="px-0">
-          <p className={cn("m-0 line-clamp-2 min-h-[2.6em] text-xs", desc ? "text-muted-foreground" : "text-muted-foreground/60 italic")}>{desc ?? "설명이 아직 없어요"}</p>
+          <p className={cn(descClass, desc ? "text-muted-foreground" : "text-muted-foreground/60 italic")}>{desc ?? "설명이 아직 없어요"}</p>
         </CardContent>
         <CardFooter className="flex items-center gap-1.5 px-0">
-          <StatusChip status={act.status}>{act.chip}</StatusChip>
+          {/* 칩은 예외일 때만 — 이 격자에 선 것은 어차피 수정 중이라, 모든 카드에 같은 칩이 붙으면
+              아무것도 가르지 못한다. 오류·새 버전만 칩을 단다(2026-08-27) */}
+          {act.chip ? <StatusChip status={act.status}>{act.chip}</StatusChip> : null}
           {/* 이름@버전은 맨 아래 옅게 — 제목 바로 밑의 고정폭 글자는 설명보다 먼저 눈에 들어왔다(2026-08-27) */}
           <span className="min-w-0 truncate font-mono text-[10.5px] text-muted-foreground/60" title={it.pkg}>{it.pkg}{it.version ? "@" + it.version : ""}</span>
           <span className="flex-1" />
@@ -253,9 +265,9 @@ function EditHint() {
   );
 }
 
+// 수정 중은 여기 오지 않는다(칩 없음) — 남는 것은 오류·새 버전·초안뿐이라 붉은 것 하나와 나머지
 function StatusChip({ status, children }: { status: CardAction["status"] | "draft"; children: React.ReactNode }) {
   if (status === "error") return <Badge variant="destructive" className={chip}>{children}</Badge>;
-  if (status === "editing") return <Badge variant="outline" className={cn(chip, "border-blue-200 bg-blue-50 text-blue-700")} title="적용하지 않은 수정이 스튜디오에 있습니다">{children}</Badge>;
   return <Badge variant="outline" className={chip}>{children}</Badge>;
 }
 
@@ -265,7 +277,7 @@ function StatusChip({ status, children }: { status: CardAction["status"] | "draf
 function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
   return (
     <Card className={cn(cardClass, "group/hc border-dashed")}>
-      <a href={df.href} className="flex flex-col gap-2 text-inherit no-underline">
+      <a href={df.href} className="flex flex-col gap-2.5 text-inherit no-underline">
         <CardHeader className="flex flex-row items-center gap-2.5 px-0">
           <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText className="size-4" /></span>
           <span className="min-w-0 flex-1">
@@ -273,7 +285,7 @@ function DraftCard({ df }: { df: ShellNav["drafts"][number] }) {
           </span>
         </CardHeader>
         <CardContent className="px-0">
-          <p className="m-0 line-clamp-2 min-h-[2.6em] text-xs text-muted-foreground">{draftLine(df.changes)}</p>
+          <p className={cn(descClass, "text-muted-foreground")}>{draftLine(df.changes)}</p>
         </CardContent>
         <CardFooter className="flex items-center gap-1.5 px-0">
           <StatusChip status="draft">초안</StatusChip>

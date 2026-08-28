@@ -23,26 +23,28 @@ export function examplesAt(page: number): ReadonlyArray<readonly [string, string
   return EXAMPLES[((page % n) + n) % n];
 }
 
-/** 홈 카드는 전부가 아니라 **지금 신경 쓸 것**만 — 수정 중·새 판·오류. 멀쩡히 도는 앱은
+/** 홈 카드는 전부가 아니라 **지금 신경 쓸 것**만 — 수정 중·새 버전·오류. 멀쩡히 도는 앱은
  *  사이드바가 이미 목록으로 보여 주므로 여기 또 세우면 같은 목록이 두 번 선다 */
 export function todoOf(items: ReadonlyArray<ShellItem>): ShellItem[] {
   return items.filter((it) => it.editing || !!it.update || !!it.error);
 }
 
-/** 새 판이 나온 설치본 수 — 배너는 개수만 말한다(실행은 카드의 버튼) */
+/** 새 버전이 나온 설치본 수 — 배너는 개수만 말한다(실행은 카드의 버튼) */
 export function updateCount(items: ReadonlyArray<ShellItem>): number {
   return items.filter((it) => !!it.update).length;
 }
 
 /** 카드의 상태 칩 하나 + 목적지 하나. 홈 카드는 "지금 손볼 것"이라 카드 전체가 그곳으로 간다 —
- *  수정 중·오류 → 스튜디오(수정 화면), 새 판 → 서재(업데이트 버튼). 우선순위는 오류 > 새 판 > 수정 중.
- *  label 은 업데이트에만 쓰인다(나머지는 연필+"수정" 표시가 목적지를 말한다) */
-export interface CardAction { status: "editing" | "update" | "error"; chip: string; label: string; href: string }
+ *  수정 중·오류 → 스튜디오(수정 화면), 새 버전 → 서재(업데이트 버튼). 우선순위는 오류 > 새 버전 > 수정 중.
+ *  label 은 업데이트에만 쓰인다(나머지는 연필+"수정" 표시가 목적지를 말한다).
+ *  수정 중은 칩이 없다(chip: null) — "진행 중" 격자의 기본값이라 칩이 모든 카드에 똑같이 붙어
+ *  아무것도 가르지 못했다. 목적지는 연필+"수정" 이 이미 말한다(2026-08-27) */
+export interface CardAction { status: "editing" | "update" | "error"; chip: string | null; label: string; href: string }
 export function cardAction(it: ShellItem, library: string | null): CardAction {
   if (it.error) return { status: "error", chip: "검사 실패", label: "수정", href: it.detail };
-  if (it.update && library) return { status: "update", chip: `새 판 ${it.update}`, label: "업데이트", href: library };
-  if (it.update) return { status: "update", chip: `새 판 ${it.update}`, label: "상세", href: it.detail };
-  return { status: "editing", chip: "수정 중", label: "수정", href: it.detail };
+  if (it.update && library) return { status: "update", chip: `새 버전 ${it.update}`, label: "업데이트", href: library };
+  if (it.update) return { status: "update", chip: `새 버전 ${it.update}`, label: "상세", href: it.detail };
+  return { status: "editing", chip: null, label: "수정", href: it.detail };
 }
 
 /** 아바타 글자 — 아이콘이 없을 때 이름 첫 글자 */
@@ -59,7 +61,7 @@ export function describe(description: string): string | null {
 
 /** 초안 카드의 한 줄 — 칩이 "초안"을 말하므로 여기는 진행 정도만 */
 export function draftLine(changes: number): string {
-  return changes ? `바뀐 파일 ${changes}개` : "첫 판 기록됨 · 아직 적용 전";
+  return changes ? `바뀐 파일 ${changes}개` : "첫 버전 만듦 · 아직 적용 전";
 }
 
 /** 초안 가르기 — 손댄 것은 카드, 빈 것(이름만 짓고 만 것 — 데몬의 empty 판정)은 한 줄로 접는다.

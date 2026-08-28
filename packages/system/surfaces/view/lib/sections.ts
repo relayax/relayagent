@@ -176,7 +176,7 @@ export const SECTIONS: SectionDef[] = [
     items: (m) =>
       (m.triggers ?? []).map((t) => ({
         id: t.id,
-        title: t.id,
+        title: t.label || t.id,
         sub: t.when?.cron ? `cron ${t.when.cron}` : t.when?.event ? `event ${t.when.event}` : undefined,
         files: [],
       })),

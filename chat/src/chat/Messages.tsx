@@ -17,6 +17,8 @@ import { Message, MessageContent } from "@/components/ui/message";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
+import { AlarmClockIcon, CircleSlashIcon, InboxIcon, TriangleAlertIcon } from "lucide-react";
 
 /** 사용자 턴 자리에 서는 카드(저작 요청·에이전트 요청·서브에이전트 위임·스킬 호출)의 공통 껍데기 —
  *  MessagePrimitive.Root 가 assistant-ui 의 뿌리로 남고(asChild), 그 위에 shadcn Message/Card 를 얹는다.
@@ -226,15 +228,25 @@ export function UserMessage() {
     // "📬 위임 완료 — ↳ agent-builder · diary(완료)" 같은 기계 머리는 사람 말로 — 내부 이름(세션
     // 라벨·서브에이전트 slug)을 화면에 내지 않는다. 성패만 남긴다
     const delivered = head0.startsWith("📬 위임 완료");
+    const failed = delivered && /\(실패\)\s*$/.test(head0);
+    const aborted = delivered && /\(중단\)\s*$/.test(head0);
+    // 아이콘이 서므로 머리의 이모지는 뗀다(같은 뜻을 두 번 그리지 않는다)
     const head = delivered
-      ? `맡긴 작업이 끝났어요${/\(실패\)\s*$/.test(head0) ? " · 실패" : /\(중단\)\s*$/.test(head0) ? " · 중단됨" : ""}`
-      : head0;
+      ? `맡긴 작업이 끝났어요${failed ? " · 실패" : aborted ? " · 중단됨" : ""}`
+      : head0.replace(/^[⏰📬📋]\s*/u, "");
+    const Icon = failed ? TriangleAlertIcon : aborted ? CircleSlashIcon : delivered ? InboxIcon : AlarmClockIcon;
+    // 말풍선도 카드도 아닌 **대화의 눈금** — shadcn Marker(separator): 양옆 실선이 흐름을 끊고
+    // 가운데 한 줄만 남는다. 옛 알약 칩(.rc-wake-chip)은 제 상자를 가져 메시지처럼 읽혔다.
     return (
-      <MessagePrimitive.Root className="rc-msg rc-wake">
-        <div className="rc-wake-chip" title={delivered ? "다른 대화에서 맡긴 작업의 결과가 이 대화로 왔어요. 아래 답이 그 결과예요" : "예약된 시각에 에이전트가 스스로 시작한 응답이에요"}>
-          {head}
-          {time ? <span className="rc-wake-time"> · {time}</span> : null}
-        </div>
+      <MessagePrimitive.Root asChild className="rc-msg">
+        <Marker variant="separator" className="my-1 text-xs"
+          title={delivered ? "다른 대화에서 맡긴 작업의 결과가 이 대화로 왔어요. 아래 답이 그 결과예요" : "예약된 시각에 에이전트가 스스로 시작한 응답이에요"}>
+          <MarkerIcon className="size-3.5 [&_svg:not([class*='size-'])]:size-3.5"><Icon /></MarkerIcon>
+          <MarkerContent className="flex-none text-center">
+            {head}
+            {time ? <span className="opacity-70"> · {time}</span> : null}
+          </MarkerContent>
+        </Marker>
       </MessagePrimitive.Root>
     );
   }

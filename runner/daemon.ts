@@ -27,6 +27,7 @@ import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime
 import { serviceStatuses, channelStatuses, connectionsOverview } from "./runtime/connections.ts";
 import { assembleCredential } from "./runtime/credential.ts";
 import { logLine } from "./supply/ledger.ts";
+import { dirCall, resolveDirService } from "./runtime/dirs.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
 import { verifyChannel } from "./supply/conform.ts";
 import { Ticker } from "./runtime/triggers.ts";
@@ -42,6 +43,59 @@ const ASSETS_DIR = path.join(RUNNER_DIR, "..", "chat", "dist");
 
 // 채널의 '최근 오류'와 비밀 지우기는 runtime/connections.ts 로 이사했다 — 패키지 단위 상태
 // (/pkg/…/channels)와 전 패키지 집계(/connections)가 같은 판정을 읽어야 해서다
+/**
+ * 폴더 고르기 — **네이티브 탐색기**를 띄우고 사람이 고른 경로를 답한다.
+ *
+ * 브라우저만으로는 안 된다: showDirectoryPicker 도 webkitdirectory 도 핸들·상대경로만 주고
+ * 절대경로를 주지 않는다(설계상 그렇다). 그래서 경로 칸이 자유 입력으로 남아 있었고, 아무도
+ * "~/Relay/memo" 를 손으로 치지 않는다. 기판은 그 컴퓨터에서 도니 진짜 탐색기를 열 수 있다.
+ *
+ * 고른 값은 홈 아래면 ~ 로 되돌린다 — 매니페스트에 기계 경로(/Users/이름/…)가 박히면 그 파일은
+ * 그 컴퓨터에서만 맞는 것이 된다. 되돌린 뒤에도 판정은 그대로 지난다(설치 시 ~ 는 결재 대상).
+ */
+function pickFolder(prompt: string): Promise<{ dir?: string; canceled?: boolean; error?: string }> {
+  const plan: [string, string[]] | null =
+    process.platform === "darwin"
+      ? ["osascript", ["-e", `POSIX path of (choose folder with prompt ${JSON.stringify(prompt)})`]]
+      : process.platform === "win32"
+        ? ["powershell", ["-NoProfile", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }"]]
+        : ["zenity", ["--file-selection", "--directory", `--title=${prompt}`]];
+  if (!plan) return Promise.resolve({ error: "이 운영체제에서는 폴더 고르기를 열 수 없습니다" });
+  return new Promise((resolve) => {
+    let out = "";
+    let err = "";
+    let child;
+    try {
+      child = spawn(plan[0], plan[1], { stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      return resolve({ error: `${plan[0]} 을 실행할 수 없습니다` });
+    }
+    child.stdout.on("data", (d) => { out += d; });
+    child.stderr.on("data", (d) => { err += d; });
+    child.on("error", () => resolve({ error: `${plan[0]} 을 실행할 수 없습니다` }));
+    child.on("close", (code) => {
+      const picked = out.trim();
+      // 취소는 실패가 아니다 — 화면은 아무 일도 하지 않아야 한다. 판정은 **로케일과 무관해야**
+      // 한다: macOS 는 취소를 그 컴퓨터의 말로 답한다("사용자가 취소함. (-128)"). 영어 단어를
+      // 찾으면 한국어 맥에서 취소가 빨간 오류로 뜬다. 숫자 -128 은 어느 말에서도 같다.
+      // zenity 는 취소를 종료 코드 1 + 빈 stderr 로 답하므로 그것도 취소로 읽는다
+      if (!picked) {
+        const canceled = code === 0 || /\(-128\)/.test(err) || !err.trim();
+        return resolve(canceled ? { canceled: true } : { error: err.trim() });
+      }
+      const home = os.homedir();
+      const abs = picked.replace(/\/$/, "");
+      resolve({ dir: abs === home ? "~" : abs.startsWith(home + path.sep) ? "~/" + abs.slice(home.length + 1) : abs });
+    });
+  });
+}
+
+/** 폴더 하나를 OS 파일 탐색기로 — 데이터의 거처가 폴더라는 약속을 한 클릭으로 증명하는 문 */
+function openInFinder(dir: string): void {
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  spawn(opener, [dir], { detached: true, stdio: "ignore" }).unref();
+}
+
 
 
 /** 데몬 자신의 오리진 — 상태를 바꾸는 요청의 Origin 화이트리스트(CSRF 판정). 데몬이 굽는
@@ -587,8 +641,7 @@ export function createApi(
         if (!getLedger().packages[name]) return void json(res, 404, { error: `미설치 패키지: ${name}` });
         const dir = workspacePath(getLedger(), name);
         fs.mkdirSync(dir, { recursive: true });
-        const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
-        spawn(opener, [dir], { detached: true, stdio: "ignore" }).unref();
+        openInFinder(dir);
         return void json(res, 200, { ok: true, dir });
       }
       // 작업 폴더의 파일 — 패키지 자기 view 가 자기 산출물을 그리는 읽기전용 문(runtime/view.ts
@@ -598,6 +651,50 @@ export function createApi(
         const name = decodeURIComponent(wsFile[1]);
         if (!getLedger().packages[name]) return void json(res, 404, { error: `미설치 패키지: ${name}` });
         return void serveWorkspaceFile(workspacePath(getLedger(), name), decodeURIComponent(wsFile[2]), req, res);
+      }
+
+      // 폴더 들여다보기 — 그 안에 무엇이 있나. 감금·목록은 dirCall 이 이미 하는 일이고(세션이
+      // dir__*__list 로 부르는 그 연산 그대로), 이 문은 같은 것을 화면에 낸다. 새 규칙을 만들지
+      // 않는 것이 요점이다 — 화면이 세션보다 더 볼 수 있으면 캡이 두 벌이 된다
+      const dirList = p.match(/^\/pkg\/([^/]+)\/dir\/([^/]+)\/list$/);
+      if (dirList && req.method === "GET") {
+        const name = decodeURIComponent(dirList[1]);
+        const svc = decodeURIComponent(dirList[2]);
+        const rec = getLedger().packages[name];
+        if (!rec) return void json(res, 404, { error: `미설치 패키지: ${name}` });
+        try {
+          const root = resolveDirService(getLedger(), name, loadManifest(rec.path), svc);
+          return void json(res, 200, { root, ...(await dirCall(root, "list", { depth: 1 }) as object) });
+        } catch (e) {
+          return void json(res, 404, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+
+      // 폴더 열기 — services[].dir 한 칸을 OS 파일 탐색기로. 경로는 **장부가 답한다**
+      // (resolveDirService → dirBindings): 화면이 보낸 문자열로 열면 그 순간 아무 폴더나 여는
+      // 문이 된다. 세션이 그 폴더를 dir__* 도구로만 만지는 것과 같은 결재를 이 문도 지난다.
+      const dirOpen = p.match(/^\/pkg\/([^/]+)\/dir\/([^/]+)\/open$/);
+      if (dirOpen && req.method === "POST") {
+        const name = decodeURIComponent(dirOpen[1]);
+        const svc = decodeURIComponent(dirOpen[2]);
+        const rec = getLedger().packages[name];
+        if (!rec) return void json(res, 404, { error: `미설치 패키지: ${name}` });
+        let dir: string;
+        try {
+          dir = resolveDirService(getLedger(), name, loadManifest(rec.path), svc);
+        } catch (e) {
+          return void json(res, 404, { error: e instanceof Error ? e.message : String(e) });
+        }
+        fs.mkdirSync(dir, { recursive: true });
+        openInFinder(dir);
+        return void json(res, 200, { ok: true, dir });
+      }
+
+      // 폴더 고르기 — 패키지에 매이지 않는다(아직 선언에 앉지 않은 값을 고르는 자리다).
+      // 고른 값이 실제로 허용되는지는 여기서 판정하지 않는다: 적용할 때 install 이 판정한다
+      if (p === "/pick/dir" && req.method === "POST") {
+        const b = await readBody(req).catch(() => ({}));
+        return void json(res, 200, await pickFolder(typeof b.prompt === "string" ? b.prompt : "이 에이전트가 쓸 폴더를 고르세요"));
       }
 
       const script = p.match(/^\/pkg\/([^/]+)\/script\/([a-z0-9-]+)$/);

@@ -115,7 +115,10 @@ export type SessionEntry = { session: string; label: string; updated: number; ar
   /** §5.3-21 additive — 이 대화의 정체성(위임 세션 등): 에이전트와 작업 대상. 없으면 착지 */
   agent?: string; param?: string;
   /** 작업 사본 위 세션 — 고친 판을 적용 전에 써보는 대화 */
-  draft?: boolean };
+  draft?: boolean;
+  /** §5.3-25 additive — 사람이 연 대화가 아닌, 기계가 판 슬롯. 없으면 사람의 대화.
+   *  슬롯 접두 스니핑은 금지(세션 id 는 불투명) — 기판이 밝힌 이 축만 본다. */
+  origin?: "dispatch" | "mission" };
 
 /** §5.3-22 additive — 민팅 시 대화 바인딩. param 은 agent 없이 설 수 없다(기판 판정).
  *  draft = 작업 사본 위에 민팅(기판이 그 나무로 세션을 세운다) */

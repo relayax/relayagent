@@ -364,4 +364,26 @@ test("미주입이면 현행 그대로 — 파일 살림·동봉 어댑터·기�
   }
 });
 
+// §5.3-25 — 사람이 연 대화와 기계가 판 슬롯(위임·미션)을 목록이 가른다. 판정 축은 슬롯 문법이지만
+// 그건 기판 내부 어휘라 클라이언트에 나가는 것은 origin 하나다. 이 축이 없으면 화면은 에이전트가
+// 판 위임 대화를 사람이 연 대화와 같은 무게로 늘어놓는다(보관함 피커, 2026-08-28 수리 지점).
+test("세션 행이 출신을 밝힌다 — 위임·미션은 origin, 사람의 대화는 없음", async () => {
+  const d = await door({ getLedger: () => ledger, authority: localAuthority(() => ledger) });
+  const home = process.env.RELAY_HOME!;
+  try {
+    const mine = (await (await fetch(`${d.base}/sessions`, jsonReq({}))).json()).session;
+    // 위임·미션 슬롯은 기판이 판다(tools.ts·a2aMissionSlot) — 여기선 그 살림만 세운다
+    for (const slot of ["sub-agent-builder-detail-page", "mission-peer-render"]) {
+      fs.mkdirSync(path.join(home, "sessions", PKG, slot), { recursive: true });
+    }
+    const rowsOf = (list: { sessions: SessionRow[] }, slot: string) => list.sessions.find((r) => r.session === slot);
+    const list = await (await fetch(`${d.base}/sessions`)).json();
+    assert.equal(rowsOf(list, "sub-agent-builder-detail-page")?.origin, "dispatch");
+    assert.equal(rowsOf(list, "mission-peer-render")?.origin, "mission");
+    assert.equal("origin" in (rowsOf(list, mine) ?? {}), false, "사람이 연 대화가 출신을 달았다");
+  } finally {
+    await d.close();
+  }
+});
+
 test.after(() => fs.rmSync(ROOT, { recursive: true, force: true }));

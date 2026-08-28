@@ -18,8 +18,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
-// 메뉴 공통 — 팝오버 본체(기본 p-4·w-72 를 목록용으로 좁힌다)와 목록 행. 배치·색은 전부 유틸리티,
-// rc-sess-* 배치 규칙은 ChatTabs 가 아직 쓰므로 chat.css 에 남아 있지만 여기서는 더 쓰지 않는다.
+// 메뉴 공통 — 팝오버 본체(기본 p-4·w-72 를 목록용으로 좁힌다)와 목록 행. 배치·색은 전부 유틸리티다.
+// 옛 rc-sess-* 배치 규칙은 아무도 쓰지 않아 chat.css 에서 걷어냈다(2026-08-27).
 const MENU = "block w-auto min-w-52 max-w-72 gap-0 p-1 text-[12.5px]";
 // 목록이 길면 팝오버 대신 이 영역이 스크롤한다 — Root 와 Viewport 모두 높이를 잡아야 base-ui 뷰포트가 넘친다.
 const LIST_SCROLL = "max-h-72 [&>[data-slot=scroll-area-viewport]]:max-h-72";

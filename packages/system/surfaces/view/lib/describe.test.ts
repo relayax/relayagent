@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cronToKorean, describe, providerLabel, scriptNamesFromFiles, scriptNamesFromTree, type Row } from "./describe.ts";
+import { agentSub, buildCron, cronToKorean, describe, parseCron, facts, matchScripts, providerLabel, scriptNamesFromFiles, scriptNamesFromTree, sentences, triggerTarget, type Para, type Row, type Tok } from "./describe.ts";
 import type { Manifest } from "./types";
 
 test("cronToKorean — 스펙의 표", () => {
   assert.equal(cronToKorean("0 22 * * *"), "매일 밤 10시");
   assert.equal(cronToKorean("30 9 * * *"), "매일 오전 9시 30분");
+  assert.equal(cronToKorean("30 * * * *"), "매시 30분");
+  assert.equal(cronToKorean("0 * * * *"), "매시 정각");
   assert.equal(cronToKorean("0 9 * * 1-5"), "평일 오전 9시");
   assert.equal(cronToKorean("0 14 * * 1"), "매주 월요일 오후 2시");
   assert.equal(cronToKorean("*/15 * * * *"), "15분마다");
@@ -132,4 +134,163 @@ test("describe — raw 도구까지 빌리는 edge 는 따로 말한다", () => 
     { text: "erp의 도구를 빌려 씀 (raw 도구까지)", sub: "search" },
     { text: "calendar의 도구를 빌려 씀", sub: "list" },
   ]);
+});
+test("matchScripts — agents[].scripts 의 글로브를 실제 동사에 편다", () => {
+  const all = ["set-copy", "set-save", "campaign-list", "offer-use"];
+  assert.deepEqual(matchScripts(["set-*"], all), ["set-copy", "set-save"]);
+  assert.deepEqual(matchScripts(["offer-use", "campaign-*"], all), ["campaign-list", "offer-use"]);
+  assert.deepEqual(matchScripts(undefined, all), []);
+  assert.deepEqual(matchScripts(["없는-*"], all), []);
+});
+
+test("triggerTarget — 깨움이 실제로 무엇을 부르나", () => {
+  assert.equal(triggerTarget({ then: { agent: "organizer" } }), "organizer");
+  assert.equal(triggerTarget({ then: { script: "report-weekly" } }), "report-weekly");
+  assert.equal(triggerTarget({ then: {} }), null);
+});
+
+test("agentSub — 보조 줄은 '무엇의 몇 개' 인지 말한다", () => {
+  const all = ["set-copy", "set-save", "offer-use"];
+  assert.equal(agentSub({ scripts: ["set-*"], dirs: ["memos"] }, all), "기능 2개 · 폴더 1개");
+  assert.equal(agentSub({ dispatch: ["coach"] }, all), "도우미 1명");
+  assert.equal(agentSub({}, all), undefined);
+});
+
+test("facts — 흐름 순서로, 없는 것은 칩을 내지 않는다", () => {
+  const m: Manifest = {
+    surfaces: { view: { source: "surfaces/view" }, channels: [{ name: "slack", source: "c/slack", entry: "i.ts" }] },
+    triggers: [{ id: "w", when: { cron: "0 9 * * 1" }, then: { agent: "organizer" } }],
+    agents: [{ name: "memo" }, { name: "organizer" }],
+    services: [{ name: "memos", dir: "memos" }],
+  };
+  const f = facts(m, { scripts: ["a", "b", "c"], landing: "memo", edges: [] });
+  assert.deepEqual(f.map((x) => x.text), [
+    "웹 화면",
+    "슬랙",
+    "매주 월요일 오전 9시 자동",
+    "기능 3개",
+    "도우미 1명",
+    "폴더 1개",
+  ]);
+  assert.deepEqual(facts({}, { scripts: [], landing: null, edges: [] }), []);
+  assert.deepEqual(facts({ agents: [{ name: "a" }] }, { scripts: [], landing: "a", edges: [] }).map((x) => x.text), ["대화만"]);
+});
+
+// ── 문장 ────────────────────────────────────────────────────────────────────
+const CTX = (over: Partial<Parameters<typeof sentences>[1]> = {}) => ({
+  workspace: "/w", scripts: [], edges: [], landing: null, activeHarness: null,
+  labelOf: (n: string) => n, files: [], ...over,
+});
+/** 문단을 사람이 읽는 한 줄로 — 토큰이든 글자든 이어 붙인다 */
+const line = (p: Para): string => p.parts.map((x) => (typeof x === "string" ? x : x.t)).join("");
+const toks = (p: Para): Tok[] => p.parts.filter((x): x is Tok => typeof x !== "string");
+
+test("sentences — 주간 메모 정리(실물)", () => {
+  const m: Manifest = {
+    surfaces: { view: { source: "surfaces/view" } },
+    triggers: [{ id: "weekly", when: { cron: "0 9 * * 1" }, then: { agent: "organizer" } }],
+    harness: { variants: [{ name: "claude-code", source: "harness/claude-code" }] },
+    agents: [{ name: "memo-weekly" }, { name: "organizer" }],
+    services: [{ name: "memos", dir: "~/Relay/memo" }, { name: "digests", dir: "~/Relay/memo-weekly" }],
+  };
+  const [meet, doing, using] = sentences(m, CTX({ scripts: ["a", "b", "c", "d", "e"], landing: "memo-weekly" }));
+  // 깨움이 문(memo-weekly)이 아니라 organizer 를 직접 부른다 — 그 이름이 문장에 나온다
+  assert.equal(line(meet), "웹 화면에서 만나고, 매주 월요일 오전 9시에 organizer 도우미를 깨웁니다.");
+  assert.ok(toks(meet).some((t) => t.sec === "agents" && t.item === "organizer"));
+  assert.equal(line(doing), "Claude 엔진으로 돌아가고, organizer 도우미와 함께 5가지 일을 합니다.");
+  // 폴더는 선언 이름("memos")이 아니라 사람이 파인더에서 여는 그 경로로 부른다
+  assert.equal(line(using), "~/Relay/memo · ~/Relay/memo-weekly 폴더를 읽고 씁니다. ");
+  // 없는 것만 점선으로 — 있는 것에는 붙지 않는다
+  assert.deepEqual(meet.adds, []);
+  assert.deepEqual(doing.adds, []);
+  assert.deepEqual(using.adds.map((a) => a.sec), ["edges", "missions"]);
+});
+
+test("sentences — 낱말마다 갈 곳이 있다", () => {
+  const m: Manifest = {
+    surfaces: { view: { source: "v" }, channels: [{ name: "slack", source: "s", entry: "e" }] },
+    triggers: [{ id: "t1", when: { cron: "0 9 * * 1" }, then: {} }],
+  };
+  const [meet] = sentences(m, CTX({ landing: "a" }));
+  assert.deepEqual(toks(meet).map((t) => [t.sec, t.item]), [
+    ["surfaces", "view"], ["surfaces", "channel:slack"], ["triggers", "t1"],
+  ]);
+  assert.equal(line(meet), "웹 화면 · 슬랙에서 만나고, 매주 월요일 오전 9시에 알아서 움직입니다.");
+});
+
+test("sentences — 빈 패키지는 붙일 것만 말한다", () => {
+  const [meet, doing, using] = sentences({}, CTX());
+  assert.equal(line(meet), "아직 만날 곳이 없습니다.");
+  assert.equal(line(doing), "아직 할 수 있는 일이 없습니다.");
+  assert.equal(line(using), "쓰는 폴더나 연결이 없습니다.");
+  // 빈 패키지에서는 붙일 수 있는 것이 전부 나온다 — 화면이 맨 아래 한 묶음으로 모으므로
+  // 문단마다 자를 이유가 없다. 그 묶음이 곧 "무엇을 만들 수 있나" 의 차림표다
+  assert.deepEqual([meet, doing, using].flatMap((p) => p.adds).map((a) => a.sec), [
+    "surfaces", "triggers", "scripts", "harness", "services", "edges", "missions",
+  ]);
+});
+
+test("sentences — 조사가 붙는 말은 전부 고정어다", () => {
+  // 값 뒤에는 받침을 따지는 조사(로/으로 · 을/를 · 와/과 · 이/가)가 오면 안 된다.
+  // "슬랙" 과 "organizer" 는 받침 판정이 서로 다르고, 로마자는 한국어 발음이 따로다
+  const m: Manifest = {
+    surfaces: { channels: [{ name: "slack", source: "s", entry: "e" }] },
+    harness: { variants: [{ name: "codex", source: "h" }] },
+    agents: [{ name: "memo" }, { name: "organizer" }],
+    services: [{ name: "memos", dir: "~/m" }],
+    missions: [{ name: "x" }],
+  };
+  for (const p of sentences(m, CTX({ scripts: ["a"], landing: "memo" }))) {
+    for (let i = 0; i < p.parts.length; i++) {
+      const part = p.parts[i];
+      if (typeof part === "string") continue;
+      const next = p.parts[i + 1];
+      if (typeof next !== "string") continue;
+      // 붙박이 이름은 내가 쓴 글자 그대로라 받침이 정해져 있다 — 규칙은 **값**에만 건다
+      if (part.fixed) continue;
+      assert.doesNotMatch(next, /^(으로|로|을|를|와|과|이|가|은|는)\b/, `"${part.t}" 뒤에 "${next}"`);
+    }
+  }
+});
+
+test("sentences — 폴더와 서비스는 이름이 아니라 실체로 부른다", () => {
+  const m: Manifest = {
+    services: [
+      { name: "memos", dir: "~/Relay/memo" },
+      { name: "notion", api: "https://api.notion.com/v1" },
+      { name: "weird", url: "${NOT_A_URL}" },
+    ],
+  };
+  const [, , using] = sentences(m, CTX());
+  // 폴더는 경로, 바깥 서비스는 호스트. 주소가 아니면 그때만 선언 이름으로 물러선다
+  assert.equal(line(using), "~/Relay/memo 폴더를 읽고 씁니다. api.notion.com · weird에 연결합니다. ");
+  // 낱말이 여는 문은 그대로 선언 이름이다 — 보이는 말만 바뀐다
+  assert.deepEqual(toks(using).map((t) => t.item), ["memos", "notion", "weird"]);
+});
+
+// ── cron 고르개 ──────────────────────────────────────────────────────────────
+test("parseCron · buildCron — 고르개가 다루는 것은 번역표와 같은 집합이다", () => {
+  const picks: import("./describe.ts").CronPick[] = [
+    { every: "day", hour: 9, min: 0 },
+    { every: "day", hour: 22, min: 30 },
+    { every: "weekday", hour: 9, min: 0 },
+    { every: "week", dow: 1, hour: 9, min: 0 },
+    { every: "week", dow: 0, hour: 18, min: 15 },
+    { every: "hour", min: 30 },
+    { every: "minutes", n: 15 },
+    { every: "hours", n: 3 },
+  ];
+  for (const p of picks) {
+    const expr = buildCron(p);
+    // 고른 것은 반드시 사람 말이 된다 — 고르개와 읽기가 어긋나면 만든 예약이 목록에서 날식으로 뜬다
+    assert.ok(cronToKorean(expr), `번역 못 함: ${expr}`);
+    assert.deepEqual(parseCron(expr), p, expr);
+  }
+});
+
+test("parseCron — 번역표 밖의 식은 고르개를 못 세운다", () => {
+  for (const bad of ["0 9 * * 1,3,5", "0 9 1 * *", "0 9 * 3 *", "not a cron", "0 99 * * *"]) {
+    assert.equal(parseCron(bad), null, bad);
+    assert.equal(cronToKorean(bad), null, bad);
+  }
 });

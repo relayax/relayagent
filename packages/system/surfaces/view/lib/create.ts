@@ -1,4 +1,5 @@
 import type { Document } from "yaml";
+import { engineLabel } from "./describe.ts";
 import type { Manifest } from "./types";
 
 // 만들 수 있는 것의 **정본 목록**.
@@ -14,6 +15,68 @@ import type { Manifest } from "./types";
 //
 // 이름은 문법이 아니라 **얻는 것**으로 쓴다. "surfaces.components" 는 그것을 이미 아는 사람에게만
 // 뜻이 있고, "다른 앱 화면에 끼울 부품" 은 처음 보는 사람에게도 뜻이 있다. 문법 좌표는 옆에 작게 단다.
+
+/** 붙일 수 있는 엔진의 **완전한 선언** — packages/system/relay.yaml 의 harness.variants 를 옮긴 것.
+ *
+ *  이름·source·entry 만 적으면 목록에는 서지만 자격도 실행 파일도 따라오지 않는다:
+ *  세션은 llm.auth.env 로만 금고의 자격을 싣고(runtime/harness.ts), 토큰 연결 창은
+ *  llm.auth.kind 로 열리며(supply/install.ts), 도구 사본은 binary 참조가 가리키는
+ *  requires.binaries 레시피로만 깔린다. 그래서 "고를 수는 있는데 돌지 않는" 껍데기 후보가
+ *  됐다(2026-08-28). 붙이는 손이 그 네 줄을 함께 적는다.
+ *
+ *  llm.icon(assets/llm/*.svg)은 어댑터 폴더 밖이라 옮기지 않는다 — 씨앗은 harness/<이름>/ 하나뿐
+ *  이고(supply/draft.ts), 없는 파일을 가리키면 판정에 걸린다. */
+export const HARNESS_SPECS: Record<string, {
+  /** 어댑터 폴더에 icon.png 가 있는 것만 참이다 — 없는 파일을 가리키면 판정에 걸린다 */
+  icon?: boolean;
+  llm: { provider: string; auth: { kind: "token" | "oauth"; env: string } };
+  /** 함께 세울 requires.binaries 레시피. kimi 는 없다 — uv 를 제품 전제로 만들지 않는다 */
+  binary?: { name: string; manager: "npm" | "uv"; package: string };
+}> = {
+  "claude-code": {
+    icon: true,
+    llm: { provider: "anthropic", auth: { kind: "oauth", env: "CLAUDE_CODE_OAUTH_TOKEN" } },
+    binary: { name: "claude", manager: "npm", package: "@anthropic-ai/claude-code" },
+  },
+  codex: {
+    icon: true,
+    llm: { provider: "openai", auth: { kind: "oauth", env: "OPENAI_API_KEY" } },
+    binary: { name: "codex", manager: "npm", package: "@openai/codex" },
+  },
+  pi: {
+    llm: { provider: "vllm", auth: { kind: "token", env: "PI_API_KEY" } },
+    // 어댑터는 pi | pi-pods 둘 다 받지만 레시피가 까는 실행 파일 이름은 pi-pods 다
+    binary: { name: "pi-pods", manager: "npm", package: "@mariozechner/pi" },
+  },
+  kimi: {
+    icon: true,
+    llm: { provider: "moonshot", auth: { kind: "token", env: "MOONSHOT_API_KEY" } },
+  },
+};
+
+export const HARNESS_TEMPLATES = Object.keys(HARNESS_SPECS);
+/** 표시 이름의 정본은 설명서 문장이 쓰는 표 하나다 */
+export { engineLabel as harnessLabel };
+
+/** 엔진 빼기 — 선언 한 줄이 아니라 그 엔진이 데려온 것을 함께 뺀다. 남은 참조가 없어진
+ *  requires 레시피를 두면 아무도 안 쓰는 도구를 설치 때마다 깔고 앉는다(어댑터 파일은 남는다:
+ *  트리는 사람의 것이고, 다시 붙일 때 그대로 쓰인다). */
+export async function removeHarness(ctx: CreateCtx, name: string): Promise<void> {
+  const variants = ctx.manifest.harness?.variants ?? [];
+  const vi = variants.findIndex((v) => v.name === name);
+  if (vi < 0) return;
+  const bin = HARNESS_SPECS[name]?.binary;
+  const stillUsed = variants.some((v) => v.name !== name && bin && v.binary === bin.name);
+  const bins = ctx.manifest.requires?.binaries ?? [];
+  // 우리가 세운 그 레시피일 때만 걷는다 — 사람이 손으로 적은 줄은 사람의 것이다
+  const bi = bin && !stillUsed
+    ? bins.findIndex((b) => b.name === bin.name && b.manager === bin.manager && b.package === bin.package)
+    : -1;
+  await ctx.apply((d) => {
+    d.deleteIn(["harness", "variants", vi]);
+    if (bi >= 0) d.deleteIn(["requires", "binaries", bi]);
+  });
+}
 
 export interface CreateCtx {
   manifest: Manifest;
@@ -95,10 +158,10 @@ const viewDoc = (m: Manifest): string =>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${m.display_name ?? "화면"}</title>
 <style>
-  body { margin: 0; padding: 32px; font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; color: #16181b; background: #f5f6f7; }
-  main { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid #e6e9ec; border-radius: 12px; padding: 24px 26px; }
+  body { margin: 0; padding: 32px; font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; color: #171717; background: #fafafa; }
+  main { max-width: 640px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 24px 26px; }
   h1 { margin: 0 0 6px; font-size: 19px; }
-  p { margin: 0; color: #5c6570; font-size: 14px; }
+  p { margin: 0; color: #737373; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -121,7 +184,7 @@ const componentDoc = `// 자립 번들의 계약은 수출 하나다 — 소비�
 // 같은 패키지가 다른 이름으로 서는 순간 깨진다.
 export function mount(el, props = {}) {
   const box = document.createElement("div");
-  box.style.cssText = "font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;padding:14px;border-radius:10px;background:#f5f6f7;color:#16181b";
+  box.style.cssText = "font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;padding:14px;border-radius:10px;background:#fafafa;color:#171717";
   box.textContent = props.title ?? "안녕하세요";
   el.appendChild(box);
   return { unmount() { box.remove(); } };
@@ -251,9 +314,27 @@ export const CREATABLES: Creatable[] = [
     },
     present: (m) => (m.harness?.variants ?? []).length,
     async make(ctx, tpl) {
-      await ctx.apply((d) => push(d, ["harness", "variants"], { name: tpl, source: `harness/${tpl}`, entry: "run" }));
+      const spec = HARNESS_SPECS[tpl];
+      if (!spec) throw new Error(`모르는 엔진: ${tpl}`);
+      const bin = spec.binary;
+      // 레시피가 이미 서 있으면 다시 세우지 않는다 — 같은 사실을 두 줄로 적으면 requires 가 갈라진다
+      const hasBin = !!bin && (ctx.manifest.requires?.binaries ?? []).some((b) => b.name === bin.name);
+      await ctx.apply((d) => {
+        if (bin && !hasBin) push(d, ["requires", "binaries"], bin);
+        push(d, ["harness", "variants"], {
+          name: tpl,
+          source: `harness/${tpl}`,
+          entry: "run",
+          ...(bin ? { binary: bin.name } : {}),
+          ...(spec.icon ? { icon: `harness/${tpl}/icon.png` } : {}),
+          llm: spec.llm,
+        });
+      });
       await ctx.seedHarness(`harness/${tpl}`, "run");
-      return { sec: "harness", item: tpl, receipt: `${tpl} 하네스 후보를 붙였습니다 — harness/${tpl} 템플릿 복사됨` };
+      return {
+        sec: "harness", item: tpl,
+        receipt: `${engineLabel(tpl)} 엔진을 붙였습니다 — 어댑터 복사${bin ? ` · ${bin.name} 실행 파일` : ""} · 자격(${spec.llm.provider}) 선언`,
+      };
     },
   },
   {

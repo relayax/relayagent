@@ -9,6 +9,8 @@ export interface AgentDecl {
   commands?: string;
   dispatch?: string[];
   scripts?: string[];
+  /** 부를 수 있는 dir 서비스 — dir__<이름>__* 도구의 캡 */
+  dirs?: string[];
 }
 
 export interface ServiceDecl {
@@ -98,6 +100,8 @@ export interface ChannelDecl {
 
 export interface TriggerDecl {
   id: string;
+  /** 표시명 — 문법이 "화면 목록이 id 대신 그린다" 고 정한 자리다(relay.manifest.yaml) */
+  label?: string;
   when: { cron?: string; tz?: string; event?: string; filter?: Record<string, unknown>; debounce_ms?: number };
   then: { agent?: string; prompt?: string; route?: string; delivery?: string; script?: string };
 }
@@ -111,7 +115,7 @@ export interface Manifest {
   icon?: string;
   requires?: {
     os?: string[];
-    binaries?: { name: string; install?: string }[];
+    binaries?: { name: string; install?: string; manager?: "npm" | "uv"; package?: string; version?: string }[];
     apps?: { name: string; install?: string }[];
   };
   surfaces?: {
@@ -121,7 +125,13 @@ export interface Manifest {
     channels?: ChannelDecl[];
   };
   harness?: {
-    variants?: { name: string; source: string; entry?: string; icon?: string; llm?: { provider?: string; icon?: string } }[];
+    variants?: {
+      name: string; source: string; entry?: string;
+      /** requires.binaries[].name 참조 — 레시피는 requires 한 곳에만 산다 */
+      binary?: string;
+      icon?: string;
+      llm?: { provider?: string; icon?: string; auth?: { kind: "none" | "token" | "oauth"; env?: string } };
+    }[];
     workdir?: string;
   };
   agents?: AgentDecl[];

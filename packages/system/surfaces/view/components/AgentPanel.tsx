@@ -3,9 +3,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { CREATABLES, blocked, type Creatable } from "@/lib/create";
-import type { Row } from "@/lib/describe";
-import { cronToKorean } from "@/lib/describe";
+import { CREATABLES, HARNESS_TEMPLATES, blocked, harnessLabel, type Creatable } from "@/lib/create";
+import type { Fact, Row } from "@/lib/describe";
+import type { Add, Para, Tok } from "@/lib/describe";
+import { agentSub, channelLabel, cronToKorean, engineLabel, facts, sentences, triggerTarget } from "@/lib/describe";
 import { SECTIONS, type SectionItem } from "@/lib/sections";
 import type { Manifest } from "@/lib/types";
 
@@ -46,27 +47,29 @@ export function Icon({ k }: { k: Key }) {
 
 const Chevron = () => <span className="ap-chev" aria-hidden="true">›</span>;
 
-/** 갈래마다 늘어놓을 섹션 — (아이콘 키, 폼 섹션 키, 제목). 에이전트 갈래는 "무엇을 하나"(엔진·성격 포함),
- *  설정 갈래는 "설치와 허용 범위". 동작 엔진은 에이전트 갈래에만 — 두 갈래에 같은 폼이 서 있었다. */
-const AGENT_SECS: { k: Key; sec: string; title: string; add: string }[] = [
-  { k: "when", sec: "triggers", title: "스케줄", add: "예약" },
-  { k: "verbs", sec: "scripts", title: "기능", add: "기능" },
-  { k: "links", sec: "edges", title: "연결", add: "연결" },
-  { k: "dirs", sec: "services", title: "폴더와 자원", add: "자원" },
-  { k: "faces", sec: "surfaces", title: "화면과 채널", add: "화면·채널" },
-  { k: "missions", sec: "missions", title: "맡길 수 있는 일", add: "일" },
-  { k: "talk", sec: "agents", title: "보조 에이전트", add: "보조" },
-];
+/** 밑줄 낱말의 툴팁 — 누르면 무엇이 열리는지. 문장은 짧게 두고 설명은 여기로 */
+/** 낱말 알약에 붙는 작은 아이콘 — 섹션 → 아이콘 키. 밑줄 대신 아이콘이 "이게 무엇의 이름인지" 를 말한다 */
+const TOK_ICON: Record<string, Key> = {
+  surfaces: "faces", triggers: "when", harness: "engine", agents: "talk",
+  scripts: "verbs", services: "dirs", edges: "links", missions: "missions",
+};
+
+const TOK_HINT: Record<string, string> = {
+  surfaces: "사람이 여는 화면과 채널을 고칩니다",
+  triggers: "언제 알아서 움직일지 고칩니다",
+  harness: "이 에이전트를 돌리는 AI 를 고릅니다",
+  agents: "이 에이전트의 성격과 할 일을 고칩니다",
+  scripts: "시키면 하는 일들을 봅니다",
+  services: "읽고 쓰는 폴더와 프로그램을 고칩니다",
+  edges: "다른 앱에서 빌려 쓰는 것을 고칩니다",
+  missions: "다른 앱에 빌려주는 일을 고칩니다",
+};
+
 /** 항목 목록을 갖는 섹션 — 이 패널이 이미 목록·＋추가·빈 상태를 다 보여주므로 섹션 랜딩(같은 목록을
  *  한 번 더 그리는 화면)으로 가는 문이 없다. 문은 항목과 ＋ 추가 둘뿐. 나머지(기본 정보·엔진·필요한 것
  *  ·브리지 캡·조직·기타 파일)는 섹션 자체가 폼 하나라 제목이 문이다 */
-/** 붙일 수 있는 엔진 — 팔레트의 harness 레시피 템플릿 이름 */
-const ENGINES = [
-  { id: "claude-code", label: "Claude" },
-  { id: "codex", label: "Codex" },
-  { id: "pi", label: "Pi" },
-  { id: "kimi", label: "Kimi" },
-];
+/** 붙일 수 있는 엔진 — 정본은 lib/create 의 HARNESS_SPECS 하나다 */
+const ENGINES = HARNESS_TEMPLATES.map((id) => ({ id, label: harnessLabel(id) }));
 
 const LIST_SECS = new Set(["triggers", "scripts", "edges", "services", "surfaces", "missions", "agents"]);
 
@@ -101,11 +104,24 @@ export interface AgentPanelProps {
   onPick: (c: Creatable) => void;
   /** [＋ 추가] 메뉴의 "말로 만들기" — 오른쪽 빌더 대화에 문장을 미리 채운다 */
   onAsk: (text: string) => void;
-  /** 엔진 칩 — 켜면 붙이고 끄면 뺀다. 도는 동안 busy */
+  /** 엔진 칩 — 없는 것을 누르면 붙이고, × 는 뺀다. 도는 동안 busy */
   onEngine: (template: string) => void;
   engineBusy?: boolean;
+  /** 지금 이 패키지를 돌리는 엔진 — 장부의 값이다(작업 사본과 무관) */
+  activeEngine?: string | null;
+  /** 설치본에 이미 선 엔진들 — 전환은 돌아가는 버전을 상대로 한다. 사본에만 있는 것은
+   *  적용 전까지 고를 수 없다(장부가 그 이름을 모른다) */
+  liveEngines?: string[];
+  /** 이 엔진으로 돌린다 — 즉시 반영된다(적용을 기다리지 않는다) */
+  onActivate?: (name: string) => void;
   /** 줄 옆 실행 상태 — 채널(연결됨·로그인 필요)·서비스(켜짐·꺼짐). null 이면 칩 없음 */
   status?: ItemStatus;
+  /** 설치 이름 → 표시 이름. 연결 줄이 "@haemin/offer-workbook" 대신 사람 말을 쓴다 */
+  labelOf?: (name: string) => string;
+  /** 착지 에이전트의 성격 글 첫 줄 — 누르면 그 글을 고친다 */
+  personaLead?: string;
+  /** 이 패키지의 동사 이름 — 보조 에이전트가 몇 가지를 쓰는지 세는 데 쓴다(글로브를 편다) */
+  scripts?: string[];
 }
 
 /** 항목 줄 옆 칩 — on 이면 살아 있다는 뜻(색 없이 글자 무게만 다르다) */
@@ -117,8 +133,9 @@ function creatablesFor(sec: string): Creatable[] {
   return head ? CREATABLES.filter((c) => c.yaml === head || c.yaml.startsWith(head + ".") || c.yaml.startsWith(head + "[")) : [];
 }
 
-/** ＋ 추가 — 눌린 자리 아래 종류 메뉴(스크린샷의 Add 메뉴). 바깥을 누르거나 Esc 로 닫는다 */
-function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; title: string; label?: string; m: Manifest; files: string[]; onPick: (c: Creatable) => void; onAsk: (t: string) => void }) {
+/** ＋ 추가 — 눌린 자리 아래 종류 메뉴(스크린샷의 Add 메뉴). 바깥을 누르거나 Esc 로 닫는다.
+ *  `why` 를 주면 버튼 대신 **점선 한 줄**로 선다 — 비어 있는 섹션의 자리를 지키는 형태다 */
+function AddMenu({ sec, title, label, why, icon, line, m, files, onPick, onAsk }: { sec: string; title: string; label?: string; why?: string; icon?: Key; line?: boolean; m: Manifest; files: string[]; onPick: (c: Creatable) => void; onAsk: (t: string) => void }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -153,9 +170,9 @@ function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; 
   const kinds = creatablesFor(sec);
   const list = (
     <div className="ap-menu" role="menu" ref={menu} style={{ position: "fixed", top: pos?.top ?? 0, left: pos?.left ?? 0, right: "auto", visibility: pos ? "visible" : "hidden" }}>
-      <button type="button" className="ap-mi" role="menuitem" onClick={() => { setOpen(false); onAsk(`이 패키지에 ${title} 하나 추가해줘: `); }}>
+      <button type="button" className="ap-mi" role="menuitem" onClick={() => { setOpen(false); onAsk(`${title} 하나 추가해줘: `); }}>
         <span className="ap-mi-t">✦ 말로 만들기</span>
-        <span className="ap-mi-d">오른쪽 빌더에게 원하는 것을 적으면 대신 만듭니다</span>
+        <span className="ap-mi-d">오른쪽에 적으면 대신 만들어 줍니다</span>
       </button>
       {kinds.map((c) => {
         const why = blocked(c, m, files);
@@ -169,24 +186,55 @@ function AddMenu({ sec, title, label, m, files, onPick, onAsk }: { sec: string; 
     </div>
   );
   return (
-    <div className="ap-addwrap">
-      <Button type="button" variant="outline" size="xs" className="flex-none hover:border-primary hover:text-foreground" ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`}>
-        ＋ {label ?? "추가"}
-      </Button>
+    <div className={why || line ? "ap-addwrap row" : "ap-addwrap"}>
+      {line ? (
+        <button type="button" className="ap-plus" ref={btn as React.Ref<HTMLButtonElement>} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          <span aria-hidden="true">＋</span> {label ?? title}
+        </button>
+      ) : why ? (
+        <button type="button" className="ap-none" ref={btn as React.Ref<HTMLButtonElement>} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {icon ? <Icon k={icon} /> : null}
+          <span className="ap-none-col">
+            <span className="ap-none-t">{label ?? title}</span>
+            <span className="ap-none-d">{why}</span>
+          </span>
+          <span className="ap-none-x" aria-hidden="true">＋</span>
+        </button>
+      ) : (
+        <button type="button" className="ap-add-x" ref={btn} aria-expanded={open} onClick={() => setOpen((v) => !v)} title={`${title} 추가`} aria-label={`${title} 추가`}>＋</button>
+      )}
       {open && typeof document !== "undefined" ? createPortal(list, document.body) : null}
     </div>
   );
 }
+
+/** 한 섹션이 접히지 않고 보여 주는 최대 줄 수 — 넘으면 "n개 더 보기". 하나 초과일 때만 자른다
+ *  (7개를 6+"1개 더 보기" 로 자르면 줄 수가 같으면서 한 번 더 누르게만 만든다) */
+const LIST_CAP = 6;
 
 const FOLD_KEY = "relay-ap-fold";
 function loadFold(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy, status }: AgentPanelProps) {
+export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy, activeEngine, liveEngines = [], onActivate, status, labelOf, personaLead, scripts = [] }: AgentPanelProps) {
   const [tab, setTab] = useState<"agent" | "settings">("agent");
   // 접힌 섹션 — 기능처럼 항목이 많으면 목록이 길어진다. 제목을 누르면 접히고, 선택은 기억한다
   const [fold, setFold] = useState<Set<string>>(() => (typeof window === "undefined" ? new Set() : loadFold()));
+  // 긴 목록은 6줄까지 — 기능 12개가 칸의 절반을 먹으면 그 아래 구조가 스크롤 밖으로 밀린다
+  const [showAll, setShowAll] = useState<Set<string>>(new Set());
+  // 엔진 안내문 — **실제로 할 수 있는 것만** 말한다. 종전에는 도는 엔진이 하나뿐일 때도
+  // "다른 것을 누르면 바로 바뀝니다" 라고 적어 두었는데, 나머지는 아직 적용 전이라 눌리지도
+  // 않는 상태였다. 화면이 약속한 것을 화면이 거부하면 누른 사람은 고장으로 읽는다(2026-08-28)
+  // 설명문은 **비어 있을 때만**. 붙어 있으면 목록의 행이 이미 상태를 하나씩 말하고 있어,
+  // 그 위에 문단을 얹으면 같은 것을 세 번 말하게 된다(상태 줄 · 행 꼬리표 · 안내문, 2026-08-28)
+  const engineNote = (m.harness?.variants ?? []).length ? "" : "＋ 로 붙인 뒤 적용하면, 어느 것으로 돌릴지 고를 수 있습니다.";
+  // 요약 칩 → 그 섹션으로. 접혀 있으면 펴고 스크롤한다(칩이 문이 아니면 사실 나열일 뿐이다)
+  const secRefs = useRef<Record<string, HTMLElement | null>>({});
+  const goSec = (sec: string) => {
+    setFold((prev) => { const n = new Set(prev); n.delete(sec); try { localStorage.setItem(FOLD_KEY, JSON.stringify([...n])); } catch {} return n; });
+    requestAnimationFrame(() => secRefs.current[sec]?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  };
   const toggleFold = (sec: string) => setFold((prev) => {
     const next = new Set(prev);
     if (next.has(sec)) next.delete(sec); else next.add(sec);
@@ -204,17 +252,36 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
 
   // 항목의 사람 말 — 폼의 id 는 그대로 두고 보이는 글만 바꾼다.
   // mono 는 부제가 id·경로일 때만. 산문을 고정폭으로 찍으면 글자가 다 따로 놀아 줄이 시끄럽다
+  // 부제는 되도록 **관계**를 적는다 — "이것이 무엇을 부르나 / 누구와 이어지나". 종전에는 id 나
+  // "기능 2" 처럼 무엇의 2인지 말하지 않는 숫자였고, 그래서 목록을 다 읽어도 구조가 안 잡혔다
   const display = (sec: string, it: SectionItem, row: Row | undefined): { title: string; sub?: string; mono?: boolean } => {
     if (sec === "triggers") {
       const t = (m.triggers ?? []).find((x) => x.id === it.id);
       const ko = t?.when?.cron ? cronToKorean(t.when.cron) : t?.when?.event ? `${t.when.event} 이 생기면` : null;
-      return ko ? { title: ko, sub: it.id, mono: true } : { title: it.id, sub: it.sub };
+      const to = t ? triggerTarget(t) : null;
+      return ko ? { title: ko, sub: to ? `→ ${to}` : it.id, mono: !to } : { title: it.id, sub: to ? `→ ${to}` : it.sub };
     }
     if (sec === "scripts") {
       const r = row?.items.find((x) => x.sub === it.id);
       return r ? { title: r.text, sub: it.id, mono: true } : { title: it.id };
     }
-    if (sec === "surfaces") return it.id === "view" ? { title: "화면", sub: it.sub } : it.id === "components" ? { title: "부품", sub: it.sub } : { title: it.title, sub: "채널" };
+    // 부제는 뜻이 더해질 때만 단다 — "웹 화면 / 사람이 여는 페이지" 처럼 제목을 되풀이하는 줄은
+    // 읽을 것만 늘린다(2026-08-28)
+    if (sec === "surfaces") {
+      if (it.id === "view") return { title: "웹 화면" };
+      if (it.id === "components") return { title: "화면 부품" };
+      return { title: channelLabel(it.title) };
+    }
+    if (sec === "agents") {
+      const a = (m.agents ?? []).find((x) => x.name === it.id);
+      return { title: it.id, sub: a ? agentSub(a, scripts) : it.sub };
+    }
+    if (sec === "edges") {
+      const e = (m.edges ?? [])[Number(it.id)];
+      if (!e) return { title: it.title, sub: it.sub };
+      const who = labelOf?.(e.provider) ?? e.provider;
+      return { title: who, sub: e.mission ? `→ ${e.mission} 맡김` : e.components ? "화면 부품" : e.tools?.length ? `기능 ${e.tools.length}개` : undefined };
+    }
     return { title: it.title, sub: it.sub };
   };
 
@@ -225,34 +292,42 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
 
   // ── 목록 ─────────────────────────────────────────────────────────────────
   const have = new Set((m.harness?.variants ?? []).map((v) => v.name));
-  const helpers = itemsOf("agents").filter((a) => a.id !== landing);
-  const agentItems = (s: { sec: string }) => (s.sec === "agents" ? helpers : itemsOf(s.sec));
+  // 문장의 재료(lib/describe.ts sentences)
+  const sayCtx = {
+    workspace: "", scripts, landing, activeHarness: activeEngine ?? null, files,
+    labelOf: labelOf ?? ((n: string) => n),
+    edges: (m.edges ?? []).map((e) => ({ consumer: "", provider: e.provider, ref: e.provider, tools: e.tools, mission: e.mission, granted: true })),
+  };
+  const say = sentences(m, sayCtx);
+  const adds = say.flatMap((p) => p.adds);
+  // 요약 칩 — edges 는 이 패널이 매니페스트만 알아 선언 그대로 센다(결재 여부는 줄 옆이 말한다)
 
   const section = (s: { k: Key; sec: string; title: string; add?: string }, items: SectionItem[], row: Row | undefined) => {
     // 열린 항목이 있는 섹션은 접혀 있어도 펼쳐 보인다 — 고치는 줄이 안 보이면 안 된다
     const folded = fold.has(s.sec) && open.sec !== s.sec;
+    const cap = showAll.has(s.sec) || items.length <= LIST_CAP + 1 ? items.length : LIST_CAP;
+    const shown = items.slice(0, cap);
     return (
-    <section key={s.sec} className={`ap-sec${folded ? " folded" : ""}`}>
+    <section key={s.sec} ref={(el) => { secRefs.current[s.sec] = el; }} className={`ap-sec${folded ? " folded" : ""}`}>
       <div className="ap-sec-h">
         {LIST_SECS.has(s.sec) ? (
           <button type="button" className="ap-sec-t fold" aria-expanded={!folded} onClick={() => toggleFold(s.sec)} title={folded ? "펼치기" : "접기"}>
             <Icon k={s.k} />
             <span>{s.title}</span>
-            {items.length ? <b className="ds-n">{items.length}</b> : null}
+            {folded && items.length ? <b className="ap-n">{items.length}</b> : null}
             <Chevron />
           </button>
         ) : (
           <button type="button" className="ap-sec-t" aria-expanded={isOpen(s.sec, null)} onClick={() => toggle(s.sec, null)} title="펼쳐서 고칩니다">
             <Icon k={s.k} />
             <span>{s.title}</span>
-            {items.length ? <b className="ds-n">{items.length}</b> : null}
             <Chevron />
           </button>
         )}
         {s.add ? <AddMenu sec={s.sec} title={s.add} m={m} files={files} onPick={onPick} onAsk={onAsk} /> : null}
       </div>
       {slot(s.sec, null)}
-      {folded ? null : items.map((it) => {
+      {folded ? null : shown.map((it) => {
         const d = display(s.sec, it, row);
         const st = status?.(s.sec, it.id) ?? null;
         return (
@@ -267,6 +342,9 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
           </div>
         );
       })}
+      {!folded && cap < items.length ? (
+        <button type="button" className="ap-more-btn" onClick={() => setShowAll((p) => new Set(p).add(s.sec))}>{items.length - cap}개 더</button>
+      ) : null}
       {!folded && !items.length && row ? <p className="ap-empty">{row.empty}</p> : null}
     </section>
     );
@@ -281,52 +359,113 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
 
       {tab === "agent" ? (
         <>
-          {/* 맨 위 — 에이전트 자신: 엔진과 성격 글 */}
-          <section className="ap-sec">
-            <div className="ap-sec-h">
-              <span className="ap-sec-t plain">
-                <Icon k="talk" />
-                <span>에이전트</span>
-              </span>
-            </div>
-            {/* 엔진 — 펼칠 것 없이 여기서 바로 고른다. 켜면 붙고 끄면 뺀다 */}
-            <div className="ap-engine">
-              {/* 켜진 것은 이름만, 꺼진 것은 "+ 이름" — 색 차이만으로는 고를 수 있는 건지 상태 표시인지 안 보였다(2026-08-27) */}
-              <span className="ap-engine-l" title="이 에이전트를 돌릴 수 있는 AI 엔진. 누르면 붙이거나 뺍니다">엔진</span>
-              <span className="st-picks">
-                {ENGINES.map((e) => (
-                  <button key={e.id} type="button" className="st-pick" aria-pressed={have.has(e.id)} disabled={engineBusy} title={have.has(e.id) ? `${e.label} 빼기` : `${e.label} 붙이기`} onClick={() => onEngine(e.id)}>
-                    {have.has(e.id) ? e.label : `+ ${e.label}`}
-                  </button>
-                ))}
-              </span>
-            </div>
-            {landing ? (
-              <>
-              <button type="button" className="ap-item" aria-expanded={isOpen("agents", landing)} onClick={() => toggle("agents", landing)}>
-                <span className="ap-item-t">성격과 역할</span>
-                {/* 값 자리에 에이전트 id 가 서 있었다 — 무엇을 적는 글인지로(2026-08-27). 인사말은 길어 제목을 밀었다 */}
-                <span className="ap-item-s">말투 · 역할 · 할 일</span>
-                <Chevron />
+          {/* 소개 한 줄은 여기 없다(2026-08-28) — 가운데 칸의 화면이 제목과 함께 그 문장을
+              이미 크게 보여 주고, 설정 탭의 [기본 정보]가 고치는 문이다. 왼쪽에 두면 두 줄에서
+              잘린 같은 문장이 세 번째로 서고, 정작 이 칸이 하는 말(아래 세 문단)을 밀어낸다 */}
+          {/* 몸 — 에이전트가 자기를 소개하는 세 문단. 밑줄 그은 낱말이 곧 고치는 문이고,
+              누르면 그 문단 아래로 폼이 펼쳐진다(다른 화면으로 가지 않는다) */}
+          {/* 이 에이전트가 자기를 말하는 문장 — 성격 글의 첫 줄 그대로. 누르면 그 글로 간다.
+              "성격과 역할은 따로 적어 두었습니다" 같은 파일 정리 안내를 대신한다(2026-08-28) */}
+          {landing && personaLead ? (
+            <>
+              <button type="button" className="ap-lead" aria-expanded={isOpen("agents", landing)} onClick={() => toggle("agents", landing)} title="성격과 역할을 고칩니다">
+                {personaLead}
               </button>
-              {slot("agents", landing)}
-              </>
-            ) : (
-              <p className="ap-empty">대화 없음 — 에이전트를 하나 만들면 이 화면에서 대화할 수 있습니다</p>
-            )}
-          </section>
-          {/* 비어 있는 섹션은 "아직 없음" 네 줄 대신 맨 아래 한 묶음으로 — 있는 것부터 보인다 */}
-          {AGENT_SECS.filter((s) => agentItems(s).length || open.sec === s.sec).map((s) => section(s, agentItems(s), byKey.get(s.k)))}
-          {AGENT_SECS.some((s) => !agentItems(s).length && open.sec !== s.sec) ? (
-            <section className="ap-sec ap-more">
-              <div className="ap-sec-h"><span className="ap-sec-t plain"><span>추가하기</span></span></div>
-              <div className="ap-chips">
-                {AGENT_SECS.filter((s) => !agentItems(s).length && open.sec !== s.sec).map((s) => (
-                  <AddMenu key={s.sec} sec={s.sec} title={s.add} label={s.title} m={m} files={files} onPick={onPick} onAsk={onAsk} />
+              {isOpen("agents", landing) ? <div className="ap-inline">{children}</div> : null}
+            </>
+          ) : null}
+
+          <div className="ap-say">
+            {say.map((para: Para) => (
+              <div key={para.key} className="ap-para">
+                <p className="ap-line">
+                  {para.parts.map((x, i) =>
+                    typeof x === "string" ? (
+                      <span key={i} className={x === " · " ? "ap-sep" : undefined}>{x}</span>
+                    ) : (
+                      <button
+                        key={i}
+                        type="button"
+                        className="ap-tok"
+                        aria-expanded={isOpen(x.sec, x.sec === "harness" ? null : (x.item ?? null))}
+                        title={TOK_HINT[x.sec] ?? "눌러서 고치기"}
+                        onClick={() => toggle(x.sec, x.sec === "harness" ? null : (x.item ?? null))}
+                      >
+                        {TOK_ICON[x.sec] ? <Icon k={TOK_ICON[x.sec]!} /> : null}
+                        <span>{x.t}</span>
+                      </button>
+                    ),
+                  )}
+                </p>
+                {/* 열린 폼 — 이 문단이 가진 낱말의 것이면 여기 선다 */}
+                {para.parts.some((x) => typeof x !== "string" && x.sec === "harness") && isOpen("harness", null) ? (
+                  <div className="ap-inline">
+                    <div className="st-verbs">
+                    {/* 다른 폼과 같은 카드 문법 — 라벨 · 상태 한 줄 · 고르는 것 · 설명 한 줄.
+                        엔진만 옛 칩 줄로 남아 있어 같은 화면에서 두 벌의 문법이 보였다(2026-08-28) */}
+                    <div className="st-verbs-h"><span className="ap-lab">엔진</span></div>
+                    {/* 칩 하나가 세 가지를 말한다: 채워짐 = 지금 도는 엔진, 테두리 = 붙어 있음
+                        (누르면 이걸로 돌린다), ＋ = 아직 없음(누르면 붙인다). 전환은 장부를 고치므로
+                        적용을 기다리지 않고, 사본에만 있는 엔진은 장부가 이름을 몰라 고를 수 없다.
+                        종전에는 이 줄이 붙이고 빼기만 했고 "그럼 지금 뭘로 도는데" 의 답이 다른
+                        화면(그래프 카드의 알약)에 있었다 — 여기서 물으니 여기서 답한다(2026-08-28) */}
+                    {/* 칩 하나가 두 가지 일(고르기·빼기)을 반반으로 나눠 갖고 있었다 — 작은 알약을
+                        절반씩 눌러야 해서, 고르려다 빼는 일이 실제로 일어났다(2026-08-28).
+                        기능·스킬과 같은 목록 행으로 바꾼다: 한 줄에 상태가 적히고, 빼기는 오른쪽 끝이다 */}
+                    <ul className="st-verbl">
+                      {ENGINES.map((e) => {
+                        const on = have.has(e.id);
+                        const live = liveEngines.includes(e.id);
+                        const now = on && live && activeEngine === e.id;
+                        const canSwitch = on && live && !now && !!onActivate;
+                        const note = now ? "사용 중" : on && !live ? "적용 전" : "";
+                        return (
+                          <li key={e.id}>
+                            <button
+                              type="button"
+                              className="st-verbl-r"
+                              aria-pressed={now}
+                              disabled={engineBusy || (on && !live)}
+                              title={on ? note : `${e.label} 붙이기`}
+                              onClick={() => (on ? canSwitch && onActivate!(e.id) : onEngine(e.id))}
+                            >
+                              <span className="st-verbl-c" aria-hidden="true">{now ? "●" : on ? "○" : "＋"}</span>
+                              <span className="st-verbl-t">{e.label}</span>
+                              <span className="st-verbl-i">{note}</span>
+                            </button>
+                            {on ? (
+                              <button type="button" className="st-verbl-x" disabled={engineBusy}
+                                title={`${e.label} 빼기`} aria-label={`${e.label} 빼기`} onClick={() => onEngine(e.id)}>×</button>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="st-verbs-p">{engineNote}                    </p>
+                    </div>
+                  </div>
+                ) : null}
+                {para.parts.some((x) => typeof x !== "string" && x.sec !== "harness" && isOpen(x.sec, x.item ?? null)) ? <div className="ap-inline">{children}</div> : null}
+              </div>
+            ))}
+            {/* 없는 것은 **맨 아래 한 묶음**으로. 문단 사이에 점선이 끼면 세 문장이 한 단락으로
+                읽히지 않는다(2026-08-28). 제목("더 붙일 수 있는 것")은 달지 않는다 — ＋ 와 점선
+                테두리가 이미 그 말이고, 줄마다 무엇이 붙는지도 적혀 있다 */}
+            {/* 없는 것만 모은다 — 전부 점선 ＋ 로 한 종류다. 종전에는 여기 실선 문(성격과 역할)이
+                섞여 있어서, 같은 묶음 안에 성질이 다른 둘이 나란히 섰다(2026-08-28) */}
+            {adds.length ? (
+              <div className="ap-adds">
+                {adds.map((a: Add) => (
+                  <div key={a.sec}>
+                    <AddMenu sec={a.sec} title={a.label} label={a.label} why="" line m={m} files={files} onPick={onPick} onAsk={onAsk} />
+                    {isOpen(a.sec, null) ? <div className="ap-inline">{children}</div> : null}
+                  </div>
                 ))}
               </div>
-            </section>
-          ) : null}
+            ) : null}
+          </div>
+
+          {/* 발 — 자주 열지 않지만 에이전트의 것. 성격은 문장으로 못 줄인다(사람이 쓰는 글이다) */}
         </>
       ) : (
         <>

@@ -242,7 +242,7 @@ const SHELL_TAG = `<script src="/shell.js" defer></script>`;
  *  (margin 전이가 매번 재생되어 화면이 들썩였다, 2026-08-27). 여기서 사람의 접힘 선호를 읽어
  *  --relay-side 를 먼저 선언하고, 사이드바가 설 자리를 같은 색 띠로 미리 칠한다. iframe 안이면
  *  본체와 같은 판단으로 아무것도 하지 않는다(html.rlys-top 없이는 어느 규칙도 안 붙는다) */
-const SHELL_PRE = `<script>(function(){try{if(self!==top)return}catch(e){return}var c=false;try{c=localStorage.getItem("relay-shell-collapsed")==="1"}catch(e){}if(matchMedia("(max-width: 900px)").matches)c=true;var d=document.documentElement;d.className+=" rlys-top";d.style.setProperty("--relay-side",(c?56:248)+"px")})()</script><style>html.rlys-top body{margin-left:var(--relay-side)}html.rlys-top::before{content:"";position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);background:#fafafa;border-right:1px solid #e5e5e5;z-index:2147482989}@media print{html.rlys-top::before{display:none}}</style>`;
+const SHELL_PRE = `<script>(function(){try{if(self!==top)return}catch(e){return}var c=false;try{c=localStorage.getItem("relay-shell-collapsed")==="1"}catch(e){}if(matchMedia("(max-width: 900px)").matches)c=true;var d=document.documentElement;d.className+=" rlys-top";d.style.setProperty("--relay-side",(c?56:248)+"px")})()</script><style>html.rlys-top body{margin-left:var(--relay-side)}html.rlys-top::before{content:"";position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);background:#f4f4f4;z-index:2147482989}@media print{html.rlys-top::before{display:none}}</style>`;
 export function injectShell(html: string): string {
   const i = html.lastIndexOf("</body>");
   let out = i >= 0 ? html.slice(0, i) + SHELL_TAG + html.slice(i) : html + SHELL_TAG;
@@ -286,7 +286,9 @@ try { if (window.self !== window.top) return; } catch (e) { return; }
 var W = 248, RAIL = 56, KEY = "relay-shell-collapsed";
 var collapsed = false;
 try { collapsed = localStorage.getItem(KEY) === "1"; } catch (e) {}
-if (window.matchMedia("(max-width: 900px)").matches) collapsed = true;
+// 좁은 창은 선호를 덮어쓰지 않고 그 위에 얹는다 — 접힌 채로 보이되 저장된 선호는 그대로 두고,
+// 넓히면 선호로 돌아온다. 로드 때 한 번만 재면 1400 에서 열고 줄인 창이 248px 를 든 채 남는다.
+var narrowMq = window.matchMedia("(max-width: 900px)");
 
 var ICONS = {
   home: '<path d="M2.5 7.5 8 2.5l5.5 5v5.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
@@ -310,43 +312,52 @@ var home = document.getElementById("relay-home");
 
 var css = [
 '@font-face{font-family:"Pretendard Variable";font-weight:45 920;font-style:normal;font-display:swap;src:url("/assets/pretendard.woff2") format("woff2-variations")}',
-':root{--relay-side:' + (collapsed ? RAIL : W) + 'px;--relay-accent:#262626;--relay-accent-deep:#171717;--relay-accent-soft:rgba(0,0,0,.06)}',
+':root{--relay-side:' + (collapsed || narrowMq.matches ? RAIL : W) + 'px;--relay-accent:#262626;--relay-accent-deep:#171717;--relay-accent-soft:rgba(0,0,0,.06)}',
 '#rlys.hid{display:none}',
 // 전이는 문서가 선 뒤에만 — 첫 페인트에서 0→폭으로 미끄러지는 일이 없도록(선주입이 값을 먼저 놓지만, 손저작 단일 HTML 처럼 <head> 가 없는 문서도 있다)
 'body{margin-left:var(--relay-side)}html.rlys-ready body{transition:margin-left .16s ease}',
-'#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#fafafa;border-right:1px solid #e5e5e5;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;color:#16181b;overflow:hidden;transition:width .16s ease}',
+// 경계선은 긋지 않는다 — 바닥 한 단(#f4f4f4)이 본문(--rc-ground #fafafa)과 면을 가른다.
+// 같은 색 두 면 사이에 선만 서면 그 선이 화면에서 가장 긴 선이 되고, 색까지 카드 테두리와
+// 같아(#e5e5e5) 카드 하나의 무게로 화면을 갈랐다(2026-08-28 피드백: "사이 라인이 과하다").
+// 선주입 띠(SHELL_PRE)도 같은 값이어야 한다 — 다르면 첫 페인트에 옛 선이 한 번 번뜩인다.
+'#rlys{position:fixed;top:0;left:0;bottom:0;width:var(--relay-side);z-index:2147482990;display:flex;flex-direction:column;gap:2px;padding:10px 8px;box-sizing:border-box;background:#f4f4f4;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;color:#171717;overflow:hidden;transition:width .16s ease}',
 '#rlys *{box-sizing:border-box}',
 '#rlys .hd{display:flex;align-items:center;gap:8px;padding:8px 8px 12px;font-weight:700;white-space:nowrap;overflow:hidden}',
-'#rlys .hd .mark{height:14px;width:auto;display:block;flex:none;color:#111318}',
+'#rlys .hd .mark{height:14px;width:auto;display:block;flex:none;color:#171717}',
 '#rlys .hd img{height:22px;width:auto;max-width:150px;object-fit:contain;display:block;flex:none}',
 '#rlys .hd span{overflow:hidden;text-overflow:ellipsis}',
-'#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#98a1aa;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
-'#rlys .hd .fold:hover{background:#f0f0f0;color:#5c6570}',
+'#rlys .hd .fold{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#a3a3a3;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
+'#rlys .hd .fold:hover{background:#eaeaea;color:#737373}',
 // 새로 만들기 — 헤더의 아이콘 버튼(접기 옆). 목록 속 한 행으로 두면 채우든 테두리든 혼자 튀어 어색했다(2026-08-27)
-'#rlys .hd .mk{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#1a1a1a;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
-'#rlys .hd .mk:hover{background:#f0f0f0}',
+'#rlys .hd .mk{margin-left:auto;width:24px;height:24px;border:none;background:none;color:#171717;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:none}',
+'#rlys .hd .mk:hover{background:#eaeaea}',
 '#rlys .hd .mk svg{width:15px;height:15px}',
 '#rlys .hd .mk+.fold{margin-left:0}',
 // + 메뉴 — 작은 팝오버. 사이드바(루트·헤더)가 overflow:hidden 이라 body 에 fixed 로 띄운다. 포커스만 옮기면 홈에서는 "아무 일도 없는" 것으로 보였고,
 // 불러오기는 홈의 옅은 링크 줄에서 못 찾았다(2026-08-27). 누르면 뭔가 열리고, 갈 곳이 글자로 보인다
-'#rlys-mn{position:fixed;z-index:2147482991;background:#fff;border:1px solid #e3e6ea;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.08);padding:4px;display:flex;flex-direction:column;gap:1px;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif}',
-'#rlys-mn a{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;color:#1a1a1a;text-decoration:none;font-weight:500;white-space:nowrap}',
+'#rlys-mn{position:fixed;z-index:2147482991;background:#fff;border:1px solid #e5e5e5;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.08);padding:4px;display:flex;flex-direction:column;gap:1px;font:13px/1.5 "Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif}',
+'#rlys-mn a{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;color:#171717;text-decoration:none;font-weight:500;white-space:nowrap}',
 '#rlys-mn a:hover{background:#f0f0f0}',
-'#rlys-mn a svg{width:14px;height:14px;flex:none;color:#5c6570}',
-'#rlys-mn a small{display:block;font-weight:400;color:#98a1aa;font-size:11px}',
+'#rlys-mn a svg{width:14px;height:14px;flex:none;color:#737373}',
+'#rlys-mn a small{display:block;font-weight:400;color:#a3a3a3;font-size:11px}',
 '#rlys .hd .fold svg{width:14px;height:14px}',
-'#rlys .lb{font-size:11px;font-weight:700;color:#98a1aa;text-transform:uppercase;letter-spacing:.04em;padding:12px 10px 6px;white-space:nowrap}',
+'#rlys .lb{font-size:11px;font-weight:700;color:#a3a3a3;text-transform:uppercase;letter-spacing:.04em;padding:12px 10px 6px;white-space:nowrap}',
 '#rlys .gp{display:flex;flex-direction:column;gap:1px}',
 '#rlys .pk{overflow-y:auto;overflow-x:hidden;min-height:0;flex:0 1 auto}',
+// 목록 막대는 사이드바에 손이 닿는 동안만 — 좁은 칸에 상시 회색 기둥이 서면 앱 이름보다 먼저 눈에 띈다
+'#rlys .pk::-webkit-scrollbar{width:8px}',
+'#rlys .pk::-webkit-scrollbar-track{background:transparent}',
+'#rlys .pk::-webkit-scrollbar-thumb{background:transparent;border:2px solid transparent;border-radius:999px;background-clip:content-box}',
+'#rlys:hover .pk::-webkit-scrollbar-thumb{background:rgba(23,23,23,.22);background-clip:content-box}',
 '#rlys .sp{flex:1 1 auto;min-height:8px}',
 '#rlys a.it,#rlys button.it{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border:none;border-radius:7px;background:none;color:inherit;font:inherit;text-align:left;text-decoration:none;cursor:pointer;white-space:nowrap}',
-'#rlys .it:hover{background:#f0f0f0}',
+'#rlys .it:hover{background:#eaeaea}',
 '#rlys .it.on{background:var(--relay-accent-soft);color:var(--relay-accent-deep);font-weight:600}',
-'#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#5c6570;border-radius:5px;overflow:hidden}',
+'#rlys .it .ic{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#737373;border-radius:5px;overflow:hidden}',
 '#rlys .it.on .ic{color:var(--relay-accent)}',
 '#rlys .it .ic svg{width:15px;height:15px}',
 '#rlys .it .ic img{width:18px;height:18px;border-radius:4px;object-fit:cover;display:block}',
-'#rlys .it .ic.ltr{background:#ebebeb;font:700 11px inherit;color:#5c6570}',
+'#rlys .it .ic.ltr{background:#e4e4e4;font:700 11px inherit;color:#737373}',
 '#rlys .it .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}',
 '#rlys .it .dt{width:7px;height:7px;border-radius:50%;background:#059669;flex:none}',
 '#rlys .it .dt.edt{background:#2563eb}',
@@ -356,12 +367,12 @@ var css = [
 '#rlys .rw{position:relative;display:flex;align-items:center}',
 // 손보기 연필 — 지금 열린 앱의 줄에만 늘 보인다. 호버도 메뉴도 없다(그 줄은 이미 와 있으니 잘못 눌러 이동할 일이 없다)
 '#rlys .rw .ed{position:absolute;right:6px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--relay-accent-deep);text-decoration:none}',
-'#rlys .rw .ed:hover{background:#e5e5e5;color:#16181b}',
+'#rlys .rw .ed:hover{background:#e5e5e5;color:#171717}',
 '#rlys .rw .ed svg{width:13px;height:13px}',
 '#rlys .rw:has(.ed) .it .dt{display:none}',
 '#rlys.cl .rw .ed{display:none}',
-'#rlys .er{font-size:11.5px;color:#c0392b;padding:8px 10px;white-space:normal}',
-'#rlys .em{font-size:12px;color:#98a1aa;padding:8px 10px}',
+'#rlys .er{font-size:11.5px;color:#dc2626;padding:8px 10px;white-space:normal}',
+'#rlys .em{font-size:12px;color:#a3a3a3;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
 '#rlys.cl .nm,#rlys.cl .lb,#rlys.cl .hd span,#rlys.cl .em,#rlys.cl .er{display:none}',
 '#rlys.cl a.it,#rlys.cl button.it{justify-content:center;padding:7px 0;position:relative}',
@@ -385,18 +396,21 @@ requestAnimationFrame(function(){ requestAnimationFrame(function(){ document.doc
 var el = document.createElement("nav");
 el.id = "rlys";
 el.setAttribute("aria-label", "설치된 에이전트");
-if (collapsed) el.className = "cl";
+if (collapsed || narrowMq.matches) el.className = "cl";
 document.body.appendChild(el);
 
 // 보이는 상태(effective)와 사람의 선호(collapsed)를 가른다 — 패키지 수정 화면은 세 칸이라
 // 사이드바를 아예 숨겨 자리를 내주는데(relay:shell-fold {hide:true}, 화면이 자기 머리에
 // ← 뒤로 를 둔다), 그건 화면의 사정이지 사람의 선택이 아니다. 저장하지 않고, 떠나면 선호로 돌아간다.
-var effective = collapsed, hidden = false;
+var effective = collapsed || narrowMq.matches, hidden = false, forced = false;
 function applyFold(v){
   effective = v;
   el.className = (v ? "cl" : "") + (hidden ? " hid" : "");
   document.documentElement.style.setProperty("--relay-side", (hidden ? 0 : v ? RAIL : W) + "px");
 }
+// 화면의 요청(forced)과 창 폭(narrowMq)은 접기만 할 수 있고, 풀리면 사람의 선호로 돌아간다.
+function refold(){ applyFold(forced || narrowMq.matches ? true : collapsed); }
+if (narrowMq.addEventListener) narrowMq.addEventListener("change", refold);
 function setCollapsed(v){
   collapsed = v;
   applyFold(v);
@@ -405,7 +419,8 @@ function setCollapsed(v){
 window.addEventListener("relay:shell-fold", function(ev){
   var d = (ev && ev.detail) || {};
   hidden = !!d.hide;
-  applyFold(d.on ? true : collapsed);
+  forced = !!d.on;
+  refold();
   if (lastNav) renderSide(lastNav, lastErr);
 });
 
