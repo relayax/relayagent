@@ -73,7 +73,7 @@ export const SECTIONS: SectionDef[] = [
     label: "화면과 창구",
     material: "그림",
     yamlKey: "surfaces",
-    hint: "밖에서 보이는 것 — 이 패키지의 화면, 다른 패키지 화면에 끼울 부품, 슬랙·디스코드 같은 채널. 직접 대화는 '대화 상대'가 있으면 저절로 생깁니다.",
+    hint: "밖에서 보이는 것 — 이 패키지의 화면, 다른 패키지 화면에 끼울 부품, 슬랙·디스코드 같은 채널. 직접 대화는 '대화 상대'가 있으면 저절로 생깁니다. 부품을 내주면 그 부품을 이어 쓰는 앱 밑으로 사이드바에서 접힙니다(기본 정보의 '사이드바 자리'로 바꿀 수 있습니다).",
     declared: (m) => !!m.surfaces,
     items: (m, files) => {
       const out: SectionItem[] = [];

@@ -118,6 +118,8 @@ export interface AgentPanelProps {
   status?: ItemStatus;
   /** 설치 이름 → 표시 이름. 연결 줄이 "@haemin/offer-workbook" 대신 사람 말을 쓴다 */
   labelOf?: (name: string) => string;
+  /** 이 패키지의 부품을 결재해 쓰는 설치본들(셸 nav 의 mounted_in) — "사이드바에서는 X 밑에 접혀 있습니다" 문장의 재료 */
+  mountedIn?: string[];
   /** 착지 에이전트의 성격 글 첫 줄 — 누르면 그 글을 고친다 */
   personaLead?: string;
   /** 이 패키지의 동사 이름 — 보조 에이전트가 몇 가지를 쓰는지 세는 데 쓴다(글로브를 편다) */
@@ -217,7 +219,7 @@ function loadFold(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy, activeEngine, liveEngines = [], onActivate, status, labelOf, personaLead, scripts = [] }: AgentPanelProps) {
+export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBack, children, links, danger, onPick, onAsk, onEngine, engineBusy, activeEngine, liveEngines = [], onActivate, status, labelOf, personaLead, scripts = [], mountedIn = [] }: AgentPanelProps) {
   const [tab, setTab] = useState<"agent" | "settings">("agent");
   // 접힌 섹션 — 기능처럼 항목이 많으면 목록이 길어진다. 제목을 누르면 접히고, 선택은 기억한다
   const [fold, setFold] = useState<Set<string>>(() => (typeof window === "undefined" ? new Set() : loadFold()));
@@ -297,6 +299,7 @@ export default function AgentPanel({ m, files, rows, landing, open, onOpen, onBa
     workspace: "", scripts, landing, activeHarness: activeEngine ?? null, files,
     labelOf: labelOf ?? ((n: string) => n),
     edges: (m.edges ?? []).map((e) => ({ consumer: "", provider: e.provider, ref: e.provider, tools: e.tools, mission: e.mission, granted: true })),
+    mountedIn,
   };
   const say = sentences(m, sayCtx);
   const adds = say.flatMap((p) => p.adds);

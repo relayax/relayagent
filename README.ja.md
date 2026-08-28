@@ -86,6 +86,8 @@ relay model <パッケージ> [モデル]        モデルの表示・設定
 relay effort <パッケージ> [強度|off]    推論強度(effort capability を持つアダプタのみ反映)
 relay connect <パッケージ> <サービス>    資格情報を貼り付け(vault / Keychain)
 relay grant <consumer> <provider> --tools a,b | --mission m
+relay suite ls | set <名前> --members a,b [--hub h] | rm <名前>   スイート(サイドバーのフォルダ)
+relay suite pack <名前> [--out f] | import <f.relaypackages>    スイート封筒を焼く | 受け取る
 ```
 
 ## パッケージの解剖

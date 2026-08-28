@@ -443,6 +443,67 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "suite": {
+      // 묶음 — 사이드바 폴더이자 .relaypackages 봉투의 단위. 로직은 supply/suites.ts, 여기는 인자 해석뿐
+      const { loadSuites, upsertSuite, removeSuite, packSuite, prepareSuite, activateSuite, installOrder } = await import("./supply/suites.ts");
+      const [sub, name] = args;
+      const usage = "사용법: relay suite ls | set <이름> --members a,b,c [--label 라벨] [--hub 설치이름|none] | rm <이름> | pack <이름> [--out 파일] | import <파일.relaypackages> [--yes]";
+      if (!sub || sub === "ls") {
+        const list = loadSuites(ledger);
+        for (const s of list) console.log(`${s.name}\t${s.label}\thub=${s.hub ?? "-"}\t${s.members.join(", ")}`);
+        if (!list.length) console.log("묶음 없음 — relay suite set <이름> --members a,b 로 만듭니다");
+        break;
+      }
+      if (!name) throw new Error(usage);
+      if (sub === "set") {
+        const prev = loadSuites(ledger).find((s) => s.name === name);
+        const members = flag("members")?.split(",").map((m) => m.trim()).filter(Boolean) ?? prev?.members ?? [];
+        const hubFlag = flag("hub");
+        const hub = hubFlag === "none" ? null : hubFlag ?? prev?.hub ?? null;
+        const s = upsertSuite(ledger, { name, label: flag("label") ?? prev?.label ?? name, members, hub });
+        console.log(`묶음 ${prev ? "갱신" : "생성"}: ${s.name} (${s.label}) — ${s.members.join(", ")}${s.hub ? ` · 허브 ${s.hub}` : ""}`);
+        console.log(`  설치 순서: ${installOrder(ledger, s.members).join(" → ")}`);
+        break;
+      }
+      if (sub === "rm") {
+        console.log(removeSuite(name) ? `묶음 제거됨: ${name} (설치본은 그대로)` : `없는 묶음: ${name}`);
+        break;
+      }
+      if (sub === "pack") {
+        const r = packSuite(ledger, name, flag("out"));
+        console.log(`구움: ${r.name} -> ${r.file} (${(r.size / 1024).toFixed(0)}KB, ${r.digest})`);
+        for (const pk of r.packages) console.log(`  ${pk.ref}@${pk.version}`);
+        break;
+      }
+      if (sub === "import") {
+        const ps = await prepareSuite(ledger, name);
+        console.log(`${ps.label} 묶음 (${ps.items.length}개, ${(ps.size / 1024).toFixed(0)}KB)`);
+        for (const it of ps.items) {
+          console.log(`\n${it.manifest.display_name} (${it.ref}@${it.version}) — ${it.fresh ? "새 설치" : "업데이트"}${it.signed ? " · 서명 확인됨" : " · 무서명"}`);
+          console.log(printDisclosure(it.disclosure, it.name));
+        }
+        if (!has("yes")) {
+          if (!process.stdin.isTTY) throw new Error("비대화형 설치에는 --yes 가 필요합니다 (위 고지서에 동의한다는 뜻입니다)");
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await new Promise<string>((resolve) => rl.question(`${ps.items.length}개를 전부 설치할까요? [y/N] `, resolve));
+          rl.close();
+          if (!/^y(es)?$/i.test(answer.trim())) {
+            console.log("설치하지 않았습니다");
+            break;
+          }
+        }
+        const r = await activateSuite(ledger, ps);
+        for (const [i, it] of r.results.entries()) {
+          console.log(`${ps.items[i].fresh ? "설치됨" : "업데이트됨"}: ${it.name} (${ps.items[i].ref}@${ps.items[i].version})`);
+          if (it.setup && !it.setup.ok) console.error(`  하네스 setup 실패: ${it.setup.out}`);
+        }
+        console.log(`묶음 기록됨: ${r.suite.name} (${r.suite.label}) — 사이드바 폴더로 섭니다`);
+        console.log("  데몬이 떠 있었다면 서비스는 다음 기동 때 새 릴리스로 뜹니다");
+        break;
+      }
+      throw new Error(usage);
+    }
+
     case "grant": {
       const [consumer, provider] = args;
       if (!consumer || !provider) throw new Error("사용법: relay grant <consumer> <provider> [--tools a,b] [--mission m] [--components]");
@@ -477,6 +538,8 @@ async function main(): Promise<void> {
           "  relay effort <패키지> [강도|off]        추론 강도 (effort capability 어댑터만 반영)",
           "  relay connect <패키지> <서비스>         자격 붙여넣기 (Keychain)",
           "  relay grant <consumer> <provider> --tools a,b | --mission m",
+          "  relay suite ls | set <이름> --members a,b [--hub h] | rm <이름>   묶음(사이드바 폴더)",
+          "  relay suite pack <이름> [--out f] | import <f.relaypackages>    묶음 봉투 굽기 | 받기",
         ].join("\n"),
       );
   }

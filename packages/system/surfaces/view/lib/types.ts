@@ -113,6 +113,8 @@ export interface Manifest {
   display_name?: string;
   description?: string;
   icon?: string;
+  /** 사이드바 자리 — auto(기본, 결재 관계로 유도) · always · never */
+  shell?: { nav?: "auto" | "always" | "never" };
   requires?: {
     os?: string[];
     binaries?: { name: string; install?: string; manager?: "npm" | "uv"; package?: string; version?: string }[];

@@ -86,6 +86,8 @@ relay model <패키지> [모델]             모델 조회 또는 설정
 relay effort <패키지> [강도|off]        추론 강도 (effort capability 어댑터만 반영)
 relay connect <패키지> <서비스>         자격 붙여넣기 (vault / Keychain)
 relay grant <consumer> <provider> --tools a,b | --mission m
+relay suite ls | set <이름> --members a,b [--hub h] | rm <이름>   묶음(사이드바 폴더)
+relay suite pack <이름> [--out f] | import <f.relaypackages>    묶음 봉투 굽기 | 받기
 ```
 
 ## 패키지 해부

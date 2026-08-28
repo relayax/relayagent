@@ -24,6 +24,7 @@ import { listReleases, rollbackRelease } from "./supply/release.ts";
 import { saveLedger } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
 import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime/shell.ts";
+import { loadSuites, upsertSuite, removeSuite, packSuite } from "./supply/suites.ts";
 import { serviceStatuses, channelStatuses, connectionsOverview } from "./runtime/connections.ts";
 import { assembleCredential } from "./runtime/credential.ts";
 import { logLine } from "./supply/ledger.ts";
@@ -367,7 +368,40 @@ export function createApi(
       if (p === "/shell/nav" && req.method === "GET") {
         // 배지의 수는 연결 화면과 같은 집계(connections.ts)에서 온다 — 두 화면이 다른 수를 말하면 안 된다
         const overview = await connectionsOverview(getLedger(), (k) => authority.credential(k));
-        return void json(res, 200, shellNav(getLedger(), runningServices(), await storeLatest(), listDrafts(getLedger()), { credentials: overview.attention }));
+        const l = getLedger();
+        return void json(res, 200, shellNav(l, runningServices(), await storeLatest(), listDrafts(l), { credentials: overview.attention }, loadSuites(l)));
+      }
+      // 묶음(supply/suites.ts) — 사이드바 폴더이자 .relaypackages 봉투의 단위. 기판 상태라 셸과 같은 자리에서 낸다.
+      // 판정 실패(미설치 구성원·이름 형식·순환)는 400 으로 사유를 그대로 낸다 — 화면이 그 문장을 보여 준다
+      if (p === "/shell/suites" && req.method === "GET") return void json(res, 200, { suites: loadSuites(getLedger()) });
+      if (p === "/shell/suites" && req.method === "POST") {
+        const b = await readBody(req);
+        try {
+          const suite = upsertSuite(getLedger(), {
+            name: String(b.name ?? ""),
+            label: String(b.label ?? ""),
+            members: Array.isArray(b.members) ? b.members.map(String) : [],
+            hub: b.hub ? String(b.hub) : null,
+          });
+          return void json(res, 200, { suite });
+        } catch (e) {
+          return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      if (p === "/shell/suites/remove" && req.method === "POST") {
+        const b = await readBody(req);
+        return void json(res, 200, { removed: removeSuite(String(b.name ?? "")) });
+      }
+      if (p === "/shell/suites/pack" && req.method === "POST") {
+        const b = await readBody(req);
+        try {
+          const r = packSuite(getLedger(), String(b.name ?? ""));
+          const file = path.basename(r.file);
+          // 받는 문은 선반 내보내기(store.ts /store/export)다 — 개별 봉투와 같은 길
+          return void json(res, 200, { ...r, file, href: `/store/export/${encodeURIComponent(file)}` });
+        } catch (e) {
+          return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        }
       }
 
       // 클라이언트 전송 계약 v1(docs/client-protocol.md) — 턴·세션·이력·파일·하네스 조회·열거.

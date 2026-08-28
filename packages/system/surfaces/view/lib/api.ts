@@ -55,6 +55,14 @@ export interface ShellItem {
   error: string | null;
   /** 도는 판 위에 적용하지 않은 수정이 있다 — 작업 사본이 앞서 있다 */
   editing: boolean;
+  /** 선언된 사이드바 자리(shell.nav) — 판정은 parent·hidden 이 끝냈다 */
+  nav: "auto" | "always" | "never";
+  /** 이 패키지의 components 를 결재해 마운트하는 설치본들 — 사이드바가 이 항목을 그 밑으로 접는 근거 */
+  mounted_in: string[];
+  /** 접힐 자리(기판 판정). null = 최상위 */
+  parent: string | null;
+  /** 목록에 서지 않는다(shell.nav: never) */
+  hidden: boolean;
 }
 export interface ShellNav {
   items: ShellItem[];
@@ -68,12 +76,42 @@ export interface ShellNav {
   connections: string;
   /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격 */
   attention: { credentials: number };
+  /** 사람이 얹은 폴더(묶음) — 설정 화면의 묶음 카드와 사이드바가 같은 응답을 읽는다 */
+  suites: Suite[];
 }
 
 export async function fetchShellNav(): Promise<ShellNav> {
   const res = await fetch("/shell/nav", { cache: "no-store" });
   if (!res.ok) throw new Error(`shell/nav ${res.status}`);
   return res.json();
+}
+
+// ── 묶음(suite) — 사이드바 폴더이자 .relaypackages 봉투의 단위. 기판 상태(runner/supply/suites.ts) ──
+export interface Suite {
+  name: string;
+  label: string;
+  members: string[];
+  /** 폴더의 문 — 접힌 레일에서 이 앱의 아이콘이 폴더를 대표한다 */
+  hub: string | null;
+}
+
+/** 묶음 목록. 묶음 문이 없는 기판(구 데몬)은 404 — 호출부가 그 사실을 그대로 보여 준다 */
+export function fetchSuites(): Promise<{ suites: Suite[] }> {
+  return getJson("/shell/suites");
+}
+
+/** 같은 이름이면 갈아 끼운다. 미설치 구성원·허브 불일치는 400 + 사유 */
+export function saveSuite(s: Suite): Promise<{ suite: Suite }> {
+  return post("/shell/suites", s);
+}
+
+export function removeSuite(name: string): Promise<{ removed: boolean }> {
+  return post("/shell/suites/remove", { name });
+}
+
+/** 묶음 봉투 굽기 — 선반에 <이름>.relaypackages 로 앉고, href 가 받는 문이다 */
+export function packSuite(name: string): Promise<{ file: string; href: string; size: number; digest: string; packages: { ref: string; version: string }[] }> {
+  return post("/shell/suites/pack", { name });
 }
 
 export function short(lineage?: string | null): string {

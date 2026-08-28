@@ -34,6 +34,26 @@ properties:
     minLength: 1
   icon:
     type: string
+  shell:
+    description: |
+      기판 셸(사이드바)에서 이 패키지가 서는 자리. 화면의 내용이 아니라 **목록에서의 위치**만
+      말한다 — display_name·icon 과 같은 표시 축이다. 선택 블록.
+        nav: auto    (기본) 결재 관계로 유도한다. 다른 설치본이 이 패키지의 components 를 결재해
+                     마운트하고 있으면 그 소비자(허브) 아래로 접히고, 아니면 최상위에 선다.
+                     제공자 혼자서는 자기가 접혀야 할지 모른다 — 허브 없이 이것만 설치한 사람에겐
+                     이 줄이 유일한 문이라서, 판정을 선언이 아니라 장부의 결재에 둔다.
+            always   결재 관계와 무관하게 늘 최상위에 선다.
+            never    사이드바 목록에 서지 않는다. 숨김이지 소멸이 아니다: 콘솔 상세·연결 화면·
+                     직접 주소(/pkg/<이름>/view/)로는 그대로 닿고, 그 화면 위에 있을 때는 현재
+                     위치로 그려진다.
+      사람이 얹는 폴더(묶음 — relay suite · .relaypackages)는 여기 없다. 묶음은 소비자가 정하는
+      배치라 기판 상태(RELAY_HOME/suites.json)에 살고, 매니페스트는 자기 쓰임새를 미리 알지 않는다.
+    type: object
+    additionalProperties: false
+    properties:
+      nav:
+        enum: [auto, always, never]
+        default: auto
   publisher:
     description: 발행 주체 좌표 (@scope). 스토어 리스팅·정산이 읽는다 — 개인 기판은 표시 외 소비 없음
     type: string
