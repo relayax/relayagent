@@ -76,15 +76,15 @@ test("stageRelease 는 스냅샷을 뜨되 장부를 건드리지 않는다 — 
   assert.equal(env.ref, `@local/${NAME}`);
 });
 
-test("landRelease 가 장부에 앉힌다 — 두 절반의 합 = publishDraft", () => {
+test("landRelease 가 장부에 앉힌다 — 두 절반의 합 = publishDraft", async () => {
   const st = stageRelease(NAME, { version: "0.1.1" });
   assert.ok(!("published" in st));
   if ("published" in st) return;
   const ledger = loadLedger();
-  const r = landRelease(ledger, st);
+  const r = await landRelease(ledger, st);
   assert.equal(r.fresh, true);
   assert.equal(loadLedger().packages[NAME].path, st.path);
   // 변경 없음 = 발행할 것 없음(앞 절반이 먼저 답한다)
-  const again = publishDraft(loadLedger(), NAME);
+  const again = await publishDraft(loadLedger(), NAME);
   assert.equal(again.published, false);
 });

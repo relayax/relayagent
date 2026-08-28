@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -108,11 +108,54 @@ export function assetsAtDaemonRoot(outDir: string): string[] {
   return [...bad].sort();
 }
 
+/** 같은 프로젝트 디렉토리의 빌드는 겹치지 않는다 — 산출(out/)을 두 손이 동시에 쓰면 반쪽 번들이 된다.
+ *  비동기가 되면서 생긴 자리다: 동기일 때는 겹칠 수가 없었다 */
+const inflight = new Map<string, Promise<unknown>>();
+
+interface ChildRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+/**
+ * 자식 프로세스 하나를 비동기로 끝까지 — 데몬의 이벤트 루프를 붙들지 않는다.
+ *
+ * spawnSync 였던 자리다. 발행 한 번에 Next 빌드가 수십 초 도는 동안 데몬이 통째로 멈춰 콘솔·위젯의
+ * SSE 가 끊기고, 도는 세션의 도구 호출이 걸리고, 데스크톱 앱은 데몬을 죽은 것으로 보고 다시 띄우려
+ * 했다(실측 2026-08-28: "데몬이 이미 실행 중입니다" 가 빌드 완료 1초 전에 찍혔다 — 사용자에게는
+ * 기판이 주기적으로 재기동되는 것으로 보였다). 시한을 넘기면 죽이고 status null 로 돌려준다.
+ */
+function runChild(command: string, args: string[], opts: { cwd: string; env: Record<string, string> }): Promise<ChildRun> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    child.stdout?.on("data", (b) => { stdout += String(b); });
+    child.stderr?.on("data", (b) => { stderr += String(b); });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, TIMEOUT);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ status: null, stdout, stderr: stderr + String(e), timedOut });
+    });
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr, timedOut });
+    });
+  });
+}
+
 /**
  * npm 프로젝트 하나를 굽는다 — view 와 components 가 같이 쓴다.
  * node_modules 부재는 최초 설치 신호다(재빌드는 install 을 건너뛴다 — 굽는 시간의 대부분이 여기다).
+ * 같은 src 의 앞선 빌드가 돌고 있으면 그 뒤에 선다(앞선 것이 실패해도 이번 것은 돈다).
  */
-function runProjectBuild(src: string, label: string, env: Record<string, string>): { ok: boolean; out: string } {
+async function runProjectBuild(src: string, label: string, env: Record<string, string>): Promise<{ ok: boolean; out: string }> {
   const pj = path.join(src, "package.json");
   if (!fs.existsSync(pj)) {
     return { ok: false, out: `${label}/package.json 없음 — out 을 선언한 표면은 빌드 가능한 프로젝트여야 합니다` };
@@ -128,21 +171,30 @@ function runProjectBuild(src: string, label: string, env: Record<string, string>
   const runNpm = (args: string[]) => {
     const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
     const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", ...args] : args;
-    return spawnSync(command, commandArgs, { cwd: src, env, encoding: "utf8", timeout: TIMEOUT });
+    return runChild(command, commandArgs, { cwd: src, env });
   };
 
-  const steps: string[] = [];
-  if (!fs.existsSync(path.join(src, "node_modules"))) {
-    const i = runNpm(["install", "--no-audit", "--no-fund"]);
-    if (i.status !== 0) {
-      return { ok: false, out: `npm install 실패:\n${((i.stdout ?? "") + (i.stderr ?? "")).trim().slice(-600)}` };
+  const prev = inflight.get(src) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(async (): Promise<{ ok: boolean; out: string }> => {
+    const steps: string[] = [];
+    if (!fs.existsSync(path.join(src, "node_modules"))) {
+      const i = await runNpm(["install", "--no-audit", "--no-fund"]);
+      if (i.status !== 0) {
+        return { ok: false, out: `npm install ${i.timedOut ? "시한 초과" : "실패"}:\n${(i.stdout + i.stderr).trim().slice(-600)}` };
+      }
+      steps.push("npm install 완료");
     }
-    steps.push("npm install 완료");
+    const b = await runNpm(["run", "build"]);
+    const tail = (b.stdout + b.stderr).trim().slice(-800);
+    if (b.status !== 0) return { ok: false, out: [...steps, b.timedOut ? `빌드 시한 초과(${TIMEOUT / 60_000}분) — 죽였습니다` : "", tail].filter(Boolean).join("\n") };
+    return { ok: true, out: steps.join("\n") };
+  });
+  inflight.set(src, run);
+  try {
+    return await run;
+  } finally {
+    if (inflight.get(src) === run) inflight.delete(src);
   }
-  const b = runNpm(["run", "build"]);
-  const tail = ((b.stdout ?? "") + (b.stderr ?? "")).trim().slice(-800);
-  if (b.status !== 0) return { ok: false, out: [...steps, tail].join("\n") };
-  return { ok: true, out: steps.join("\n") };
 }
 
 /**
@@ -154,13 +206,13 @@ function runProjectBuild(src: string, label: string, env: Record<string, string>
  * 화면에서야 발견된다 — 굽는 자리에서 fail-loud 로 잡는다. 스타일은 번들 안에 탄다(문법의 스타일
  * 규율): 옆에 낸 CSS 는 소비자가 설치 이름이 박힌 주소를 조립해야 닿으므로 계약이 아니다.
  */
-export function buildComponents(pkgPath: string, m: Manifest): BuildResult | undefined {
+export async function buildComponents(pkgPath: string, m: Manifest): Promise<BuildResult | undefined> {
   const comp = m.surfaces?.components;
   if (!comp?.out) return undefined;
 
   const src = path.join(pkgPath, comp.source);
   const env = { ...(process.env as Record<string, string>), NEXT_TELEMETRY_DISABLED: "1" };
-  const r = runProjectBuild(src, comp.source, env);
+  const r = await runProjectBuild(src, comp.source, env);
   if (!r.ok) return r;
 
   const outDir = path.join(src, comp.out);
@@ -183,7 +235,7 @@ export function buildComponents(pkgPath: string, m: Manifest): BuildResult | und
  * 기판은 view 를 /pkg/<설치이름>/view/ 아래로 서빙하는데 설치 이름은 설치 시점에 정해지므로
  * 빌드도 설치 시점에 돌고, 접두사를 RELAY_BASE_PATH 로 넘긴다.
  */
-export function buildView(pkg: string, pkgPath: string, m: Manifest, base?: string): BuildResult | undefined {
+export async function buildView(pkg: string, pkgPath: string, m: Manifest, base?: string): Promise<BuildResult | undefined> {
   const view = m.surfaces?.view;
   if (!view?.out) return undefined;
 
@@ -194,9 +246,9 @@ export function buildView(pkg: string, pkgPath: string, m: Manifest, base?: stri
     NEXT_TELEMETRY_DISABLED: "1",
   };
 
-  const r = runProjectBuild(src, view.source, env);
+  const r = await runProjectBuild(src, view.source, env);
   if (!r.ok) {
-    // §8-2 잔여: buildView 는 동기 설치 파이프라인(installer·draft) 깊숙이 있어 authority 주입이
+    // §8-2 잔여: buildView 는 설치 파이프라인(installer·draft) 깊숙이 있어 authority 주입이
     // installPkg·activatePrepared·publishDraft 전 시그니처 연쇄를 일으킨다 — audit 이사는 보류
     logLine("build", { pkg, ok: false });
     return r;
