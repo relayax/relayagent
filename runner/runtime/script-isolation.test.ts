@@ -29,14 +29,15 @@ function mk(p: string): string {
 }
 
 // 가짜 REST 몸 — 받은 헤더와 본문을 되돌려준다
-const seen: { auth?: string; principal?: string; body: string; method: string }[] = [];
+const seen: { auth?: string; principal?: string; body: string; method: string; type?: string }[] = [];
 const api = http.createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => (body += c));
+  const chunks: Buffer[] = [];
+  req.on("data", (c) => chunks.push(Buffer.from(c)));
   req.on("end", () => {
-    seen.push({ auth: req.headers.authorization, principal: req.headers["x-relay-principal"] as string | undefined, body, method: req.method ?? "" });
+    const body = Buffer.concat(chunks).toString("utf8");
+    seen.push({ auth: req.headers.authorization, principal: req.headers["x-relay-principal"] as string | undefined, body, method: req.method ?? "", type: req.headers["content-type"] });
     res.writeHead(201, { "content-type": "application/json", "x-echo": "yes" });
-    res.end(JSON.stringify({ echoed: body, path: req.url }));
+    res.end(JSON.stringify({ echoed: body, path: req.url, type: req.headers["content-type"] ?? null }));
   });
 });
 await new Promise<void>((r) => api.listen(0, "127.0.0.1", r));
@@ -76,6 +77,15 @@ verb("rest", [
   "export default async function (i: any, ctx: any) {",
   '  const res = await ctx.service("rest").fetch("/things", { method: "POST", headers: { "content-type": "text/plain" }, body: i.text });',
   '  return { ok: res.ok, status: res.status, echo: res.headers.get("x-echo"), json: await res.json(), connected: await ctx.service("rest").connected() };',
+  "}",
+].join("\n") + "\n");
+verb("upload", [
+  "export default async function (_i: any, ctx: any) {",
+  "  const form = new FormData();",
+  '  form.set("model", "x");',
+  '  form.set("image", new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), "a.png");',
+  '  const res = await ctx.service("rest").fetch("/upload", { method: "POST", body: form });',
+  "  return await res.json();",
   "}",
 ].join("\n") + "\n");
 verb("late", [
@@ -142,10 +152,19 @@ test("REST 문은 기판이 요청을 대신 나가고 Response 로 되돌아온
   assert.equal(r.status, 201);
   assert.equal(r.ok, true);
   assert.equal(r.echo, "yes");
-  assert.deepEqual(r.json, { echoed: "본문", path: "/things" });
+  assert.deepEqual(r.json, { echoed: "본문", path: "/things", type: "text/plain" });
   assert.equal(r.connected, true);
   assert.equal(seen[seen.length - 1].method, "POST");
   assert.equal(seen[seen.length - 1].principal, undefined, "api 형은 신원을 밖에 흘리지 않는다");
+});
+
+test("REST 문은 FormData 도 나른다 — multipart 로 구워 boundary 와 파일 칸이 그대로 도착한다", async () => {
+  const r = (await run("upload")) as { echoed: string; type: string | null; path: string };
+  assert.equal(r.path, "/upload");
+  assert.match(r.type ?? "", /^multipart\/form-data; boundary=/);
+  assert.match(r.echoed, /name="model"/);
+  assert.match(r.echoed, /name="image"; filename="a.png"/);
+  assert.match(r.echoed, /content-type: image\/png/i);
 });
 
 test("반환 뒤의 문 — 백그라운드로 끝맺는 동사도 문을 잃지 않는다", async () => {
