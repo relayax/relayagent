@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
 import { spawn } from "node:child_process";
-import { API_PORT, API_URL, OAUTH_CALLBACK_URL, RELAY_HOME, STORE_INDEX_URL, TLS_PORT, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger } from "./supply/ledger.ts";
+import { API_PORT, API_URL, OAUTH_CALLBACK_URL, RELAY_HOME, STORE_INDEX_URL, TLS_PORT, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, runningDaemonRunner, takeoverReason, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger, type RunnerId } from "./supply/ledger.ts";
 import { ensureLocalCert } from "./tls.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
@@ -40,6 +40,15 @@ import { fixedRedirect, receiveOAuthCallback, serviceAuthHeader, startServiceOAu
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** 이 프로세스가 어느 러너에서 떴는가 — 앱 번들과 체크아웃을 가르는 실경로 + 판.
+ *  기동이 옛 데몬을 물려받을지 판정하는 근거이자, /instance 가 감독자에게 내는 답이다 */
+export const RUNNER_ID: RunnerId = {
+  dir: (() => { try { return fs.realpathSync(RUNNER_DIR); } catch { return RUNNER_DIR; } })(),
+  version: (() => {
+    try { return String(JSON.parse(fs.readFileSync(path.join(RUNNER_DIR, "..", "package.json"), "utf8")).version ?? "0.0.0"); } catch { return "0.0.0"; }
+  })(),
+};
 const SCHEMA_FILE = path.join(RUNNER_DIR, "..", "relay.manifest.yaml");
 // 서빙 정본은 번들 산출물이다 — 소스가 아니라 컷이 구운 dist 를 낸다(계획 §4-a)
 const ASSETS_DIR = path.join(RUNNER_DIR, "..", "chat", "dist");
@@ -345,7 +354,9 @@ export function createApi(
       // 같은 포트에 다른 인스턴스가 설 수 있으므로(홈은 사람이 고른다) 부르는 쪽은 이것으로 대조한다.
       // 자격도 장부도 싣지 않는다 — 신원 한 줄이다
       if (p === "/instance" && req.method === "GET") {
-        return void json(res, 200, { home: homeId(), port: API_PORT, principal: authority.principal() });
+        // runner 는 감독자(데스크톱 앱)가 "이 데몬이 내 번들에서 떴는가"를 묻는 자리다 —
+        // 포트가 답한다는 사실만으로는 최신인지 알 수 없다(Node 는 적재한 모듈을 다시 읽지 않는다)
+        return void json(res, 200, { home: homeId(), port: API_PORT, principal: authority.principal(), runner: RUNNER_ID.dir, version: RUNNER_ID.version });
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
 
@@ -882,6 +893,34 @@ export function createApi(
  * 기동에서 이것으로 문을 닫으면 없어도 되는 의존을 강제하는 것이다. 릴리스 번들에는 항상
  * 들어 있으므로(release.yml build:widget) 이 줄이 뜨는 것은 개발 트리뿐이다.
  */
+/**
+ * 옛 데몬을 내리고 그 자리가 비기를 기다린다. 정중한 신호(SIGTERM)로 시작하는 것이 계약이다 —
+ * 그쪽에도 정리할 것이 있다(상주·채널·트리거·기록). 끝내 안 내려가면 fail-loud: 여기서 그냥
+ * 진행하면 포트를 못 잡아 이유 없는 EADDRINUSE 로 죽는다.
+ *
+ * 동기 대기인 이유: startDaemon 은 이 뒤로 문·서비스·복구가 순서대로 서는 자리라, 옛 데몬이 아직
+ * 살아 있는 동안 그 일들이 시작되면 두 판이 같은 세션·같은 폴더를 동시에 만진다.
+ */
+function retireDaemon(pid: number, waitMs = 10_000): void {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return; // 이미 없다
+  }
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return; // 내려갔다
+    }
+    // 이 자리에는 이벤트 루프가 없다(기동 전) — 동기 대기가 유일한 길이다.
+    // 프로세스를 띄우지 않는다: 스폰의 자리는 spawn.ts 하나이고, 잠깐 자는 데 자식이 필요하지 않다
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  throw new Error(`옛 데몬이 내려가지 않습니다: pid ${pid} — 직접 내린 뒤 다시 시작하세요 (kill ${pid})`);
+}
+
 function widgetBundleNote(): string {
   if (fs.existsSync(path.join(ASSETS_DIR, "chat-app.js"))) return "";
   return "⚠ 채팅 위젯 번들이 없습니다(chat/dist — 빌드 산출물이라 갓 클론한 트리에는 없다).\n"
@@ -896,9 +935,17 @@ export function startDaemon(): void {
   // 데몬의 cwd 는 사라지지 않는 곳이어야 한다 — Tauri 앱이 임시 스테이징 디렉토리에서 띄운 데몬의 cwd 가
   // 뒤에 지워져, 그 cwd 를 물려받는 자식(하네스 verb)이 전부 침묵한 실사고(2026-08-28). 홈은 남는다.
   try { process.chdir(os.homedir()); } catch { /* 홈조차 없으면 있던 자리 — 진입 디렉토리 기본 cwd(spawn.ts)가 받친다 */ }
-  // 같은 홈에 데몬은 하나다 — 홈이 곧 인스턴스라서. 살아 있는 기록이 있으면 그쪽으로 가라고 말한다
+  // 같은 홈에 데몬은 하나다 — 홈이 곧 인스턴스라서. 다만 "하나"의 뜻은 "같은 판 하나"다:
+  // 옛 러너로 뜬 데몬이 남아 있으면 물려받는다. 앱을 업데이트해도 도는 프로세스는 옛 코드를 든 채
+  // 남고(Node 는 적재한 모듈을 다시 읽지 않는다), 감독자는 "포트가 답하니 살아 있다"로 넘어간다.
+  // 그 매듭을 여기서 푼다 — 새 판으로 뜬 기동이 옛 데몬을 갈아 끼우면 업데이트가 그것으로 완성된다.
   const old = runningDaemonPid();
-  if (old != null) throw new Error(`데몬이 이미 실행 중입니다: pid ${old} (${API_URL}) — 이 홈(${RELAY_HOME})의 CLI 는 그 데몬을 따라갑니다`);
+  if (old != null) {
+    const why = takeoverReason(runningDaemonRunner(), RUNNER_ID);
+    if (!why) throw new Error(`데몬이 이미 실행 중입니다: pid ${old} (${API_URL}) — 이 홈(${RELAY_HOME})의 CLI 는 그 데몬을 따라갑니다`);
+    console.log(`옛 데몬을 물려받습니다: pid ${old} — ${why}`);
+    retireDaemon(old);
+  }
   markDaemonStarting();
   // 상주 하네스는 데몬만 허용한다 — CLI 1회 실행이 상주를 남기면 고아가 된다
   enableResidents();
@@ -913,7 +960,7 @@ export function startDaemon(): void {
   // 문이 선 자리와 한 글자도 달라서는 안 된다(임베더가 listen 좌표를 바꿔도 기록은 진실을 말한다)
   server.once("listening", () => {
     const addr = server.address();
-    if (addr && typeof addr === "object") markDaemonListening(addr.port);
+    if (addr && typeof addr === "object") markDaemonListening(addr.port, RUNNER_ID);
   });
   // 문을 못 열면 조용히 죽지 않는다. 포트가 막힌 것은 십중팔구 **다른 홈**의 기판이다(같은 홈이면 위에서
   // 기동을 거부했다) — 그 사실과 처방을 말하고, 반쯤 적힌 기록을 지운 채 내려간다

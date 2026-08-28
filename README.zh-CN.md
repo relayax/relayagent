@@ -132,7 +132,7 @@ my-package/
 | `~/Relay/packages/<名称>/` | 编辑层:带 git 历史的工作副本(工作室与 agent-builder 写在这里)。创作是本产品的中心,因此它发生在人能打开的地方——正在运行的版本留在 `releases/`,手够不到。 |
 | `~/Relay/.stage/` | 聊天与会话之间的文件交换台 |
 | `.env`(检出根目录) | 实例设置:`RELAY_HOME`(默认 `~/.relay`)、`RELAY_PORT`(仅在需要*选择*端口时 — CLI 跟随正在运行的守护进程)。shell 环境变量总是优先。参见 [.env.example](.env.example) |
-| `~/.relay/run/daemon.{pid,port}` | 正在运行的守护进程的 pid 与端口 — 启动时写入,CLI 跟随,关闭时删除 |
+| `~/.relay/run/daemon.{pid,port,runner}` | 正在运行的守护进程的 pid、端口与其启动来源 runner — 启动时写入,CLI 跟随,关闭时删除。来自不同 runner 的启动会接管旧守护进程(更新应用即更新守护进程) |
 | `127.0.0.1:4747` | 守护进程 API 与控制台(默认端口) |
 
 ## 贡献

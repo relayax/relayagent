@@ -11,6 +11,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import type { Ledger } from "../supply/ledger.ts";
 import type { HostBridge } from "./scripts.ts";
 
@@ -20,7 +21,7 @@ process.env.USERPROFILE = process.env.HOME;
 process.env.RELAY_HOME = mk(path.join(ROOT, "relay-home"));
 process.env.RELAY_PORT = String(await freePort());
 
-const { createApi } = await import("../daemon.ts");
+const { createApi, RUNNER_ID } = await import("../daemon.ts");
 const { homeId, API_PORT, API_URL } = await import("../supply/ledger.ts");
 const { localAuthority } = await import("../authority.ts");
 const { Ticker } = await import("./triggers.ts");
@@ -49,7 +50,7 @@ test.after(() => {
   server.close();
 });
 
-test("/instance — 홈의 실경로와 듣는 자리, 그리고 사람. 장부도 자격도 싣지 않는다", async () => {
+test("/instance — 홈의 실경로와 듣는 자리, 사람, 그리고 뜬 러너. 장부도 자격도 싣지 않는다", async () => {
   const res = await fetch(API_URL + "/instance");
   assert.equal(res.status, 200);
   const d = (await res.json()) as Record<string, unknown>;
@@ -57,8 +58,13 @@ test("/instance — 홈의 실경로와 듣는 자리, 그리고 사람. 장부�
   assert.equal(d.home, fs.realpathSync(process.env.RELAY_HOME!));
   assert.equal(d.port, API_PORT);
   assert.equal(d.principal, authority.principal());
-  // 신원 한 줄이다 — 장부·자격이 새어 나가지 않는다
-  assert.deepEqual(Object.keys(d).sort(), ["home", "port", "principal"]);
+  // 러너 신원 — 감독자(데스크톱 앱)가 "이 데몬이 내 번들에서 떴는가" 를 묻는 자리다.
+  // 포트가 답한다는 사실만으로는 최신인지 알 수 없다(Node 는 적재한 모듈을 다시 읽지 않는다)
+  assert.equal(d.runner, RUNNER_ID.dir);
+  assert.equal(d.version, RUNNER_ID.version);
+  assert.equal(d.runner, fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")));
+  // 신원뿐이다 — 장부·자격이 새어 나가지 않는다
+  assert.deepEqual(Object.keys(d).sort(), ["home", "port", "principal", "runner", "version"]);
 });
 
 test("신원은 실경로다 — 심링크로 같은 홈을 다르게 불러도 대조가 성립한다", () => {

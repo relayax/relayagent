@@ -27,6 +27,16 @@ const DEFAULT_PORT = 4747;
 const runDir = (): string => path.join(RELAY_HOME, "run");
 const daemonPidFile = (): string => path.join(runDir(), "daemon.pid");
 const daemonPortFile = (): string => path.join(runDir(), "daemon.port");
+const daemonRunnerFile = (): string => path.join(runDir(), "daemon.runner");
+
+/** 도는 데몬이 **어느 러너에서** 떴는가. 앱 번들을 갈아도 프로세스는 옛 코드를 메모리에 든 채 남으므로,
+ *  "포트가 답한다"는 최신인가의 답이 못 된다 — 그 답을 여기 적는다(실사고 2026-08-29) */
+export interface RunnerId {
+  /** 러너 디렉토리의 실경로 — 앱 번들과 체크아웃을 가른다 */
+  dir: string;
+  /** package.json version — 같은 자리에서 판만 오른 경우를 가른다 */
+  version: string;
+}
 
 function parsePort(raw: string): number {
   const n = Number(raw);
@@ -47,7 +57,21 @@ export function runningDaemonPid(): number | null {
   }
   fs.rmSync(f, { force: true });
   fs.rmSync(daemonPortFile(), { force: true });
+  fs.rmSync(daemonRunnerFile(), { force: true });
   return null;
+}
+
+/** 도는 데몬의 러너 신원 — 기록이 없으면 null(이 축을 모르는 지난 판이 도는 중이라는 뜻이다) */
+export function runningDaemonRunner(): RunnerId | null {
+  if (runningDaemonPid() == null) return null;
+  const f = daemonRunnerFile();
+  if (!fs.existsSync(f)) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    return typeof j?.dir === "string" && typeof j?.version === "string" ? { dir: j.dir, version: j.version } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 이 홈의 데몬이 듣는 포트 — 데몬이 문을 연 뒤 적는다(markDaemonListening). 도는 데몬이 없거나 아직 안 열렸으면 null */
@@ -65,15 +89,34 @@ export function markDaemonStarting(): void {
   fs.writeFileSync(daemonPidFile(), String(process.pid) + "\n");
 }
 
-/** 문이 열린 뒤에야 적는다 — 기록은 "여기로 오라"는 약속이라, 듣기 전에 적으면 CLI 가 빈 문을 두드린다 */
-export function markDaemonListening(port: number): void {
+/** 문이 열린 뒤에야 적는다 — 기록은 "여기로 오라"는 약속이라, 듣기 전에 적으면 CLI 가 빈 문을 두드린다.
+ *  러너 신원을 함께 적는다: 다음 기동이 "지금 도는 것이 내 판인가"를 왕복 없이 판정한다 */
+export function markDaemonListening(port: number, runner?: RunnerId): void {
   fs.mkdirSync(runDir(), { recursive: true });
   fs.writeFileSync(daemonPortFile(), String(port) + "\n");
+  if (runner) fs.writeFileSync(daemonRunnerFile(), JSON.stringify(runner) + "\n");
 }
 
 export function clearDaemonMark(): void {
   fs.rmSync(daemonPidFile(), { force: true });
   fs.rmSync(daemonPortFile(), { force: true });
+  fs.rmSync(daemonRunnerFile(), { force: true });
+}
+
+/**
+ * 도는 데몬을 물려받을 이유 — 없으면(null) 같은 판이 이미 돌고 있다는 뜻이라 기동은 거부다.
+ *
+ * "앱을 업데이트했는데 왜 옛 화면인가"의 답이 여기 있다: Node 는 적재한 모듈을 디스크에서 다시 읽지
+ * 않으므로, 파일을 갈아도 **도는 프로세스는 옛 코드**다. 그리고 감독자(데스크톱 앱)는 대개 "포트가
+ * 답하면 살아 있다"로 건강을 판정해 옛 데몬을 그대로 둔다(실사고 2026-08-29: 00:14 데몬이 00:33 번들
+ * 교체와 00:55 앱 재시작을 지나 계속 4748 을 쥐었다). 그래서 판정을 데몬 쪽에 둔다 — 새 러너로 뜬
+ * 기동이 옛 데몬을 물려받으면, 앱은 아무것도 몰라도 업데이트가 완성된다.
+ */
+export function takeoverReason(running: RunnerId | null, mine: RunnerId): string | null {
+  if (!running) return "자리 기록이 없는 지난 판";
+  if (running.dir !== mine.dir) return `다른 러너에서 도는 데몬(${running.dir})`;
+  if (running.version !== mine.version) return `옛 판 v${running.version}`;
+  return null;
 }
 
 /** 인스턴스의 신원 = 홈의 실경로. 심링크로 같은 자리를 다르게 부를 수 있으므로 realpath 로 편다 */

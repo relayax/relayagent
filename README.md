@@ -132,7 +132,7 @@ At the root of these six principles sits one premise: **everything can be expres
 | `~/Relay/packages/<name>/` | edit layer: git-backed working copies (the Studio and agent-builder write here). Authoring is the point of this product, so it happens where you can open it — the running edition stays in `releases/`, out of reach. |
 | `~/Relay/.stage/` | file exchange stage between chat and sessions |
 | `.env` (checkout root) | instance settings: `RELAY_HOME` (default `~/.relay`), `RELAY_PORT` (only to *choose* a port — the CLI follows the running daemon). Real shell env always wins. See [.env.example](.env.example) |
-| `~/.relay/run/daemon.{pid,port}` | the running daemon's pid and port — written at start, followed by the CLI, removed at shutdown |
+| `~/.relay/run/daemon.{pid,port,runner}` | the running daemon's pid, port, and the runner it started from — written at start, followed by the CLI, removed at shutdown. A start from a different runner takes the old daemon over, so updating the app updates the daemon |
 | `127.0.0.1:4747` | daemon API and console (default port) |
 
 ## Contributing
