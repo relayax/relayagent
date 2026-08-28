@@ -41,7 +41,7 @@ function wireError(e: unknown): WireError {
   return { message: String(e) };
 }
 
-/** fetch 의 init 을 메시지로 — 본문은 문자열·바이트만 나른다(FormData 같은 스트림 형은 아직 문이 없다) */
+/** fetch 의 init 을 메시지로 — 본문은 문자열·바이트로 나른다. FormData 는 여기서 multipart 로 굽는다 */
 async function initToWire(init: RequestInit | undefined): Promise<{ method?: string; headers: [string, string][]; body?: string | Uint8Array }> {
   const headers = [...new Headers(init?.headers ?? {})];
   let body: string | Uint8Array | undefined;
@@ -54,7 +54,14 @@ async function initToWire(init: RequestInit | undefined): Promise<{ method?: str
   } else if (b instanceof ArrayBuffer) body = new Uint8Array(b);
   else if (ArrayBuffer.isView(b)) body = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
   else if (b instanceof Blob) body = new Uint8Array(await b.arrayBuffer());
-  else throw new Error("격리 문은 이 본문 형을 나르지 않습니다 — 문자열·바이트·URLSearchParams·Blob 으로 보내세요");
+  else if (b instanceof FormData) {
+    // 표준 multipart/form-data — 문자열 칸과 파일 칸(Blob: 파일명·타입 보존). 스레드 경계를 못 넘는 형이라
+    // 굽는 자리가 여기뿐이다. Response 로 굽고 boundary 가 든 content-type 을 함께 보낸다
+    const baked = new Response(b);
+    body = new Uint8Array(await baked.arrayBuffer());
+    const ct = baked.headers.get("content-type");
+    if (ct) headers.push(["content-type", ct]);
+  } else throw new Error("격리 문은 이 본문 형을 나르지 않습니다 — 문자열·바이트·URLSearchParams·Blob·FormData 로 보내세요");
   return { method: init?.method, headers, body };
 }
 
