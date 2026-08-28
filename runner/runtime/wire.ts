@@ -296,6 +296,8 @@ interface TurnRecord {
   settledEnvelope: boolean;
   /** 봉투 file 이벤트가 이미 알린 stage 상대경로 — 종결 시 무대 산출물 중복 고지를 막는다 */
   announcedFiles: Set<string>;
+  /** 입양 턴의 종결 신호 — 세션 사슬(§5.1-12)이 이 턴 뒤에 선 wire 턴을 기다리는 근거 */
+  onSettled?: () => void;
 }
 
 const turns = new Map<string, TurnRecord>();
@@ -473,6 +475,12 @@ export function adoptSessionTurn(pkg: string, slot: string, turn: { id: string; 
   const q = sessionQueues.get(key) ?? [];
   q.push(t);
   sessionQueues.set(key, q);
+  // 입양한 턴도 세션 사슬에 선다(§5.1-12). 없으면 이 턴이 도는 동안 도착한 wire 턴이 뒤에 줄을
+  // 서지 않고 runSession 문지기("이 대화는 아직 이전 요청을 처리하는 중입니다")에 즉시 부딪힌다 —
+  // 위임 탭에서 보낸 말이 전부 오류로 종결하던 실사고(2026-08-28). 종결 신호는 settleTurn 이 내고,
+  // 그 시점엔 live 슬롯이 이미 풀려 있다(harness.ts finish → live.delete 가 closeObserved 보다 앞).
+  const done = new Promise<void>((resolve) => { t.onSettled = resolve; });
+  sessionChains.set(key, (sessionChains.get(key) ?? Promise.resolve()).then(() => done));
   announceTurn(t); // 관찰 줄기에는 개설 줄보다 먼저 알린다 — 그 줄이 싱크를 지나게
   appendTurnEvent(t, { event: "turn", status: "started", turn: t.id, session: slot });
 }
@@ -507,6 +515,7 @@ function settleTurn(t: TurnRecord, ok: boolean): void {
   t.ok = ok;
   // 수명주기 settled(§6-36) — 스트림의 마지막 이벤트. 장부에도 앉아 재생이 같은 종결을 본다
   appendTurnEvent(t, { event: "turn", status: "settled", turn: t.id, ok });
+  t.onSettled?.(); // 입양 턴 뒤에 선 wire 턴의 차례
   const key = sessionKey(t.pkg, t.session);
   const q = sessionQueues.get(key);
   if (q) {

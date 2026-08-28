@@ -34,13 +34,13 @@ RelayAgent 是随身携带自己界面的智能体包(agent package)的个人基
 | 包(Package) | 带有 `relay.yaml` 的目录。清单是结构与路径的正本,目录树是内容的正本。 |
 | Surfaces | 包面向用户的方式。核心是 `view`:包自带的网页 UI,安装期构建,由守护进程托管在 `/pkg/<名称>/view/`,并凭包令牌连接到自己智能体的动词。`channels`(Discord、Slack 等适配器)是额外的门——频道声明它所需凭据的*形态*(`credential.fields`),控制台据此渲染输入框,而不是让人手工拼装 JSON。`components` 导出一个**自包含 ESM 包**(样式也打在其中),供其他包的界面在运行时挂载:基座以地址提供该包,并向消费方文档注入 import map,因此消费方只写 `import { mount } from "<提供方名称>"`,从不自行拼装地址。用 React 编写也一样——React 被打进包内,消费方无需框架、无需构建。 |
 | Harness | 随包内置、负责运行智能体的执行适配器。系统包内置 Claude Code、Codex、Kimi、Pi 适配器。动词:`session`、`setup`、`models`、`commands`、`info`(可选 `login`,以及 `serve` —— 常驻会话,经 stdin 注入回合,而非每回合一个进程)。契约一致性由 `relay harness-check` 判定,完整契约见 [docs/harness-protocol.md](docs/harness-protocol.md)。variant 所驱动的 CLI 在 `requires.binaries` 中声明——带 `manager`+`package` 配方时,缺失则由基座自行安装(装入 `~/.relay/bin/<包>/`,置于 PATH 最前);variant 的 `binary: <name>` 是对该条目的引用,宿主机上损坏的安装会在 setup 失败时被基座副本替换。 |
-| Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch,以及可选的 `greeting`——空对话的第一句话,它属于说话的一方,而不属于任何一道门。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体——声明了智能体的包必须确定一个着陆点(用该标记,或用与包同名的智能体),否则安装拒绝。会话立于人格之上,因此 `agents[]` 之外的名字永远打不开一个回合。直接对话无需声明:有智能体而没有 `view`,基座就在 `/pkg/<名称>/view/` 免费立起整屏对话。`dirs` 是该智能体可打开的 `dir` 服务名称——workspace 之外的文件夹以工具而非路径抵达会话。 |
+| Agents | 人格(`AGENT.md`)加上技能、斜杠命令、向子智能体的 dispatch,以及可选的 `greeting`——空对话的第一句话,它属于说话的一方,而不属于任何一道门。以中立 bundle 交付给 harness,翻译成原生格式完全是适配器的职责。`default: true` 标记着陆智能体——声明了智能体的包必须确定一个着陆点(用该标记,或用与包同名的智能体),否则安装拒绝。会话立于人格之上,因此 `agents[]` 之外的名字永远打不开一个回合。直接对话无需声明:有智能体而没有 `view`,基座就在 `/pkg/<名称>/view/` 免费立起整屏对话。 |
 | Scripts | 动词。`scripts/<名称>.ts` 默认导出 `async (input, ctx) => JSON`。 |
-| Services | 四种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点)、`api`(远程 REST 基址)、`dir`(由基座立为一道门的文件夹)。凭证只挂在向外走的两种(`url`、`api`)上。`dir` 以名字抵达,而非路径——动词用 `ctx.service(<名称>).call("list"|"read"|"write"|"remove", …)`,会话看到的是其智能体在 `agents[].dirs` 中声明的文件夹所对应的 `dir__<名称>__*` 工具。声明的路径是本地默认绑定,安装批准可以替换它,组织基座则把同一个名字解析为自己的卷坐标。 |
+| Services | 四种形态:`source`(自己的躯体,容器或进程)、`url`(远程 MCP 端点)、`api`(远程 REST 基址)、`dir`(由基座立为一道门的文件夹)。凭证只挂在向外走的两种(`url`、`api`)上。`dir` 以名字抵达,而非路径——动词用 `ctx.service(<名称>).call("list"|"read"|"write"|"remove", …)`;会话从不直接触碰文件夹,只能经由包装它的动词抵达。声明的路径是本地默认绑定,安装批准可以替换它,组织基座则把同一个名字解析为自己的卷坐标。token 凭证可以声明输入框的形态(`auth.fields`——与频道 `credential.fields` 相同的字段词汇,只在进入 `Authorization` 的那一个字段上标 `header: true`)、是否必需(`auth.required`,默认 true;false 表示没有它也能运行,只是该功能关闭)以及从哪里获取(`auth.help`)。控制台的连接页面(`/connect`)据此渲染所有包的对外凭证;动词从不持有密钥——用 `ctx.service(<名称>).connected()` 询问是否已连接,用 `.fields()` 只读取非机密字段。 |
 | Connector | 无躯体连接器——动词调用外部 REST API 的包。以 `api` 服务声明 REST 基址及其 `auth` 形态,凭证存放在 vault 的 `<包>/<服务>` 坐标下。由基座在每次调用时附加,动词从不经手凭证,也无法越出所声明的基址。`auth.scheme` 指定 `Authorization` 的前缀(例如 Unsplash 的 `Client-ID`)——未声明即为 `Bearer`。 |
 | Triggers | cron 或事件。用提示词唤醒智能体,或以 headless 方式运行脚本。`delivery: <频道>:<会话键>` 让该回合在对应会话的 slot 中运行,并把回复经频道适配器发出。 |
 | Missions | 包向其他包提供的问答能力。 |
-| Edges | 对其他包的 tools、mission 或 components 的依赖声明。声明是申请,激活靠授权——components 在安装解析该 edge 时记录授权,执行点则是基座注入消费方界面的 import map。 |
+| Edges | 对其他包的 tools、mission 或 components 的依赖声明。声明是申请,激活靠授权——components 在安装解析该 edge 时记录授权,执行点则是基座注入消费方界面的 import map。`agent_access`(仅 tools 形态,默认 `scripts-only`)规定消费方智能体能触碰什么:`scripts-only` 下 edge 工具永远是提供方的动词;`full` 则额外把提供方在 `services[].url.tools` 声明的远程 MCP 工具以 raw 形式开放,并在披露单上标记为 raw。 |
 | Workspace | 包的文件夹授权:会话的 cwd,在安装时确定(默认 `~/Relay/<名称>`)并记入台账。自己的 view 通过 `GET /pkg/<名称>/workspace/<路径>` 读取——只读,与 `dir` 门相同的隔离,每次请求都重新验证。 |
 | Grants | 记入台账的授权。授权永远不能超过声明。 |
 
@@ -113,7 +113,7 @@ my-package/
 3. **声明是上限,授权是激活。** 清单中的 `edges` 与 `dir` 服务是申请。激活发生在安装或 `relay grant` 时,记入台账,且永远不能超过声明。
 4. **凭证从不进入目录树。** 清单只声明认证的形态(`none`、`token`、`oauth`)。值存放在 vault:macOS Keychain,缺失时回落到 `0600` 文件。
 5. **智能体与 harness 中立。** 智能体以中立 bundle(人格、技能、命令、元数据)交付。翻译成任何原生格式完全是适配器的职责,因此包不会绑死在某一个 CLI 上。
-6. **最小立足地。** 会话立足的只有安装时授权的那一个 workspace。多需要一个文件夹就声明 `dir` 服务——会话不是立于其上,而是用工具(`dir__<名称>__*`)去调用,并不知道该文件夹的路径。基板的家(`~/.relay`)对所有会话永远关闭,也不能作为 `dir` 打开(安装会拒绝)。
+6. **最小立足地。** 会话立足的只有安装时授权的那一个 workspace。多需要一个文件夹就声明 `dir` 服务——只有包的动词能抵达它(`ctx.service`);会话既不直接触碰它,也不知道它的路径。基板的家(`~/.relay`)对所有会话永远关闭,也不能作为 `dir` 打开(安装会拒绝)。
 
 这六条原则的根部有一个前提:**一切都可以表达为一个智能体包。**
 

@@ -303,31 +303,14 @@ properties:
               required: [fields]
               properties:
                 fields:
+                  description: |
+                    칸 어휘는 서비스 auth.fields 와 한 벌($defs/credentialField)이다 — 비밀값을 받는 칸의
+                    모양은 그 비밀이 들어오는 문(채널)에 쓰이든 나가는 문(서비스)에 쓰이든 같다.
+                    header 만 서비스 전용이다(어댑터는 자격 전체를 RELAY_CRED_<이름> 으로 받는다)
                   type: array
                   minItems: 1
                   items:
-                    type: object
-                    additionalProperties: false
-                    required: [label]
-                    properties:
-                      key:
-                        description: 조립될 JSON 키. 생략하면 자격이 문자열 하나라는 뜻(단독일 때만)
-                        type: string
-                        pattern: '^[a-z][a-z0-9_]*$'
-                      label:
-                        type: string
-                        minLength: 1
-                      placeholder:
-                        type: string
-                      secret:
-                        description: 참이면 화면이 값을 가린다. 토큰 류는 참
-                        type: boolean
-                      list:
-                        description: 참이면 쉼표 구분 입력을 배열로 조립한다 (key 있는 필드만)
-                        type: boolean
-                      required:
-                        description: 참이면 이 칸이 비면 화면이 연결을 막는다
-                        type: boolean
+                    $ref: '#/$defs/credentialField'
                 help:
                   description: 자격을 어디서 얻는지 — 화면이 링크와 안내로 보여준다
                   type: object
@@ -497,18 +480,6 @@ properties:
           items:
             type: string
             pattern: '^[a-z0-9][a-z0-9-]*\*?$'
-        dirs:
-          description: |
-            이 에이전트가 세션에서 여는 폴더 — services[] 의 dir 선언 **이름**을 가리킨다.
-            선언된 폴더 하나가 도구 넷이 된다: dir__<이름>__{list,read,write,remove}.
-            미선언 = 안 보인다. 세션이 딛는 땅은 workspace 하나이고(cwd — 네이티브 파일 도구가
-            그냥 닿는다), **그 밖의 폴더는 경로가 아니라 이 문으로만** 닿는다. 세션에는 폴더의
-            절대경로가 나가지 않는다: 흘리면 도구를 우회해 파일시스템을 직접 만지려는 시도가
-            따라오고, 그 경로는 조직 기판에서 아무 데도 아니다.
-            선언 밖 이름은 판정이 거부한다(캡은 선언을 넘지 못한다)
-          type: array
-          items:
-            $ref: '#/$defs/slug'
   scripts:
     description: |
       동사 디렉토리. <이름>.ts = 기본 수출 async 함수 (input, ctx) => 결과 JSON.
@@ -625,7 +596,11 @@ properties:
       선언은 신청, 활성화는 결재. 혈통이 같은 설치본이 여럿이면 결재가 디렉토리에 바인딩한다.
       소비물은 셋 중 하나다(동시 선언 불가): tools(동사, 런타임 결재) · mission(질의,
       런타임 결재) · components(제공자의 surfaces.components 번들을 이 패키지 화면이 마운트 —
-      설치 시점 해석이 결재이고, 집행은 기판이 심는 import map 이다)
+      설치 시점 해석이 결재이고, 집행은 기판이 심는 import map 이다).
+      tools 형에는 agent_access 축이 있다 — 이 패키지의 에이전트가 그 edge 로 무엇을 만지는가.
+      scripts-only(기본) = edge 도구는 언제나 제공자의 동사(서비스는 동사가 감싸서만 소비된다).
+      full = 제공자가 services[].url.tools 에 선언한 원격 MCP 도구도 raw 로 선다 — 명시 opt-in
+      이고 고지서에 raw 로 표시된다. raw 전용 도구는 full 없이는 결재도 안 된다
     type: array
     items:
       type: object
@@ -652,6 +627,14 @@ properties:
             설치가 해석하면 기판이 소비자 문서에 import map 을 심는다: provider 매니페스트
             name 이 그 번들 주소가 된다. 화면은 `import { mount } from "<provider name>"`.
           const: true
+        agent_access:
+          description: |
+            tools 형에만. scripts-only(기본, 미선언) = edge 도구는 제공자의 동사뿐.
+            full = 제공자의 services[].url.tools(원격 MCP 서버의 도구)도 이 패키지 세션에
+            edge__<provider>__<tool> 로 raw 로 선다 — 자격은 제공자의 것, 신원은 호출자의 것.
+            미지값은 접지 않고 거부한다(오타가 조용히 어느 쪽으로든 접히면 선택이 소실된다)
+          type: string
+          enum: [scripts-only, full]
   host_methods:
     description: |
       기판 host 브리지 게이트 선언 — 이 패키지의 동사가 부를 수 있는 host.* 메서드의 캡.
@@ -771,6 +754,27 @@ $defs:
                 type: object
                 additionalProperties:
                   type: string
+          required:
+            description: |
+              없으면 이 패키지의 주 기능이 서지 않는 자격인가 — 미선언 = true. false 면 없어도 돌고
+              그 기능만 꺼진다(무엇이 켜지는지는 help.note 가 말한다). 콘솔의 연결 화면이 이 축으로
+              "필요"(필수인데 빈 것 — 사이드바 배지에 세어진다)와 "선택"을 가른다. 동사는
+              ctx.service(<이름>).connected() 로 있는지 묻고 그 기능을 켜거나 끈다 — 401 을 받아 보고
+              아는 것은 판단이 아니라 사고다. services[].auth 에서만 — llm 자격에는 화면이 없다
+            type: boolean
+          fields:
+            description: |
+              입력 칸의 형태 — 미선언 = 토큰 문자열 한 칸(붙여넣기). 칸 어휘는 채널 credential.fields 와
+              한 벌이고($defs/credentialField), 여기에만 header 가 있다: key 있는 칸들이면 vault 에 JSON 으로
+              앉고 header: true 인 칸 **하나**의 값만 `<scheme> <값>` 으로 Authorization 에 나간다.
+              header·secret 칸은 기판만 본다. 나머지 칸(계정 번호·저장소 이름처럼 자격과 함께 움직이지만
+              비밀은 아닌 설정)은 동사가 ctx.service(<이름>).fields() 로 읽는다 — 자격이 동사의 손을
+              지나지 않는다는 약속이 칸 단위로 선다. 콘솔의 연결 화면과 relay connect 가 같은 조립 규칙을
+              지난다. token 형에서만 — oauth 는 인가 흐름이 자격을 만든다
+            type: array
+            minItems: 1
+            items:
+              $ref: '#/$defs/serviceField'
       - type: object
         additionalProperties: false
         required: [kind]
@@ -809,6 +813,82 @@ $defs:
                     type: object
                     additionalProperties:
                       type: string
+          help:
+            description: 앱 등록처 링크와 한 줄 안내 — 연결 화면이 인가 버튼 옆에 그린다
+            type: object
+            additionalProperties: false
+            properties:
+              url:
+                type: string
+              note:
+                type: string
+          verify:
+            description: 번들의 access_token 으로 두드려 볼 주소 — "저장됨 ≠ 유효" 를 서비스 축에서 판정한다
+            type: object
+            additionalProperties: false
+            required: [url]
+            properties:
+              url:
+                type: string
+              headers:
+                type: object
+                additionalProperties:
+                  type: string
+          required:
+            description: token 형의 required 와 같은 축 — 미선언 = true
+            type: boolean
+  credentialField:
+    description: |
+      자격 입력 칸 하나 — 값이 아니라 형태다. 채널(surfaces.channels[].credential.fields)이 쓴다.
+      조립 규칙: 모든 칸에 key 가 있으면 화면이 JSON 객체로 조립해 넘기고, key 없는 칸 하나뿐이면
+      그 값이 곧 자격 문자열이다. 둘을 섞으면 판정 실패다
+    type: object
+    additionalProperties: false
+    required: [label]
+    properties:
+      key:
+        description: 조립될 JSON 키. 생략하면 자격이 문자열 하나라는 뜻(단독일 때만)
+        type: string
+        pattern: '^[a-z][a-z0-9_]*$'
+      label:
+        type: string
+        minLength: 1
+      placeholder:
+        type: string
+      secret:
+        description: 참이면 화면이 값을 가린다. 토큰 류는 참
+        type: boolean
+      list:
+        description: 참이면 쉼표 구분 입력을 배열로 조립한다 (key 있는 필드만)
+        type: boolean
+      required:
+        description: 참이면 이 칸이 비면 화면이 연결을 막는다
+        type: boolean
+  serviceField:
+    description: |
+      credentialField + header. 서비스(services[].auth.fields)가 쓴다 — 같은 칸 어휘에 "어느 칸이
+      Authorization 으로 나가는가" 한 축이 더 있다. header 칸은 언제나 비밀이고 늘 필수다
+    type: object
+    additionalProperties: false
+    required: [label]
+    properties:
+      key:
+        type: string
+        pattern: '^[a-z][a-z0-9_]*$'
+      label:
+        type: string
+        minLength: 1
+      placeholder:
+        type: string
+      secret:
+        type: boolean
+      list:
+        type: boolean
+      required:
+        type: boolean
+      header:
+        description: 이 칸의 값이 Authorization 헤더로 나간다 — key 있는 칸들 중 정확히 하나. key 없는 칸 하나면 그 값이 곧 토큰이라 표시하지 않는다
+        type: boolean
   sourceService:
     type: object
     additionalProperties: false
@@ -851,6 +931,10 @@ $defs:
         type: string
         pattern: '^https?://'
       tools:
+        description: |
+          이 서버의 도구 중 다른 패키지에 raw 로 빌려줄 수 있는 것의 목록(제공자 쪽 캡).
+          소비자가 edges[].agent_access: full 을 선언하고 결재받으면 그 세션에 raw 로 선다.
+          자기 세션에는 서지 않는다 — 자기 서비스는 언제나 동사가 감싸서 소비한다
         type: array
         items:
           $ref: '#/$defs/slug'
@@ -894,13 +978,14 @@ $defs:
           설치 결재(relay install --bind <이름>=<경로>)가 그것을 갈아 끼운다. 조직 기판은 같은
           이름을 자기 볼륨 좌표로 푼다(누구의 폴더인가 — 인스턴스당이냐 사람당이냐 — 는 그쪽
           정책이라 이 문법에는 없다).
-          닿는 길은 둘이고 둘 다 기판이 세운 문이다: 동사는 ctx.service(<이름>).call("list"|
-          "read"|"write"|"remove", 인자), 세션은 agents[].dirs 로 캡을 선언한 도구
-          dir__<이름>__*. 감금(상대경로만·.. 금지·심링크 탈출 금지)은 기판의 몫이다.
+          닿는 길은 하나, 기판이 세운 동사 문이다: ctx.service(<이름>).call("list"|"read"|
+          "write"|"remove", 인자). 세션은 이 폴더를 직접 만지지 않는다 — 그 폴더를 감싼 동사로만
+          닿는다(세션 폴더 도구 dir__<이름>__* 와 agents[].dirs 는 2026-08-28 은퇴 — 선언하면
+          판정이 처방과 함께 거부한다). 감금(상대경로만·.. 금지·심링크 탈출 금지)은 기판의 몫이다.
           경로 문자열이 필요한 동사는 ctx.dir(<이름>) 로 받는다 — 세션에는 나가지 않는다.
           자기 workspace 안쪽을 가리키지 않는다: 그 땅은 이미 결재됐고 고지서에 같은 폴더가
           두 번 선다. 기판 홈(RELAY_HOME) 안쪽은 설치가 거부한다 — 그 폴더에는 자격과 장부의
-          시크릿이 살고, 세션이 dir 을 도구로 열 수 있으므로 여기 구멍이 나면 담장이 한 축에서만
+          시크릿이 살고, 동사가 dir 을 ctx.service 로 열 수 있으므로 여기 구멍이 나면 담장이 한 축에서만
           선다(판정 자리는 supply/install.ts: RELAY_HOME 은 인스턴스 설정이라 문법 판정이 알아서는
           안 된다). 상대경로 선언은 이 판정을 지나지 않는다 — 발행본의 트리가 장기 안에 앉는다
         $ref: '#/$defs/dirpath'

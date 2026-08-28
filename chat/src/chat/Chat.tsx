@@ -45,6 +45,19 @@ export { OpenConversationCtx, PaneTargetCtx, type PaneTarget } from "./ctx";
  *   · push 미선언 기판 — 문서 visibility 복귀·창 포커스·사용자 행위(pointerdown/keydown)
  *     시점의 history.get 1회 프로브로 따라잡는다("다음 사용자 행위 시점 따라잡기").
  *  프로브는 idle 일 때만 산다(스트리밍 중 불필요) + 최소 간격 스로틀로 행위 연타를 흡수한다. */
+/** 스레드의 마지막 assistant 메시지가 절단(cut)으로 끝났는가 — 그 턴은 서버에서 아직 돌 수 있으므로
+ *  같은 id 라도 다시 붙는다. 재발견 no-op 은 "지금 보고 있는 턴"에만 맞는 규칙이다(2026-08-28: 끊긴
+ *  위임 탭이 유휴로 굳어 사용자의 말이 큐 대신 새 턴으로 나가 문지기에 부딪혔다). */
+function lastEndedCut(rt: NonNullable<ReturnType<typeof useThreadRuntime>>): boolean {
+  const msgs = rt.getState().messages;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== "assistant") continue;
+    return (m.metadata?.custom as { ended?: string } | undefined)?.ended === "cut";
+  }
+  return false;
+}
+
 function ServerTurnWatch({ ctx, attach }: { ctx: RelayCtx; attach: ActiveTurn | null }) {
   const rt = useThreadRuntime();
   const running = useThread((t) => t.isRunning);
@@ -70,7 +83,7 @@ function ServerTurnWatch({ ctx, attach }: { ctx: RelayCtx; attach: ActiveTurn | 
         if (!alive) return;
         const skipThis = skipCancelled;
         skipCancelled = false; // interrupt 가 빨라 act=null 이어도 첫 프로브에서 해제
-        if (!act || act.turnId === seen.current) return;
+        if (!act || (act.turnId === seen.current && !lastEndedCut(rt))) return;
         if (skipThis) { seen.current = act.turnId; return; }
         seen.current = act.turnId;
         setAttachTurn(act);

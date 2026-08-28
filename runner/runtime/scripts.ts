@@ -3,11 +3,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
 import { serviceAuthHeader } from "./oauth.ts";
+import { publicFields } from "./credential.ts";
+import { credKey } from "../vault.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, listScripts, agentScriptScope, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
-import { resolveProvider } from "../supply/install.ts";
-// dir 문의 집행 정본 — 세션 도구(dir__*)와 여기가 같은 감금·같은 연산을 지난다
+import { loadManifest, listScripts, agentScriptScope, type AuthDecl, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { resolveProvider, edgeAgentAccess } from "../supply/install.ts";
+import type { McpToolInfo } from "./mcp.ts";
+// dir 문의 집행 정본(dirs.ts) — 감금·연산은 한 벌이고, 그 문을 지나는 입구는 동사 문(ctx.service) 하나다
 import { dirCall, ensureDirRoot, resolveDirService } from "./dirs.ts";
 
 export interface HostBridge {
@@ -91,6 +94,18 @@ export interface ServiceHandle {
   call(tool: string, args: unknown): Promise<unknown>;
   /** api 형 — 선언된 base 접두 안쪽으로만 나가는 REST 요청. Authorization 은 기판이 붙인다 */
   fetch(path: string, init?: RequestInit): Promise<Response>;
+  /**
+   * 자격이 앉아 있는가 — 밖으로 나가는 두 형(url·api)의 답. auth 미선언·kind none 은 늘 true.
+   * auth.required: false 로 선언한 선택 자격의 동사가 "없으면 그 기능만 끈다" 를 판단하는 문이다 —
+   * 401 을 받아 보고 아는 것은 판단이 아니라 사고다. dir·source 형에는 자격 축이 없어 던진다
+   */
+  connected(): Promise<boolean>;
+  /**
+   * 연결 화면이 받은 칸 중 비밀이 아닌 것(services[].auth.fields 에서 header 도 secret 도 아닌 칸).
+   * 계정 번호·저장소 이름처럼 자격과 함께 움직이지만 비밀은 아닌 설정이 이 문으로 온다. header·
+   * secret 칸은 절대 실리지 않는다 — 자격이 동사의 손을 지나지 않는다는 약속의 칸 단위 집행이다
+   */
+  fields(): Promise<Record<string, string | string[]>>;
 }
 
 /** 결재된 provider 하나로 열린 문 — edges[] 선언 × grants 결재를 지난 것만 부를 수 있다 */
@@ -117,7 +132,8 @@ export interface ScriptCtx {
   /**
    * 선언한 dir 서비스의 **절대경로**. `~` 형은 설치 결재로 바인딩된 신청이다(자기 바닥은 workspace).
    * 동사는 기판 안에서 도므로 경로를 직접 받는다 — 감금이 필요하면 ctx.service(이름) 쪽 파일
-   * 문을 쓴다(세션이 보는 dir__* 도구와 같은 판정 한 벌). 세션에는 이 경로를 넘기지 않는다.
+   * 문을 쓴다(감금·연산의 정본은 dirs.ts 한 벌). 세션에는 이 경로도 폴더 도구도 넘기지 않는다 —
+   * 폴더는 동사가 감싸서만 소비된다.
    */
   dir(name: string): string;
   service(name: string): ServiceHandle;
@@ -191,6 +207,36 @@ export async function mcpCall(url: string, tool: string, args: unknown, authHead
   return parsed.result;
 }
 
+/**
+ * 원격 MCP 문의 도구 목록 — raw 소비(edges[].agent_access: full)의 광고가 읽는다. 목록이 실패해도
+ * 세션의 도구 목록은 서야 하므로 null 로 돌려준다(부르는 쪽이 이름만으로 세운다). 시한이 짧은
+ * 이유: 목록은 턴이 아니다 — 먼 서버 하나가 느리다고 세션의 첫 응답이 늦어지면 안 된다.
+ */
+export async function mcpList(url: string, authHeader?: string, identity?: CallerIdentity, timeoutMs = 3000): Promise<McpToolInfo[] | null> {
+  const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+  if (authHeader) headers.authorization = authHeader;
+  if (identity?.principal) headers["x-relay-principal"] = identity.principal;
+  if (identity?.agent) headers["x-relay-agent"] = identity.agent;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/list", params: {} }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    const jsonLine = text.startsWith("event:") || text.includes("\ndata:") ? text.split("\n").find((l) => l.startsWith("data:"))?.slice(5) : text;
+    const parsed = JSON.parse(jsonLine ?? "{}");
+    const tools = parsed?.result?.tools;
+    if (!Array.isArray(tools)) return null;
+    return tools
+      .filter((t): t is McpToolInfo => !!t && typeof t === "object" && typeof (t as { name?: unknown }).name === "string")
+      .map((t) => ({ name: t.name, description: typeof t.description === "string" ? t.description : undefined, inputSchema: t.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : undefined }));
+  } catch {
+    return null;
+  }
+}
+
 // host_methods 선언 = ring-0 브리지의 캡. 미선언이면 전체(ring-0 결재가 유일한 경계 — 현행 호환),
 // 선언하면 목록 밖 메서드는 거부한다. 메서드 이름 좌표는 host.<동사_스네이크> (draftPublish → host.draft_publish)
 const hostKey = (prefix: string, method: string): string => prefix + "." + method.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
@@ -252,9 +298,18 @@ export function makeCtx(
     service: (name) => {
       const svc = (m.services ?? []).find((s) => s.name === name);
       if (!svc) throw new Error(`미선언 서비스: ${name}`);
-      // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산은
-      // 세션 도구(dir__*)와 같은 한 벌(dirs.ts)을 지난다 — 두 입구가 다른 답을 내면 캡이 아니라
-      // 우연이다(edge 소비와 같은 규율). 자격·신원 축은 없다: 나가는 요청이 아니다.
+      // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산의
+      // 정본은 dirs.ts 한 벌이다. 이 문을 지나는 입구는 동사뿐이다 — 세션에 폴더 도구는 서지
+      // 않는다(폴더는 동사가 감싸서만 소비된다). 자격·신원 축은 없다: 나가는 요청이 아니다.
+      // 자격 축이 없는 형(dir·source)의 connected/fields — 없는 축을 물으면 사유를 실어 되돌린다
+      const noAuthAxis = (form: string) => async (): Promise<never> => {
+        throw new Error(`${form} 형에는 자격 축이 없습니다: ${name} — connected()·fields() 는 밖으로 나가는 url·api 서비스의 문입니다`);
+      };
+      // 밖으로 나가는 두 형의 자격 문 — 값은 기판만 보고(헤더 조립), 동사는 있음/없음과 비밀 아닌 칸만 본다
+      const outwardAuth = (auth: AuthDecl | undefined) => ({
+        connected: async () => !auth || auth.kind === "none" || (await authority.credential(credKey(pkg, name))) != null,
+        fields: async () => publicFields(auth, await authority.credential(credKey(pkg, name))),
+      });
       if ("dir" in svc && svc.dir != null) {
         const root = ensureDirRoot(resolveDirService(ledger, pkg, m, name));
         return {
@@ -263,6 +318,8 @@ export function makeCtx(
           fetch: async () => {
             throw new Error(`폴더 문에는 fetch 가 없습니다: ${name} — 파일 연산은 ctx.service("${name}").call("read"|"list"|"write"|"remove", 인자)`);
           },
+          connected: noAuthAxis("dir"),
+          fields: noAuthAxis("dir"),
         };
       }
       // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
@@ -283,6 +340,7 @@ export function makeCtx(
             if (authHeader) headers.set("authorization", authHeader);
             return await fetch(target, { ...init, headers });
           },
+          ...outwardAuth(a.auth),
         };
       }
       // 신원(caller)은 남은 두 형에서 같은 규칙으로 실린다: 원격 몸이 "누구로서"를 모르면
@@ -294,12 +352,12 @@ export function makeCtx(
       };
       if ("url" in svc && svc.url != null) {
         const u = svc as Extract<ServiceDecl, { url: string }>;
-        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch };
+        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch, ...outwardAuth(u.auth) };
       }
       const src = svc as Extract<ServiceDecl, { source: string }>;
       const body = io.body(pkg, name, src.port ?? null);
       if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
-      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch };
+      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch, connected: noAuthAxis("source"), fields: noAuthAxis("source") };
     },
     // 남의 동사 — 선언(edges[])이 캡이고 결재(grants)가 승인이다. 판정은 세션 문과 같은
     // 한 벌(callEdgeTool)을 지난다. provider 는 edges[].provider 에 적은 참조 그대로 쓰면 된다
@@ -350,7 +408,6 @@ export async function callEdgeTool(
   // 결재는 남았는데 설치가 사라진 자리 — 조용히 TypeError 로 죽으면 원인이 결재인지 설치인지 모른다
   if (!rec) throw new Error(`E_NO_PROVIDER: 미설치 provider — ${provider} (결재는 남아 있습니다)`);
   const m = loadManifest(rec.path);
-  const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
   // 소비의 두 축은 여기서 갈라진다 — 자격은 provider, 신원은 원 호출자.
   // 자격: provider 의 것으로 나간다(몸과의 연결은 provider 가 소유한다 — ctx.service 와 같은
   //   해석: token·oauth 회전). 무자격 호출이던 구멍의 답.
@@ -360,8 +417,21 @@ export async function callEdgeTool(
   //   agent 이름은 consumer 패키지의 어휘다: provider 는 이것을 자기 에이전트로 읽으면 안 된다.
   //   ctx.service 와 같은 규칙을 쓴다 — 같은 질문에 두 경로가 다른 답을 내면 안 된다.
   const identity = { principal: authority.principal(), agent };
-  if (urlSvc) return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
+  // 동사가 먼저다 — 서비스는 동사가 감싸서 소비되는 것이 기본형이고, 같은 이름이 둘이면 동사가 이긴다.
   if (listScripts(rec.path, m).includes(tool)) return await runScript(ledger, provider, tool, args, identity, host, authority, io, chain);
+  // raw 도구(provider 가 services[].url.tools 에 선언한 원격 MCP 서버의 도구)는 소비자가
+  // edges[].agent_access: full 을 선언했을 때만 열린다 — 기본 scripts-only, raw 노출은 명시 opt-in.
+  // 목록(tools.ts)·결재(addGrant)와 같은 답(edgeAgentAccess)을 본다
+  const urlSvc = (m.services ?? []).find((s): s is Extract<ServiceDecl, { url: string }> => "url" in s && s.url != null && (s.tools ?? []).includes(tool));
+  if (urlSvc) {
+    if (edgeAgentAccess(ledger, consumer, provider) !== "full") {
+      throw new Error(
+        `E_RAW_ACCESS: ${consumer} -> ${provider}/${tool} 는 동사가 아니라 ${urlSvc.name} 서버의 raw 도구입니다 — ` +
+        `${consumer} 의 edges 항목에 agent_access: full 을 선언해야 열립니다(기본 scripts-only)`,
+      );
+    }
+    return await mcpCall(urlSvc.url, tool, args, await serviceAuthHeader(authority, provider, urlSvc.name, urlSvc.auth), identity);
+  }
   throw new Error(`provider 에 해당 동사 없음: ${provider}/${tool}`);
 }
 

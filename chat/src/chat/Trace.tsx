@@ -360,9 +360,12 @@ export function TurnStatusChip() {
   // 중요도가 낮다는 피드백(2026-08-27). 칩은 문제가 있을 때(중지·오류·끊김)만 뜬다.
   if (kind === "ok") return null;
   const icon = kind === "cancel" ? <SquareIcon className="size-2.5! fill-current" /> : <TriangleAlertIcon />;
+  // 문지기에 물린 발화(meta.blocked)는 재전송해도 같은 문지기다 — 버튼 대신 기다리라는 안내만.
+  const blocked = kind === "error" && !!meta?.blocked;
   // 오류 사유(본문 텍스트)가 따로 있으면 칩은 짧게, 없으면 칩이 사유 문장을 겸한다.
   const label =
     kind === "cancel" ? "중지됨"
+    : blocked ? "앞선 요청이 끝난 뒤 다시 보내 주세요"
     : kind === "error" ? (hasContent ? "오류로 중단됨" : "응답을 만들지 못했어요")
     : "응답이 끊겼어요";
   const tone = kind === "cancel" ? "text-foreground/70"
@@ -372,7 +375,7 @@ export function TurnStatusChip() {
   // 스레드가 실행 중이거나 마지막 메시지가 아니면 프리미티브가 스스로 비활성화한다.
   // 라이브에서 끊긴 턴(meta.turnId 있음)은 같은 reload 가 재전송이 아니라 재관찰로 간다(runtime _cutTurns) —
   // 문구도 그 뜻으로. 재생된 옛 끊김(좌표 없음)은 종전대로 재전송이다.
-  const retry = kind !== "cancel";
+  const retry = kind !== "cancel" && !blocked;
   const reattach = kind === "cut" && !!meta?.turnId;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1" role="status">

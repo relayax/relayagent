@@ -275,11 +275,31 @@ async function main(): Promise<void> {
 
     case "connect": {
       const [pkg, service] = args;
-      if (!pkg || !service) throw new Error("사용법: relay connect <패키지> <서비스>");
+      if (!pkg || !service) throw new Error("사용법: relay connect <패키지> <서비스|채널>");
+      const rec = ledger.packages[pkg];
+      if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
+      // 칸 선언(services[].auth.fields)이 있으면 칸마다 묻고 화면과 같은 한 벌(credential.ts)로
+      // 조립한다 — 두 입구가 다른 모양으로 앉히면 헤더 조립이 한쪽에서만 맞는다.
+      // 채널 이름이면 선언이 없어 문자열 한 칸(어댑터 문서의 JSON 그대로)으로 물러난다
+      const svc = (loadManifest(rec.path).services ?? []).find((s) => s.name === service);
+      const auth = svc ? outwardService(svc)?.auth : undefined;
+      if (auth?.kind === "oauth") throw new Error(`oauth 자격 서비스 — 인가 흐름은 relay oauth ${pkg} ${service}`);
+      const { assembleCredential } = await import("./runtime/credential.ts");
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const token = await new Promise<string>((resolve) => rl.question(`${pkg}/${service} 토큰 붙여넣기: `, resolve));
+      const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+      const values: Record<string, string> = {};
+      const fields = auth?.fields;
+      if (fields?.length && fields.every((f) => f.key != null)) {
+        for (const f of fields) {
+          values[f.key!] = await ask(`${f.label}${f.required || f.header ? " (필수)" : ""}${f.list ? " (쉼표 구분)" : ""}: `);
+        }
+      } else {
+        values.token = await ask(`${pkg}/${service} ${fields?.[0]?.label ?? "토큰"} 붙여넣기: `);
+      }
       rl.close();
-      await authority.setCredential(credKey(pkg, service), token.trim());
+      const r = assembleCredential(fields, values);
+      if (!r.ok) throw new Error(`빈 칸: ${r.missing.join(", ")}`);
+      await authority.setCredential(credKey(pkg, service), r.value);
       console.log(`저장됨: ${credKey(pkg, service)} (vault)`);
       break;
     }

@@ -26,12 +26,30 @@ export interface RequiresDecl {
 }
 
 /**
+ * 자격 입력 칸 하나 — 값이 아니라 형태다. 채널(surfaces.channels[].credential.fields)과 서비스
+ * (services[].auth.fields)가 같은 칸 어휘를 쓴다: 비밀값을 받는 칸의 모양은 그 비밀이 들어오는
+ * 문(채널)에 쓰이든 나가는 문(서비스)에 쓰이든 같기 때문이다. 문의 성질은 선언 자리가 가른다 —
+ * 채널은 어댑터가 자격 전체를 env 로 받고, 서비스는 기판이 그중 한 칸만 Authorization 으로
+ * 조립하며 동사는 비밀 칸을 영영 못 본다. header 가 서비스 전용인 이유가 그것이다.
+ */
+export interface CredentialField {
+  key?: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  list?: boolean;
+  required?: boolean;
+  /** services[].auth 전용 — 이 칸의 값이 Authorization 헤더로 나간다. key 있는 칸들 중 정확히 하나 */
+  header?: boolean;
+}
+
+/**
  * 자격 형태 선언(surfaces.channels[].credential) — 값이 아니라 형태다.
  * 화면이 이걸로 입력 칸을 그린다. 조립 규칙은 relay.manifest.yaml 의 주석이 정본이다:
  * 전부 key 있으면 JSON 객체, key 없는 것 하나뿐이면 문자열. 섞이면 판정 실패.
  */
 export interface CredentialDecl {
-  fields: { key?: string; label: string; placeholder?: string; secret?: boolean; list?: boolean; required?: boolean }[];
+  fields: CredentialField[];
   help?: { url?: string; note?: string };
 }
 
@@ -60,12 +78,14 @@ export interface Manifest {
     variants?: HarnessVariant[];
     workdir?: string;
   };
-  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; dirs?: string[]; default?: boolean }[];
+  agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   scripts?: { source: string };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
-  edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean }[];
+  /** agent_access — tools 형에만. scripts-only(기본) = edge 도구는 언제나 provider 의 동사.
+   *  full = provider 가 services[].url.tools 에 선언한 원격 MCP 도구도 raw 로 선다(명시 opt-in) */
+  edges?: { provider: string; tools?: string[]; mission?: string; components?: boolean; agent_access?: "scripts-only" | "full" }[];
   /** ring-0 host 브리지 게이트 선언 — host.* 캡. 미선언 = 전체(ring-0 결재가 경계) */
   host_methods?: string[];
   org?: unknown;
@@ -104,6 +124,12 @@ export interface AuthDecl {
   oauth_client?: unknown;
   /** org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시 */
   service?: string;
+  /** 없으면 이 패키지의 주 기능이 서지 않는 자격인가 — 미선언 = true. false 면 없어도 돌고 그 기능만
+   *  꺼진다(무엇이 켜지는지는 help.note 가 말한다). 연결 화면이 "필요"와 "선택"을 가르는 축 */
+  required?: boolean;
+  /** token 형의 입력 칸 형태 — 미선언 = 토큰 문자열 한 칸. key 있는 칸들이면 vault 에 JSON 으로 앉고
+   *  header 칸만 헤더로 나가며, 나머지 비밀 아닌 칸은 동사가 ctx.service(이름).fields() 로 읽는다 */
+  fields?: CredentialField[];
 }
 
 export interface TriggerDecl {
@@ -163,13 +189,88 @@ export function validCron(expr: string): boolean {
   });
 }
 
+// 판정기가 아는 auth 어휘의 전부 — kind 마다 닫힌집합이다. 미지 키는 거부한다(최상위·surfaces 와
+// 같은 규율). 조용히 받으면 "판정 통과 · 집행 없음" 이 생긴다 — 실사고(2026-08-28): 세 패키지가
+// token 형에 fields 를 적었고 판정은 통과했지만, 그 칸을 그리는 화면도 읽는 러너도 없었다
+const AUTH_KEYS: Record<string, Set<string>> = {
+  none: new Set(["kind"]),
+  token: new Set(["kind", "env", "scheme", "service", "help", "verify", "required", "fields"]),
+  oauth: new Set(["kind", "env", "client", "service", "oauth_client", "help", "verify", "required"]),
+};
+const FIELD_KEYS = new Set(["key", "label", "placeholder", "secret", "list", "required", "header"]);
+const FIELD_KEY = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * 자격 입력 칸 판정 — 채널 credential.fields 와 서비스 auth.fields 가 같은 한 벌을 지난다.
+ * 조립 규칙은 형태로 판정한다: 화면이 이 선언 하나로 자격을 조립하므로, 섞인 선언은 "무엇으로
+ * 조립되는지" 가 정해지지 않는다. 갈리는 축은 header 하나 — 서비스는 key 있는 칸 중 정확히
+ * 하나가 헤더로 나가야 하고(없으면 기판이 무엇을 Authorization 에 넣을지 모른다), 채널에는
+ * 그 축이 없다(어댑터가 자격 전체를 받는다).
+ */
+function judgeFields(fields: unknown, label: string, issues: string[], where: "channel" | "service"): void {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    issues.push(`${label}: 칸 목록(fields)은 비어 있지 않은 배열`);
+    return;
+  }
+  for (const f of fields as Record<string, unknown>[]) {
+    if (typeof f !== "object" || f == null) {
+      issues.push(`${label}: 칸은 객체({label, key?, secret?, required?, …})`);
+      continue;
+    }
+    for (const k of Object.keys(f)) {
+      if (!FIELD_KEYS.has(k)) {
+        issues.push(
+          k === "note"
+            ? `${label}: 칸에는 note 가 없습니다 — 칸의 설명은 label 에, 서비스의 안내(무엇이 켜지는지·발급처)는 auth.help.note 에 적으세요`
+            : `미지 ${label} 칸 키: ${k}`,
+        );
+      } else if (k === "header" && where === "channel") {
+        issues.push(`${label}: header 는 services[].auth 의 칸에서만 — 채널 어댑터는 자격 전체를 RELAY_CRED_<이름> 으로 받습니다`);
+      }
+    }
+    if (typeof f.label !== "string" || !f.label.trim()) issues.push(`${label}: 칸마다 label 필수`);
+    if (f.key != null && !FIELD_KEY.test(String(f.key))) issues.push(`${label}: key 형식 위반(소문자로 시작, 소문자·숫자·_): ${f.key}`);
+  }
+  const typed = fields as CredentialField[];
+  const keyed = typed.filter((f) => f.key != null);
+  const bare = typed.filter((f) => f.key == null);
+  if (keyed.length && bare.length) {
+    issues.push(`${label}: key 있는 필드와 없는 필드를 섞을 수 없습니다 — 전부 key(JSON 조립) 또는 key 없는 하나(문자열)`);
+  }
+  if (bare.length > 1) issues.push(`${label}: key 없는 필드는 하나뿐이어야 합니다 — 문자열 자격은 칸이 하나입니다`);
+  if (bare.some((f) => f.list)) issues.push(`${label}: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
+  const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
+  if (dupKey) issues.push(`${label}: key 중복: ${dupKey}`);
+  if (where === "service") {
+    const headers = keyed.filter((f) => f.header);
+    if (keyed.length && headers.length !== 1) {
+      issues.push(`${label}: key 있는 칸 중 정확히 하나에 header: true — 그 칸의 값이 Authorization 으로 나갑니다(지금 ${headers.length}개)`);
+    }
+    if (bare.some((f) => f.header)) issues.push(`${label}: key 없는 칸 하나면 그 값이 곧 토큰입니다 — header 표시는 key 있는 칸에만`);
+    if (headers.some((f) => f.list)) issues.push(`${label}: header 칸은 list 가 될 수 없습니다 — 헤더는 문자열 하나입니다`);
+  }
+}
+
 /** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다.
- *  where 는 어휘가 갈리는 유일한 축이다: scheme 은 헤더 조립의 말이라 헤더로 나가는 서비스 자격에만 뜻이 있다 */
+ *  where 는 어휘가 갈리는 유일한 축이다: scheme·fields·required 는 화면과 헤더의 말이라 서비스 자격에만 뜻이 있다 */
 function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], where: "service" | "llm" = "service"): void {
   if (!a) return;
   if (!["none", "token", "oauth"].includes(a.kind)) {
     issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
     return;
+  }
+  for (const k of Object.keys(a as unknown as Record<string, unknown>)) {
+    if (!AUTH_KEYS[a.kind].has(k)) issues.push(`미지 ${label} 키(${a.kind} 형): ${k}`);
+  }
+  if (a.required != null) {
+    if (where !== "service") issues.push(`${label}.required: services[].auth 에서만 — 연결 화면이 필수·선택을 가르는 축입니다`);
+    else if (typeof a.required !== "boolean") issues.push(`${label}.required: true | false`);
+  }
+  if (a.fields != null) {
+    // 소비자 없는 선언은 통과시키지 않는다 — llm 자격은 화면이 아니라 env 로 잇고, oauth 는 인가 흐름이 자격을 만든다
+    if (where !== "service") issues.push(`${label}.fields: services[].auth 에서만 — llm 자격은 화면이 아니라 env 로 잇습니다`);
+    else if (a.kind !== "token") issues.push(`${label}.fields: token 형에서만 — oauth 는 인가 흐름이 자격을 만듭니다`);
+    else judgeFields(a.fields, `${label}.fields`, issues, "service");
   }
   if (a.scheme != null) {
     // 소비자 없는 선언은 통과시키지 않는다 — 통과하면 "Client-ID 로 나간다" 가 광고가 된다
@@ -318,23 +419,12 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if (!c.source || !c.entry) issues.push(`channels[${c.name}]: source + entry 필수`);
     else mustExist(path.join(c.source, c.entry), `channels[${c.name}].entry`);
     if (c.icon) mustExist(c.icon, `channels[${c.name}].icon`);
-    // 조립 규칙은 형태로 판정한다 — 화면이 이 선언 하나로 자격을 조립하므로, 섞인 선언은
-    // "무엇으로 조립되는지" 가 정해지지 않는다. 애매한 채로 화면에 흘리지 않는다.
-    const fields = c.credential?.fields;
-    if (fields) {
-      const keyed = fields.filter((f) => f.key != null);
-      const bare = fields.filter((f) => f.key == null);
-      if (keyed.length && bare.length) {
-        issues.push(`channels[${c.name}].credential: key 있는 필드와 없는 필드를 섞을 수 없습니다 — 전부 key(JSON 조립) 또는 key 없는 하나(문자열)`);
+    // 칸 판정은 서비스 auth.fields 와 한 벌(judgeFields) — 채널에는 header 축만 없다
+    if (c.credential != null) {
+      for (const k of Object.keys(c.credential)) {
+        if (!["fields", "help"].includes(k)) issues.push(`미지 channels[${c.name}].credential 키: ${k}`);
       }
-      if (bare.length > 1) {
-        issues.push(`channels[${c.name}].credential: key 없는 필드는 하나뿐이어야 합니다 — 문자열 자격은 칸이 하나입니다`);
-      }
-      if (bare.some((f) => f.list)) {
-        issues.push(`channels[${c.name}].credential: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
-      }
-      const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
-      if (dupKey) issues.push(`channels[${c.name}].credential: key 중복: ${dupKey}`);
+      judgeFields(c.credential.fields, `channels[${c.name}].credential`, issues, "channel");
     }
   }
 
@@ -388,8 +478,6 @@ export function judge(m: Manifest, pkgPath?: string): void {
 
   const agents = m.agents ?? [];
   const agentNames = new Set<string>();
-  // 세션이 볼 수 있는 폴더의 후보 — 에이전트의 dirs 캡은 이 집합을 넘을 수 없다
-  const dirNames = new Set((m.services ?? []).filter((x) => "dir" in x && x.dir != null).map((x) => x.name));
   const scriptNames = pkgPath && m.scripts?.source ? listScripts(pkgPath, m) : null;
   const defaults = agents.filter((a) => a.default === true);
   if (defaults.length > 1) issues.push(`agents[].default 는 최대 1: ${defaults.map((a) => a.name).join(", ")}`);
@@ -423,15 +511,13 @@ export function judge(m: Manifest, pkgPath?: string): void {
       const hit = s.endsWith("*") ? scriptNames.some((n) => n.startsWith(s.slice(0, -1))) : scriptNames.includes(s);
       if (!hit) issues.push(`agents[${a.name}].scripts 실체 없음: ${s}`);
     }
-    // dir 캡 — 선언된 폴더만 가리킬 수 있다. 없는 이름은 설치 후 도구가 조용히 비는 자리라
-    // scripts 스코프와 같은 규율로 여기서 막는다(선언이 실체를 적는다)
-    for (const d of a.dirs ?? []) {
-      if (!dirNames.has(d)) {
-        issues.push(
-          `agents[${a.name}].dirs 미선언 폴더: ${d} — services[] 에 { name: ${d}, dir: <경로> } 를 선언하세요` +
-          `${dirNames.size ? ` (선언된 폴더: ${[...dirNames].join(", ")})` : ""}`,
-        );
-      }
+    // 은퇴한 축(2026-08-28) — 폴더를 세션 도구(dir__*)로 세우던 agents[].dirs. "서비스는 동사가
+    // 감싸서만 소비된다"는 계약의 유일한 예외였다. 조용히 무시하면 저작자는 도구가 서는 줄 안다
+    if ((a as { dirs?: unknown }).dirs != null) {
+      issues.push(
+        `agents[${a.name}].dirs 는 은퇴했습니다(2026-08-28) — 폴더는 세션 도구가 아니라 동사가 감쌉니다: ` +
+        `services[].dir 을 선언하고 그 폴더를 읽고 쓰는 동사를 agents[].scripts 에 넣으세요`,
+      );
     }
   }
   // 착지 없는 에이전트 패키지는 대화의 문이 없다 — 관례(짧은 이름)로도 명시(default: true)로도
@@ -534,6 +620,14 @@ export function judge(m: Manifest, pkgPath?: string): void {
     for (const t of e.tools ?? []) if (!SLUG.test(t)) issues.push(`edges[${e.provider}].tools 형식 위반: ${t}`);
     if (e.mission != null && (typeof e.mission !== "string" || !e.mission.trim())) issues.push(`edges[${e.provider}].mission: 비어 있지 않은 문자열만`);
     if (e.components != null && e.components !== true) issues.push(`edges[${e.provider}].components: true 만`);
+    // agent_access — raw 노출은 명시 opt-in 이고 미지값은 접지 않는다: 오타가 어느 쪽으로든 조용히
+    // 접히면 저작자의 선택이 무음 소실된다(relayos normalizeAgentAccess 와 같은 규율)
+    if (e.agent_access != null) {
+      if (e.agent_access !== "scripts-only" && e.agent_access !== "full") {
+        issues.push(`edges[${e.provider}].agent_access: scripts-only | full 만 (지금 ${String(e.agent_access)})`);
+      }
+      if (e.tools == null) issues.push(`edges[${e.provider}].agent_access 는 tools 형에만 — mission·components 에는 raw 도구 축이 없습니다`);
+    }
   }
 
   if (m.host_methods != null) {
@@ -590,16 +684,6 @@ export function agentScriptScope(m: Manifest, agent: string): ((s: string) => bo
   return (key) => exact.has(key) || prefixes.some((p) => key.startsWith(p));
 }
 
-/**
- * 이 에이전트가 세션 문에서 볼 수 있는 폴더. 미선언 = 없음이다 — dir 은 지금까지 세션 도구가
- * 아니었으므로 이 기본값은 회귀가 아니라 추가다. 선언된 dir 서비스 밖 이름은 여기서 걸러진다:
- * 캡이 선언을 넘으면 판정이 광고가 된다.
- */
-export function agentDirScope(m: Manifest, agent: string): string[] {
-  const declared = new Set((m.services ?? []).filter((s) => "dir" in s && s.dir != null).map((s) => s.name));
-  return ((m.agents ?? []).find((a) => a.name === agent)?.dirs ?? []).filter((d) => declared.has(d));
-}
-
 export function listScripts(pkgPath: string, m: Manifest): string[] {
   if (!m.scripts) return [];
   const dir = path.join(pkgPath, m.scripts.source);
@@ -638,8 +722,8 @@ export function declaredPaths(m: Manifest): DeclaredPath[] {
 }
 
 export interface Disclosure {
-  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더. 세션은 경로가 아니라
-   *  기판이 세운 도구(dir__<이름>__*)로 닿는다 — 딛는 땅(workspace)과 성격이 다르므로
+  /** services[].dir — 사용자 컴퓨터에서 만들고 읽고 쓰는 폴더. 세션은 경로도 폴더 도구도
+   *  받지 않고 그 폴더를 감싼 동사로만 닿는다 — 딛는 땅(workspace)과 성격이 다르므로
    *  고지서도 두 줄을 갈라 적는다 */
   folders: { name: string; path: string }[];
   /** services[].url(MCP 문) · services[].api(REST 베이스) — 밖으로 나가는 접점과 자격의 형태.
@@ -689,8 +773,9 @@ export function disclosure(m: Manifest): Disclosure {
   if (m.requires?.os?.length) host.push(`OS: ${m.requires.os.join(", ")}`);
   for (const b of m.requires?.binaries ?? []) host.push(b.name);
   for (const a of m.requires?.apps ?? []) host.push(`${a.name}.app`);
+  // raw 표시 — 고지가 "빌렸다"와 "에이전트가 raw 로 만진다"를 구분해야 한다(agent_access: full)
   const borrows = (m.edges ?? []).map((e) =>
-    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")})` : ""}`,
+    `${e.provider}${e.mission ? ` (mission ${e.mission})` : e.components ? " (components)" : e.tools?.length ? ` (tools ${e.tools.join(", ")}${e.agent_access === "full" ? " · raw" : ""})` : ""}`,
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
   const hostMethods = m.host_methods ?? [];

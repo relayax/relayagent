@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { creatable, push, slugOk, type Made } from "@/lib/create";
 import { SECTIONS, schemaHint, unclaimedFiles, type SectionDef, type SectionItem } from "@/lib/sections";
-import type { Manifest } from "@/lib/types";
+import type { CredentialField, Manifest, ServiceDecl } from "@/lib/types";
 import { draftIconList, type DraftChange } from "@/lib/studio";
 
 // depth 2: 섹션 랜딩(항목 목록 또는 폼)과 항목 폼 + 파일 카드.
@@ -617,7 +617,9 @@ function ScriptItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
   const items = def.items!(ctx.manifest, ctx.files);
   const [name, setName] = useState("");
-  const [form, setForm] = useState<"process" | "container" | "url" | "dir">("process");
+  // 문법의 네 형(source | url | api | dir) 그대로 — source 만 컨테이너/프로세스 둘로 갈라 고른다.
+  // api 가 빠져 있던 동안(2026-08-28 이전) REST 서비스는 스튜디오에서 만들 수도 고칠 수도 없었다
+  const [form, setForm] = useState<"process" | "container" | "url" | "api" | "dir">("process");
   const [busy, make] = useMake(ctx);
   return (
     <>
@@ -627,7 +629,8 @@ function ServicesLanding({ def, ctx }: { def: SectionDef; ctx: SectionCtx }) {
         <select value={form} onChange={(e) => setForm(e.target.value as never)}>
           <option value="process">프로세스</option>
           <option value="container">컨테이너</option>
-          <option value="url">바깥 도구 (원격)</option>
+          <option value="url">바깥 도구 (원격 MCP)</option>
+          <option value="api">바깥 서비스 (REST)</option>
           <option value="dir">폴더</option>
         </select>
         <Button
@@ -649,7 +652,6 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
   const m = ctx.manifest;
   const idx = (m.services ?? []).findIndex((s) => s.name === id);
   const s = (m.services ?? [])[idx];
-  const uid = useId();
   if (!s) return <div className="empty">없는 서비스</div>;
   const p = (k: string) => ["services", idx, k];
   const item = { files: ctx.files.filter((f) => (s.source ? f.startsWith(s.source + "/") : false)) };
@@ -658,18 +660,13 @@ function ServiceItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       {s.url != null ? (
         <>
           <Field label="원격 도구 주소" k="url" value={s.url} mono onCommit={(x) => ctx.apply((d) => set(d, p("url"), x))} />
-          <Field label="빌려 쓸 도구 (쉼표)" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${uid}-auth`} className="text-xs text-muted-foreground">로그인 방식</Label>
-            <select id={`${uid}-auth`} value={(s as any).auth?.kind ?? "none"} onChange={(e) => ctx.apply((d) => d.setIn([...p("auth"), "kind"], e.target.value))}>
-              <option value="none">없음</option>
-              <option value="token">토큰</option>
-              <option value="oauth">OAuth 로그인</option>
-            </select>
-          </div>
-          {(s as any).auth?.kind === "token" ? (
-            <Field label="토큰을 넣어 줄 환경변수 이름" k="auth.env" value={(s as any).auth?.env ?? ""} mono placeholder={`${s.name.toUpperCase().replace(/-/g, "_")}_TOKEN`} onCommit={(x) => ctx.apply((d) => set(d, [...p("auth"), "env"], x))} />
-          ) : null}
+          <Field label="남에게 raw 로 빌려줄 수 있는 도구 (쉼표)" hint="이 서버의 도구 중 다른 앱의 에이전트가 raw 로 만져도 되는 것. 내 에이전트는 이 도구를 직접 보지 않고 동사가 ctx.service(이름).call(도구, 인자) 로 감싸서 씁니다. 상대 앱은 edges 에 agent_access: full 을 선언해야 열립니다" k="tools" value={(s.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, p("tools"), listField(x)))} />
+          <AuthEditor idx={idx} s={s} ctx={ctx} />
+        </>
+      ) : s.api != null ? (
+        <>
+          <Field label="REST 베이스 주소" hint="동사의 요청은 이 접두 밖으로 나가지 못합니다 — 자격은 기판이 헤더로 붙이고, 동사는 ctx.service(이름).fetch(경로) 로 부릅니다" k="api" value={s.api} mono onCommit={(x) => ctx.apply((d) => set(d, p("api"), x))} />
+          <AuthEditor idx={idx} s={s} ctx={ctx} />
         </>
       ) : s.dir != null ? (
         <Field label="폴더" hint="상대경로면 이 앱의 것, ~ 로 시작하면 설치할 때 허락받습니다" k="dir" value={s.dir} mono onCommit={(x) => ctx.apply((d) => set(d, p("dir"), x))} />
@@ -891,6 +888,7 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
       d.deleteIn(["edges", idx, "tools"]);
       d.deleteIn(["edges", idx, "mission"]);
       d.deleteIn(["edges", idx, "components"]);
+      d.deleteIn(["edges", idx, "agent_access"]); // tools 형에만 있는 축 — 형이 바뀌면 같이 지운다
       if (k === "components") d.setIn(["edges", idx, "components"], true);
       else if (k === "mission") d.setIn(["edges", idx, "mission"], "");
       else d.setIn(["edges", idx, "tools"], []);
@@ -907,7 +905,30 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
         </select>
       </div>
       {kind === "tools" ? (
-        <Field label="빌려 쓸 기능 (쉼표)" k="tools" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+        <>
+          <Field label="빌려 쓸 기능 (쉼표)" k="tools" value={(e.tools ?? []).join(", ")} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "tools"], listField(x)))} />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${uid}-access`} className="text-xs text-muted-foreground">에이전트가 만지는 것</Label>
+            {/* raw 는 명시 opt-in — 기본(미선언)은 그 앱의 동사뿐이다. 미선언과 scripts-only 를 한 값으로
+                그린다: 문서에 기본값을 적어 두면 뜻은 같은데 diff 만 생긴다 */}
+            <select
+              id={`${uid}-access`}
+              value={e.agent_access === "full" ? "full" : "scripts-only"}
+              onChange={(ev) =>
+                ctx.apply((d) => {
+                  if (ev.target.value === "full") d.setIn(["edges", idx, "agent_access"], "full");
+                  else d.deleteIn(["edges", idx, "agent_access"]);
+                })
+              }
+            >
+              <option value="scripts-only">그 앱의 동사만 (기본)</option>
+              <option value="full">그 앱이 열어 둔 raw 도구까지 (full)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              raw 는 그 앱이 url 서비스의 tools 에 열어 둔 원격 MCP 도구를 내 에이전트가 직접 만지는 것입니다. 허락 화면에 raw 로 표시되고, 없으면 raw 전용 기능은 허락 자체가 거부됩니다.
+            </p>
+          </div>
+        </>
       ) : kind === "mission" ? (
         <Field label="맡길 일" k="mission" value={e.mission ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, ["edges", idx, "mission"], x))} />
       ) : (
@@ -931,14 +952,83 @@ function EdgeItem({ id, ctx }: { id: string; ctx: SectionCtx }) {
 }
 
 /**
- * credential — 자격의 **형태** 선언. 값이 아니다(값은 vault 에 산다).
+ * credential — 채널 자격의 **형태** 선언. 값이 아니다(값은 vault 에 산다).
  *
  * 이 선언이 곧 연결 화면의 입력 칸이라, 저작자가 여기서 고치는 것은 남이 보게 될 폼이다.
  * 그래서 오른쪽 결과면이 같은 선언으로 그 폼을 그대로 그린다 — 선언과 결과가 한 화면에 있다.
+ * 칸 편집기는 서비스 auth.fields 와 한 벌(FieldsEditor) — 채널에는 header 축만 없다
  */
-function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { fields?: { key?: string; label: string; secret?: boolean; list?: boolean; required?: boolean }[] } }; ctx: SectionCtx }) {
-  const fields = ch.credential?.fields ?? [];
-  const at = (i: number, k: string) => ["surfaces", "channels", idx, "credential", "fields", i, k];
+function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { fields?: CredentialField[] } }; ctx: SectionCtx }) {
+  return <FieldsEditor base={["surfaces", "channels", idx, "credential", "fields"]} fields={ch.credential?.fields ?? []} ctx={ctx} />;
+}
+
+/**
+ * 바깥 서비스(url·api)의 자격 계약 — 값이 아니라 형태다. 로그인 방식·헤더 접두·필수 여부·발급처·
+ * 검증 주소·입력 칸. 이 선언이 곧 연결 화면의 줄과 폼이라, 저작자가 여기서 고치는 것은 남이 보게
+ * 될 폼이다. 종전의 "토큰을 넣어 줄 환경변수 이름(auth.env)" 은 llm 자격의 어휘를 서비스에 잘못
+ * 얹은 것이었다 — 서비스 자격은 env 로 안 나가고 기판이 호출 시점에 헤더로 붙인다
+ */
+function AuthEditor({ idx, s, ctx }: { idx: number; s: ServiceDecl; ctx: SectionCtx }) {
+  const uid = useId();
+  const a = s.auth;
+  const kind = a?.kind ?? "none";
+  const at = (k: string) => ["services", idx, "auth", k];
+  return (
+    <div className="st-form">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`${uid}-auth`} className="text-xs text-muted-foreground">로그인 방식</Label>
+        <select
+          id={`${uid}-auth`}
+          value={kind}
+          onChange={(e) =>
+            ctx.apply((d) => {
+              const v = e.target.value;
+              // 형이 바뀌면 그 형에 없는 축은 같이 지운다 — 남겨 두면 판정이 "token 형에서만" 으로 막는다
+              if (v === "none") d.setIn(["services", idx, "auth"], { kind: "none" });
+              else {
+                d.setIn(at("kind"), v);
+                if (v === "oauth") {
+                  d.deleteIn(at("fields"));
+                  d.deleteIn(at("scheme"));
+                }
+              }
+            })
+          }
+        >
+          <option value="none">없음</option>
+          <option value="token">토큰</option>
+          <option value="oauth">OAuth 로그인</option>
+        </select>
+      </div>
+      {kind !== "none" ? (
+        <>
+          <Label className="flex-none text-xs font-normal">
+            <Checkbox checked={a?.required !== false} onCheckedChange={(c) => ctx.apply((d) => (c ? d.deleteIn(at("required")) : d.setIn(at("required"), false)))} />
+            필수 — 없으면 이 앱의 주 기능이 서지 않습니다 (끄면 선택: 없어도 돌고 그 기능만 꺼집니다)
+          </Label>
+          {kind === "token" ? (
+            <Field label="인증 헤더 접두" hint="비우면 Bearer. Unsplash 처럼 다른 접두를 요구하면 적습니다 (예: Client-ID)" k="auth.scheme" value={a?.scheme ?? ""} mono placeholder="Bearer" onCommit={(x) => ctx.apply((d) => set(d, at("scheme"), x))} />
+          ) : null}
+          <Field label="발급처 주소" hint="연결 화면이 '발급처 열기' 링크로 그립니다" k="auth.help.url" value={a?.help?.url ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, [...at("help"), "url"], x))} />
+          <Field label="안내 한 줄" hint="이 키가 있으면 무엇이 켜지는지 — 연결 화면이 그대로 보여 줍니다" k="auth.help.note" value={a?.help?.note ?? ""} onCommit={(x) => ctx.apply((d) => set(d, [...at("help"), "note"], x))} />
+          <Field label="검증 주소" hint="저장된 자격으로 두드려 볼 주소 — 2xx 면 유효. 비우면 저장만 됩니다" k="auth.verify.url" value={a?.verify?.url ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, [...at("verify"), "url"], x))} />
+          {kind === "token" ? <FieldsEditor base={at("fields")} fields={a?.fields ?? []} ctx={ctx} header /> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 자격 입력 칸 편집기 — 채널 credential.fields 와 서비스 auth.fields 가 같은 편집기를 쓴다.
+ * 비밀값을 받는 칸의 모양은 그 비밀이 들어오는 문에 쓰이든 나가는 문에 쓰이든 같기 때문이다.
+ * header 는 서비스에서만 켜진다 — 그 칸의 값이 Authorization 으로 나간다(key 있는 칸 중 정확히 하나)
+ */
+function FieldsEditor({ base, fields, ctx, header }: { base: (string | number)[]; fields: CredentialField[]; ctx: SectionCtx; header?: boolean }) {
+  const at = (i: number, k: string) => [...base, i, k];
+  const flags = header ? (["secret", "list", "required", "header"] as const) : (["secret", "list", "required"] as const);
+  const keyed = fields.length > 0 && fields.every((f) => f.key);
+  const headers = fields.filter((f) => f.header).length;
   return (
     <div className="st-form">
       <div className="rc-label">로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다</div>
@@ -952,13 +1042,13 @@ function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { 
               onChange={(e) => ctx.apply((d) => set(d, at(i, "key"), e.target.value))}
             />
             <Input value={f.label} placeholder="사람이 읽는 이름" onChange={(e) => ctx.apply((d) => d.setIn(at(i, "label"), e.target.value))} />
-            <Button variant="ghost" size="icon-xs" className="flex-none text-muted-foreground" title="이 칸 빼기" onClick={() => ctx.apply((d) => d.deleteIn(["surfaces", "channels", idx, "credential", "fields", i]))}>
+            <Button variant="ghost" size="icon-xs" className="flex-none text-muted-foreground" title="이 칸 빼기" onClick={() => ctx.apply((d) => d.deleteIn([...base, i]))}>
               ×
             </Button>
           </div>
           <div className="bar text-xs text-muted-foreground">
-            {(["secret", "list", "required"] as const).map((k) => (
-              <Label key={k} className="flex-none text-xs font-normal">
+            {flags.map((k) => (
+              <Label key={k} className="flex-none text-xs font-normal" title={k === "header" ? "이 칸의 값이 인증 헤더로 나갑니다 — 하나만" : undefined}>
                 <Checkbox checked={!!f[k]} onCheckedChange={(checked) => ctx.apply((d) => (checked ? d.setIn(at(i, k), true) : d.deleteIn(at(i, k))))} />
                 {k}
               </Label>
@@ -970,14 +1060,18 @@ function CredentialFields({ idx, ch, ctx }: { idx: number; ch: { credential?: { 
         variant="outline"
         size="sm"
         className="self-start"
-        onClick={() => void ctx.apply((d) => push(d, ["surfaces", "channels", idx, "credential", "fields"], { key: "token", label: "토큰", secret: true, required: true }))}
+        onClick={() => void ctx.apply((d) => push(d, base, header ? { key: "token", label: "API 토큰", header: true } : { key: "token", label: "토큰", secret: true, required: true }))}
       >
         + 자격 칸
       </Button>
       {fields.length ? (
         <p className="text-xs text-muted-foreground">
-          {fields.every((f) => f.key)
-            ? "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
+          {keyed
+            ? header && headers !== 1
+              ? `key 있는 칸 중 정확히 하나에 header 를 켜세요 — 그 칸이 인증 헤더로 나갑니다 (지금 ${headers}개).`
+              : header
+                ? "모든 칸에 key 가 있으니 vault 에 JSON 으로 앉고, header 칸만 헤더로 나갑니다. 나머지 비밀 아닌 칸은 동사가 fields() 로 읽습니다."
+                : "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
             : fields.length === 1
               ? "key 없는 칸 하나 — 그 값이 곧 자격 문자열이다."
               : "key 있는 칸과 없는 칸을 섞으면 판정 실패다 — 전부 채우거나, 한 칸만 비우세요."}

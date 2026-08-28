@@ -149,7 +149,7 @@ export default function AddEdgeDialog({
                     <div key={i} className={`lv-row${pick === v ? " on" : ""}`} onClick={() => setPick(v)}>
                       <span className="lv-tx">
                         <span className="lv-t">{e.tools!.join(", ")}</span>
-                        <span className="lv-s">도구 빌려 쓰기{alreadyGranted(e.tools) ? " · 이미 연결됨" : ""}</span>
+                        <span className="lv-s">도구 빌려 쓰기{e.agent_access === "full" ? " · raw 도구까지" : ""}{alreadyGranted(e.tools) ? " · 이미 연결됨" : ""}</span>
                       </span>
                       <span className="lv-ring" />
                     </div>

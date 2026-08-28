@@ -137,11 +137,32 @@ window.addEventListener("relay:turn", (e) => {
 
 화면이 만드는 것은 사람이 열 수 있는 파일이어야 한다. `services[].dir` 로 폴더를 선언하고,
 동사가 그 안에 쓴다 — `ctx.service("<이름>").call("write", { path, content })`. 같은 폴더를
-에이전트도 다뤄야 하면 `agents[].dirs` 에 그 이름을 적는다(세션에 `dir__<이름>__*` 도구가 선다).
+에이전트도 다뤄야 하면 그 폴더를 읽고 쓰는 동사를 만들어 `agents[].scripts` 에 넣는다 —
+세션에 폴더 도구는 서지 않는다(서비스는 동사가 감싸서만 소비된다).
 `localStorage` 는 거처가 아니다 — 에이전트가 못 읽고, 사용자가 못 열고, 백업도 안 된다.
+
+## 바깥 서비스의 키 — 화면은 안내만
+
+키가 있어야 켜지는 기능(스톡 검색·이미지 가공·발행 …)이 있으면 **그 자리에 입력칸을 두지 마라.**
+키를 넣는 화면은 기판의 연결 화면 하나이고(사이드바 [연결]), 화면은 기판에 상태를 물어 없으면
+안내와 딥링크로 물러난다:
+
+```js
+const { services } = await (await fetch(`${base}/services`, { cache: "no-store" })).json();
+const s = services.find((x) => x.name === "unsplash");   // { hasCred, required, help, kind } — 값은 없다
+if (s && s.kind !== "none" && !s.hasCred) {
+  banner.textContent = s.help?.note ?? "연결하면 이 기능이 켜집니다";
+  link.href = `/connect?p=${encodeURIComponent(ctx.instanceId)}&s=unsplash`;   // 딥링크 하나 — 주소를 조립하지 않는다
+}
+```
+
+돌아오면 다시 묻는다(`visibilitychange`). 선언(`auth.required`·`help.note`)과 동사 쪽 규율
+(`ctx.service(이름).connected()`)은 authoring-service 스킬이 정본이다 — 화면을 짓기 전에 읽어라.
 
 ## 흔한 실수
 
+- **화면이 키 입력칸을 만든다.** 사용자가 아무 화면에나 비밀값을 넣는 습관이 생기고, 그 칸에는
+  값을 vault 로 보낼 문도 없다. 상태를 묻고 안내하라(위 절).
 - **`npx next build` 를 직접 돌린다.** 접두사가 빠져 서빙된 화면이 자기 청크를 404 받는다.
   빌드는 통과하므로 증상이 빌드 오류처럼 안 보인다. `relay build <패키지>` 만 쓴다.
 - **고치고 다시 굽지 않는다.** `out` 을 선언한 화면은 기판이 **발행물**을 서빙한다.

@@ -566,9 +566,14 @@ fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: c
 .gx-pill.llm { left: 8px; }
 .gx-pill.llm img { width: 11px; height: 11px; border-radius: 3px; object-fit: contain; flex: 0 0 auto; }
 .gx-pill-tx { overflow: hidden; text-overflow: ellipsis; }
+/* 오른쪽 묶음 — 창구(채널) 필과 바깥 서비스 필이 나란히 선다. 둘 다 right:8px 절대좌표였을 때는 포개졌다 */
+.gx-pills { position: absolute; top: -10px; right: 8px; z-index: 4; display: inline-flex; gap: 4px; max-width: 58%; }
+.gx-pills .gx-pill { position: static; max-width: none; }
 .gx-pill.dep { right: 8px; padding: 1px 3px; gap: 2px; cursor: pointer; max-width: 42%; }
 .gx-pill.dep img { width: 15px; height: 15px; border-radius: 3px; object-fit: contain; }
 .gx-pill.dep i { width: 15px; height: 15px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-style: normal; font-size: 9px; font-weight: 700; background: var(--rc-ground); color: var(--rc-soft); }
+/* 두 문의 글리프 — 채널은 동그라미(사람이 들어오는 창구), 서비스는 네모(내가 나가는 문) */
+.gx-pill.dep.svc i { border-radius: 4px; }
 .gx-view[data-lod="far"] .gx-pill { display: none; }
 .gx-avatar { position: relative; overflow: hidden; }
 .gx-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: 50%; background: var(--rc-bg); padding: 3px; }

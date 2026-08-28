@@ -298,6 +298,25 @@ export const CREATABLES: Creatable[] = [
     },
   },
   {
+    id: "service-api",
+    group: "자원",
+    label: "바깥 REST 서비스",
+    yaml: "services[] · api",
+    detail: "REST 베이스로 나가는 문. 동사가 ctx.service(이름).fetch() 로 부르면 기판이 자격을 헤더로 붙입니다. 칸·필수 여부·발급처를 선언하면 연결 화면이 그대로 그립니다.",
+    needs: { kind: "slug", label: "서비스 이름", placeholder: "unsplash" },
+    present: (m) => (m.services ?? []).filter((s) => s.api).length,
+    async make(ctx, n) {
+      await ctx.apply((d) =>
+        push(d, ["services"], {
+          name: n,
+          api: "https://api.example.com",
+          auth: { kind: "token", required: true, fields: [{ key: "token", label: "API 토큰", header: true }] },
+        }),
+      );
+      return { sec: "services", item: n, receipt: `바깥 서비스 ${n} 을 선언했습니다 — api 베이스와 자격 칸·발급처 안내를 채우세요` };
+    },
+  },
+  {
     id: "service-dir",
     group: "자원",
     label: "쓸 수 있는 폴더",

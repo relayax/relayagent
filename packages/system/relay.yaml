@@ -131,13 +131,7 @@ agents:
     greeting: "이 패키지를 말로 고칠 수 있습니다. 예를 들어 \"저녁 8시에 하루 정리를 물어보게 해줘\", \"저장 버튼을 목록 위로 올려줘\", \"노션이랑 연결해줘\" 처럼 말해 보세요. 고친 것은 왼쪽 목록과 오른쪽 미리보기에 바로 반영됩니다."
     skills: agents/agent-builder/skills
     scripts: [pkg-*, grant-*, draft-*, release-*]
-    dirs: [packages]
 
 scripts:
   source: scripts
 
-services:
-  # 사용자가 저작한 패키지가 앉는 폴더. 저작 세션이 dir__packages__* 로 열어 보고 고친다 —
-  # 이 셸의 workspace 밖이라 파일 도구로는 닿지 않는 자리다
-  - name: packages
-    dir: "~/Relay/packages"

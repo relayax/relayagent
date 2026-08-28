@@ -172,6 +172,14 @@ function Progress({ nav }: { nav: ShellNav }) {
   const any = todo.length || live.length;
   return (
     <>
+      {nav.attention?.credentials ? (
+        // 연결 배너 — 필수인데 빈 자격의 수만 말한다(선택 자격의 빔으로는 뜨지 않는다). 넣는 자리는 연결 화면 하나다
+        <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3.5 py-2 text-xs">
+          <b className="font-semibold">연결 필요 {nav.attention.credentials}개</b> · 키를 넣어야 켜지는 기능이 있어요
+          <span className="flex-1" />
+          <a href={nav.connections} className="font-semibold text-blue-700 underline underline-offset-3">연결 화면 열기</a>
+        </div>
+      ) : null}
       {ups && nav.library ? (
         // 새 판 요약 배너 — 개수만 말한다. 실행은 각 카드의 버튼(설치 동의 관문이 판마다 선다)
         <div className="mx-5 mt-4 -mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3.5 py-2 text-xs">
