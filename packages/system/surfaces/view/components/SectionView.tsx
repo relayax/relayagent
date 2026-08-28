@@ -307,7 +307,26 @@ function IdentityView({ ctx }: { ctx: SectionCtx }) {
         <Field label="고유 이름" hint="설치와 배포에 쓰는 이름" k="name" value={m.name ?? ""} mono placeholder="@local/my-agent" onCommit={(v) => ctx.apply((d) => set(d, ["name"], v))} />
         <Field label="버전" k="version" value={m.version ?? ""} mono placeholder="0.1.0" onCommit={(v) => ctx.apply((d) => set(d, ["version"], v))} />
         <Field label="아이콘 파일" k="icon" value={m.icon ?? ""} mono placeholder="assets/icon.svg" onCommit={(v) => ctx.apply((d) => set(d, ["icon"], v))} />
+        <NavField ctx={ctx} />
       </Advanced>
+    </div>
+  );
+}
+
+/** 사이드바 자리(shell.nav) — 표시 축이라 이름·아이콘 옆에 선다. 기본(auto)은 선언을 지운다:
+ *  "접힐지"는 기판이 결재를 보고 정하는 것이라 매니페스트에 기본값을 박아 두지 않는다 */
+function NavField({ ctx }: { ctx: SectionCtx }) {
+  const id = useId();
+  const nav = ctx.manifest.shell?.nav ?? "auto";
+  return (
+    <div className="st-field" title="relay.yaml: shell.nav">
+      <Label htmlFor={id}>사이드바 자리</Label>
+      <p className="st-hintline">기본은 자동 — 이 앱의 부품을 이어 쓰는 앱이 있으면 그 밑으로 접히고, 없으면 최상위에 섭니다. 숨겨도 상세 화면과 직접 주소로는 열립니다.</p>
+      <select id={id} value={nav} onChange={(e) => ctx.apply((d) => (e.target.value === "auto" ? d.deleteIn(["shell"]) : d.setIn(["shell", "nav"], e.target.value)))}>
+        <option value="auto">자동 (부품을 쓰는 앱 밑으로 접힘)</option>
+        <option value="always">늘 최상위</option>
+        <option value="never">사이드바에 숨김</option>
+      </select>
     </div>
   );
 }

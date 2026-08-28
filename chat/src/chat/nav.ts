@@ -18,6 +18,14 @@ export interface ShellItem {
   error: string | null;
   update: string | null;
   editing: boolean;
+  /** 선언된 사이드바 자리(shell.nav) — 판정은 parent·hidden 이 끝냈다 */
+  nav: "auto" | "always" | "never";
+  /** 이 패키지의 components 를 결재해 마운트하는 설치본들 — 사이드바가 이 항목을 그 밑으로 접는 근거 */
+  mounted_in: string[];
+  /** 접힐 자리(기판 판정). null = 최상위 */
+  parent: string | null;
+  /** 목록에 서지 않는다(shell.nav: never) */
+  hidden: boolean;
 }
 
 export interface ShellNav {
@@ -31,6 +39,8 @@ export interface ShellNav {
   connections: string;
   /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격. 홈 배너와 사이드바 배지가 같은 수를 읽는다 */
   attention: { credentials: number };
+  /** 사람이 얹은 폴더(묶음) — 사이드바가 그린다. 홈은 읽지 않는다 */
+  suites: { name: string; label: string; hub: string | null; members: string[] }[];
   brand?: { name: string; logo: string | null; accent: string | null };
 }
 

@@ -59,6 +59,30 @@ function header(rel: string, size: number, mode: number): Buffer {
   return h;
 }
 
+export interface TarEntry {
+  rel: string;
+  content: Buffer;
+  mode: number;
+}
+
+/**
+ * 엔트리 → 결정적 tar+gzip. 봉투(packDir)와 묶음(suites.ts .relaypackages)이 같은 굽기를 쓴다.
+ * 정렬은 기본 sort(코드 유닛 순)와 같아야 한다 — 다르면 같은 트리의 봉인이 굽는 쪽마다 흔들린다
+ */
+export function packEntries(entries: TarEntry[]): Buffer {
+  const chunks: Buffer[] = [];
+  for (const e of [...entries].sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))) {
+    if (e.content.length > MAX_ENTRY) throw new Error(`봉투 엔트리 상한 초과 (${MAX_ENTRY}): ${e.rel}`);
+    chunks.push(header(e.rel, e.content.length, e.mode), e.content);
+    const pad = e.content.length % BLOCK;
+    if (pad) chunks.push(Buffer.alloc(BLOCK - pad));
+  }
+  chunks.push(Buffer.alloc(BLOCK * 2)); // 종료 표지
+  return zlib.gzipSync(Buffer.concat(chunks), { level: 9 });
+}
+
+export const sha256Of = (b: Buffer): string => "sha256:" + crypto.createHash("sha256").update(b).digest("hex");
+
 // ── 파일 수집 ────────────────────────────────────────────────────────────────
 
 function walk(root: string, rel: string, skipAbs: string[], out: string[]): void {
@@ -143,22 +167,17 @@ export function packDir(pkgDir: string, outFile?: string): PackResult {
   }
   const sorted = [...files].sort(); // 경로 오름차순 — 결정성의 축
 
-  const chunks: Buffer[] = [];
+  const entries: TarEntry[] = [];
   const included: PackResult["included"] = [];
   for (const rel of sorted) {
     const abs = path.join(root, rel);
     const st = fs.statSync(abs);
     if (st.size > MAX_ENTRY) throw new Error(`봉투 엔트리 상한 초과 (${MAX_ENTRY}): ${rel}`);
-    const mode = st.mode & 0o111 ? 0o755 : 0o644; // 실행 비트만 보존
-    const content = fs.readFileSync(abs);
-    chunks.push(header(rel, content.length, mode), content);
-    const pad = content.length % BLOCK;
-    if (pad) chunks.push(Buffer.alloc(BLOCK - pad));
+    entries.push({ rel, content: fs.readFileSync(abs), mode: st.mode & 0o111 ? 0o755 : 0o644 }); // 실행 비트만 보존
     included.push({ path: rel, size: st.size });
   }
-  chunks.push(Buffer.alloc(BLOCK * 2)); // 종료 표지
-  const gz = zlib.gzipSync(Buffer.concat(chunks), { level: 9 });
-  const digest = "sha256:" + crypto.createHash("sha256").update(gz).digest("hex");
+  const gz = packEntries(entries);
+  const digest = sha256Of(gz);
 
   const file = outFile
     ? path.resolve(outFile)
@@ -199,6 +218,25 @@ export function verifyArtifact(file: string, expected: string): void {
   if (actual !== expected) {
     throw new Error(`봉인 불일치: ${path.basename(file)}\n  기대 ${expected}\n  실제 ${actual}`);
   }
+}
+
+/**
+ * 봉투의 엔트리 이름만 — 파일을 쓰지 않고 헤더만 걷는다. 형 판정용(묶음 봉투인가)이라 봉인·체크섬은
+ * 보지 않는다: 그 판정은 뒤이어 여는 쪽(unpackArtifact)이 같은 바이트로 다시 한다
+ */
+export function listArtifact(file: string): string[] {
+  const tar = zlib.gunzipSync(fs.readFileSync(file), { maxOutputLength: MAX_TOTAL });
+  const names: string[] = [];
+  let off = 0;
+  while (off + BLOCK <= tar.length) {
+    const h = tar.subarray(off, off + BLOCK);
+    if (h.every((b) => b === 0)) break;
+    const name = parseStr(h, 0, 100);
+    const prefix = parseStr(h, 345, 155);
+    names.push(prefix ? prefix + "/" + name : name);
+    off += BLOCK + Math.ceil(parseOctal(h, 124, 12) / BLOCK) * BLOCK;
+  }
+  return names;
 }
 
 function parseOctal(b: Buffer, off: number, len: number): number {

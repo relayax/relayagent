@@ -86,6 +86,8 @@ relay model <包> [模型]                查看或设置模型
 relay effort <包> [强度|off]           推理强度(仅支持 effort capability 的适配器生效)
 relay connect <包> <服务>              粘贴凭证(vault / Keychain)
 relay grant <consumer> <provider> --tools a,b | --mission m
+relay suite ls | set <名称> --members a,b [--hub h] | rm <名称>   套件(侧栏文件夹)
+relay suite pack <名称> [--out f] | import <f.relaypackages>    打包 | 导入套件封包
 ```
 
 ## 包的解剖

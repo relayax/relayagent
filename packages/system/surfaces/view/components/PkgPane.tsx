@@ -144,6 +144,7 @@ export default function PkgPane({
               pkg={pkg} reg={reg} edges={edges} view={view} nav={nav} onChanged={onChanged} onGone={onGone} onTitle={setTitle}
               actionsSlot={slot} editorSlot={hasView ? editorSlot : null}
               liveStatus={status}
+              mountedIn={item?.mounted_in ?? []}
             />
           </div>
           {hasView ? (

@@ -19,8 +19,9 @@
 // 항목을 그리기만 한다 — 마운트 문법(/pkg/…)도 얼굴 규칙도 클라가 조립하지 않는다
 // (client-protocol §2-6 과 같은 규율). 콘솔 화면도 같은 응답을 읽어 판정이 갈라지지 않는다.
 import { STORE_INDEX_URL, consoleInstall, type Ledger } from "../supply/ledger.ts";
-import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
+import { loadManifest, landingAgentName, navMode, type Manifest, type NavMode } from "../supply/manifest.ts";
 import { fetchStoreIndex } from "../supply/registry.ts";
+import type { Suite } from "../supply/suites.ts";
 
 /** 콘솔 패키지 — 사용자가 아니라 기판이 아는 이름이다. 화면 없는 얼굴(상주·부품)과 저작은
  *  이 패키지의 페이지로 간다: 기판은 문이고, 관리 화면은 패키지다. 설치 이름은 장부가 답한다
@@ -58,6 +59,14 @@ export interface ShellItem {
   update: string | null;
   /** 도는 판 위에 적용하지 않은 수정이 있다 — 작업 사본이 앞서 있다. 카드가 "수정 중" 으로 낸다 */
   editing: boolean;
+  /** 선언된 사이드바 자리(shell.nav) — 판정은 아래 parent·hidden 이 끝냈고 이건 그 근거다 */
+  nav: NavMode;
+  /** 이 패키지의 components 를 결재해 마운트하는 설치본들(장부 순). 사이드바가 이 항목을 그 밑으로 접는 근거 */
+  mounted_in: string[];
+  /** 접힐 자리 — 기판의 판정. null = 최상위. auto 면 mounted_in 의 첫 소비자, always 면 null */
+  parent: string | null;
+  /** 목록에 서지 않는다(shell.nav: never). 그 화면 위에 있을 때만 현재 위치로 그린다 */
+  hidden: boolean;
 }
 
 /** 초안(작업 사본) 한 줄 — supply/draft.ts listDrafts 의 모양. 데몬이 읽어 넘긴다 */
@@ -91,6 +100,9 @@ export interface ShellNav {
   /** 신경 쓸 수 — 사이드바 배지와 홈 배너. credentials = 필수인데 빈 서비스 자격 + 빈 채널 자격
    *  (runtime/connections.ts attentionOf). 선택 자격의 빔은 세지 않는다 — 배지가 늘 켜져 있으면 아무도 안 본다 */
   attention: { credentials: number };
+  /** 사람이 얹은 폴더(supply/suites.ts). members 는 설치본만 — 지워진 것은 빠진 채로 온다.
+   *  결재로 유도되는 허브▸모듈 트리(items[].parent)와는 다른 축이고, 사이드바가 둘을 합친다 */
+  suites: { name: string; label: string; hub: string | null; members: string[] }[];
   /** 크롬의 얼굴 — 이름·마크·강조색 셋만(additive, 2026-08-26). 미선언 = "Relay" 와 기본 색.
    *  임베더(조직 기판)가 자기 브랜딩을 싣는 자리다. 팔레트 전체는 열지 않는다 — 크롬은 남의
    *  토큰에 얹지 않는다는 규율(③)과 양립하는 최소 셋이다 */
@@ -168,9 +180,20 @@ export function shellNav(
   latest?: Map<string, string>,
   drafts: DraftEntry[] = [],
   attention: ShellNav["attention"] = { credentials: 0 },
+  suites: Suite[] = [],
 ): ShellNav {
   const live = new Set(running.map((k) => k.split("/")[0]));
   const draftOf = new Map(drafts.map((d) => [d.name, d]));
+  // 접힘의 근거는 결재다 — 장부의 components 결재(소비자 → 제공자)를 제공자 쪽에서 본다.
+  // 선언(edges)이 아니라 결재를 읽는 이유: 선언은 신청이고, 미설치 소비자의 선언은 아무것도 마운트하지
+  // 않는다. 허브 없이 모듈만 깐 사람에게는 그 모듈의 줄이 유일한 문이다
+  const mountedIn = new Map<string, string[]>();
+  for (const g of ledger.grants) {
+    if (!g.components || !ledger.packages[g.consumer] || !ledger.packages[g.provider]) continue;
+    const list = mountedIn.get(g.provider) ?? [];
+    if (!list.includes(g.consumer)) list.push(g.consumer);
+    mountedIn.set(g.provider, list);
+  }
   const items: ShellItem[] = [];
   for (const [pkg, rec] of Object.entries(ledger.packages)) {
     const base = {
@@ -179,6 +202,7 @@ export function shellNav(
       detail: hrefFor(ledger, pkg, "parts"),
       resident: live.has(pkg),
       ring0: rec.ring === 0,
+      mounted_in: mountedIn.get(pkg) ?? [],
     };
     let m: Manifest;
     try {
@@ -186,7 +210,7 @@ export function shellNav(
     } catch (e) {
       // 판정 실패한 설치 — 목록에서 지우면 "왜 안 보이지" 가 되고 진단은 어디에도 없다.
       // 이름만으로 세우고 사유를 실어 상세로 보낸다(그 화면이 처방을 그린다)
-      items.push({ ...base, label: pkg, description: "", version: "", icon: null, face: "parts", faces: ["parts"], view: null, error: String(e), update: null, editing: false });
+      items.push({ ...base, label: pkg, description: "", version: "", icon: null, face: "parts", faces: ["parts"], view: null, error: String(e), update: null, editing: false, nav: "auto", parent: base.mounted_in[0] ?? null, hidden: false });
       continue;
     }
     const faces = facesOf(m);
@@ -199,6 +223,8 @@ export function shellNav(
     // 수정 중 = 작업 사본에 기록하지 않은 변경이 있거나, 사본의 버전이 도는 판과 다르다
     const d = draftOf.get(pkg);
     const editing = !!d && (d.changes > 0 || (d.version != null && d.version !== (m.version ?? "")));
+    // 자리 판정 — always 는 결재와 무관하게 최상위, never 는 목록 밖, auto 는 첫 소비자(허브) 밑
+    const nav = navMode(m);
     items.push({
       ...base,
       label: m.display_name || pkg,
@@ -212,6 +238,9 @@ export function shellNav(
       error: null,
       update,
       editing,
+      nav,
+      parent: nav === "always" ? null : base.mounted_in[0] ?? null,
+      hidden: nav === "never",
     });
   }
   // 설치한 순서대로 아래로 쌓인다 — 이름순은 새로 하나 앉힐 때마다 자리가 흔들려 손이 외우지 못한다.
@@ -232,6 +261,7 @@ export function shellNav(
     library: store ? store + "library" : null,
     connections: consoleHref(ledger, "connections/"),
     attention,
+    suites: suites.map((s) => ({ name: s.name, label: s.label, hub: s.hub && ledger.packages[s.hub] ? s.hub : null, members: s.members.filter((m) => !!ledger.packages[m]) })),
   };
 }
 
@@ -299,6 +329,7 @@ var ICONS = {
   down: '<path d="M8 3v8M4.5 7.5 8 11l3.5-3.5"/>',
   edit: '<path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M10 4l2 2"/>',
   draft: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M6 8h4M6 10.5h4"/>',
+  folder: '<path d="M2 4.5h4l1.5 1.5H14v7.5H2z"/>',
   fold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M11.5 6.5 10 8l1.5 1.5"/>',
   unfold: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M9.5 6.5 11 8l-1.5 1.5"/>'
 };
@@ -371,6 +402,17 @@ var css = [
 '#rlys .rw .ed svg{width:13px;height:13px}',
 '#rlys .rw:has(.ed) .it .dt{display:none}',
 '#rlys.cl .rw .ed{display:none}',
+// 펼침 표지 — 자식(결재로 접힌 모듈)이나 구성원(묶음)이 있는 줄의 오른쪽 끝. 누르면 이동하지 않고 접고 편다
+'#rlys .it .cv{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#98a1aa;border-radius:4px;transform:rotate(-90deg);transition:transform .12s ease}',
+'#rlys .it .cv.op{transform:none}',
+'#rlys .it .cv:hover{background:#e5e5e5;color:#5c6570}',
+'#rlys .it .cv svg{width:12px;height:12px}',
+// 묶음 폴더 머리 — 항목과 같은 줄 모양이되 문이 아니라 접힘 스위치다. 접힌 레일에서는 허브 아이콘 하나로 선다
+'#rlys button.fh{color:#5c6570;font-weight:600}',
+'#rlys button.fh .ic{color:#98a1aa}',
+// 지금 열린 줄에는 연필이 오른쪽 끝을 차지한다 — 펼침 표지·점이 그 밑에 깔리지 않게 자리를 비운다
+'#rlys .rw:has(.ed) .it{padding-right:32px}',
+'#rlys.cl .it .cv{display:none}',
 '#rlys .er{font-size:11.5px;color:#dc2626;padding:8px 10px;white-space:normal}',
 '#rlys .em{font-size:12px;color:#a3a3a3;padding:8px 10px}',
 // 접힌 레일 — 글자를 지우고 아이콘만 남긴다. 폭 계약이 같이 줄어드니 문서는 따라온다
@@ -451,14 +493,92 @@ function item(href, iconHtml, label, opts){
   a.className = "it" + (opts.on ? " on" : "");
   a.href = href;
   a.title = opts.title || label;
+  // 깊이 = 결재로 접힌 자리(허브 밑의 모듈)·묶음 안의 자리. 접힌 레일은 계층을 그리지 않으므로 들여쓰기도 없다
+  if (opts.depth && !effective) a.style.paddingLeft = (10 + opts.depth * 16) + "px";
   a.innerHTML = '<span class="ic' + (opts.letter ? " ltr" : "") + '">' + iconHtml + '</span>' +
     '<span class="nm">' + esc(label) + '</span>' +
     // 얼굴(화면·대화…) 글리프는 두지 않는다 — 오른쪽 끝의 작은 아이콘은 버튼으로 읽히는데 눌러도 아무 일이 없다.
-    // 종류는 title 과 홈 카드의 칩이 말한다
+    // 종류는 title 과 홈 카드의 칩이 말한다. 펼침 표지(cv)만 예외다 — 그건 눌리는 것이고 누르면 접고 편다
     // 수정 중(적용 안 한 변경)은 파란 점 — 홈 카드의 "수정 중" 칩과 같은 상태인데 사이드바에선 안 보였다(2026-08-27)
     (opts.dot ? '<span class="dt" title="도는 중"></span>' : opts.edit ? '<span class="dt edt" title="수정 중 — 적용 안 한 변경이 있습니다"></span>' : "") +
-    (opts.badge ? '<span class="bd" title="연결이 필요한 자격 ' + esc(opts.badge) + '개">' + esc(opts.badge) + '</span>' : "");
+    (opts.badge ? '<span class="bd" title="연결이 필요한 자격 ' + esc(opts.badge) + '개">' + esc(opts.badge) + '</span>' : "") +
+    (opts.caret ? '<span class="cv' + (opts.caret.open ? " op" : "") + '" title="' + (opts.caret.open ? "접기" : "펼치기") + '">' + svg(ICONS.down) + '</span>' : "");
+  if (opts.caret) {
+    var cv = a.querySelector(".cv");
+    cv.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); setOpen(opts.caret.key, !opts.caret.open); renderSide(lastNav, lastErr); };
+  }
   return a;
+}
+
+// 접힘 상태 — 묶음 폴더와 허브(자식을 가진 항목)의 펼침을 사람이 정한 대로 기억한다.
+// 기본은 폴더 열림·허브 닫힘: 폴더는 사람이 만든 것이라 안이 보여야 하고, 허브 밑의 모듈은
+// 허브 화면이 마운트해 쓰는 부품이라 목록에서는 허브 하나로 보이는 것이 맞다
+var FOLDS = "relay-shell-folds";
+var folds = {};
+try { folds = JSON.parse(localStorage.getItem(FOLDS) || "{}") || {}; } catch (e) {}
+function isOpen(key, dflt){ return Object.prototype.hasOwnProperty.call(folds, key) ? !!folds[key] : dflt; }
+function setOpen(key, v){ folds[key] = v; try { localStorage.setItem(FOLDS, JSON.stringify(folds)); } catch (e) {} }
+
+// 항목 한 줄 — 손보기 연필은 **지금 열린 앱의 줄에만** 하나. 다른 줄에는 두지 않는다
+// (이동하는 행에 "고치기"가 같이 붙으면 잘못 누르고 뜻도 섞인다; 열린 줄은 이동할 곳이 없다).
+// 홈 카드는 신경 쓸 것만 세우므로 멀쩡히 도는 앱의 손보기 문은 이것 하나다. Relay(ring 0)는 손볼 대상이 아니다
+function row(it, here, depth, caret, inside){
+  var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
+  var mounted = it.mounted_in || [];
+  var rw = document.createElement("div");
+  rw.className = "rw";
+  rw.appendChild(item(it.href, ic, it.label, {
+    // 접힌 레일은 자식을 그리지 않으므로, 현재 항목이 그 밑에 있으면 부모 줄이 켜진다
+    on: it.pkg === here || (effective && inside),
+    dot: it.resident,
+    edit: it.editing,
+    letter: !it.icon,
+    depth: depth,
+    caret: caret,
+    title: it.pkg + (it.ring0 ? " · ring-0" : "") + (mounted.length ? " · " + mounted.join(", ") + " 안에서 쓰입니다" : "")
+  }));
+  if (it.pkg === here && !effective && !it.ring0 && it.href !== it.detail) {
+    var ed = document.createElement("a");
+    ed.className = "ed";
+    ed.href = it.detail;
+    ed.title = it.label + " 손보기";
+    ed.setAttribute("aria-label", it.label + " 손보기");
+    ed.innerHTML = svg(ICONS.edit);
+    rw.appendChild(ed);
+  }
+  return rw;
+}
+
+// 한 집합을 트리로 그린다. 판정(parent·hidden)은 기판이 했고 여기는 배치뿐이다: 부모(자기를 components 로
+// 마운트하는 소비자)가 같은 집합 안에 있으면 그 밑으로, 아니면 이 집합의 최상위로.
+// hidden(never) 은 그 화면 위에 서 있을 때만 그린다 — 어디에 있는지는 알아야 한다.
+// 접힌 레일은 최상위만 그린다(계층을 놓을 폭이 없다) — 현재 항목이 밑에 있으면 부모 줄이 켜진다
+function drawTree(container, list, here, depth){
+  var kids = {}, inSet = {}, roots = [], seen = {};
+  for (var i = 0; i < list.length; i++) inSet[list[i].pkg] = list[i];
+  for (var j = 0; j < list.length; j++) {
+    var it = list[j], p = it.parent;
+    if (p && p !== it.pkg && inSet[p]) (kids[p] = kids[p] || []).push(it); else roots.push(it);
+  }
+  function holds(it, guard){
+    guard = guard || {};
+    if (guard[it.pkg]) return false;
+    guard[it.pkg] = 1;
+    var ks = kids[it.pkg] || [];
+    for (var k = 0; k < ks.length; k++) if (ks[k].pkg === here || holds(ks[k], guard)) return true;
+    return false;
+  }
+  function draw(it, d){
+    if (seen[it.pkg]) return;
+    seen[it.pkg] = 1;
+    var inside = holds(it);
+    if (it.hidden && it.pkg !== here && !inside) return;
+    var ks = (kids[it.pkg] || []).filter(function(k){ return !k.hidden || k.pkg === here || holds(k); });
+    var open = ks.length ? (inside || isOpen("p:" + it.pkg, false)) : false;
+    container.appendChild(row(it, here, d, ks.length ? { open: open, key: "p:" + it.pkg } : null, inside));
+    if (open && !effective) for (var k = 0; k < ks.length; k++) draw(ks[k], d + 1);
+  }
+  for (var r = 0; r < roots.length; r++) draw(roots[r], depth);
 }
 
 function applyBrand(nav){
@@ -569,32 +689,54 @@ function renderSide(nav, err){
       em.textContent = "설치된 패키지가 없습니다";
       pk.appendChild(em);
     }
-    for (var i = 0; i < nav.items.length; i++) {
-      var it = nav.items[i];
-      var ic = it.icon ? '<img src="' + esc(it.icon) + '" alt="">' : esc((it.label.trim()[0] || "?").toUpperCase());
-      // 행은 패키지 화면으로. 손보기 문은 **지금 열린 앱의 줄에만** 연필 하나 — 다른 줄에는 두지 않는다
-      // (이동하는 행에 "고치기"가 같이 붙으면 잘못 누르고 뜻도 섞인다; 열린 줄은 이동할 곳이 없다).
-      // 홈 카드는 신경 쓸 것만 세우므로 멀쩡히 도는 앱의 손보기 문은 이것 하나다. Relay(ring 0)는 손볼 대상이 아니다.
-      var rw = document.createElement("div");
-      rw.className = "rw";
-      rw.appendChild(item(it.href, ic, it.label, {
-        on: it.pkg === here,
-        dot: it.resident,
-        edit: it.editing,
-        letter: !it.icon,
-        title: it.pkg + (it.ring0 ? " · ring-0" : "")
-      }));
-      if (it.pkg === here && !effective && !it.ring0 && it.href !== it.detail) {
-        var ed = document.createElement("a");
-        ed.className = "ed";
-        ed.href = it.detail;
-        ed.title = it.label + " 손보기";
-        ed.setAttribute("aria-label", it.label + " 손보기");
-        ed.innerHTML = svg(ICONS.edit);
-        rw.appendChild(ed);
+    // 세 층이 위에서 아래로: 셸 자신(ring 0) → 묶음 폴더 → 나머지. 폴더 안팎 어디서나 같은 트리 규칙
+    // (결재로 접힘)이 서고, 한 항목은 한 자리에만 선다(placed)
+    var byPkg = {}, placed = {};
+    nav.items.forEach(function(it){ byPkg[it.pkg] = it; });
+    function place(list){ list.forEach(function(it){ placed[it.pkg] = 1; }); }
+    var pinned = nav.items.filter(function(it){ return it.ring0; });
+    drawTree(pk, pinned, here, 0);
+    place(pinned);
+    // 묶음: 구성원에 허브가 있으면 그 허브 밑에 접힌 모듈들(부모 사슬)이 따라 들어온다 — 폴더에 허브를
+    // 넣었는데 모듈이 폴더 밖에 남으면 같은 앱이 두 곳에 나뉜 것으로 읽힌다
+    function withDescendants(pkgs){
+      var out = {}, q = pkgs.slice();
+      pkgs.forEach(function(p){ out[p] = 1; });
+      while (q.length) {
+        var cur = q.shift();
+        nav.items.forEach(function(it){ if (it.parent === cur && !out[it.pkg]) { out[it.pkg] = 1; q.push(it.pkg); } });
       }
-      pk.appendChild(rw);
+      return out;
     }
+    var suites = nav.suites || [];
+    for (var s = 0; s < suites.length; s++) {
+      var su = suites[s];
+      var members = (su.members || []).filter(function(p){ return byPkg[p] && !placed[p]; });
+      if (!members.length) continue;
+      var set = withDescendants(members);
+      var list = nav.items.filter(function(it){ return set[it.pkg] && !placed[it.pkg]; });
+      var hub = byPkg[su.hub] || byPkg[members[0]];
+      var inside = list.some(function(it){ return it.pkg === here; });
+      var open = inside || isOpen("s:" + su.name, true);
+      if (effective) {
+        // 접힌 레일 — 폴더는 허브의 아이콘 하나로 서고 문은 허브 화면이다(허브가 없으면 첫 구성원)
+        var hic = hub.icon ? '<img src="' + esc(hub.icon) + '" alt="">' : svg(ICONS.folder);
+        pk.appendChild(item(hub.href, hic, su.label, { on: inside, title: su.label + " — " + members.length + "개" }));
+      } else {
+        var fh = document.createElement("button");
+        fh.type = "button";
+        fh.className = "it fh";
+        fh.title = su.label + " — " + members.length + "개";
+        fh.setAttribute("aria-expanded", open ? "true" : "false");
+        fh.innerHTML = '<span class="ic">' + svg(ICONS.folder) + '</span><span class="nm">' + esc(su.label) + '</span>' +
+          '<span class="cv' + (open ? " op" : "") + '" title="' + (open ? "접기" : "펼치기") + '">' + svg(ICONS.down) + '</span>';
+        fh.onclick = (function(key, v){ return function(){ setOpen(key, v); renderSide(lastNav, lastErr); }; })("s:" + su.name, !open);
+        pk.appendChild(fh);
+        if (open) drawTree(pk, list, here, 1);
+      }
+      place(list);
+    }
+    drawTree(pk, nav.items.filter(function(it){ return !placed[it.pkg]; }), here, 0);
     el.appendChild(pk);
   }
 

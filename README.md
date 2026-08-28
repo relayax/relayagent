@@ -86,6 +86,8 @@ relay model <pkg> [model]             show or set the model
 relay effort <pkg> [level|off]        reasoning effort (adapters with the effort capability)
 relay connect <pkg> <service>         paste a credential (vault / Keychain)
 relay grant <consumer> <provider> --tools a,b | --mission m
+relay suite ls | set <name> --members a,b [--hub h] | rm <name>   suites: sidebar folders
+relay suite pack <name> [--out f] | import <f.relaypackages>      bake | receive a suite envelope
 ```
 
 ## Anatomy of a package

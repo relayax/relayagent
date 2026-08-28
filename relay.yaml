@@ -7,6 +7,11 @@ icon: assets/icon.svg
 publisher: "@local"          # 발행 주체 좌표 — 스토어 리스팅·정산이 읽는다 (선택)
 released_at: "2026-08-14"    # 발행일 — 스토어 리스팅 메타 (선택)
 
+# 사이드바 자리(선택) — auto(기본): 다른 설치본이 내 components 를 결재해 마운트하면 그 허브 아래로
+# 접힌다 · always: 늘 최상위 · never: 목록에 안 선다(콘솔 상세·직접 주소로는 닿는다)
+shell:
+  nav: auto
+
 surfaces:
   view:
     source: surfaces/view

@@ -11,6 +11,7 @@ import { artifactsDir, stageDir, STORE_INDEX_URL, type Ledger } from "./ledger.t
 import { fetchStoreIndex, downloadArtifact, redeemArtifact, redeemWithTicket, cacheHit, RedeemError } from "./registry.ts";
 import { readMarketIndex, packDir, updateMarketIndex } from "./pack.ts";
 import { prepareArtifact, activatePrepared, resolveInstallName, type Prepared } from "./install.ts";
+import { isSuiteArchive, prepareSuite, activateSuite, type PreparedSuite } from "./suites.ts";
 import { loadManifest } from "./manifest.ts";
 import { startServices, startChannels, stopServices, type RunnerIO } from "../runtime/services.ts";
 import { Ticker } from "../runtime/triggers.ts";
@@ -20,6 +21,8 @@ import { injectShell } from "../runtime/shell.ts";
 
 /** 준비된(동의 전) 봉투의 대기소 — 데몬 하나당 하나. 만료분은 접근 때마다 걷힌다 */
 const prepared = new Map<string, { p: Prepared; at: number }>();
+/** 준비된 묶음(.relaypackages)의 대기소 — 봉투 하나에 설치 여럿이라 따로 든다. 만료 규칙은 같다 */
+const preparedSuites = new Map<string, { p: PreparedSuite; at: number }>();
 const PREPARE_TTL = 10 * 60_000;
 /** 손으로 가져오는 봉투의 상한 — 원격 다운로드와 같은 선 */
 const MAX_IMPORT = 200 * 1024 * 1024;
@@ -81,9 +84,9 @@ function importPage(res: http.ServerResponse): void {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(injectShell(`${SHELL}<div class="card">
 <div><h1>파일 불러오기</h1>
-<p class="desc">받은 <code>.relay</code> 파일을 놓으세요. 설치하기 전에 이 에이전트가 무엇을 하는지 먼저 보여 드립니다.</p></div>
-<div class="drop" id="d"><b>파일을 여기에 놓거나 클릭해서 선택</b>.relay 파일</div>
-<input type="file" id="f" accept=".relay" style="display:none">
+<p class="desc">받은 <code>.relay</code> 파일이나 묶음 <code>.relaypackages</code> 파일을 놓으세요. 설치하기 전에 이 에이전트가 무엇을 하는지 먼저 보여 드립니다.</p></div>
+<div class="drop" id="d"><b>파일을 여기에 놓거나 클릭해서 선택</b>.relay · .relaypackages 파일</div>
+<input type="file" id="f" accept=".relay,.relaypackages" style="display:none">
 <p class="note" id="st"></p>
 <script>
 var d=document.getElementById("d"),f=document.getElementById("f"),st=document.getElementById("st");
@@ -124,7 +127,8 @@ function installPage(res: http.ServerResponse, code: number, title: string, deta
  * sideloaded: 스토어를 거치지 않고 손으로 받은 봉투. 봉인은 계산했지만 대조할 정본이 없어
  * "이 값이 맞는가"를 확인해 줄 곳이 없다. 그 차이를 화면이 숨기지 않는다.
  */
-function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = false): void {
+/** 고지서 → 사람이 읽는 줄들. 단일 봉투와 묶음의 동의 화면이 같은 문장을 쓴다 */
+function disclosureRows(prep: Prepared): { rows: string[]; nots: string[] } {
   const d = prep.disclosure;
   const row = (label: string, body: string) => `<div><dt>${label}</dt><dd>${body}</dd></div>`;
   const authNote: Record<string, string> = { oauth: "설치 후 로그인", token: "설치 후 키 입력" };
@@ -142,6 +146,47 @@ function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = fals
   if (!d.network.length) nots.push("인터넷 접속");
   if (!d.wakeups.length) nots.push("자동 실행");
   if (!d.borrows.length) nots.push("다른 에이전트 사용");
+  return { rows, nots };
+}
+
+/**
+ * 묶음의 동의 관문 — 봉투 하나에 설치 여럿. 동의는 한 번이되 고지서는 패키지마다 따로 편다:
+ * 묶음이라고 "다 합쳐서 인터넷에 접속합니다" 로 뭉뚱그리면 어느 앱이 나가는지가 사라진다.
+ * 출처 판정도 패키지 단위다(안쪽 봉투마다 서명이 따로다) — 하나라도 무서명이면 그 사실을 말한다
+ */
+function consentSuitePage(res: http.ServerResponse, ps: PreparedSuite): void {
+  const row = (label: string, body: string) => `<div><dt>${label}</dt><dd>${body}</dd></div>`;
+  const unsigned = ps.items.filter((p) => !p.signed);
+  const origin = unsigned.length
+    ? `<div class="warn">출처를 확인할 수 없는 봉투가 ${unsigned.length}개 있습니다. 스토어를 거치지 않았으니 보낸 사람을 믿을 수 있을 때만 설치하세요.<small>묶음 파일 지문 — 보낸 사람이 알려 준 값과 같은지 확인하세요</small><code>${esc(ps.digest)}</code></div>`
+    : `<div class="seal">안쪽 봉투 ${ps.items.length}개가 전부 서명되어 있습니다<small>묶음 파일 지문</small><code>${esc(ps.digest)}</code></div>`;
+  const sections = ps.items.map((p) => {
+    const { rows, nots } = disclosureRows(p);
+    return `<div><h2>${esc(p.manifest.display_name ?? p.name)} <span class="sub">${esc(p.ref)} · v${esc(p.version)} · ${p.fresh ? "새 설치" : "업데이트"}</span></h2>
+<dl>${rows.join("") || row("—", "폴더·계정·인터넷 어느 것도 쓰지 않습니다")}</dl>
+${nots.length ? `<p class="nots">${esc(nots.join(" · "))}은 하지 않습니다</p>` : ""}</div>`;
+  });
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(injectShell(
+    `${SHELL}<div class="card">
+<div><h1>${esc(ps.label)} 묶음 설치</h1>
+<p class="desc">에이전트 ${ps.items.length}개가 한 폴더로 들어옵니다. 설치 순서는 묶음이 정한 대로(빌려 쓰이는 쪽이 먼저)입니다.</p>
+<p class="sub">${esc(ps.name)} · ${(ps.size / 1024).toFixed(0)}KB</p></div>
+${origin}
+${sections.join("")}
+<form method="post" action="/store/install/confirm" class="row">
+  <input type="hidden" name="id" value="${esc(ps.id)}">
+  <a class="btn" href="/pkg/system/view/">취소</a>
+  <button class="go" type="submit">전부 설치</button>
+</form>
+<p class="note">설치 전에는 이 에이전트들의 코드가 한 줄도 실행되지 않습니다</p>
+</div></body></html>`,
+  ));
+}
+
+function consentPage(res: http.ServerResponse, prep: Prepared, sideloaded = false): void {
+  const row = (label: string, body: string) => `<div><dt>${label}</dt><dd>${body}</dd></div>`;
+  const { rows, nots } = disclosureRows(prep);
 
   // 출처 — 스토어가 확인한 파일인지, 손으로 받은 파일인지를 숨기지 않는다
   const origin = sideloaded && !prep.signed
@@ -238,6 +283,27 @@ if (p === "/store/install" && req.method === "GET") {
 }
 if (p === "/store/install/confirm" && req.method === "POST") {
   const b = await readBody(req);
+  const heldSuite = preparedSuites.get(String(b.id ?? ""));
+  if (heldSuite) {
+    preparedSuites.delete(heldSuite.p.id);
+    if (Date.now() - heldSuite.at > PREPARE_TTL) { installPage(res, 410, "시간이 지나 다시 열어야 합니다", "묶음 파일을 다시 불러와 주세요."); return true; }
+    try {
+      const l = getLedger();
+      const { suite, results } = await activateSuite(l, heldSuite.p);
+      // 단일 설치와 같은 뒷정리를 패키지마다 — 옛 릴리스로 떠 있던 서비스를 갈아타고, 설치 이벤트를 낸다
+      const rio = runnerIO(l);
+      for (const [i, r] of results.entries()) {
+        const item = heldSuite.p.items[i];
+        stopServices(r.name);
+        await startServices(l, r.name, item.dir, item.manifest, rio);
+        startChannels(l, r.name, item.dir, item.manifest, rio);
+        ticker.emit(item.fresh ? "relay.package.installed" : "relay.package.published", { pkg: r.name, version: item.version });
+      }
+      { installPage(res, 200, `${suite.label} 묶음 설치 완료`, `${suite.members.length}개가 사이드바의 "${suite.label}" 폴더에 들어왔습니다.`, true); return true; }
+    } catch (e) {
+      { installPage(res, 500, "묶음 설치에 실패했습니다", e instanceof Error ? e.message : String(e)); return true; }
+    }
+  }
   const held = prepared.get(String(b.id ?? ""));
   if (!held || Date.now() - held.at > PREPARE_TTL) {
     { installPage(res, 410, "시간이 지나 다시 열어야 합니다", "스토어의 내 서재에서 설치를 다시 눌러 주세요."); return true; }
@@ -302,7 +368,8 @@ if (marketAsset && req.method === "GET") {
 // 화면은 "스토어를 거치지 않았다"고 분명히 말한다. 믿음의 근거가 다르기 때문이다.
 // .sig 사이드카도 내보낸다 — 손으로 옮기는 봉투가 서명을 잃지 않게(받는 쪽이 .relay 옆에
 // 두면 prepareArtifact 가 읽는다). 봉투와 사이드카는 같은 선반 봉인 아래 있다
-const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.relay(?:\.sig)?)$/);
+// 묶음(.relaypackages)도 같은 문으로 나간다 — 선반에 구운 것만(suites.ts packSuite)
+const exportFile = p.match(/^\/store\/export\/([A-Za-z0-9._-]+\.(?:relay(?:\.sig)?|relaypackages))$/);
 if (exportFile && req.method === "GET") {
   const file = path.join(artifactsDir(), exportFile[1]);
   if (!fs.existsSync(file)) { json(res, 404, { error: "선반에 없는 봉투 — 먼저 구우세요" }); return true; }
@@ -327,6 +394,13 @@ if (p === "/store/import" && req.method === "POST") {
   const tmp = path.join(stageDir("import"), `${Date.now()}.relay`);
   fs.writeFileSync(tmp, Buffer.concat(chunks));
   try {
+    // 형 판정은 내용으로 — 업로드에는 파일 이름이 남지 않는다. 묶음이면 안쪽 봉투를 하나씩 준비한다
+    if (isSuiteArchive(tmp)) {
+      const ps = await prepareSuite(getLedger(), tmp);
+      preparedSuites.set(ps.id, { p: ps, at: Date.now() });
+      for (const [id, v] of preparedSuites) if (Date.now() - v.at > PREPARE_TTL) preparedSuites.delete(id);
+      { json(res, 200, { id: ps.id, suite: ps.name, packages: ps.items.length }); return true; }
+    }
     const prep = await prepareArtifact(getLedger(), tmp);
     prepared.set(prep.id, { p: prep, at: Date.now() });
     { json(res, 200, { id: prep.id }); return true; }
@@ -338,6 +412,8 @@ if (p === "/store/import" && req.method === "POST") {
 }
 // 준비된 설치의 동의 관문을 id 로 다시 연다 (가져오기가 쓴다 — 스토어 경로는 곧장 그린다)
 if (p === "/store/install/consent" && req.method === "GET") {
+  const heldSuite = preparedSuites.get(url.searchParams.get("id") ?? "");
+  if (heldSuite && Date.now() - heldSuite.at <= PREPARE_TTL) { consentSuitePage(res, heldSuite.p); return true; }
   const held = prepared.get(url.searchParams.get("id") ?? "");
   if (!held || Date.now() - held.at > PREPARE_TTL) {
     { installPage(res, 410, "시간이 지나 다시 열어야 합니다", "파일을 다시 불러와 주세요."); return true; }

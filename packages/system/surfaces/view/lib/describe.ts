@@ -153,6 +153,8 @@ export interface DescribeCtx {
   files: string[];
   /** 동사 이름 → 짧은 서술(pkg-verbs). 있으면 서술을 크게, 이름을 작게 */
   verbLabels?: Record<string, string>;
+  /** 이 패키지의 부품을 결재해 쓰는 설치본들(셸 nav 의 mounted_in) — 사이드바에서 그 밑으로 접히는 근거. 모르면 빈 배열 */
+  mountedIn?: string[];
 }
 
 /**
@@ -193,12 +195,22 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
     ],
   });
 
+  // 사이드바 자리 — 접힐지는 기판이 결재를 보고 정한다. 여기서는 그 결과(어느 앱 밑인가)와 선언(숨김·최상위)만
+  // 말하고, 기본 상태(최상위·결재 없음)는 줄을 늘리지 않는다
+  const nav = m.shell?.nav ?? "auto";
+  const mountedIn = ctx.mountedIn ?? [];
+  const seat =
+    nav === "never" ? { text: "사이드바에 숨김", sub: "상세와 직접 주소로 열림" }
+    : nav === "always" ? { text: "사이드바 늘 최상위", sub: "부품을 쓰는 앱이 있어도" }
+    : mountedIn.length ? { text: `${mountedIn.map(ctx.labelOf).join(", ")} 안에서 쓰임`, sub: "사이드바에서 그 밑으로 접힘" }
+    : null;
   rows.push({
     key: "faces", q: "화면과 채널", sec: "surfaces", empty: "아직 없음",
     items: [
       ...(m.surfaces?.view ? [{ text: "화면", sub: m.surfaces.view.source }] : []),
       ...(m.surfaces?.components ? [{ text: "부품", sub: m.surfaces.components.source }] : []),
       ...(m.surfaces?.channels ?? []).map((c) => ({ text: c.name, sub: "채널" })),
+      ...(seat ? [seat] : []),
     ],
   });
 
@@ -386,6 +398,17 @@ export function sentences(m: Manifest, ctx: DescribeCtx): Para[] {
       ...(times.length ? [] : [{ sec: "triggers", label: "정해진 때 알아서 움직이기" }]),
     ]),
   });
+
+  // ①-a 사이드바에서의 자리 — 기본(최상위·결재 없음)은 말하지 않는다. 접혔거나 숨겼거나 못박았을 때만
+  // 한 줄. "왜 사이드바에 없지"가 이 화면에서 가장 먼저 풀려야 할 물음이라서다. 낱말은 기본 정보(자리 선택)로 간다
+  const seatNav = m.shell?.nav ?? "auto";
+  const seatIn = ctx.mountedIn ?? [];
+  const seatParts: (string | Tok)[] | null =
+    seatNav === "never" ? [{ t: "사이드바", sec: "identity" }, "에는 숨겨져 있습니다 — 상세와 직접 주소로만 엽니다."]
+    : seatNav === "always" ? [{ t: "사이드바", sec: "identity" }, "에 늘 최상위로 섭니다."]
+    : seatIn.length ? [{ t: "사이드바", sec: "identity" }, `에서는 ${seatIn.map(ctx.labelOf).join(", ")} 밑에 접혀 있습니다.`]
+    : null;
+  if (seatParts) out.push({ key: "seat", parts: seatParts, adds: [] });
 
   // ② 누가 무엇을 하나
   // 엔진은 **하나**다. harness.variants 는 후보 목록이고 실제로 도는 것은 그중 하나뿐이라,

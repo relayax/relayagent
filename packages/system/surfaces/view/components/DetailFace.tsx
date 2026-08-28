@@ -39,9 +39,12 @@ export default function DetailFace({
   actionsSlot,
   editorSlot,
   liveStatus,
+  mountedIn,
 }: {
   pkg: Pkg;
   reg: Registry;
+  /** 이 패키지의 부품을 결재해 쓰는 설치본들(셸 nav 의 mounted_in) — 설명서의 사이드바 자리 줄 */
+  mountedIn?: string[];
   edges: EdgeView[];
   view: View;
   nav: Nav;
@@ -145,6 +148,7 @@ export default function DetailFace({
       labelOf: label,
       files: draft.status?.files ?? [],
       verbLabels,
+      mountedIn: mountedIn ?? [],
     },
     { editing },
   );
@@ -352,6 +356,7 @@ export default function DetailFace({
           danger={foot}
           onPick={pickKind}
           onAsk={ask}
+          mountedIn={mountedIn ?? []}
           personaLead={personaLead}
           onEngine={toggleEngine}
           engineBusy={engineBusy}

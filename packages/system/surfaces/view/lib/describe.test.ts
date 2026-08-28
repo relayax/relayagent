@@ -294,3 +294,25 @@ test("parseCron — 번역표 밖의 식은 고르개를 못 세운다", () => {
     assert.equal(cronToKorean(bad), null, bad);
   }
 });
+
+test("describe — 사이드바 자리는 결재·선언이 있을 때만 줄에 선다", () => {
+  const withParts: Manifest = { surfaces: { components: { source: "parts" } } };
+  // 기본(결재 없음·선언 없음)은 늘리지 않는다
+  assert.deepEqual(byKey(describe(withParts, base), "faces").items, [{ text: "부품", sub: "parts" }]);
+  // 결재로 접힌 것 — 어느 앱 밑인지 표시 이름으로
+  const folded = describe(withParts, { ...base, labelOf: (n) => (n === "studio" ? "카드뉴스 스튜디오" : n), mountedIn: ["studio"] });
+  assert.deepEqual(byKey(folded, "faces").items[1], { text: "카드뉴스 스튜디오 안에서 쓰임", sub: "사이드바에서 그 밑으로 접힘" });
+  // 선언이 결재를 이긴다
+  assert.equal(byKey(describe({ ...withParts, shell: { nav: "always" } }, { ...base, mountedIn: ["studio"] }), "faces").items[1].text, "사이드바 늘 최상위");
+  assert.equal(byKey(describe({ shell: { nav: "never" } }, base), "faces").items[0].text, "사이드바에 숨김");
+});
+
+test("sentences — 사이드바 자리 문단은 접혔거나 숨겼거나 못박았을 때만 선다", () => {
+  const withParts: Manifest = { surfaces: { view: { source: "v" }, components: { source: "parts" } } };
+  assert.ok(!sentences(withParts, base).some((p) => p.key === "seat"));
+  const folded = sentences(withParts, { ...base, labelOf: (n) => (n === "studio" ? "카드뉴스 스튜디오" : n), mountedIn: ["studio"] });
+  const seat = folded.find((p) => p.key === "seat")!;
+  assert.deepEqual(seat.parts, [{ t: "사이드바", sec: "identity" }, "에서는 카드뉴스 스튜디오 밑에 접혀 있습니다."]);
+  assert.equal(sentences({ shell: { nav: "never" } }, base).find((p) => p.key === "seat")!.parts[1], "에는 숨겨져 있습니다 — 상세와 직접 주소로만 엽니다.");
+  assert.equal(sentences({ ...withParts, shell: { nav: "always" } }, { ...base, mountedIn: ["studio"] }).find((p) => p.key === "seat")!.parts[1], "에 늘 최상위로 섭니다.");
+});

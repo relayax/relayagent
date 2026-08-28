@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import Detail from "@/components/Detail";
 import Graph from "@/components/Graph";
+import SuitesCard from "@/components/SuitesCard";
 import type { EdgeView, Registry } from "@/lib/types";
 
 // 관리의 자리. 사이드바가 쓰는 자리라면 여기는 다스리는 자리다 — 지도(그래프), 설치·권한·자격의
@@ -39,6 +40,8 @@ export default function SettingsPane({ reg, edges, onChanged }: { reg: Registry;
       </header>
       <div className={`settings-body${selected ? " has-detail" : ""}${!selected && closing ? " detail-closing" : ""}`}>
         <div className="col">
+          {/* 묶음(사이드바 폴더·.relaypackages)은 지도 위의 카드다 — 연결(결재)이 아니라 배치라 지도의 선이 아니다 */}
+          <SuitesCard reg={reg} />
           <Graph reg={reg} edges={edges} sel={sel} onSelect={(name) => (name ? setSel(name) : sel && closeDetail())} onChanged={onChanged} />
         </div>
         {shown ? (

@@ -53,6 +53,10 @@ export interface CredentialDecl {
   help?: { url?: string; note?: string };
 }
 
+/** shell.nav 의 어휘 — 사이드바 자리. auto = 결재 관계로 유도 · always = 늘 최상위 · never = 목록에 안 선다 */
+export type NavMode = "auto" | "always" | "never";
+export const NAV_MODES: readonly NavMode[] = ["auto", "always", "never"];
+
 export interface Manifest {
   schema: string;
   name: string;
@@ -66,6 +70,8 @@ export interface Manifest {
   released_at?: string;
   /** 판 변경 기록(마크다운) — 스토어 리스팅·업그레이드 화면 메타 */
   changelog?: string;
+  /** 기판 셸(사이드바)에서의 자리 — display_name·icon 과 같은 표시 축. nav 미선언 = auto(결재 관계로 유도) */
+  shell?: { nav?: NavMode };
   requires?: RequiresDecl;
   /** 창구 선언 — 전부 경로 축이다. 트리거·채널로만 도는 패키지는 창구가 없을 수 있다 */
   surfaces?: {
@@ -148,7 +154,7 @@ const SIZE = /^\d+(Mi|Gi)$/;
 // 판정기가 아는 최상위 어휘의 전부. 미지 키는 거부한다 — 조용히 받으면 같은 manifest 가
 // 기판마다 다른 뜻이 되는 방언의 문이 열린다. 확장(org 의미)은 org 블록 한 곳으로만 들어온다
 const TOP_KEYS = new Set([
-  "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog",
+  "schema", "name", "version", "display_name", "description", "icon", "publisher", "released_at", "changelog", "shell",
   "requires", "surfaces", "harness", "agents", "scripts", "services",
   "triggers", "missions", "edges", "host_methods", "org",
 ]);
@@ -411,6 +417,15 @@ export function judge(m: Manifest, pkgPath?: string): void {
     }
     if (comp.out != null && badPath(comp.out)) issues.push("surfaces.components.out: 상대경로 필수");
   }
+  // shell.nav — 사이드바 자리의 어휘는 셋으로 닫는다. 미지값을 auto 로 접으면 저작자의 선택이 무음 소실된다
+  if (m.shell != null) {
+    if (typeof m.shell !== "object" || Array.isArray(m.shell)) issues.push("shell: 객체만");
+    else {
+      for (const k of Object.keys(m.shell)) if (k !== "nav") issues.push(`shell.${k}: 미지 키 — nav 만`);
+      const nav = (m.shell as { nav?: unknown }).nav;
+      if (nav != null && !NAV_MODES.includes(nav as NavMode)) issues.push(`shell.nav: auto | always | never 만 (지금 ${String(nav)})`);
+    }
+  }
   const chNames = new Set<string>();
   for (const c of m.surfaces?.channels ?? []) {
     if (!SLUG.test(c.name ?? "")) issues.push(`channels 이름 형식 위반: ${c.name}`);
@@ -665,6 +680,11 @@ export function landingAgentName(m: Manifest): string | null {
   if (explicit) return explicit.name;
   const short = shortName(m.name);
   return (m.agents ?? []).some((a) => a.name === short) ? short : null;
+}
+
+/** 선언된 사이드바 자리 — 미선언 = auto. 판정(누구 밑으로 접히는가)은 셸이 장부를 보고 한다(shell.ts) */
+export function navMode(m: Manifest): NavMode {
+  return m.shell?.nav ?? "auto";
 }
 
 /** 착지 에이전트의 인사말 — 빈 대화의 첫 줄. 새 대화는 정의상 착지에 떨어지므로(session.ts
