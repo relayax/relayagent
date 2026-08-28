@@ -243,6 +243,22 @@ export function shellNav(
       hidden: nav === "never",
     });
   }
+  // 접힘의 사슬은 끊겨 있어야 한다 — A 가 B 의 부품을, B 가 A 의 부품을 쓰면 서로가 서로의 자리가 되어
+  // 어느 쪽도 최상위에 서지 못하고 목록에서 통째로 사라진다(실측). 설치는 미설치 제공자를 거부하므로
+  // 순환은 발행으로만 생기지만, 생기면 문이 없어지는 것이라 여기서 끊는다: 장부 순으로 훑어 자기에게
+  // 돌아오는 사슬을 만나면 **그 항목**을 최상위로 올린다(먼저 앉은 쪽이 자리를 갖는다 — 결정적이다)
+  const parentOf = new Map(items.map((i) => [i.pkg, i.parent]));
+  for (const it of items) {
+    const seen = new Set<string>([it.pkg]);
+    for (let at = parentOf.get(it.pkg); at != null; at = parentOf.get(at) ?? null) {
+      if (seen.has(at)) {
+        it.parent = null;
+        parentOf.set(it.pkg, null);
+        break;
+      }
+      seen.add(at);
+    }
+  }
   // 설치한 순서대로 아래로 쌓인다 — 이름순은 새로 하나 앉힐 때마다 자리가 흔들려 손이 외우지 못한다.
   // 순서는 원장 키 순서 그대로(재설치는 같은 키를 덮어써 자리를 지킨다). 셸 자신(ring 0)은
   // 설치된 것들과 성격이 다르니 맨 위에 고정한다 — sort 는 안정 정렬이라 나머지 순서는 남는다
@@ -578,7 +594,18 @@ function drawTree(container, list, here, depth){
     container.appendChild(row(it, here, d, ks.length ? { open: open, key: "p:" + it.pkg } : null, inside));
     if (open && !effective) for (var k = 0; k < ks.length; k++) draw(ks[k], d + 1);
   }
+  // 그물 — 뿌리에서 **사슬로 닿는가**를 접힘과 따로 센다. 접혀서 안 그려진 자식은 제자리가 있는
+  // 것이고(펼치면 나온다), 사슬이 돌아 어느 뿌리에서도 닿지 못하는 항목만 줄을 잃는다.
+  // 판정은 기판이 끊지만(shellNav), 그리는 쪽도 항목을 삼키지 않는다
+  var reach = {}, queue = roots.slice();
+  for (var q = 0; q < queue.length; q++) {
+    if (reach[queue[q].pkg]) continue;
+    reach[queue[q].pkg] = 1;
+    var ks2 = kids[queue[q].pkg] || [];
+    for (var k2 = 0; k2 < ks2.length; k2++) queue.push(ks2[k2]);
+  }
   for (var r = 0; r < roots.length; r++) draw(roots[r], depth);
+  for (var u = 0; u < list.length; u++) if (!reach[list[u].pkg]) draw(list[u], depth);
 }
 
 function applyBrand(nav){

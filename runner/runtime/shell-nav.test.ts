@@ -116,3 +116,43 @@ test("facesOf 는 그대로 — components 수출은 얼굴이 아니다(화면�
   assert.deepEqual(facesOf(loadManifest(bank)), ["view"]);
   assert.deepEqual(facesOf({ name: "@t/x", surfaces: { components: { source: "x" } } } as never), ["parts"]);
 });
+
+test("서로를 마운트하면 사슬을 끊는다 — 순환은 목록에서 사라지는 것과 같아서, 먼저 앉은 쪽이 최상위로 선다", () => {
+  const cyc = {
+    ...ledger,
+    packages: { forge: { path: forge }, bank: { path: bank } },
+    grants: [
+      { consumer: "forge", provider: "bank", components: true },
+      { consumer: "bank", provider: "forge", components: true },
+    ],
+  } as unknown as Ledger;
+  const by = Object.fromEntries(shellNav(cyc, []).items.map((i) => [i.pkg, i]));
+  // 근거(누가 나를 쓰는가)는 둘 다 남고, 자리만 끊긴다
+  assert.deepEqual(by.forge.mounted_in, ["bank"]);
+  assert.deepEqual(by.bank.mounted_in, ["forge"]);
+  const roots = Object.values(by).filter((i) => i.parent === null);
+  assert.equal(roots.length, 1, "한쪽은 최상위로 올라와야 한다");
+  assert.equal(by.forge.parent, null); // 장부 순의 앞(forge)이 자리를 갖는다
+  assert.equal(by.bank.parent, "forge");
+});
+
+test("세 개가 도는 사슬도 끊긴다 — 어느 항목도 자리를 잃지 않는다", () => {
+  const three = {
+    ...ledger,
+    packages: { hub: { path: hub }, forge: { path: forge }, bank: { path: bank } },
+    grants: [
+      { consumer: "hub", provider: "forge", components: true },
+      { consumer: "forge", provider: "bank", components: true },
+      { consumer: "bank", provider: "hub", components: true },
+    ],
+  } as unknown as Ledger;
+  const items = shellNav(three, []).items;
+  assert.equal(items.filter((i) => i.parent === null).length, 1);
+  // 사슬을 따라 올라가면 반드시 최상위에 닿는다(무한히 돌지 않는다)
+  const by = Object.fromEntries(items.map((i) => [i.pkg, i]));
+  for (const it of items) {
+    let at: string | null = it.pkg;
+    for (let n = 0; at != null && n <= items.length; n++) at = by[at].parent;
+    assert.equal(at, null, `${it.pkg} 의 사슬이 끝나지 않는다`);
+  }
+});
