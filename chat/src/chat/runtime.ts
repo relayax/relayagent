@@ -390,6 +390,9 @@ function llmNetworkGuide(): string {
 // 계약 소유 코드(client-protocol §5.0-10)는 문장으로, 미등록 E_ 코드는 괄호 보존 문구로 감싼다.
 // 사유 없는 실패의 기본 문장 — 본문에는 싣지 않고 상태 칩(TurnStatusChip)이 대신 말한다.
 const GENERIC_TURN_ERROR = "응답을 만들지 못했어요";
+/** 기판 문지기 문장(client-protocol §8-42-a — 서버 정본 runner/runtime/harness.ts): 앞선 요청이 도는 동안
+ *  도착한 발화의 거절. 위젯은 이 문장을 만들지 않고 알아보기만 한다. */
+const BUSY_GUARD_RE = /이전 요청을 처리하는 중/;
 const TURN_ERROR_TEXT: Record<string, string> = {
   E_DISCONNECTED: "연결이 잠시 끊겼어요. 진행 중이던 응답은 서버에서 계속 만들어져요. 잠시 후 대화를 다시 열어 확인해 주세요.",
   E_NETWORK: "서버와 통신하지 못했어요. 네트워크 상태를 확인하고 다시 시도해 주세요.",
@@ -423,8 +426,9 @@ function friendlyTurnError(text: string): string {
 /** files = 이 턴의 무대 산출물(stage 상대 경로). 봉투 축 확장이 아니라 여기 사는 이유:
  *  실황은 봉투 file 이벤트가, 재생은 이력의 files 가 같은 자리를 채운다 — 두 길이 한 필드로
  *  모여야 방금 본 화면과 다시 연 화면이 같은 것을 그린다. */
-/** turnId = 절단(cut)으로 마감된 라이브 턴의 좌표 — 상태 칩의 "다시 연결"이 재관찰할 근거(재생 이력엔 없다). */
-export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[]; turnId?: string };
+/** turnId = 절단(cut)으로 마감된 라이브 턴의 좌표 — 상태 칩의 "다시 연결"이 재관찰할 근거(재생 이력엔 없다).
+ *  blocked = 앞선 요청이 도는 동안 문지기(§8-42-a)가 물린 발화 — 재전송 버튼 대신 기다리라는 안내가 선다. */
+export type TurnMeta = { usage?: any; contextUsage?: any; durationMs?: number; costUsd?: number; numTurns?: number; ended?: "ok" | "error" | "cancelled" | "cut"; model?: string; effort?: string; files?: string[]; turnId?: string; blocked?: boolean };
 
 export type ReplayMessage =
   | { role: "user"; content: { type: "text"; text: string }[]; createdAt?: Date; turnId?: string }
@@ -1574,6 +1578,9 @@ export function makeAdapter(getContext: () => RelayCtx): ChatModelAdapter {
       if (!driveError && meta.custom.ended === "error") {
         // 봉투 error 이벤트로 종결된 턴 — 사유는 리듀서가 meta.error 에 보관했다.
         const raw = (reducer.meta as { error?: string }).error || GENERIC_TURN_ERROR;
+        // 기판 문지기 문장(§8-42-a) — 이 발화는 받아들여지지 않았고 앞선 턴이 끝나야 보낼 수 있다.
+        // 재전송 버튼은 같은 문지기에 또 부딪히므로 달지 않는다(실측 2026-08-28: 1초에 3번).
+        if (BUSY_GUARD_RE.test(String(raw))) meta.custom.blocked = true;
         const base = friendlyTurnError(String(raw).replace(/^turn failed:\s*ERROR:\s*/i, "").trim());
         // 자격(401) → 연결(refused) 순으로 분류한다. 여기는 실패 확정 경로라 오탐이 없다.
         const guide = isLlmAuthError(raw) ? llmAuthGuide() : isLlmNetworkError(raw) ? llmNetworkGuide() : "";
