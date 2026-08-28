@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runCommand } from "../spawn.ts";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -112,44 +112,6 @@ export function assetsAtDaemonRoot(outDir: string): string[] {
  *  비동기가 되면서 생긴 자리다: 동기일 때는 겹칠 수가 없었다 */
 const inflight = new Map<string, Promise<unknown>>();
 
-interface ChildRun {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
-
-/**
- * 자식 프로세스 하나를 비동기로 끝까지 — 데몬의 이벤트 루프를 붙들지 않는다.
- *
- * spawnSync 였던 자리다. 발행 한 번에 Next 빌드가 수십 초 도는 동안 데몬이 통째로 멈춰 콘솔·위젯의
- * SSE 가 끊기고, 도는 세션의 도구 호출이 걸리고, 데스크톱 앱은 데몬을 죽은 것으로 보고 다시 띄우려
- * 했다(실측 2026-08-28: "데몬이 이미 실행 중입니다" 가 빌드 완료 1초 전에 찍혔다 — 사용자에게는
- * 기판이 주기적으로 재기동되는 것으로 보였다). 시한을 넘기면 죽이고 status null 로 돌려준다.
- */
-function runChild(command: string, args: string[], opts: { cwd: string; env: Record<string, string> }): Promise<ChildRun> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    child.stdout?.on("data", (b) => { stdout += String(b); });
-    child.stderr?.on("data", (b) => { stderr += String(b); });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, TIMEOUT);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ status: null, stdout, stderr: stderr + String(e), timedOut });
-    });
-    child.on("close", (status) => {
-      clearTimeout(timer);
-      resolve({ status, stdout, stderr, timedOut });
-    });
-  });
-}
-
 /**
  * npm 프로젝트 하나를 굽는다 — view 와 components 가 같이 쓴다.
  * node_modules 부재는 최초 설치 신호다(재빌드는 install 을 건너뛴다 — 굽는 시간의 대부분이 여기다).
@@ -171,7 +133,7 @@ async function runProjectBuild(src: string, label: string, env: Record<string, s
   const runNpm = (args: string[]) => {
     const command = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
     const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "npm.cmd", ...args] : args;
-    return runChild(command, commandArgs, { cwd: src, env });
+    return runCommand(command, commandArgs, { cwd: src, env, timeout: TIMEOUT });
   };
 
   const prev = inflight.get(src) ?? Promise.resolve();

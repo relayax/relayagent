@@ -226,7 +226,7 @@ if (p === "/store/install" && req.method === "GET") {
       { installPage(res, 409, "새 버전이 있습니다", `링크는 v${want}, 스토어는 v${entry.version} 입니다. 내 서재에서 다시 눌러 주세요.`); return true; }
     }
     const abs = await redeemWithTicket(STORE_INDEX_URL, entry, ticket);
-    const prep = prepareArtifact(getLedger(), abs, { digest: entry.digest, registry: STORE_INDEX_URL });
+    const prep = await prepareArtifact(getLedger(), abs, { digest: entry.digest, registry: STORE_INDEX_URL });
     prepared.set(prep.id, { p: prep, at: Date.now() });
     for (const [id, v] of prepared) if (Date.now() - v.at > PREPARE_TTL) prepared.delete(id);
     { consentPage(res, prep); return true; }
@@ -327,7 +327,7 @@ if (p === "/store/import" && req.method === "POST") {
   const tmp = path.join(stageDir("import"), `${Date.now()}.relay`);
   fs.writeFileSync(tmp, Buffer.concat(chunks));
   try {
-    const prep = prepareArtifact(getLedger(), tmp);
+    const prep = await prepareArtifact(getLedger(), tmp);
     prepared.set(prep.id, { p: prep, at: Date.now() });
     { json(res, 200, { id: prep.id }); return true; }
   } catch (e) {
@@ -408,7 +408,7 @@ if (p === "/install/prepare" && req.method === "POST") {
     // 화면은 선반의 파일 이름만 안다 — 절대경로가 아니면 선반 아래로 봉인해 해석한다
     abs = file.startsWith("/") ? file : path.join(artifactsDir(), path.basename(file));
   }
-  const prep = prepareArtifact(getLedger(), abs, { name: b.name ? String(b.name) : undefined, digest, registry });
+  const prep = await prepareArtifact(getLedger(), abs, { name: b.name ? String(b.name) : undefined, digest, registry });
   prepared.set(prep.id, { p: prep, at: Date.now() });
   for (const [id, v] of prepared) if (Date.now() - v.at > PREPARE_TTL) prepared.delete(id);
   const { manifest: _m, ...rest } = prep;
@@ -425,7 +425,7 @@ if (p === "/install/activate" && req.method === "POST") {
   const r = await activatePrepared(l, held.p, { workspace: b.workspace ? String(b.workspace) : undefined });
   stopServices(held.p.name); // 업데이트라면 옛 릴리스 코드로 떠 있다 — 새 스냅샷으로 갈아탄다
   const rio = runnerIO(l);
-  const notes = [...startServices(l, held.p.name, held.p.dir, held.p.manifest, rio), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest, rio)];
+  const notes = [...(await startServices(l, held.p.name, held.p.dir, held.p.manifest, rio)), ...startChannels(l, held.p.name, held.p.dir, held.p.manifest, rio)];
   ticker.emit(held.p.fresh ? "relay.package.installed" : "relay.package.published", { pkg: held.p.name, version: held.p.version });
   { json(res, 200, { name: r.name, fresh: held.p.fresh, version: held.p.version, setup: r.setup ?? null, build: r.build ?? null, services: notes }); return true; }
 }

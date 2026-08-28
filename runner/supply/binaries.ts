@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { runCommand } from "../spawn.ts";
 import { RELAY_HOME } from "./ledger.ts";
 import type { BinaryRequire, Manifest } from "./manifest.ts";
 
@@ -111,7 +112,7 @@ export interface EnsureResult {
  *      무조건 설치는 한 번에 921MB 였다).
  *   ④ 어디에도 없음 → 레시피가 있으면 깔고, 없으면 안내와 함께 실패.
  */
-export function ensureBinary(pkg: string, b: BinaryRequire): EnsureResult {
+export async function ensureBinary(pkg: string, b: BinaryRequire): Promise<EnsureResult> {
   const pinned = hasRecipe(b) && b.version != null;
   if (pinned && substrateBinaryReady(pkg, b)) return { ok: true, cached: true, out: `${b.name} 준비됨 (기판 사본, ${b.version} 고정)` };
   if (!pinned) {
@@ -123,13 +124,13 @@ export function ensureBinary(pkg: string, b: BinaryRequire): EnsureResult {
   }
   fs.mkdirSync(pkgBinRoot(pkg), { recursive: true });
   const { cmd, args, env } = installCommand(pkg, b);
-  const r = spawnSync(cmd, args, { encoding: "utf8", env, timeout: 10 * 60_000 });
-  if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") {
+  const r = await runCommand(cmd, args, { env, timeout: 10 * 60_000 });
+  if (r.error && r.error.code === "ENOENT") {
     return { ok: false, cached: false, out: `${b.manager} 이 없습니다 — ${b.name} 을 기판이 설치하려면 ${b.manager} 가 필요합니다${b.install ? ` (직접 설치: ${b.install})` : ""}` };
   }
   if (r.status !== 0) {
-    const tail = ((r.stdout ?? "") + (r.stderr ?? "")).trim().slice(-600);
-    return { ok: false, cached: false, out: `${b.name} 설치 실패(${b.manager}):\n${tail}` };
+    const tail = (r.stdout + r.stderr).trim().slice(-600);
+    return { ok: false, cached: false, out: `${b.name} 설치 ${r.timedOut ? "시한 초과(10분)" : "실패"}(${b.manager}):\n${tail}` };
   }
   if (!substrateBinaryReady(pkg, b)) {
     // 설치는 0 으로 끝났는데 실행 파일이 없다 = 선언과 실체의 불일치(name 이 패키지가 까는 이름과 다르다)
@@ -143,15 +144,14 @@ export function ensureBinary(pkg: string, b: BinaryRequire): EnsureResult {
  * 존재 검사(ensureBinary ③)는 껍데기 설치를 통과시키므로, "있는데 안 도는" 부류는 여기가
  * 유일한 회복 경로다. 참조가 없으면 null(기판이 대줄 것이 없다 — 어댑터의 처방이 답이다).
  */
-export function provisionForVariant(pkg: string, m: Manifest, variantBinary: string | undefined): EnsureResult | null {
+export async function provisionForVariant(pkg: string, m: Manifest, variantBinary: string | undefined): Promise<EnsureResult | null> {
   if (!variantBinary) return null;
   const b = (m.requires?.binaries ?? []).find((x) => x.name === variantBinary);
   if (!b || !hasRecipe(b)) return null;
   if (substrateBinaryReady(pkg, b)) return null; // 이미 기판 사본인데도 실패 — 도구 문제가 아니다
   const forced: BinaryRequire = { ...b, version: b.version ?? "latest" };
   // version "latest" 는 npm/uv 의 실제 태그다 — 고정 취급으로 호스트를 건너뛰게 하는 장치
-  const r = ensureBinary(pkg, forced);
-  return r;
+  return await ensureBinary(pkg, forced);
 }
 
 /** 패키지 제거의 동반 조치 — 기판이 깐 사본도 함께 치운다. */

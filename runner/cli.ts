@@ -125,9 +125,9 @@ async function main(): Promise<void> {
             file = await downloadArtifact(storeUrl, entry);
           }
           console.log(`받음: ${entry.ref}@${entry.version} (${(entry.size / 1024).toFixed(0)}KB, 봉인 대조 통과)`);
-          p = prepareArtifact(ledger, file, { name: flag("name"), digest: entry.digest, registry: storeUrl });
+          p = await prepareArtifact(ledger, file, { name: flag("name"), digest: entry.digest, registry: storeUrl });
         } else {
-          p = prepareArtifact(ledger, target, { name: flag("name"), digest: flag("digest") });
+          p = await prepareArtifact(ledger, target, { name: flag("name"), digest: flag("digest") });
         }
         console.log(`${p.manifest.display_name} (${p.ref}@${p.version}, ${(p.size / 1024).toFixed(0)}KB)`);
         console.log(`  봉인 확인됨 ${p.digest.slice(0, 22)}...`);
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
           console.log(`${v.name === active ? "*" : " "} ${v.name}\t(llm: ${v.llm?.provider ?? "어댑터 기본"})`);
         }
       } else {
-        const r = setHarness(ledger, pkg, name);
+        const r = await setHarness(ledger, pkg, name);
         console.log(`활성 하네스: ${r.active}`);
         console.log(`setup: ${r.setup.ok ? "준비됨" : "불가"} — ${r.setup.out}`);
       }
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
       if (!pkg) throw new Error("사용법: relay harness-check <패키지>");
       const { conformPkg } = await import("./supply/conform.ts");
       let allOk = true;
-      for (const r of conformPkg(ledger, pkg)) {
+      for (const r of await conformPkg(ledger, pkg)) {
         console.log(`${r.ok ? "통과" : "위반"}  ${r.variant}`);
         for (const c of r.checks) console.log(`  ${c.ok ? "o" : "x"} ${c.verb}: ${c.note}`);
         allOk = allOk && r.ok;
@@ -340,7 +340,7 @@ async function main(): Promise<void> {
       const [pkg, ...rest] = args;
       if (!pkg) throw new Error("사용법: relay login <패키지> [--token]");
       const { harnessLogin } = await import("./supply/install.ts");
-      process.exitCode = harnessLogin(ledger, pkg, rest);
+      process.exitCode = await harnessLogin(ledger, pkg, rest);
       break;
     }
 
@@ -349,7 +349,7 @@ async function main(): Promise<void> {
       if (!pkg) throw new Error("사용법: relay model <패키지> [모델]");
       const { harnessVerb } = await import("./supply/install.ts");
       if (!model) {
-        const r = harnessVerb(ledger, pkg, "models");
+        const r = await harnessVerb(ledger, pkg, "models");
         console.log(`지원 모델: ${r.out}`);
         console.log(`현재 설정: ${ledger.packages[pkg]?.model ?? "(어댑터 기본)"}`);
       } else {
@@ -359,7 +359,7 @@ async function main(): Promise<void> {
         console.log(`설정됨: ${pkg} -> ${model}`);
         // 저장 시점 재검증 — 장부에 없는 모델이 조용히 썩는 사고의 답. 직접 입력은 막지 않는다
         try {
-          const arr = JSON.parse(harnessVerb(ledger, pkg, "models").out);
+          const arr = JSON.parse((await harnessVerb(ledger, pkg, "models")).out);
           if (Array.isArray(arr) && !arr.includes(model)) {
             console.log("주의: 어댑터 모델 목록에 없는 이름입니다 — 세션에서 거부되면 relay model " + pkg + " 로 목록을 확인하세요");
           }

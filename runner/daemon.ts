@@ -161,7 +161,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const r = await installPkg(getLedger(), dir, { ring0: opts?.ring0, workspace: opts?.workspace, bindings: opts?.bindings });
       retireResidents(r.name); // 재설치라면 상주가 옛 코드·옛 번들로 떠 있다
       retireScriptWorkers(r.name);
-      startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
+      await startServices(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       startChannels(getLedger(), r.name, getLedger().packages[r.name].path, r.manifest);
       getTicker()?.emit("relay.package.installed", { pkg: r.name });
       // setup 과 build 결과를 여기서 버리면 "설치 성공" 이 검증 없이 참이 된다
@@ -189,7 +189,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       // 임베더가 착지를 맡는 기판(Authority.publish) — 발행물은 여기 장부에 앉지 않는다. 스냅샷을
       // 봉투로 굽고 넘기며, 설치는 그쪽의 별 걸음이다. 거부는 그대로 throw(스튜디오가 사유를 낸다)
       if (authority.publish) {
-        const st = stageRelease(name, opts);
+        const st = await stageRelease(name, opts);
         if ("published" in st) return { ...st, landed: "org" };
         const env = packDir(st.path, path.join(os.tmpdir(), `relay-publish-${name}-${st.version}-${process.pid}.tgz`));
         try {
@@ -206,7 +206,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
         retireResidents(name);
         retireScriptWorkers(name);
         stopServices(name);
-        const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
+        const notes = [...(await startServices(l, name, r.path, r.manifest)), ...startChannels(l, name, r.path, r.manifest)];
         getTicker()?.emit(r.fresh ? "relay.package.installed" : "relay.package.published", { pkg: name, version: r.version });
         return { ...r, manifest: undefined, services: notes, landed: "local" };
       }
@@ -264,7 +264,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       retireResidents(name);
       retireScriptWorkers(name);
       stopServices(name);
-      const notes = [...startServices(l, name, r.path, r.manifest), ...startChannels(l, name, r.path, r.manifest)];
+      const notes = [...(await startServices(l, name, r.path, r.manifest)), ...startChannels(l, name, r.path, r.manifest)];
       return { name: r.name, version: r.version, path: r.path, services: notes };
     },
     dispatch: async (providerRef, mission, payload, consumer) => {
@@ -466,7 +466,7 @@ export function createApi(
         // probe=1 이면 variant 전수를 실제로 실행해 준비 상태·계정·capabilities 를 싣는다.
         // 어댑터 구현이 정상이면 행마다 무조건 뜬다 — 활성만 점검하던 구멍의 답
         const probes = url.searchParams.get("probe") === "1"
-          ? new Map(probeHarness(l, pkg).map((x) => [x.name, x]))
+          ? new Map((await probeHarness(l, pkg)).map((x) => [x.name, x]))
           : null;
         const variants = (m.harness?.variants ?? []).map((v) => ({
           name: v.name,
@@ -482,14 +482,14 @@ export function createApi(
         const { setHarness } = await import("./supply/install.ts");
         const pkg = decodeURIComponent(hs[1]);
         retireResidents(pkg); // 상주는 이전 하네스로 떠 있다
-        return void json(res, 200, setHarness(getLedger(), pkg, String(b.name ?? "")));
+        return void json(res, 200, await setHarness(getLedger(), pkg, String(b.name ?? "")));
       }
 
       // token 자격형의 웹 연결 경로 — vault 에 provider 소속으로 앉는다
       const hc = p.match(/^\/pkg\/([^/]+)\/harness\/connect$/);
       if (hc && req.method === "POST") {
         const b = await readBody(req);
-        const setup = connectHarnessToken(getLedger(), decodeURIComponent(hc[1]), String(b.token ?? ""));
+        const setup = await connectHarnessToken(getLedger(), decodeURIComponent(hc[1]), String(b.token ?? ""));
         return void json(res, 200, { ok: setup.ok, setup });
       }
 
@@ -525,7 +525,7 @@ export function createApi(
           return void json(res, 200, { ok: true });
         }
         if (cop[3] === "verify") {
-          return void json(res, 200, verifyChannel(rec.path, c, await authority.credential(credKey(pkg, channel))));
+          return void json(res, 200, await verifyChannel(rec.path, c, await authority.credential(credKey(pkg, channel))));
         }
         // restart — 옛 상주를 죽이고 다시 스폰한다(새 자격 반영). 정체 가드가 겹침 레이스를 막는다
         stopChannel(pkg, channel);
@@ -609,7 +609,7 @@ export function createApi(
         const b = await readBody(req);
         const pkg = decodeURIComponent(hl[1]);
         if (b.mode === "terminal") {
-          return void json(res, 200, { mode: "terminal", ...launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch }) });
+          return void json(res, 200, { mode: "terminal", ...(await launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch })) });
         }
         return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, authority, { switch: !!b.switch }) });
       }
@@ -630,7 +630,7 @@ export function createApi(
       // 클라이언트 계약이 가져갔다(§5.5-29·30). setup 은 준비 상태를 여는 관리 동사라 계약 밖(§5.5-31)
       const hv = p.match(/^\/pkg\/([^/]+)\/harness\/setup$/);
       if (hv && req.method === "GET") {
-        return void json(res, 200, harnessVerb(getLedger(), decodeURIComponent(hv[1]), "setup"));
+        return void json(res, 200, await harnessVerb(getLedger(), decodeURIComponent(hv[1]), "setup"));
       }
 
       // 데이터 폴더 열기 — 패키지의 workspace 를 OS 파일 탐색기로 연다.
@@ -812,15 +812,18 @@ export function startDaemon(): void {
   void sweepPendingDeliveries(daemonAuthority)
     .then((n) => { if (n) console.log(`미결 위임 배달: ${n}건`); })
     .catch((e) => console.error(`미결 위임 배달 실패 - ${e}`));
-  for (const [name, rec] of Object.entries(l.packages)) {
-    try {
-      const m = loadManifest(rec.path);
-      const notes = [...startServices(l, name, rec.path, m), ...startChannels(l, name, rec.path, m)];
-      for (const n of notes) console.log(n);
-    } catch (e) {
-      console.error(`${name}: 서비스 기동 실패 - ${e}`);
+  // 서비스·채널 기동은 문을 막지 않는다 — 컨테이너 몸의 docker build 가 수 분 걸려도 데몬은 이미 듣는다
+  void (async () => {
+    for (const [name, rec] of Object.entries(l.packages)) {
+      try {
+        const m = loadManifest(rec.path);
+        const notes = [...(await startServices(l, name, rec.path, m)), ...startChannels(l, name, rec.path, m)];
+        for (const n of notes) console.log(n);
+      } catch (e) {
+        console.error(`${name}: 서비스 기동 실패 - ${e}`);
+      }
     }
-  }
+  })();
   // 원격 제어 상주 — 장부에 켜짐이 남은 패키지를 잇는다(서비스와 같은 자리, 문을 막지 않는다)
   void resumeRemotes(daemonAuthority, localSessionIO(() => loadLedger()))
     .then((notes) => { for (const n of notes) console.log(n); })

@@ -2,13 +2,12 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { saveLedger, expandHome, workspacePath, RELAY_HOME, type Grant, type Ledger, type PkgOrigin } from "./ledger.ts";
 import { loadManifest, judge, activeHarness, disclosure, ManifestError, type Disclosure, type Manifest, type HarnessVariant, listScripts } from "./manifest.ts";
 import { pinnedKeys, verifyDigest, type EnvelopeSignature } from "./sign.ts";
 import { buildView, buildComponents, componentBundleUrl, componentOutDir, type BuildResult } from "../runtime/view.ts";
 import { conformHarness } from "./conform.ts";
-import { spawnEntrySync } from "../spawn.ts";
+import { spawnEntrySync, runEntry, runCommand } from "../spawn.ts";
 import { ensureBinary, binaryEnv, provisionForVariant, removeBinaries } from "./binaries.ts";
 import { vaultGet, vaultSet } from "../vault.ts";
 import { sha256File, unpackArtifact } from "./pack.ts";
@@ -90,7 +89,7 @@ export interface InstallResult {
 }
 
 /** requires 실체 판정. 기판은 안내(install)만 전하고 대신 설치하지 않는다 */
-export function judgeRequires(m: Manifest, pkgName: string): void {
+export async function judgeRequires(m: Manifest, pkgName: string): Promise<void> {
   const r = m.requires;
   if (!r) return;
   const issues: string[] = [];
@@ -101,7 +100,7 @@ export function judgeRequires(m: Manifest, pkgName: string): void {
   // 항목은 없을 때 기판이 채우고(ensureBinary ④), 레시피 없는 항목은 안내와 함께 거부한다.
   // 채우다 실패한 것도 거부다: "기판이 대준다" 는 선언이 조용히 빈 약속이 되면 안 된다.
   for (const b of r.binaries ?? []) {
-    const t = ensureBinary(pkgName, b);
+    const t = await ensureBinary(pkgName, b);
     if (!t.ok) issues.push(t.out);
   }
   const appRoots = ["/Applications", path.join(os.homedir(), "Applications"), "/System/Applications"];
@@ -114,9 +113,8 @@ export function judgeRequires(m: Manifest, pkgName: string): void {
 }
 
 /** 하네스 계약 검사 — 어댑터 동사를 실제 실행한다. 위반이면 fail-loud (장부 기록 전에 불러야 한다) */
-function judgeConform(pkgPath: string, m: Manifest): void {
-  const broken = (m.harness?.variants ?? [])
-    .map((v) => conformHarness(pkgPath, v))
+async function judgeConform(pkgPath: string, m: Manifest): Promise<void> {
+  const broken = (await Promise.all((m.harness?.variants ?? []).map((v) => conformHarness(pkgPath, v))))
     .filter((r) => !r.ok)
     .map((r) => `${r.variant}: ` + r.checks.filter((c) => !c.ok).map((c) => `${c.verb} — ${c.note}`).join(" / "));
   if (broken.length) {
@@ -125,7 +123,7 @@ function judgeConform(pkgPath: string, m: Manifest): void {
 }
 
 /** variant 전수 setup 을 돌려 쓸 수 있는 하네스를 선출한다 — installPkg 과 activatePrepared 공용 */
-function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: string | null; out: string } | null {
+async function electHarness(pkgName: string, pkgPath: string, m: Manifest): Promise<{ picked: string | null; out: string } | null> {
   const variants = m.harness?.variants ?? [];
   if (!variants.length) return null;
   const reports: string[] = [];
@@ -133,18 +131,18 @@ function electHarness(pkgName: string, pkgPath: string, m: Manifest): { picked: 
   for (const v of variants) {
     // Windows 에서는 엔트리 확장자 해석이 필요하다 — 이 레포의 어댑터 실행 규약(spawnEntrySync)을 따른다
     const entry = path.join(pkgPath, v.source, v.entry);
-    const setup = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(pkgName) });
+    const setup = () => runEntry(entry, ["setup"], { env: binaryEnv(pkgName) });
     // 실행 파일 실재는 judgeRequires 가 이미 보장했다(AND — 레시피 항목은 기판이 채운다).
     // 여기 남은 판정은 준비 상태(자격·로그인)와, 존재 검사가 못 거르는 껍데기 설치뿐이다.
-    let r = setup();
+    let r = await setup();
     let note = "";
     if (r.status !== 0) {
       // setup 실패 + 변형이 requires 를 참조 — "있는데 안 도는" 부류(네이티브 바이너리 빠진
       // npm 래퍼 실사고)일 수 있다. 참조된 레시피를 기판 사본으로 강제 승격하고 한 번 재시도.
-      const t = provisionForVariant(pkgName, m, v.binary);
+      const t = await provisionForVariant(pkgName, m, v.binary);
       if (t) {
         note = ` · ${t.out}`;
-        if (t.ok) r = setup();
+        if (t.ok) r = await setup();
       }
     }
     const out = ((r.stdout ?? "") + (r.stderr ?? "")).trim();
@@ -158,12 +156,12 @@ export async function installPkg(ledger: Ledger, dir: string, opts: InstallOpts 
   const abs = path.resolve(dir);
   const m = loadManifest(abs);
   const name = opts.name ?? path.basename(abs);
-  judgeRequires(m, name); // 장부에 기록되기 전에 fail-loud — 레시피 항목은 여기서 기판이 채운다
+  await judgeRequires(m, name); // 장부에 기록되기 전에 fail-loud — 레시피 항목은 여기서 기판이 채운다
 
   // 계약 적합성은 설치 게이트다. 도구 미설치(환경 미비)와 계약 위반(어댑터 결함)은 다른 축이라
   // conform 은 setup 실패를 위반으로 세지 않는다 — 여기서 막히는 것은 잘못 만든 어댑터뿐이다.
   // 장부 기록 전에 던져야 거부된 패키지가 등재된 채 남지 않는다(judgeRequires 와 같은 자리)
-  judgeConform(abs, m);
+  await judgeConform(abs, m);
   // components edge 는 빌드 의존 — 미해결(미설치 provider·제공 선언 없음·범위 밖)이면
   // 장부 기록 전에 fail-loud (judgeRequires 와 같은 자리)
   const components = resolveComponentEdges(ledger, m);
@@ -186,7 +184,7 @@ export async function installPkg(ledger: Ledger, dir: string, opts: InstallOpts 
   const current = ledger.packages[name].harness;
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 선출한다
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(name, abs, m)!;
+    const elected = (await electHarness(name, abs, m))!;
     ledger.packages[name].harness = elected.picked ?? variants[0].name;
     saveLedger(ledger);
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[name].harness}\n` + elected.out };
@@ -283,11 +281,11 @@ export interface Prepared {
  * 이름 결정 -> 릴리스 자리로 이동 -> 고지서 계산. 패키지 코드는 실행되지 않는다.
  * 릴리스는 불변이라 같은 버전 자리에 다른 내용이 오면 거부한다 (.relay-digest 로 대조).
  */
-export function prepareArtifact(
+export async function prepareArtifact(
   ledger: Ledger,
   file: string,
   opts: { name?: string; digest?: string; registry?: string | null; signature?: EnvelopeSignature } = {},
-): Prepared {
+): Promise<Prepared> {
   const abs = path.resolve(expandHome(file));
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error(`없는 아티팩트: ${file}`);
   const digest = sha256File(abs);
@@ -318,7 +316,7 @@ export function prepareArtifact(
     unpackArtifact(abs, staging);
     const m = loadManifest(staging); // 판정 실패는 여기서 fail-loud
     const { name, fresh } = resolveInstallName(ledger, m.name, opts.name);
-    judgeRequires(m, name);
+    await judgeRequires(m, name);
     const dest = path.join(RELAY_HOME, "releases", name, m.version);
     const digestFile = path.join(dest, ".relay-digest");
     if (fs.existsSync(dest)) {
@@ -389,7 +387,7 @@ export async function buildSurfaces(pkg: string, dir: string, m: Manifest, base?
  */
 export async function activatePrepared(ledger: Ledger, p: Prepared, opts: InstallOpts = {}): Promise<InstallResult> {
   const m = p.manifest;
-  judgeConform(p.dir, m);
+  await judgeConform(p.dir, m);
   const components = resolveComponentEdges(ledger, m);
   const build = await buildSurfaces(p.name, p.dir, m);
   if (build && !build.ok) {
@@ -424,7 +422,7 @@ export async function activatePrepared(ledger: Ledger, p: Prepared, opts: Instal
   const variants = m.harness?.variants ?? [];
   const current = ledger.packages[p.name].harness;
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = electHarness(p.name, p.dir, m)!;
+    const elected = (await electHarness(p.name, p.dir, m))!;
     ledger.packages[p.name].harness = elected.picked ?? variants[0].name;
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[p.name].harness}\n` + elected.out };
   }
@@ -460,13 +458,13 @@ function llmEnv(v: HarnessVariant, pkg?: string): NodeJS.ProcessEnv {
 
 /** variant 를 주면 활성이 아닌 선언 변형에도 묻는다(모델 피커가 공급자 호버로 그 카탈로그를
  *  미리 보는 자리, §5.5-29) — 조회일 뿐 장부는 건드리지 않는다. 미선언 이름은 거부. */
-export function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info" | "setup" | "commands", variant?: string): { ok: boolean; out: string } {
+export async function harnessVerb(ledger: Ledger, name: string, verb: "models" | "info" | "setup" | "commands", variant?: string): Promise<{ ok: boolean; out: string }> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
   const v = variant ? ((m.harness?.variants ?? []).find((x) => x.name === variant) ?? null) : activeHarness(m, rec.harness);
   if (!v) throw new Error(variant ? `미선언 하네스: ${variant}` : `하네스 미동봉 패키지: ${name}`);
-  const r = spawnEntrySync(path.join(rec.path, v.source, v.entry), [verb], { encoding: "utf8", env: llmEnv(v, name) });
+  const r = await runEntry(path.join(rec.path, v.source, v.entry), [verb], { env: llmEnv(v, name) });
   // models·info·commands 는 stdout 이 JSON 계약이다. stderr(강등 사유 등)를 섞으면
   // JSON 해석이 깨져 화면의 모델 목록이 통째로 사라진다 — 진단문은 setup 에만 합친다
   const jsonVerb = verb === "models" || verb === "info" || verb === "commands";
@@ -489,21 +487,22 @@ export interface VariantProbe {
 }
 
 /** variant 전수 점검 — 다이얼로그의 행별 준비 상태·계정 표시가 이걸 그린다. 활성만 보던 구멍의 답 */
-export function probeHarness(ledger: Ledger, name: string): VariantProbe[] {
+export async function probeHarness(ledger: Ledger, name: string): Promise<VariantProbe[]> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
-  return (m.harness?.variants ?? []).map((v) => {
+  // 변형 전수를 병렬로 — 동기일 때는 변형마다 최대 30초씩 줄을 섰고 그동안 데몬이 멈췄다
+  return await Promise.all((m.harness?.variants ?? []).map(async (v) => {
     const entry = path.join(rec.path, v.source, v.entry);
     // 조회는 설치하지 않는다 — 다이얼로그를 여는 행위가 수백 MB 를 받아선 안 된다.
     // 기판 사본이 있으면 PATH 앞이라 그것이 쓰이고, 없으면 호스트 도구로 판정된다.
     const env = llmEnv(v, name);
-    const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", timeout: 15_000, env });
+    const info = await runEntry(entry, ["info"], { timeout: 15_000, env });
     let j: { account?: unknown; protocol?: unknown; capabilities?: unknown; verbs?: unknown } = {};
     try {
       j = JSON.parse(info.stdout || "{}");
     } catch { /* info 비 JSON — conform 이 잡을 결함, 여기선 기본값으로 */ }
-    const setup = spawnEntrySync(entry, ["setup"], { encoding: "utf8", timeout: 15_000, env });
+    const setup = await runEntry(entry, ["setup"], { timeout: 15_000, env });
     // setup 종료코드가 미준비의 축을 가른다: 3 = 도구 없음(설치), 그 외 비0 = 자격 없음(로그인/토큰).
     // 화면은 이 축으로 처방을 고른다 — 도구가 없는데 토큰 입력창을 띄우면 사용자를 헛돌린다
     const reason = setup.status === 0 ? "ok" : setup.status === 3 ? "no-tool" : "no-auth";
@@ -519,11 +518,11 @@ export function probeHarness(ledger: Ledger, name: string): VariantProbe[] {
       login: Array.isArray(j.verbs) && (j.verbs as unknown[]).includes("login"),
       auth: v.llm?.auth?.kind ?? null,
     };
-  });
+  }));
 }
 
 /** token 자격형 하네스의 자격 연결 — vault 에 provider 소속으로 앉힌다 (relay connect llm 의 웹 등가) */
-export function connectHarnessToken(ledger: Ledger, name: string, tokenValue: string): { ok: boolean; out: string } {
+export async function connectHarnessToken(ledger: Ledger, name: string, tokenValue: string): Promise<{ ok: boolean; out: string }> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
@@ -536,18 +535,18 @@ export function connectHarnessToken(ledger: Ledger, name: string, tokenValue: st
   if (!val) throw new Error("빈 토큰");
   // §8-2 잔여: llmEnv 와 같은 사유(동기 체인) — setCredential 이사 보류
   vaultSet(`llm/${v.llm.provider}`, val);
-  return harnessVerb(ledger, name, "setup");
+  return await harnessVerb(ledger, name, "setup");
 }
 
 /** login 은 대화형(TTY 상속)이라 출력을 삼키지 않는다. HTTP 로는 열지 않는다 — 사용자의 터미널 행위 */
-export function harnessLogin(ledger: Ledger, name: string, args: string[] = []): number {
+export async function harnessLogin(ledger: Ledger, name: string, args: string[] = []): Promise<number> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
+  const info = await runEntry(entry, ["info"], { env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -564,14 +563,14 @@ export function harnessLogin(ledger: Ledger, name: string, args: string[] = []):
  * 기판이 터미널 창을 열어 login 동사를 그 안에서 돌린다. 자격을 만드는 행위는 여전히 사용자의 것이고
  * 기판은 문만 열어 준다. 창을 못 여는 환경에서는 명령을 돌려줘 사용자가 직접 실행한다
  */
-export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?: boolean } = {}): { launched: boolean; command: string; note: string } {
+export async function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?: boolean } = {}): Promise<{ launched: boolean; command: string; note: string }> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
   const v = activeHarness(m, rec.harness);
   if (!v) throw new Error(`하네스 미동봉 패키지: ${name}`);
   const entry = path.join(rec.path, v.source, v.entry);
-  const info = spawnEntrySync(entry, ["info"], { encoding: "utf8", env: binaryEnv(name) });
+  const info = await runEntry(entry, ["info"], { env: binaryEnv(name) });
   let verbs: string[] = [];
   try {
     verbs = JSON.parse(info.stdout || "{}").verbs ?? [];
@@ -590,12 +589,12 @@ export function launchHarnessLogin(ledger: Ledger, name: string, opts: { switch?
     `#!/bin/bash\ncd ${JSON.stringify(path.dirname(entry))}\necho "relay: ${v.name} 로그인 — 끝나면 이 창을 닫고 GUI 에서 '다시 점검'"\n${JSON.stringify(entry)} ${args.map((a) => JSON.stringify(a)).join(" ")}\n`,
     { mode: 0o700 },
   );
-  const r = spawnSync("open", ["-a", "Terminal", script], { encoding: "utf8" });
-  if (r.status !== 0) return { launched: false, command, note: (r.stderr ?? "터미널을 열지 못했습니다").trim() };
+  const r = await runCommand("open", ["-a", "Terminal", script], { timeout: 30_000 });
+  if (r.status !== 0) return { launched: false, command, note: (r.stderr || "터미널을 열지 못했습니다").trim() };
   return { launched: true, command, note: "터미널 창에서 로그인을 마친 뒤 다시 점검을 누르세요" };
 }
 
-export function setHarness(ledger: Ledger, name: string, variant: string): { active: string; setup: { ok: boolean; out: string } } {
+export async function setHarness(ledger: Ledger, name: string, variant: string): Promise<{ active: string; setup: { ok: boolean; out: string } }> {
   const rec = ledger.packages[name];
   if (!rec) throw new Error(`미설치 패키지: ${name}`);
   const m = loadManifest(rec.path);
@@ -608,14 +607,14 @@ export function setHarness(ledger: Ledger, name: string, variant: string): { act
   // 전환도 선출과 같은 계약이다 — setup 실패가 "있는데 안 도는" 부류면 참조된 requires
   // 레시피를 기판 사본으로 승격하고 한 번 재시도한다(껍데기 npm 래퍼 실사고의 회복 경로).
   const entry = path.join(rec.path, v.source, v.entry);
-  const run = () => spawnEntrySync(entry, ["setup"], { encoding: "utf8", env: binaryEnv(name) });
-  let r = run();
+  const run = () => runEntry(entry, ["setup"], { env: binaryEnv(name) });
+  let r = await run();
   let note = "";
   if (r.status !== 0) {
-    const t = provisionForVariant(name, m, v.binary);
+    const t = await provisionForVariant(name, m, v.binary);
     if (t) {
       note = t.ok ? "" : `\n${t.out}`;
-      if (t.ok) r = run();
+      if (t.ok) r = await run();
     }
   }
   return { active: variant, setup: { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() + note } };

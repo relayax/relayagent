@@ -8,7 +8,7 @@ import { packagesPath, saveLedger, consoleInstall, type Ledger } from "./ledger.
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
-import { spawnEntrySync } from "../spawn.ts";
+import { runEntry } from "../spawn.ts";
 import { buildSurfaces, judgeRequires, validateDir } from "./install.ts";
 import { draftViewBase, type BuildResult } from "../runtime/view.ts";
 
@@ -483,7 +483,7 @@ export interface StagedRelease {
  * 서비스 재기동은 데몬 소유라 여기서 하지 않는다 — 브리지가 publish 후 stop/start 를 잇는다.
  */
 export async function publishDraft(ledger: Ledger, name: string, opts: { version?: string } = {}): Promise<PublishResult> {
-  const staged = stageRelease(name, opts);
+  const staged = await stageRelease(name, opts);
   if ("published" in staged) return staged;
   return { published: true, ...staged, ...(await landRelease(ledger, staged)) };
 }
@@ -494,7 +494,7 @@ export async function publishDraft(ledger: Ledger, name: string, opts: { version
  * 데몬의 장부에 앉히고(저작자 = 사용자), 임베더는 Authority.publish 로 자기 유통망에 올린다.
  * 변경도 새 버전 지정도 없으면 스테이지할 것이 없다 — published:false 로 돌려준다.
  */
-export function stageRelease(name: string, opts: { version?: string } = {}): StagedRelease | NotStaged {
+export async function stageRelease(name: string, opts: { version?: string } = {}): Promise<StagedRelease | NotStaged> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
@@ -523,9 +523,8 @@ export function stageRelease(name: string, opts: { version?: string } = {}): Sta
   const v = validateDir(droot);
   if (!v.ok) throw new ManifestError(v.issues);
   const m = loadManifest(droot);
-  judgeRequires(m, name);
-  const broken = (m.harness?.variants ?? [])
-    .map((hv) => conformHarness(droot, hv))
+  await judgeRequires(m, name);
+  const broken = (await Promise.all((m.harness?.variants ?? []).map((hv) => conformHarness(droot, hv))))
     .filter((r) => !r.ok)
     .map((r) => `${r.variant}: ` + r.checks.filter((c) => !c.ok).map((c) => `${c.verb} — ${c.note}`).join(" / "));
   if (broken.length) throw new ManifestError(["하네스 계약 위반 (relay harness-check 로 재현):", ...broken]);
@@ -564,7 +563,7 @@ export async function landRelease(
       const reports: string[] = [];
       let picked: string | null = null;
       for (const hv of variants) {
-        const r = spawnEntrySync(path.join(snapshot, hv.source, hv.entry), ["setup"], { encoding: "utf8" });
+        const r = await runEntry(path.join(snapshot, hv.source, hv.entry), ["setup"]);
         reports.push(`${hv.name}: ${r.status === 0 ? "준비됨" : "불가"}`);
         if (r.status === 0 && !picked) picked = hv.name;
       }

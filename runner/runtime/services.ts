@@ -1,4 +1,5 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { runCommand } from "../spawn.ts";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { API_URL, expandHome, type Ledger } from "../supply/ledger.ts";
@@ -63,11 +64,12 @@ function containerApiUrl(io: RunnerIO): string {
   }
 }
 
-function dockerAvailable(): boolean {
-  return spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
+async function dockerAvailable(): Promise<boolean> {
+  return (await runCommand("docker", ["info"], { timeout: 30_000 })).status === 0;
 }
 
-export function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manifest, io: RunnerIO = localIO(l)): string[] {
+/** 컨테이너 몸의 build·run 이 비동기라 Promise 다 — 발행·설치·기동이 그 시간만큼 데몬을 붙들던 자리 */
+export async function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manifest, io: RunnerIO = localIO(l)): Promise<string[]> {
   const notes: string[] = [];
   for (const s of m.services ?? []) {
     if ("dir" in s && s.dir != null) {
@@ -77,17 +79,17 @@ export function startServices(l: Ledger, pkg: string, pkgPath: string, m: Manife
     }
     if ("url" in s && s.url != null) continue;
     if (!("source" in s) || s.source == null) continue;
-    notes.push(startSourceService(io, pkg, pkgPath, s));
+    notes.push(await startSourceService(io, pkg, pkgPath, s));
   }
   return notes.filter(Boolean);
 }
 
-function startSourceService(
+async function startSourceService(
   io: RunnerIO,
   pkg: string,
   pkgPath: string,
   s: Extract<ServiceDecl, { source: string }>,
-): string {
+): Promise<string> {
   const key = `${pkg}/${s.name}`;
   if (children.has(key)) return "";
   const env = baseEnv(io, pkg);
@@ -113,13 +115,13 @@ function startSourceService(
   }
 
   if (s.dockerfile) {
-    if (!dockerAvailable()) return `${key}: docker 미가용 — 컨테이너 서비스 건너뜀`;
+    if (!(await dockerAvailable())) return `${key}: docker 미가용 — 컨테이너 서비스 건너뜀`;
     const tag = `relay/${pkg}-${s.name}`.toLowerCase();
     const ctx = path.join(pkgPath, s.source);
-    const build = spawnSync("docker", ["build", "-t", tag, "-f", path.join(ctx, s.dockerfile), ctx], { encoding: "utf8" });
-    if (build.status !== 0) return `${key}: docker build 실패 — ${build.stderr?.slice(-300)}`;
+    const build = await runCommand("docker", ["build", "-t", tag, "-f", path.join(ctx, s.dockerfile), ctx], { timeout: 30 * 60_000 });
+    if (build.status !== 0) return `${key}: docker build 실패 — ${build.stderr.slice(-300)}`;
     const name = `relay-${pkg}-${s.name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+    await runCommand("docker", ["rm", "-f", name], { timeout: 60_000 });
     const args = ["run", "-d", "--name", name];
     if (s.port) args.push("-p", `${s.port}:${s.port}`);
     // resources 집행 — 선언이 판정만 되고 조용히 무시되면 "같은 문법 다른 뜻"이 된다.
@@ -134,8 +136,8 @@ function startSourceService(
       args.push("-v", `${vol}:/data`);
     }
     args.push(tag);
-    const run = spawnSync("docker", args, { encoding: "utf8" });
-    if (run.status !== 0) return `${key}: docker run 실패 — ${run.stderr?.slice(-300)}`;
+    const run = await runCommand("docker", args, { timeout: 5 * 60_000 });
+    if (run.status !== 0) return `${key}: docker run 실패 — ${run.stderr.slice(-300)}`;
     return `${key}: 컨테이너 기동 (${name})`;
   }
   return "";

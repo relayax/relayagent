@@ -63,8 +63,8 @@ openDraft(loadLedger(), NAME, {
 // writeDraft 는 내용만 쓴다 — 어댑터 entry 는 실행 비트가 있어야 conform 을 지난다
 fs.chmodSync(path.join(process.env.HOME!, "Relay", "packages", NAME, "harness", "only", "run"), 0o755);
 
-test("stageRelease 는 스냅샷을 뜨되 장부를 건드리지 않는다 — 착지는 별 걸음", () => {
-  const st = stageRelease(NAME);
+test("stageRelease 는 스냅샷을 뜨되 장부를 건드리지 않는다 — 착지는 별 걸음", async () => {
+  const st = await stageRelease(NAME);
   assert.ok(!("published" in st), "판정 통과 → 스냅샷");
   if ("published" in st) return;
   assert.equal(st.version, "0.1.0");
@@ -77,7 +77,7 @@ test("stageRelease 는 스냅샷을 뜨되 장부를 건드리지 않는다 — 
 });
 
 test("landRelease 가 장부에 앉힌다 — 두 절반의 합 = publishDraft", async () => {
-  const st = stageRelease(NAME, { version: "0.1.1" });
+  const st = await stageRelease(NAME, { version: "0.1.1" });
   assert.ok(!("published" in st));
   if ("published" in st) return;
   const ledger = loadLedger();
