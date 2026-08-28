@@ -516,6 +516,19 @@ properties:
     properties:
       source:
         $ref: '#/$defs/relpath'
+      get:
+        description: |
+          GET 으로도 열리는 동사의 목록 — 미선언 = 없음(동사 문은 POST 하나다). 브라우저 주소창,
+          인가 리다이렉트, 웹훅 검증처럼 **GET 으로 오는 호출**의 자리다: 그런 상대는 POST 를 보내지
+          않으므로, 이 선언이 없으면 그 흐름은 동사에 닿지 못하고 정적 화면 한 장이 다리를 놓아야 한다.
+          입력은 질의 문자열이 그대로 객체가 되고(같은 키가 여럿이면 배열), 답이 문자열이면 본문
+          그대로(text/plain — 검증 챌린지를 되돌려 주는 상대), 아니면 JSON 이다.
+          이 문에는 Origin 판정이 없다(브라우저는 GET 에 Origin 을 싣지 않는다) — 그래서 **선언으로만**
+          열리고 고지서에 들어오는 문으로 선다. 실재하는 동사만 가리킨다(fail-loud)
+        type: array
+        minItems: 1
+        items:
+          $ref: '#/$defs/slug'
   services:
     description: |
       패키지가 닿는 몸의 선언 — 네 형이 한 배열에 산다. source 는 기판이 띄우는 자기 몸
@@ -790,11 +803,15 @@ $defs:
               header·secret 칸은 기판만 본다. 나머지 칸(계정 번호·저장소 이름처럼 자격과 함께 움직이지만
               비밀은 아닌 설정)은 동사가 ctx.service(<이름>).fields() 로 읽는다 — 자격이 동사의 손을
               지나지 않는다는 약속이 칸 단위로 선다. 콘솔의 연결 화면과 relay connect 가 같은 조립 규칙을
-              지난다. token 형에서만 — oauth 는 인가 흐름이 자격을 만든다
+              지난다. oauth 형에도 칸이 있다 — 다만 거기서는 로그인이 주지 않는 부속 값만 담는다
             type: array
             minItems: 1
             items:
               $ref: '#/$defs/serviceField'
+          accounts:
+            $ref: '#/$defs/authAccounts'
+          inject:
+            $ref: '#/$defs/authInject'
       - type: object
         additionalProperties: false
         required: [kind]
@@ -812,6 +829,9 @@ $defs:
             type: string
             pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
           oauth_client:
+            description: |
+              인가 흐름의 선언. 표준(디스커버리·DCR·PKCE·refresh)은 선언 없이 돌고, 여기 적는 것은
+              표준이 답하지 못하는 것뿐이다: 등록된 앱의 공개 식별자, 콜백 프로토콜 요구, 제공자 방언
             type: object
             additionalProperties: false
             properties:
@@ -819,17 +839,53 @@ $defs:
                 type: array
                 items:
                   type: string
+              client_id:
+                description: |
+                  등록된 앱(client: registered)의 공개 식별자. 비밀이 아니라 트리에 살 수 있고, 선언하면
+                  연결 화면이 묻지 않는다 — 사람이 넣을 것은 client_secret 뿐이다(그것은 vault 로 간다)
+                type: string
+                minLength: 1
+              https:
+                description: |
+                  콜백(redirect_uri)에 HTTPS 를 요구하는 제공자(메타 계열). 참이면 기판의 TLS 문
+                  (RELAY_TLS_PORT)이 없을 때 인가 흐름이 사유와 함께 서지 않는다 — 제공자의
+                  "redirect_uri 불일치"는 원인을 말해 주지 않으므로 판정을 앞으로 당긴다
+                type: boolean
               auth_meta:
                 type: object
                 additionalProperties: false
                 properties:
                   authorization_endpoint:
                     type: string
+                    pattern: '^https?://'
                   token_endpoint:
                     type: string
+                    pattern: '^https?://'
                   registration_endpoint:
                     type: string
+                    pattern: '^https?://'
                   authorize_params:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  exchange_endpoint:
+                    description: |
+                      코드 교환 직후 한 번 더 — 단기 토큰을 장기 토큰으로 바꾸는 제공자의 방언
+                      (예: 인스타그램 그래프의 ig_exchange_token). GET <주소>?<exchange_params>
+                      &access_token=<방금 받은 토큰> 이고 답은 표준 토큰 응답의 부분집합이다
+                    type: string
+                    pattern: '^https?://'
+                  exchange_params:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  refresh_endpoint:
+                    description: |
+                      refresh_token 없이 access_token 으로 회전하는 제공자의 방언
+                      (예: ig_refresh_token). 이 계열의 회전 창은 넓다 — 기판은 만료 7일 전부터 돌린다
+                    type: string
+                    pattern: '^https?://'
+                  refresh_params:
                     type: object
                     additionalProperties:
                       type: string
@@ -857,6 +913,56 @@ $defs:
           required:
             description: token 형의 required 와 같은 축 — 미선언 = true
             type: boolean
+          fields:
+            description: |
+              인가와 **함께** 받는 부속 칸 — 로그인이 주지 않는 값의 자리다(계정 번호, 이미지 임시
+              저장소 좌표처럼 자격과 함께 움직이지만 로그인 흐름이 답하지 않는 설정). 값은 인가 번들
+              안에 앉고, 비밀 아닌 칸은 token 형과 똑같이 동사가 ctx.service(<이름>).fields() 로 읽는다.
+              header 칸은 없다 — Authorization 으로 나가는 것은 번들의 access_token 이다(RFC 6750).
+              칸에는 전부 key 가 있어야 한다(번들 안의 JSON 이라 이름이 필요하다)
+            type: array
+            minItems: 1
+            items:
+              $ref: '#/$defs/serviceField'
+          accounts:
+            $ref: '#/$defs/authAccounts'
+          inject:
+            $ref: '#/$defs/authInject'
+  authAccounts:
+    description: |
+      계정 축 — 한 서비스에 자격이 **여럿** 앉는다(계정마다 하나). 참이면 vault 좌표가
+      <패키지>/<서비스>@<계정> 이 되고, 어느 계정이 앉아 있는지는 기판의 색인이 답한다.
+      동사는 ctx.service(<이름>).accounts() 로 열거하고 .account(<계정>) 으로 골라 그 계정의 자격으로
+      나간다 — 고르지 않은 손잡이는 열거와 유무만 답하고 나머지 문은 계정을 고르라고 던진다
+      (자격이 여럿인데 아무거나 나가면 그건 캡이 아니라 우연이다).
+      이 축이 없으면 같은 서비스의 계정이 여럿인 앱은 자기 비밀 보관소를 따로 지어야 한다 —
+      그 순간 "자격은 트리에 살지 않는다"가 그 패키지에서만 거짓이 된다.
+      연결 화면은 계정마다 한 줄을 그리고 "계정 추가" 로 같은 폼을 다시 연다. services[].auth 에서만
+    type: boolean
+  authInject:
+    description: |
+      자격이 요청의 **어디에** 실리는가 — 미선언 = Authorization 헤더(token 형은 scheme 접두).
+      query 는 질의 파라미터, form 은 x-www-form-urlencoded 본문의 파라미터다. 헤더를 받지 않고
+      토큰을 파라미터로 받는 API(인스타그램 그래프의 access_token 이 그렇다)를 위한 자리다:
+      동사는 자격을 손에 쥐지 않으므로(verb-contract) 이 조립을 패키지 코드가 대신할 길이 없고,
+      자리를 문법이 모르면 그 API 는 자격을 동사 손에 쥐여 주는 길로만 열린다.
+      api 형에서만 — MCP 문은 헤더로 말하고 llm 자격은 env 로 나간다. scheme 과는 함께 쓸 수 없다
+      (자격이 헤더로 안 나가면 접두가 붙을 자리가 없다)
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [query]
+        properties:
+          query:
+            type: string
+            pattern: '^[A-Za-z_][A-Za-z0-9_.-]*$'
+      - type: object
+        additionalProperties: false
+        required: [form]
+        properties:
+          form:
+            type: string
+            pattern: '^[A-Za-z_][A-Za-z0-9_.-]*$'
   credentialField:
     description: |
       자격 입력 칸 하나 — 값이 아니라 형태다. 채널(surfaces.channels[].credential.fields)이 쓴다.
@@ -978,9 +1084,23 @@ $defs:
         description: |
           REST 베이스 URL. 동사의 요청은 이 접두 밖으로 나가지 못한다 — 집행이 기판 손에
           있어서 고지서의 "이 자격은 이 호스트로만 나갑니다"가 홍보가 아니라 사실이 된다.
-          선언만 받고 집행하지 않으면 이 줄은 거짓말이 될 수 있는 자리다
+          선언만 받고 집행하지 않으면 이 줄은 거짓말이 될 수 있는 자리다.
+          상대 경로는 언제나 이 베이스 안이다 — 보조 베이스로 나가려면 절대 URL 을 쓴다
         type: string
         pattern: '^https?://'
+      bases:
+        description: |
+          보조 베이스 — 같은 자격이 나가는 **다른** 접두. 한 서비스가 호스트 하나로 끝나지 않는
+          제공자를 위한 자리다: 토큰 교환이 다른 호스트에 살거나(인스타그램은 그래프와 교환이
+          갈린다), 업로드가 별도 도메인인 API 가 그렇다. 없으면 저작자는 두 번째 서비스를 선언하고
+          같은 비밀을 두 좌표에 앉히거나, 자격을 동사 손에 쥐여 주는 길로 간다 — 둘 다 계약이 깨진다.
+          집행은 api 와 같은 판정 한 벌이고(접두를 슬래시로 닫아 비교한다), 고지서에는 이 주소들도
+          "밖으로 나갑니다" 줄에 함께 선다 — 자격이 닿는 곳은 전부 고지된다
+        type: array
+        minItems: 1
+        items:
+          type: string
+          pattern: '^https?://'
       auth:
         description: 이 서비스의 자격 계약 — 값은 vault 의 <패키지>/<이 서비스 이름> 좌표에 앉는다
         $ref: '#/$defs/auth'

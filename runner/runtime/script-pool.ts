@@ -148,15 +148,19 @@ class PkgWorker {
   private async serve(run: Run | undefined, req: DoorRequest): Promise<unknown> {
     if (!run) throw new Error("동사 실행 기록이 만료됐습니다 — 반환 뒤 1시간·최근 256건까지만 문이 열립니다");
     const ctx = run.ctx;
+    // 계정 축 — 거울이 고른 계정을 여기서 기판의 손잡이로 다시 고른다(이름 판정은 account() 안에서 fail-loud)
+    const svc = (name: string, account?: string) => (account ? ctx.service(name).account(account) : ctx.service(name));
     switch (req.kind) {
       case "service.call":
-        return await ctx.service(req.name).call(req.tool, req.args);
+        return await svc(req.name, req.account).call(req.tool, req.args);
       case "service.connected":
-        return await ctx.service(req.name).connected();
+        return await svc(req.name, req.account).connected();
       case "service.fields":
-        return await ctx.service(req.name).fields();
+        return await svc(req.name, req.account).fields();
+      case "service.accounts":
+        return await ctx.service(req.name).accounts();
       case "service.fetch": {
-        const res = await ctx.service(req.name).fetch(req.path, {
+        const res = await svc(req.name, req.account).fetch(req.path, {
           ...(req.init.method ? { method: req.init.method } : {}),
           headers: req.init.headers,
           ...(req.init.body != null ? { body: req.init.body as unknown as BodyInit } : {}),

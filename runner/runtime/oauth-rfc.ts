@@ -194,6 +194,35 @@ export function exchangeCode(
   return tokenRequest(tokenEndpoint, params, p.style ?? "form", p.timeoutMs ?? 20_000);
 }
 
+/**
+ * 토큰으로 토큰을 받는 왕복 — 표준 밖의 두 방언이 같은 모양이다: 교환 직후 단기 토큰을 장기 토큰으로
+ * 바꾸는 것(메타 계열 `ig_exchange_token`)과 refresh_token 없이 access_token 으로 회전하는 것
+ * (`ig_refresh_token`). 둘 다 GET <endpoint>?<params>&access_token=<토큰>[&client_secret=<비밀>] 이고
+ * 답은 표준 토큰 응답의 부분집합({access_token, expires_in?})이다. 선언(auth_meta.exchange_*·refresh_*)이
+ * 주소와 고정 파라미터를 주고, 여기는 왕복만 한다
+ */
+export async function tokenByToken(
+  endpoint: string,
+  p: { accessToken: string; params?: Record<string, string>; clientSecret?: string; timeoutMs?: number },
+): Promise<TokenResponse | null> {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  for (const [k, v] of Object.entries(p.params ?? {})) u.searchParams.set(k, v);
+  if (p.clientSecret) u.searchParams.set("client_secret", p.clientSecret);
+  u.searchParams.set("access_token", p.accessToken);
+  try {
+    const res = await fetch(u, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(p.timeoutMs ?? 20_000) });
+    const j = (await res.json().catch(() => null)) as TokenResponse | null;
+    return j && typeof j.access_token === "string" && j.access_token ? j : null;
+  } catch {
+    return null;
+  }
+}
+
 /** refresh_token 회전 — 새 refresh 가 안 오면 호출자가 옛것을 유지한다(회전-비발급 서버) */
 export function refreshToken(
   tokenEndpoint: string,

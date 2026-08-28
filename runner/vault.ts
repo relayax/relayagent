@@ -76,4 +76,12 @@ export function vaultDelete(key: string): void {
   }
 }
 
-export const credKey = (pkg: string, service: string) => `${pkg}/${service}`;
+/** 자격 좌표 — <패키지>/<서비스>. 계정 축(services[].auth.accounts)이 있으면 <패키지>/<서비스>@<계정> —
+ *  같은 서비스에 자격이 여럿 앉는 유일한 모양이다. 계정 없는 좌표와 겹치지 않는다(서비스 이름은 slug 라 @ 가 없다) */
+export const credKey = (pkg: string, service: string, account?: string | null): string =>
+  account ? `${pkg}/${service}@${account}` : `${pkg}/${service}`;
+
+/** 계정 축의 색인 좌표 — 그 서비스에 앉은 계정 이름 목록(JSON 배열)이 산다. Keychain 에는 열거 API 가
+ *  없어(키는 문자열 하나다) 색인이 없으면 "어느 계정이 연결됐는가" 를 아무도 답하지 못한다. 서비스 이름에
+ *  슬래시가 없으므로 자격 좌표와 겹칠 수 없다 */
+export const accountsKey = (pkg: string, service: string): string => `${pkg}/${service}/accounts`;

@@ -7,11 +7,12 @@
 // 자격 값은 어느 응답에도 실리지 않는다 — hasCred 뿐이다. 칸 선언(fields)은 형태라 그대로 나간다.
 import fs from "node:fs";
 import path from "node:path";
-import { RELAY_HOME, type Ledger } from "../supply/ledger.ts";
+import { OAUTH_CALLBACK_URL, RELAY_HOME, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, outwardService, type CredentialDecl, type CredentialField, type Manifest } from "../supply/manifest.ts";
 import { credKey } from "../vault.ts";
 import { channelPid } from "./services.ts";
 import { serviceOAuthStatus } from "./oauth.ts";
+import { listAccounts } from "./credential.ts";
 
 /** 자격의 있음/없음만 묻는 문 — 권위 이음새(authority.credential)의 형이다 */
 export type Credential = (scope: string) => Promise<string | null>;
@@ -28,8 +29,19 @@ export interface ServiceStatus {
   fields: CredentialField[] | null;
   help: { url?: string; note?: string } | null;
   client: string | null;
+  /** oauth 의 선언된 공개 client_id(oauth_client.client_id) — 있으면 화면이 묻지 않는다 */
+  clientId: string | null;
+  /** oauth 콜백에 HTTPS 를 요구하는 제공자(oauth_client.https) */
+  https: boolean;
+  /** 이 기판의 인가 콜백 주소 — 등록형 앱(client: registered)의 redirect_uri 로 제공자에 적는 값. oauth 형만 */
+  callback: string | null;
+  /** 자격이 실리는 자리(auth.inject) — 미선언 = 헤더 */
+  inject: "header" | "query" | "form";
+  /** 계정 축(auth.accounts) — null 이면 축 없음. 있으면 색인의 계정들과 각각의 인가 진행(oauth 형) */
+  accounts: { name: string; oauth: (ReturnType<typeof serviceOAuthStatus>) | null }[] | null;
   verifiable: boolean;
   tools: string[];
+  /** 자격이 앉아 있는가 — 계정 축이 있으면 "계정이 하나라도" */
   hasCred: boolean;
   oauth: (ReturnType<typeof serviceOAuthStatus>) | null;
 }
@@ -52,6 +64,10 @@ export async function serviceStatuses(pkg: string, m: Manifest, credential: Cred
     const o = outwardService(sv);
     if (!o) continue;
     const a = o.auth;
+    const multi = a?.accounts === true;
+    const accounts = multi
+      ? (await listAccounts(credential, pkg, sv.name)).map((name) => ({ name, oauth: a?.kind === "oauth" ? serviceOAuthStatus(pkg, sv.name, name) : null }))
+      : null;
     out.push({
       name: sv.name,
       url: o.base,
@@ -61,10 +77,15 @@ export async function serviceStatuses(pkg: string, m: Manifest, credential: Cred
       fields: a?.fields ?? null,
       help: a?.help ?? null,
       client: a?.client ?? null,
+      clientId: a?.oauth_client?.client_id ?? null,
+      https: a?.oauth_client?.https === true,
+      callback: a?.kind === "oauth" ? OAUTH_CALLBACK_URL : null,
+      inject: a?.inject && "query" in a.inject ? "query" : a?.inject && "form" in a.inject ? "form" : "header",
+      accounts,
       verifiable: a?.verify?.url != null,
       tools: "tools" in sv ? sv.tools ?? [] : [],
-      hasCred: (await credential(credKey(pkg, sv.name))) != null,
-      oauth: a?.kind === "oauth" ? serviceOAuthStatus(pkg, sv.name) : null,
+      hasCred: multi ? (accounts?.length ?? 0) > 0 : (await credential(credKey(pkg, sv.name))) != null,
+      oauth: a?.kind === "oauth" && !multi ? serviceOAuthStatus(pkg, sv.name) : null,
     });
   }
   return out;

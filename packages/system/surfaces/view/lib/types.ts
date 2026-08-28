@@ -18,6 +18,8 @@ export interface ServiceDecl {
   url?: string;
   /** REST 베이스 — 자격이 이 접두 안에서만 나가는 형 */
   api?: string;
+  /** 보조 베이스 — 같은 자격이 나가는 다른 접두(교환이 다른 호스트에 사는 제공자). api 형에만 */
+  bases?: string[];
   dir?: string;
   source?: string;
   dockerfile?: string;
@@ -41,6 +43,17 @@ export interface ServiceAuth {
   help?: { url?: string; note?: string };
   verify?: { url: string; headers?: Record<string, string> };
   client?: string;
+  /** 계정 축 — 참이면 한 서비스에 자격이 여럿(계정마다 하나) */
+  accounts?: boolean;
+  /** 자격이 실리는 자리 — 미선언 = Authorization 헤더. api 형에만 */
+  inject?: { query?: string; form?: string };
+  /** 인가 흐름의 선언 — 등록된 앱의 공개 식별자·콜백 프로토콜 요구·제공자 방언 */
+  oauth_client?: {
+    scopes?: string[];
+    client_id?: string;
+    https?: boolean;
+    auth_meta?: Record<string, unknown>;
+  };
 }
 
 /** 밖으로 나가는 두 형(url = MCP 문, api = REST 베이스)만 자격 축을 갖는다 — runner 의
@@ -137,7 +150,8 @@ export interface Manifest {
     workdir?: string;
   };
   agents?: AgentDecl[];
-  scripts?: { source: string };
+  /** get — GET 으로도 열리는 동사(인가 리다이렉트·웹훅 검증처럼 GET 으로 오는 호출의 문) */
+  scripts?: { source: string; get?: string[] };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];

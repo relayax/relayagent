@@ -1342,6 +1342,9 @@ function AuthEditor({ idx, s, ctx }: { idx: number; s: ServiceDecl; ctx: Section
   const a = s.auth;
   const kind = a?.kind ?? "none";
   const at = (k: string) => ["services", idx, "auth", k];
+  const isApi = s.api != null;
+  const injectAt: "header" | "query" | "form" = a?.inject?.query != null ? "query" : a?.inject?.form != null ? "form" : "header";
+  const injectName = a?.inject?.query ?? a?.inject?.form ?? "";
   return (
     <div className="st-form">
       <div className="flex flex-col gap-1.5">
@@ -1352,13 +1355,14 @@ function AuthEditor({ idx, s, ctx }: { idx: number; s: ServiceDecl; ctx: Section
           onChange={(e) =>
             ctx.apply((d) => {
               const v = e.target.value;
-              // 형이 바뀌면 그 형에 없는 축은 같이 지운다 — 남겨 두면 판정이 "token 형에서만" 으로 막는다
+              // 형이 바뀌면 그 형에 없는 축은 같이 지운다 — 남겨 두면 판정이 "token 형에서만" 으로 막는다.
+              // oauth 형에도 칸은 있다(로그인이 주지 않는 부속 값) — 지울 것은 헤더 접두와 header 표시뿐이다
               if (v === "none") d.setIn(["services", idx, "auth"], { kind: "none" });
               else {
                 d.setIn(at("kind"), v);
                 if (v === "oauth") {
-                  d.deleteIn(at("fields"));
                   d.deleteIn(at("scheme"));
+                  for (let i = 0; i < (s.auth?.fields ?? []).length; i++) d.deleteIn([...at("fields"), i, "header"]);
                 }
               }
             })
@@ -1375,13 +1379,76 @@ function AuthEditor({ idx, s, ctx }: { idx: number; s: ServiceDecl; ctx: Section
             <Checkbox checked={a?.required !== false} onCheckedChange={(c) => ctx.apply((d) => (c ? d.deleteIn(at("required")) : d.setIn(at("required"), false)))} />
             필수 — 없으면 이 앱의 주 기능이 서지 않습니다 (끄면 선택: 없어도 돌고 그 기능만 꺼집니다)
           </Label>
-          {kind === "token" ? (
+          <Label className="flex-none text-xs font-normal">
+            <Checkbox
+              checked={a?.accounts === true}
+              onCheckedChange={(c) => ctx.apply((d) => (c ? d.setIn(at("accounts"), true) : d.deleteIn(at("accounts"))))}
+            />
+            계정이 여럿 — 같은 서비스에 계정마다 자격을 따로 앉힙니다 (동사는 ctx.service(…).account(&lt;계정&gt;) 으로 고릅니다)
+          </Label>
+          {isApi ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${uid}-inject`} className="text-xs text-muted-foreground">자격이 실리는 자리</Label>
+              <select
+                id={`${uid}-inject`}
+                value={injectAt}
+                onChange={(e) =>
+                  ctx.apply((d) => {
+                    const v = e.target.value;
+                    if (v === "header") d.deleteIn(at("inject"));
+                    else {
+                      // 헤더 접두는 헤더로 나갈 때만 뜻이 있다 — 남겨 두면 판정이 막는다
+                      d.deleteIn(at("scheme"));
+                      d.setIn(at("inject"), v === "query" ? { query: injectName || "access_token" } : { form: injectName || "access_token" });
+                    }
+                  })
+                }
+              >
+                <option value="header">인증 헤더 (기본)</option>
+                <option value="query">질의 파라미터</option>
+                <option value="form">폼 파라미터</option>
+              </select>
+            </div>
+          ) : null}
+          {injectAt !== "header" ? (
+            <Field
+              label="파라미터 이름"
+              hint="이 이름으로 자격이 실립니다 (예: access_token)"
+              k="auth.inject"
+              value={injectName}
+              mono
+              placeholder="access_token"
+              onCommit={(x) => ctx.apply((d) => d.setIn(at("inject"), injectAt === "query" ? { query: x } : { form: x }))}
+            />
+          ) : null}
+          {kind === "token" && injectAt === "header" ? (
             <Field label="인증 헤더 접두" hint="비우면 Bearer. Unsplash 처럼 다른 접두를 요구하면 적습니다 (예: Client-ID)" k="auth.scheme" value={a?.scheme ?? ""} mono placeholder="Bearer" onCommit={(x) => ctx.apply((d) => set(d, at("scheme"), x))} />
+          ) : null}
+          {kind === "oauth" ? (
+            <>
+              <Field
+                label="등록된 앱의 client_id"
+                hint="공개 식별자라 트리에 살 수 있습니다 — 적어 두면 연결 화면이 묻지 않습니다(사람이 넣을 것은 client_secret 뿐)"
+                k="auth.oauth_client.client_id"
+                value={a?.oauth_client?.client_id ?? ""}
+                mono
+                onCommit={(x) => ctx.apply((d) => set(d, [...at("oauth_client"), "client_id"], x))}
+              />
+              <Label className="flex-none text-xs font-normal">
+                <Checkbox
+                  checked={a?.oauth_client?.https === true}
+                  onCheckedChange={(c) => ctx.apply((d) => (c ? d.setIn([...at("oauth_client"), "https"], true) : d.deleteIn([...at("oauth_client"), "https"])))}
+                />
+                콜백에 HTTPS 를 요구하는 제공자 — 기판의 TLS 문이 없으면 인가가 서지 않습니다
+              </Label>
+            </>
           ) : null}
           <Field label="발급처 주소" hint="연결 화면이 '발급처 열기' 링크로 그립니다" k="auth.help.url" value={a?.help?.url ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, [...at("help"), "url"], x))} />
           <Field label="안내 한 줄" hint="이 키가 있으면 무엇이 켜지는지 — 연결 화면이 그대로 보여 줍니다" k="auth.help.note" value={a?.help?.note ?? ""} onCommit={(x) => ctx.apply((d) => set(d, [...at("help"), "note"], x))} />
           <Field label="검증 주소" hint="저장된 자격으로 두드려 볼 주소 — 2xx 면 유효. 비우면 저장만 됩니다" k="auth.verify.url" value={a?.verify?.url ?? ""} mono onCommit={(x) => ctx.apply((d) => set(d, [...at("verify"), "url"], x))} />
-          {kind === "token" ? <FieldsEditor base={at("fields")} fields={a?.fields ?? []} ctx={ctx} header /> : null}
+          {/* 칸은 두 형 다 있다 — token 은 자격 그 자체를 받고(그중 하나가 헤더로 나간다),
+              oauth 는 로그인이 주지 않는 부속 값만 받는다(헤더로 나가는 것은 번들의 access_token 이라 header 축이 없다) */}
+          <FieldsEditor base={at("fields")} fields={a?.fields ?? []} ctx={ctx} header={kind === "token"} oauth={kind === "oauth"} />
         </>
       ) : null}
     </div>
@@ -1393,14 +1460,16 @@ function AuthEditor({ idx, s, ctx }: { idx: number; s: ServiceDecl; ctx: Section
  * 비밀값을 받는 칸의 모양은 그 비밀이 들어오는 문에 쓰이든 나가는 문에 쓰이든 같기 때문이다.
  * header 는 서비스에서만 켜진다 — 그 칸의 값이 Authorization 으로 나간다(key 있는 칸 중 정확히 하나)
  */
-function FieldsEditor({ base, fields, ctx, header }: { base: (string | number)[]; fields: CredentialField[]; ctx: SectionCtx; header?: boolean }) {
+function FieldsEditor({ base, fields, ctx, header, oauth }: { base: (string | number)[]; fields: CredentialField[]; ctx: SectionCtx; header?: boolean; oauth?: boolean }) {
   const at = (i: number, k: string) => [...base, i, k];
   const flags = header ? (["secret", "list", "required", "header"] as const) : (["secret", "list", "required"] as const);
   const keyed = fields.length > 0 && fields.every((f) => f.key);
   const headers = fields.filter((f) => f.header).length;
   return (
     <div className="st-form">
-      <div className="rc-label">로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다</div>
+      <div className="rc-label">
+        {oauth ? "부속 칸 — 로그인이 주지 않는 값(계정 번호·저장소 좌표). 인가와 함께 받습니다" : "로그인 정보 칸 — 연결 화면이 이대로 입력 칸을 그립니다"}
+      </div>
       {fields.map((f, i) => (
         <div key={i} className="item">
           <div className="bar">
@@ -1429,24 +1498,34 @@ function FieldsEditor({ base, fields, ctx, header }: { base: (string | number)[]
         variant="outline"
         size="sm"
         className="self-start"
-        onClick={() => void ctx.apply((d) => push(d, base, header ? { key: "token", label: "API 토큰", header: true } : { key: "token", label: "토큰", secret: true, required: true }))}
+        onClick={() =>
+          void ctx.apply((d) =>
+            push(d, base, oauth ? { key: "user_id", label: "계정 번호" } : header ? { key: "token", label: "API 토큰", header: true } : { key: "token", label: "토큰", secret: true, required: true }),
+          )
+        }
       >
-        + 자격 칸
+        + {oauth ? "부속 칸" : "자격 칸"}
       </Button>
       {fields.length ? (
         <p className="text-xs text-muted-foreground">
-          {keyed
-            ? header && headers !== 1
-              ? `key 있는 칸 중 정확히 하나에 header 를 켜세요 — 그 칸이 인증 헤더로 나갑니다 (지금 ${headers}개).`
-              : header
-                ? "모든 칸에 key 가 있으니 vault 에 JSON 으로 앉고, header 칸만 헤더로 나갑니다. 나머지 비밀 아닌 칸은 동사가 fields() 로 읽습니다."
-                : "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
-            : fields.length === 1
-              ? "key 없는 칸 하나 — 그 값이 곧 자격 문자열이다."
-              : "key 있는 칸과 없는 칸을 섞으면 판정 실패다 — 전부 채우거나, 한 칸만 비우세요."}
+          {oauth
+            ? keyed
+              ? "모든 칸에 key 가 있으니 인가 번들 안에 JSON 으로 앉습니다. 비밀 아닌 칸은 동사가 fields() 로 읽습니다 — 헤더로 나가는 것은 번들의 access_token 이라 header 축은 없습니다."
+              : "oauth 형의 칸에는 전부 key 가 있어야 합니다 — 번들 안의 JSON 이라 이름이 필요합니다."
+            : keyed
+              ? header && headers !== 1
+                ? `key 있는 칸 중 정확히 하나에 header 를 켜세요 — 그 칸이 자격으로 나갑니다 (지금 ${headers}개).`
+                : header
+                  ? "모든 칸에 key 가 있으니 vault 에 JSON 으로 앉고, header 칸만 자격으로 나갑니다. 나머지 비밀 아닌 칸은 동사가 fields() 로 읽습니다."
+                  : "모든 칸에 key 가 있으니 화면이 JSON 객체로 조립해 넘긴다."
+              : fields.length === 1
+                ? "key 없는 칸 하나 — 그 값이 곧 자격 문자열이다."
+                : "key 있는 칸과 없는 칸을 섞으면 판정 실패다 — 전부 채우거나, 한 칸만 비우세요."}
         </p>
       ) : (
-        <p className="text-xs text-muted-foreground">칸을 정하지 않으면 연결 화면은 붙여넣기 칸 하나로 물러납니다.</p>
+        <p className="text-xs text-muted-foreground">
+          {oauth ? "부속 칸이 없으면 인가가 주는 것만으로 자격이 완성됩니다." : "칸을 정하지 않으면 연결 화면은 붙여넣기 칸 하나로 물러납니다."}
+        </p>
       )}
     </div>
   );

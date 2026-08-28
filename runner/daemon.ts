@@ -1,4 +1,5 @@
 import http from "node:http";
+import https from "node:https";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,7 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
 import { spawn } from "node:child_process";
-import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger } from "./supply/ledger.ts";
+import { API_PORT, API_URL, OAUTH_CALLBACK_URL, RELAY_HOME, STORE_INDEX_URL, TLS_PORT, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger } from "./supply/ledger.ts";
+import { ensureLocalCert } from "./tls.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
@@ -26,7 +28,7 @@ import { serveView, serveComponents, serveDraftView, serveDraftComponents, serve
 import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime/shell.ts";
 import { loadSuites, upsertSuite, removeSuite, packSuite } from "./supply/suites.ts";
 import { serviceStatuses, channelStatuses, connectionsOverview } from "./runtime/connections.ts";
-import { assembleCredential } from "./runtime/credential.ts";
+import { assembleCredential, assembleFields, forgetAccount, judgeAccount, rememberAccount } from "./runtime/credential.ts";
 import { logLine } from "./supply/ledger.ts";
 import { dirCall, resolveDirService } from "./runtime/dirs.ts";
 import { startServices, startChannels, startOneChannel, stopChannel, channelPid, runningServices, stopServices, stopAll, localIO, type RunnerIO } from "./runtime/services.ts";
@@ -34,7 +36,7 @@ import { verifyChannel } from "./supply/conform.ts";
 import { Ticker } from "./runtime/triggers.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./runtime/login.ts";
 import { localAuthority, type Authority } from "./authority.ts";
-import { serviceAuthHeader, startServiceOAuth, serviceOAuthStatus, verifyService } from "./runtime/oauth.ts";
+import { fixedRedirect, receiveOAuthCallback, serviceAuthHeader, startServiceOAuth, serviceOAuthStatus, verifyService } from "./runtime/oauth.ts";
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +107,8 @@ const SELF_ORIGINS = new Set([
   `http://127.0.0.1:${API_PORT}`,
   `http://localhost:${API_PORT}`,
   `http://[::1]:${API_PORT}`,
+  // TLS 문(RELAY_TLS_PORT)은 같은 라우트의 두 번째 문이라 같은 오리진 집합이다
+  ...(TLS_PORT != null ? [`https://127.0.0.1:${TLS_PORT}`, `https://localhost:${TLS_PORT}`, `https://[::1]:${TLS_PORT}`] : []),
 ]);
 
 /** 문의 신뢰 좌표 — 임베더가 **넓히는 선언**만 할 수 있다. 끄는 스위치는 없다.
@@ -305,7 +309,7 @@ export function createApi(
   const runnerIO = (l: Ledger): RunnerIO => (opts.runner ?? localIO)(l);
   const extraHosts = new Set((opts.door?.hosts ?? []).map((h) => h.toLowerCase()));
   const extraOrigins = new Set((opts.door?.origins ?? []).map((o) => o.toLowerCase()));
-  const server = http.createServer(async (req, res) => {
+  const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     try {
       // URL 파싱은 try 안에서 — "//" 같은 기형 경로의 파싱 예외가 밖으로 새면
       // 요청 하나가 데몬 프로세스 전체를 죽인다 (2026-08-06 실사고)
@@ -360,6 +364,15 @@ export function createApi(
       if (p === "/connect" && req.method === "GET") {
         res.writeHead(302, { location: consoleHref(getLedger(), "connections/") + url.search, "cache-control": "no-store" });
         return void res.end();
+      }
+      // 인가 콜백의 고정 문 — 등록된 OAuth 앱의 redirect_uri(OAUTH_CALLBACK_URL)가 여기다. 임시 포트는 등록이 안 되므로
+      // 데몬의 문이 직접 받는다. state 로 기다리는 흐름에만 답이 닿고, 모르는 state 는 404 다(아무 페이지나 두드릴 수 있는 GET 문)
+      if (p === "/oauth/cb" && req.method === "GET") {
+        const taken = receiveOAuthCallback(url.searchParams);
+        res.writeHead(taken ? 200 : 404, { "content-type": MIME[".html"], "cache-control": "no-store" });
+        return void res.end(taken
+          ? "<meta charset='utf-8'>연결되었습니다 — 이 창을 닫아도 됩니다."
+          : "<meta charset='utf-8'>기다리는 인가 흐름이 없습니다 — 연결 화면에서 다시 시작하세요.");
       }
 
       // 전역 셸 크롬(runtime/shell.ts) — 모든 view 문서에 주입되는 사이드바의 본체와 그 데이터.
@@ -603,13 +616,28 @@ export function createApi(
         const out = sv ? outwardService(sv) : null;
         if (!out) return void json(res, 404, { error: `자격 축이 없는 서비스: ${name}` });
         const auth = out.auth;
+        const b = sop && req.method === "POST" ? await readBody(req) : {};
+        // 계정 축 — 선언된 서비스는 계정이 있어야 좌표가 서고, 없는 서비스에 계정을 실으면 없는 좌표를 짓는 셈이다.
+        // 조회(oauth/status)는 ?account= 로, 나머지는 본문의 account 로 온다
+        const rawAccount = sst ? url.searchParams.get("account") : b.account;
+        let account: string | null = null;
+        if (auth?.accounts) {
+          if (rawAccount == null || String(rawAccount).trim() === "") return void json(res, 400, { error: `계정 축이 선언된 서비스입니다: ${name} — account 를 실으세요` });
+          try {
+            account = judgeAccount(rawAccount);
+          } catch (e) {
+            return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+          }
+        } else if (rawAccount != null && String(rawAccount) !== "") {
+          return void json(res, 400, { error: `계정 축이 없는 서비스입니다: ${name} — services[].auth.accounts: true 를 선언해야 계정을 둘 수 있습니다` });
+        }
+        const key = credKey(pkg, name, account);
 
-        if (sst && req.method === "GET") return void json(res, 200, serviceOAuthStatus(pkg, name));
+        if (sst && req.method === "GET") return void json(res, 200, serviceOAuthStatus(pkg, name, account));
         if (!sop || req.method !== "POST") return void json(res, 405, { error: "POST 만" });
 
         if (sop[3] === "connect") {
           if (auth?.kind !== "token") return void json(res, 400, { error: `token 자격형이 아닙니다(${auth?.kind ?? "none"}) — oauth 는 인가 흐름으로` });
-          const b = await readBody(req);
           // 칸 선언(auth.fields)이 있으면 칸별 값(fields)을, 없으면 토큰 문자열(token)을 받는다 — 조립은
           // CLI(relay connect)와 같은 한 벌(credential.ts). 필수 칸이 비면 저장하지 않는다:
           // 반쪽 자격이 앉으면 "연결됨" 인데 401 이 나는 상태가 된다
@@ -618,24 +646,40 @@ export function createApi(
           if (b.token != null) values.token = String(b.token);
           const r = assembleCredential(auth.fields, values);
           if (!r.ok) return void json(res, 400, { error: `빈 칸: ${r.missing.join(", ")}`, missing: r.missing });
-          await authority.setCredential(credKey(pkg, name), r.value); // 저장만 — 유효 판정은 verify 소관
+          await authority.setCredential(key, r.value); // 저장만 — 유효 판정은 verify 소관
+          if (account) await rememberAccount(authority, pkg, name, account);
           return void json(res, 200, { ok: true });
         }
         if (sop[3] === "verify") {
-          return void json(res, 200, await verifyService(authority, pkg, name, auth));
+          return void json(res, 200, await verifyService(authority, pkg, name, auth, account));
         }
         if (sop[3] === "disconnect") {
           if (typeof authority.deleteCredential !== "function") {
             return void json(res, 501, { error: "이 기판의 권위는 자격 폐기를 구현하지 않습니다" });
           }
-          await authority.deleteCredential(credKey(pkg, name));
+          await authority.deleteCredential(key);
+          if (account) await forgetAccount(authority, pkg, name, account);
           return void json(res, 200, { ok: true });
         }
-        // oauth — 흐름을 열고 즉시 돌아온다. 브라우저는 데몬이 연다(사람과 같은 기기)
+        // oauth — 흐름을 열고 즉시 돌아온다. 브라우저는 데몬이 연다(사람과 같은 기기). 콜백은 데몬의 고정 문(/oauth/cb)으로
+        // 온다 — 등록된 앱의 redirect_uri 가 그 주소다. 부속 칸(auth.fields)은 흐름 전에 조립해 번들에 앉힌다
         if (auth?.kind !== "oauth") return void json(res, 400, { error: `oauth 자격형이 아닙니다(${auth?.kind ?? "none"}) — token 은 connect 로` });
-        const b = await readBody(req);
+        let fields: Record<string, string | string[]> | undefined;
+        if (auth.fields?.length) {
+          const values: Record<string, string> = {};
+          for (const [k, v] of Object.entries((b.fields ?? {}) as Record<string, unknown>)) values[k] = String(v ?? "");
+          const r = assembleFields(auth.fields, values);
+          if (!r.ok) return void json(res, 400, { error: `빈 칸: ${r.missing.join(", ")}`, missing: r.missing });
+          fields = r.value;
+        }
         try {
-          const run = startServiceOAuth(authority, pkg, name, out.base, auth, { clientId: b.client_id ? String(b.client_id) : undefined });
+          const run = startServiceOAuth(authority, pkg, name, out.base, auth, {
+            clientId: b.client_id ? String(b.client_id) : undefined,
+            clientSecret: b.client_secret ? String(b.client_secret) : undefined,
+            account,
+            fields,
+            redirect: fixedRedirect(OAUTH_CALLBACK_URL),
+          });
           return void json(res, 200, { ...run, running: !run.done });
         } catch (e) {
           return void json(res, 409, { error: e instanceof Error ? e.message : String(e) });
@@ -743,6 +787,29 @@ export function createApi(
         const result = await runScript(getLedger(), decodeURIComponent(script[1]), script[2], b.input ?? b, { principal: authority.principal() }, host, authority, opts.service ?? localServiceIO);
         return void json(res, 200, { result });
       }
+      // GET 문 — scripts.get 에 선언한 동사만. 브라우저 주소·리다이렉트·웹훅 검증처럼 GET 으로 오는 호출의 자리다.
+      // 입력은 질의 문자열(같은 키가 여럿이면 배열), 답은 문자열이면 text/plain(검증 챌린지처럼 본문 그대로를 요구하는
+      // 상대), 아니면 JSON. 이 문에는 Origin 판정이 없다(브라우저는 GET 에 Origin 을 싣지 않는다) — 그래서 선언으로만
+      // 열리고 고지서에 선다. 동사의 권능은 POST 문과 같다: 같은 동사가 문에 따라 다르게 도는 일이 없어야 한다
+      if (script && req.method === "GET") {
+        const pkg = decodeURIComponent(script[1]);
+        const rec = getLedger().packages[pkg];
+        if (!rec) return void json(res, 404, { error: "미설치 패키지" });
+        if (!(loadManifest(rec.path).scripts?.get ?? []).includes(script[2])) {
+          return void json(res, 405, { error: `GET 문이 없는 동사: ${script[2]} — scripts.get 에 선언한 동사만 GET 으로 열립니다` });
+        }
+        const input: Record<string, string | string[]> = {};
+        for (const k of new Set(url.searchParams.keys())) {
+          const all = url.searchParams.getAll(k);
+          input[k] = all.length > 1 ? all : all[0];
+        }
+        const result = await runScript(getLedger(), pkg, script[2], input, { principal: authority.principal() }, host, authority, opts.service ?? localServiceIO);
+        if (typeof result === "string") {
+          res.writeHead(200, { "content-type": MIME[".txt"], "cache-control": "no-store" });
+          return void res.end(result);
+        }
+        return void json(res, 200, { result });
+      }
 
       const comps = p.match(/^\/pkg\/([^/]+)\/components(\/.*)?$/);
       if (comps && req.method === "GET") return void serveComponents(getLedger(), decodeURIComponent(comps[1]), (comps[2] ?? "/").slice(1), res);
@@ -776,12 +843,28 @@ export function createApi(
     } catch (e) {
       json(res, 500, { error: String(e) });
     }
-  });
+  };
+  const server = http.createServer(handle);
   // listen 좌표. false 면 소켓의 주인은 임베더다 — 반환된 서버를 자기가 연다(자기 문 뒤에서).
   // 여기서 열지 않는 것이 요점이다: 우리가 loopback 을 먼저 열어 두면 임베더가 원치 않는
   // 리스너가 하나 더 서고, 그 문에는 인증이 없다
   if (opts.door?.listen !== false) {
     server.listen(opts.door?.listen?.port ?? API_PORT, opts.door?.listen?.host ?? "127.0.0.1");
+    // TLS 문 — 인가 콜백에 HTTPS 를 요구하는 제공자를 위한, 같은 라우트의 두 번째 문. loopback 이름 둘에만 선다
+    // (인증서의 SAN 이 localhost·127.0.0.1·::1). 인증서를 못 구우면 그 문만 안 서고 사유가 로그에 남는다
+    if (TLS_PORT != null) {
+      const tlsPort: number = TLS_PORT;
+      void ensureLocalCert()
+        .then((cert) => {
+          for (const host of ["127.0.0.1", "::1"]) {
+            const tls = https.createServer(cert, handle);
+            tls.on("error", (e) => console.error(`TLS 문(${host}:${tlsPort}) 실패 - ${e instanceof Error ? e.message : e}`));
+            tls.listen(tlsPort, host);
+          }
+          console.log(`TLS 문: ${OAUTH_CALLBACK_URL} (인가 콜백)`);
+        })
+        .catch((e) => console.error(`TLS 문을 열지 못했습니다 - ${e instanceof Error ? e.message : e}`));
+    }
   }
   return server;
 }

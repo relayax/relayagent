@@ -62,9 +62,12 @@ test("칸의 note 는 거부하고 갈 곳(auth.help.note)을 말한다 — 실�
   assert.ok(r.some((i) => i.includes("칸에는 note 가 없습니다") && i.includes("auth.help.note")), r.join("\n"));
 });
 
-test("auth 의 미지 키는 거부한다 — fields 는 token 형에서만, oauth 에는 인가 흐름이 있다", () => {
+test("auth 의 미지 키는 거부한다 — 칸은 두 형 다 있지만 oauth 의 칸에는 header 가 없다", () => {
+  // 2026-08-28: oauth 형에도 칸이 생겼다(로그인이 주지 않는 부속 값의 자리 — service-accounts·oauth-connect 시험).
+  // 갈리는 축은 header 하나다: 헤더로 나가는 것은 번들의 access_token 이라 그 표시가 설 자리가 없다
   const r = issuesOf(withAuth({ kind: "oauth", fields: KEYED.fields }));
-  assert.ok(r.some((i) => i.includes("services[unsplash].auth.fields") && i.includes("token 형에서만")), r.join("\n"));
+  assert.ok(r.some((i) => i.includes("services[unsplash].auth.fields") && i.includes("header 가 없습니다")), r.join("\n"));
+  assert.deepEqual(issuesOf(withAuth({ kind: "oauth", fields: [{ key: "user_id", label: "계정 번호" }] })), []);
   const unknown = issuesOf(withAuth({ kind: "token", token_field: "x" }));
   assert.ok(unknown.some((i) => i.includes("미지 services[unsplash].auth 키(token 형): token_field")), unknown.join("\n"));
   assert.ok(issuesOf(withAuth({ kind: "none", required: false })).some((i) => i.includes("미지") && i.includes("required")));

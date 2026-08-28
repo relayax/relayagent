@@ -81,7 +81,7 @@ relayos-claude/docs/convergence.md §"runner의 두 반쪽" 및 §"OSS 선행 �
 
 | 동사 | 계약 | 로컬 구현 | control-ts 대응물 |
 |---|---|---|---|
-| `credential(scope): Promise<string \| null>` | 어떤 자격으로 — 스코프 좌표의 자격 값, **요청 시점 발급**. 없으면 `null` | `vault.ts:36-42` `vaultGet` (Keychain, 0600 파일 폴백). 좌표 문법 `<pkg>/<service>` = `vault.ts:53` `credKey` | `POST /connections/token:issue` · `/llm/token:issue` — 요청 시점 발급, 좌표 (인스턴스 신원 토큰, principal) (ARCHITECTURE.md §0) |
+| `credential(scope): Promise<string \| null>` | 어떤 자격으로 — 스코프 좌표의 자격 값, **요청 시점 발급**. 없으면 `null` | `vault.ts:36-42` `vaultGet` (Keychain, 0600 파일 폴백). 좌표 문법 `<pkg>/<service>`(계정 축이 선언된 서비스는 `<pkg>/<service>@<account>`, 그 서비스의 계정 색인은 `<pkg>/<service>/accounts`) = `vault.ts` `credKey`·`accountsKey` | `POST /connections/token:issue` · `/llm/token:issue` — 요청 시점 발급, 좌표 (인스턴스 신원 토큰, principal) (ARCHITECTURE.md §0) |
 | `setCredential(scope, value): Promise<void>` | 자격 기록 | `vault.ts:26-34` `vaultSet` | `ConnectionService.vaultScope` — 자격 좌표 = (커넥터, principal), 공용 술어 `connectorScope(pkg)` (ARCHITECTURE.md §7 "자격 좌표" 항목) |
 
 1. **자격은 요청 시점 pull 이다. env 상주 금지.** *왜: 상주가 없어야 회전·revoke 가 다음
