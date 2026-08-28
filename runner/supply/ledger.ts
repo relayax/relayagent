@@ -18,10 +18,84 @@ if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 export const RELAY_HOME = process.env.RELAY_HOME
   ? path.resolve(expandHome(process.env.RELAY_HOME))
   : path.join(os.homedir(), ".relay");
-export const API_PORT = Number(process.env.RELAY_PORT ?? 4747);
-if (!Number.isInteger(API_PORT) || API_PORT < 1 || API_PORT > 65535) {
-  throw new Error(`RELAY_PORT: 포트가 아니다: ${process.env.RELAY_PORT}`);
+// ── 데몬의 자리(run/daemon.pid · run/daemon.port) ──────────────────────────────
+// 포트는 인스턴스의 정체가 아니라 홈의 부속이다. 데몬이 기동하며 자기 pid 와 듣는 포트를 홈에 적고,
+// 같은 홈을 보는 CLI 는 그 기록을 따라간다 — 홈만 알면 포트는 몰라도 된다.
+// 실사고(2026-08-28): 데스크톱이 ~/.relay-app:4748 로 뜬 뒤, .env 없는 CLI 가 기본 4747 의 지난 빌드
+// 데몬에 붙어 다른 인스턴스에 발행·결재를 썼다. 포트를 사람이 외워 맞추는 구조가 원인이었다.
+const DEFAULT_PORT = 4747;
+const runDir = (): string => path.join(RELAY_HOME, "run");
+const daemonPidFile = (): string => path.join(runDir(), "daemon.pid");
+const daemonPortFile = (): string => path.join(runDir(), "daemon.port");
+
+function parsePort(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error(`RELAY_PORT: 포트가 아니다: ${raw}`);
+  return n;
 }
+
+/** 이 홈에서 도는 데몬의 pid — 기록이 있고 그 프로세스가 살아 있을 때만. 죽은 기록은 지운다(다음 기동이 그 자리를 쓴다) */
+export function runningDaemonPid(): number | null {
+  const f = daemonPidFile();
+  if (!fs.existsSync(f)) return null;
+  const pid = Number(fs.readFileSync(f, "utf8").trim());
+  if (Number.isInteger(pid) && pid > 0) {
+    try {
+      process.kill(pid, 0);
+      return pid;
+    } catch { /* 죽은 기록 */ }
+  }
+  fs.rmSync(f, { force: true });
+  fs.rmSync(daemonPortFile(), { force: true });
+  return null;
+}
+
+/** 이 홈의 데몬이 듣는 포트 — 데몬이 문을 연 뒤 적는다(markDaemonListening). 도는 데몬이 없거나 아직 안 열렸으면 null */
+export function runningDaemonPort(): number | null {
+  if (runningDaemonPid() == null) return null;
+  const f = daemonPortFile();
+  if (!fs.existsSync(f)) return null;
+  const n = Number(fs.readFileSync(f, "utf8").trim());
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+}
+
+/** 기동 첫 줄 — pid 부터 적어 같은 홈의 두 번째 기동을 막는다. 포트는 문이 실제로 열린 뒤(아래) */
+export function markDaemonStarting(): void {
+  fs.mkdirSync(runDir(), { recursive: true });
+  fs.writeFileSync(daemonPidFile(), String(process.pid) + "\n");
+}
+
+/** 문이 열린 뒤에야 적는다 — 기록은 "여기로 오라"는 약속이라, 듣기 전에 적으면 CLI 가 빈 문을 두드린다 */
+export function markDaemonListening(port: number): void {
+  fs.mkdirSync(runDir(), { recursive: true });
+  fs.writeFileSync(daemonPortFile(), String(port) + "\n");
+}
+
+export function clearDaemonMark(): void {
+  fs.rmSync(daemonPidFile(), { force: true });
+  fs.rmSync(daemonPortFile(), { force: true });
+}
+
+/** 인스턴스의 신원 = 홈의 실경로. 심링크로 같은 자리를 다르게 부를 수 있으므로 realpath 로 편다 */
+export function homeId(): string {
+  try {
+    return fs.realpathSync(RELAY_HOME);
+  } catch {
+    return path.resolve(RELAY_HOME); // 아직 없는 홈 — 첫 기동 전
+  }
+}
+
+/**
+ * API 포트 판정. RELAY_PORT 는 "이 포트로 들어라/가라" 는 명시 선언이라 늘 이긴다(데스크톱·개발 인스턴스).
+ * 없으면 이 홈에서 지금 도는 데몬의 기록을 따르고, 그것도 없으면 기본값이다.
+ * 데몬 자신에게는 이 판정이 곧 env·기본값이다: 도는 데몬이 있으면 기동이 거부되고(startDaemon), 없으면
+ * 기록이 지워지므로 옛 기록이 새 데몬의 자리를 정하는 일은 없다.
+ */
+export function discoverApiPort(env: NodeJS.ProcessEnv = process.env): number {
+  if (env.RELAY_PORT != null && env.RELAY_PORT !== "") return parsePort(env.RELAY_PORT);
+  return runningDaemonPort() ?? DEFAULT_PORT;
+}
+export const API_PORT = discoverApiPort();
 export const API_URL = `http://127.0.0.1:${API_PORT}`;
 // 폴더 결재의 기본 홈. workspace 미기록 패키지의 cwd 와 stage 가 이 아래 앉는다.
 // 인스턴스별 분리 대상이 아니다: workspace 는 패키지별 결재로 이미 재지정 가능

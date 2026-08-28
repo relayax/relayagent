@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
 import { spawn } from "node:child_process";
-import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, type Grant, type Ledger } from "./supply/ledger.ts";
+import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger } from "./supply/ledger.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
@@ -336,6 +336,12 @@ export function createApi(
       if (p === "/" || p === "") {
         res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
         return void res.end(homeDoc(getLedger()));
+      }
+      // 이 문은 누구인가 — 홈(인스턴스의 신원)과 듣는 자리. 포트가 같아도 홈이 다르면 다른 기판이고,
+      // 같은 포트에 다른 인스턴스가 설 수 있으므로(홈은 사람이 고른다) 부르는 쪽은 이것으로 대조한다.
+      // 자격도 장부도 싣지 않는다 — 신원 한 줄이다
+      if (p === "/instance" && req.method === "GET") {
+        return void json(res, 200, { home: homeId(), port: API_PORT, principal: authority.principal() });
       }
       if (p === "/registry" && req.method === "GET") return void json(res, 200, registryData(getLedger()));
 
@@ -807,19 +813,10 @@ export function startDaemon(): void {
   // 데몬의 cwd 는 사라지지 않는 곳이어야 한다 — Tauri 앱이 임시 스테이징 디렉토리에서 띄운 데몬의 cwd 가
   // 뒤에 지워져, 그 cwd 를 물려받는 자식(하네스 verb)이 전부 침묵한 실사고(2026-08-28). 홈은 남는다.
   try { process.chdir(os.homedir()); } catch { /* 홈조차 없으면 있던 자리 — 진입 디렉토리 기본 cwd(spawn.ts)가 받친다 */ }
-  const pidFile = path.join(RELAY_HOME, "run", "daemon.pid");
-  if (fs.existsSync(pidFile)) {
-    const old = Number(fs.readFileSync(pidFile, "utf8").trim());
-    let alive = false;
-    try {
-      process.kill(old, 0);
-      alive = true;
-    } catch {
-      alive = false;
-    }
-    if (alive) throw new Error(`데몬이 이미 실행 중입니다: pid ${old} (${API_URL})`);
-  }
-  fs.writeFileSync(pidFile, String(process.pid) + "\n");
+  // 같은 홈에 데몬은 하나다 — 홈이 곧 인스턴스라서. 살아 있는 기록이 있으면 그쪽으로 가라고 말한다
+  const old = runningDaemonPid();
+  if (old != null) throw new Error(`데몬이 이미 실행 중입니다: pid ${old} (${API_URL}) — 이 홈(${RELAY_HOME})의 CLI 는 그 데몬을 따라갑니다`);
+  markDaemonStarting();
   // 상주 하네스는 데몬만 허용한다 — CLI 1회 실행이 상주를 남기면 고아가 된다
   enableResidents();
   let ticker: Ticker | null = null;
@@ -827,7 +824,26 @@ export function startDaemon(): void {
   const daemonAuthority = localAuthority(() => loadLedger());
   const host = makeHostBridge(() => loadLedger(), () => ticker, daemonAuthority);
   ticker = new Ticker(() => loadLedger(), host, daemonAuthority);
-  createApi(() => loadLedger(), host, ticker, daemonAuthority);
+  const server = createApi(() => loadLedger(), host, ticker, daemonAuthority);
+  // 포트 기록은 문이 실제로 열린 뒤 — 같은 홈의 CLI 가 이 기록을 따라온다(ledger.ts discoverApiPort).
+  // 값은 선언(API_PORT)이 아니라 **실제 바인딩된 주소**에서 읽는다: 기록은 "여기로 오라"는 약속이라
+  // 문이 선 자리와 한 글자도 달라서는 안 된다(임베더가 listen 좌표를 바꿔도 기록은 진실을 말한다)
+  server.once("listening", () => {
+    const addr = server.address();
+    if (addr && typeof addr === "object") markDaemonListening(addr.port);
+  });
+  // 문을 못 열면 조용히 죽지 않는다. 포트가 막힌 것은 십중팔구 **다른 홈**의 기판이다(같은 홈이면 위에서
+  // 기동을 거부했다) — 그 사실과 처방을 말하고, 반쯤 적힌 기록을 지운 채 내려간다
+  server.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code === "EADDRINUSE") {
+      console.error(`포트 ${API_PORT} 를 다른 프로세스가 듣고 있습니다 — 이 홈(${RELAY_HOME})의 데몬은 아닙니다. 다른 홈의 기판이면 RELAY_PORT 로 다른 포트를 주거나 그쪽을 내리세요`);
+    } else {
+      console.error(`문을 열지 못했습니다: ${e.message}`);
+    }
+    ticker?.stop();
+    clearDaemonMark();
+    process.exit(1);
+  });
   ticker.start();
   const l = loadLedger();
   // 지난 기동이 턴 도중에 끊겼다면 그 자리에 답이 없다. 서비스보다 먼저 줍는다 —
@@ -862,7 +878,9 @@ export function startDaemon(): void {
   void resumeRemotes(daemonAuthority, localSessionIO(() => loadLedger()))
     .then((notes) => { for (const n of notes) console.log(n); })
     .catch((e) => console.error(`원격 제어 상주 재개 실패 - ${e}`));
-  console.log(`relay daemon: ${API_URL} (principal: ${daemonAuthority.principal()})`);
+  // 기동 첫 줄에 홈을 적는다 — 한 기계에 인스턴스가 둘일 수 있고(데스크톱과 체크아웃), 주소만으로는
+  // 어느 쪽이 떴는지 알 수 없다. 사람이 로그에서 가장 먼저 확인하는 것이 이 짝이다
+  console.log(`relay daemon: ${API_URL} (home: ${RELAY_HOME}, principal: ${daemonAuthority.principal()})`);
   const widget = widgetBundleNote();
   if (widget) console.log(widget);
   console.log(`콘솔: ${API_URL}/pkg/system/view/`);
@@ -877,7 +895,7 @@ export function startDaemon(): void {
     retireAllScriptWorkers();
     stopAllRemotes();
     stopAll();
-    fs.rmSync(pidFile, { force: true });
+    clearDaemonMark();
     process.exit(0);
   };
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, shutdown);

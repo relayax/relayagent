@@ -59,7 +59,7 @@ relay install packages/system --ring0   # 관리 셸을 ring-0으로
 relay daemon                          # API, 서비스, 트리거, 콘솔
 ```
 
-데몬은 `http://127.0.0.1:4747`에서 듣습니다(포트는 `RELAY_PORT`로 변경). 콘솔은 `/pkg/system/view/`, 저작 playground는 `/pkg/system/view/playground.html`. 이 콘솔 자체가 system 패키지의 view입니다. 기판 위에서 도는 첫 번째 에이전트 소프트웨어인 셈입니다.
+데몬은 기본 `http://127.0.0.1:4747`에서 듣고(`RELAY_PORT`로 다른 포트를 고를 수 있음) 자기 포트를 `RELAY_HOME/run/daemon.port`에 적습니다. CLI는 그 기록을 따라가므로 체크아웃은 홈만 알면 됩니다. 콘솔은 `/pkg/system/view/`, 저작 playground는 `/pkg/system/view/playground.html`. 이 콘솔 자체가 system 패키지의 view입니다. 기판 위에서 도는 첫 번째 에이전트 소프트웨어인 셈입니다.
 
 기판과 대화하기:
 
@@ -131,7 +131,8 @@ my-package/
 | `~/Relay/` | 보이는 땅: 기본 workspace(`~/Relay/<이름>`) |
 | `~/Relay/packages/<이름>/` | 수정 레이어: git 이력을 가진 작업 사본 (스튜디오와 agent-builder가 여기 쓴다). 저작이 이 제품의 중심이므로 사람이 열 수 있는 자리에서 벌어진다 — 도는 판은 `releases/` 에 남아 손이 닿지 않는다. |
 | `~/Relay/.stage/` | 채팅과 세션 사이의 파일 교환 무대 |
-| `.env` (체크아웃 루트) | 인스턴스 설정: `RELAY_HOME`(기본 `~/.relay`), `RELAY_PORT`(기본 4747). 셸 환경변수가 항상 이긴다. [.env.example](.env.example) 참조 |
+| `.env` (체크아웃 루트) | 인스턴스 설정: `RELAY_HOME`(기본 `~/.relay`), `RELAY_PORT`(포트를 *고를* 때만 — CLI는 도는 데몬을 따라간다). 셸 환경변수가 항상 이긴다. [.env.example](.env.example) 참조 |
+| `~/.relay/run/daemon.{pid,port}` | 도는 데몬의 pid와 포트 — 기동 때 적고, CLI가 따라가고, 종료 때 지운다 |
 | `127.0.0.1:4747` | 데몬 API와 콘솔 (기본 포트) |
 
 ## 기여
