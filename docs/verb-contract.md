@@ -39,7 +39,7 @@ and reported as such. A result that cannot cross the thread boundary — a funct
 | `pkg` | The verb's own package (install name). |
 | `caller` | `{principal, agent?}` — who this run is for. The substrate fills it; a verb never mints it. |
 | `dir(name)` | Absolute path of a declared `dir` service, with the install-time binding applied. Undeclared names throw. A verb runs inside the substrate, so it may hold a path; a session never does. |
-| `service(name)` | `{url, call(tool, args), fetch(path, init?)}` for a declared service. `call` speaks MCP over HTTP (`url`, `source`) or the substrate's own file door (`dir`); `fetch` speaks REST inside the declared base (`api`). See below. |
+| `service(name)` | `{url, call(tool, args), fetch(path, init?), connected(), fields(), account(label), accounts()}` for a declared service. `call` speaks MCP over HTTP (`url`, `source`) or the substrate's own file door (`dir`); `fetch` speaks REST inside the declared base (`api`). See below. |
 | `dispatch(provider, mission, payload)` | a2a delegation. Requires an approved grant; returns the provider session's reply. |
 | `host` | ring-0 only. The substrate bridge, capped by `host_methods`. `undefined` everywhere else. |
 
@@ -91,7 +91,7 @@ does not have throws with a message naming the other:
 | Declared form | `ctx.service(name)` |
 |---|---|
 | `url` | The declared URL, called with the credential its `auth` block declares (resolved per call — an OAuth bundle rotates 60 s before expiry). `fetch` throws. |
-| `api` | `fetch(path, init?)` against the declared REST base, with `Authorization` attached by the substrate from the service's own `auth` block — `<auth.scheme> <token>`, `Bearer` unless declared otherwise (Unsplash's `Client-ID`, for instance); same per-call resolution, same rotation. The verb never holds the credential, and a request resolving outside the declared base prefix throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
+| `api` | `fetch(path, init?)` against the declared REST base, with the credential attached by the substrate from the service's own `auth` block; same per-call resolution, same rotation. Where it rides is declared too (`auth.inject`): unset means the `Authorization` header — `<auth.scheme> <token>`, `Bearer` unless declared otherwise (Unsplash's `Client-ID`) — while `{query: <name>}` puts it in the query string and `{form: <name>}` in the `x-www-form-urlencoded` body (an API that takes its token as a parameter, not a header; a `form` service refuses a body of any other type rather than smuggling a field into it). The verb never holds the credential, and a request resolving outside the declared prefixes throws — a foreign absolute URL, a `../` climb, and a root escape from a base that has a path are all the same judgment. `bases` widens *where*, never *whether*: a provider whose token exchange or upload lives on a second host declares those hosts there and the same judgment covers them, so the consent sheet lists every address the credential can reach. That is what makes the manifest's base and the consent sheet's *goes out to this address* enforced rather than advertised. `call` throws. |
 | `source` (`entry` or `dockerfile`) | The address the substrate knows the spawned body listens on. On a single-user substrate that is the declared `port` on loopback — the process form receives it as `env.PORT`, the container form maps `-p <port>:<port>`, so both look the same from the substrate's side. The MCP door is the root of that port: the declaration fixes a port and nothing else, so appending a path would invent grammar. A `source` service with no `port` throws. `fetch` throws. |
 | `dir` | A file door the substrate stands up itself: `call("list"\|"read"\|"write"\|"remove", args)`, dispatched in-process (no network hop). Paths in the arguments are relative to the folder and nothing else — an absolute path, a `..` climb, and a symlink pointing outward are all refused by one judgment. `fetch` throws. Until 2026-08-25 this row read *a folder is not a door* and returned the caller to `ctx.dir(name)`; removing that exception is what makes the sentence above — one accessor for every form — true without an asterisk (the session-side folder tools that briefly accompanied it are retired again; see *Ground and folders*). The credential and identity axes are absent here on purpose: nothing goes out. |
 
@@ -111,9 +111,24 @@ the package runs without, with only that feature off, and the verb decides by as
 a 401. When the declaration shapes the input as keyed fields (`auth.fields`), the one marked
 `header: true` goes into `Authorization` and every field marked `secret` stays with the substrate; the
 rest — an account id, a repository name, settings that travel with the credential but are not secret —
-come back from `ctx.service(name).fields()`. People enter these on the console's connection screen
+come back from `ctx.service(name).fields()`. An `oauth` service has fields too, and they mean the same
+thing on the side the login does not answer: the flow mints the token, the fields carry what it never
+asked for, and they ride inside the bundle. There is no `header` there — what goes into `Authorization`
+is the bundle's `access_token`. People enter all of this on the console's connection screen
 (`/connect?p=<install>&s=<service>`); a package screen only points there and never draws a key input
 of its own.
+
+**One service, many credentials.** `auth.accounts: true` says the same service is reached as several
+accounts, and the vault coordinate gains the axis: `<pkg>/<service>@<account>`. The verb picks one —
+`ctx.service(name).account("brand-main")` returns a handle whose every call carries that account's
+credential — and `ctx.service(name).accounts()` lists the ones that are connected. The unpicked handle
+answers only those two questions (`accounts()`, and `connected()` meaning *any*); `fetch`, `call` and
+`fields` throw and name the choice. That refusal is the point: when several credentials sit behind one
+name, letting an unqualified call pick one silently is not a cap, it is a coincidence. Choosing an
+account on a service that never declared the axis throws as well — inventing a coordinate would write
+a credential nobody reads. Without this axis a package that talks to several accounts of one service
+has to build its own secret store, and *credentials never live in the tree* stops being true for
+exactly that package.
 
 **Address resolution is injectable.** `ServiceIO.body(pkg, service, port)` returns
 `{url, authorization?}` or `null`, and the substrate's default answers loopback. An embedder whose
@@ -123,6 +138,34 @@ patches no source. The credential half lives in the same seam because the `sourc
 by the infrastructure that issues them. When the seam returns none, the call carries none — the
 body was already handed its credential at spawn time, in `RELAY_CRED_<NAME>`, from the same vault
 coordinate (`<pkg>/<service>`).
+
+## Being reached by a GET
+
+A verb's door is `POST /pkg/<install>/script/<verb>`, and for a session that is the whole story — the
+MCP door calls it. Some callers cannot: an OAuth provider's redirect, a webhook's verification
+challenge, a link someone opens. They arrive as `GET`, and a substrate that only listens for `POST`
+sends the author off to build a static page that catches the code and re-posts it — a bridge whose
+only job is to change a method.
+
+`scripts.get` names the verbs that also answer `GET`:
+
+```yaml
+scripts:
+  source: scripts
+  get: [oauth-return, webhook-verify]
+```
+
+The query string is the input, verbatim — a repeated key arrives as an array. A verb that returns a
+string answers `text/plain` with that string as the whole body (a verification challenge is echoed,
+not wrapped); anything else answers JSON like the `POST` door. The verb itself is unchanged: same
+code, same `ctx`, same judgment — a verb that behaved differently depending on which door it came
+through would be two verbs wearing one name.
+
+It is a declaration and not a default because this door is reachable by any web page. Browsers omit
+`Origin` on `GET`, so the CSRF judgment that guards every state-changing route has nothing to read
+here; what stands in its place is that the author named the verb and the consent sheet lists it as an
+inbound address. Treat what arrives as untrusted input — it is a stranger's query string, not a
+session's arguments.
 
 ## Reaching another package
 
@@ -220,6 +263,7 @@ export const meta = {
 |---|---|
 | `description` | What `tools/list` shows the session — the verb's own and any session that borrows it through an edge. Absent → the substrate synthesizes `<pkg> 패키지의 <verb> 동사` (`edge 소비: <provider> 의 <verb>` when borrowed). |
 | `input` | JSON Schema literal, published as the tool's `inputSchema`. Absent → the open schema `{type:"object", additionalProperties:true}`. |
+
 | `output` | Accepted and ignored for now: MCP 2025-03-26 `tools/list` has no `outputSchema` slot. |
 
 Rules:

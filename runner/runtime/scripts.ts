@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { workspaceDir, type Grant, type Ledger } from "../supply/ledger.ts";
-import { serviceAuthHeader } from "./oauth.ts";
-import { publicFields } from "./credential.ts";
+import { attachCredential, serviceAuthHeader } from "./oauth.ts";
+import { judgeAccount, listAccounts, publicFields } from "./credential.ts";
 import { credKey } from "../vault.ts";
 import { localAuthority } from "../authority.ts";
 import type { Authority } from "../authority-contract.ts";
-import { loadManifest, listScripts, agentScriptScope, type AuthDecl, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
+import { loadManifest, listScripts, agentScriptScope, outwardService, type AuthDecl, type Manifest, type ServiceDecl } from "../supply/manifest.ts";
 import { resolveProvider, edgeAgentAccess } from "../supply/install.ts";
 import type { McpToolInfo } from "./mcp.ts";
 // dir 문의 집행 정본(dirs.ts) — 감금·연산은 한 벌이고, 그 문을 지나는 입구는 동사 문(ctx.service) 하나다
@@ -108,6 +108,14 @@ export interface ServiceHandle {
    * secret 칸은 절대 실리지 않는다 — 자격이 동사의 손을 지나지 않는다는 약속의 칸 단위 집행이다
    */
   fields(): Promise<Record<string, string | string[]>>;
+  /**
+   * 계정 축(services[].auth.accounts: true) — 이 계정의 자격으로 같은 문을 연다. 축이 선언된 서비스의 바탕
+   * 손잡이는 accounts()·connected()(하나라도 있는가)만 답하고 나머지 문은 계정을 고르라고 던진다. 축 없는
+   * 서비스에서 account() 는 던진다 — 없는 좌표를 지어 조용히 빈 자격으로 나가는 일이 없어야 한다
+   */
+  account(label: string): ServiceHandle;
+  /** 앉아 있는 계정 이름들 — 계정 축이 선언된 서비스만. 아니면 던진다 */
+  accounts(): Promise<string[]>;
 }
 
 /** 결재된 provider 하나로 열린 문 — edges[] 선언 × grants 결재를 지난 것만 부를 수 있다 */
@@ -156,11 +164,14 @@ export interface ScriptCtx {
  * 갈 수 있으면 선언은 광고지 사실이 아니다. 다른 호스트의 절대 URL 도, 상대 경로의 ../ 도,
  * base 가 경로를 가질 때의 루트 탈출(/foo)도 이 판정 하나로 같이 막힌다.
  */
-export function apiTarget(base: string, p: string, name: string): string {
-  const root = base.endsWith("/") ? base : base + "/";
-  const u = new URL(p, root);
-  if (u.href !== base && !u.href.startsWith(root)) {
-    throw new Error(`api 서비스 base 밖 요청: ${name} — ${u.href} 는 ${base} 접두 밖입니다`);
+export function apiTarget(base: string, p: string, name: string, bases: string[] = []): string {
+  const rootOf = (b: string): string => (b.endsWith("/") ? b : b + "/");
+  const u = new URL(p, rootOf(base));
+  // 보조 베이스(services[].bases)도 같은 판정을 지난다 — 상대 경로는 언제나 첫 베이스 안이고, 절대 URL 은 선언된
+  // 접두 중 하나 안이어야 한다. 접두는 슬래시로 닫아 비교한다(api.notion.com.evil 이 api.notion.com 접두를 흉내 낸다)
+  const inside = [base, ...bases].some((b) => u.href === b || u.href.startsWith(rootOf(b)));
+  if (!inside) {
+    throw new Error(`api 서비스 base 밖 요청: ${name} — ${u.href} 는 ${[base, ...bases].join(" · ")} 접두 밖입니다`);
   }
   return u.href;
 }
@@ -282,6 +293,107 @@ export function makeCtx(
 ): ScriptCtx {
   const rec = ledger.packages[pkg];
   const m = loadManifest(rec.path);
+  const credential = (k: string): Promise<string | null> => authority.credential(k);
+  // 자격 축이 없는 형(dir·source)의 문 — 없는 축을 물으면 사유를 실어 되돌린다
+  const noAuthAxis = (form: string, name: string) => async (): Promise<never> => {
+    throw new Error(`${form} 형에는 자격 축이 없습니다: ${name} — connected()·fields()·account()·accounts() 는 밖으로 나가는 url·api 서비스의 문입니다`);
+  };
+  const noAccountAxis = (form: string, name: string) => (): never => {
+    throw new Error(`${form} 형에는 자격 축이 없습니다: ${name} — account() 는 밖으로 나가는 url·api 서비스의 문입니다`);
+  };
+  /**
+   * 서비스 손잡이 하나 — account 는 계정 축(auth.accounts)의 좌표다. null 이면 바탕 손잡이: 축 없는 서비스는 그것이
+   * 자격 전부이고, 축 있는 서비스는 열거(accounts)와 유무(connected)만 답하고 나머지 문은 계정을 고르라고 던진다.
+   * 축 없는 서비스에서 계정을 고르는 것도 던진다 — 없는 좌표로 조용히 빈 자격이 나가는 일이 없어야 한다
+   */
+  const serviceHandle = (name: string, account: string | null): ServiceHandle => {
+    const svc = (m.services ?? []).find((s) => s.name === name);
+    if (!svc) throw new Error(`미선언 서비스: ${name}`);
+    // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산의
+    // 정본은 dirs.ts 한 벌이다. 이 문을 지나는 입구는 동사뿐이다 — 세션에 폴더 도구는 서지
+    // 않는다(폴더는 동사가 감싸서만 소비된다). 자격·신원 축은 없다: 나가는 요청이 아니다.
+    if ("dir" in svc && svc.dir != null) {
+      const root = ensureDirRoot(resolveDirService(ledger, pkg, m, name));
+      return {
+        url: `dir://${name}`,
+        call: (op, args) => dirCall(root, op, (args ?? {}) as Record<string, unknown>),
+        fetch: async () => {
+          throw new Error(`폴더 문에는 fetch 가 없습니다: ${name} — 파일 연산은 ctx.service("${name}").call("read"|"list"|"write"|"remove", 인자)`);
+        },
+        connected: noAuthAxis("dir", name),
+        fields: noAuthAxis("dir", name),
+        account: noAccountAxis("dir", name),
+        accounts: noAuthAxis("dir", name),
+      };
+    }
+    const noFetch = (): never => {
+      throw new Error(`MCP 문에는 fetch 가 없습니다: ${name} — 도구 호출은 ctx.service("${name}").call(도구, 인자)`);
+    };
+    if (!("url" in svc && svc.url != null) && !("api" in svc && svc.api != null)) {
+      // source 형 — 신원(caller)은 url 형과 같은 규칙으로 실리고, 자격은 문법에 auth 자리가 없어 이음새가 주는 것뿐이다
+      const src = svc as Extract<ServiceDecl, { source: string }>;
+      const body = io.body(pkg, name, src.port ?? null);
+      if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
+      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch, connected: noAuthAxis("source", name), fields: noAuthAxis("source", name), account: noAccountAxis("source", name), accounts: noAuthAxis("source", name) };
+    }
+    // 밖으로 나가는 두 형의 자격 문 — 값은 기판만 보고(헤더·질의·폼 조립), 동사는 있음/없음과 비밀 아닌 칸만 본다
+    const auth = outwardService(svc)?.auth;
+    const multi = auth?.accounts === true;
+    const key = credKey(pkg, name, account);
+    const pick = (): never => {
+      throw new Error(`계정 축이 선언된 서비스입니다: ${name} — ctx.service("${name}").account(<계정>) 으로 고르세요(앉아 있는 계정은 .accounts())`);
+    };
+    const axis = {
+      connected: async (): Promise<boolean> => {
+        if (!auth || auth.kind === "none") return true;
+        if (multi && !account) return (await listAccounts(credential, pkg, name)).length > 0;
+        return (await credential(key)) != null;
+      },
+      fields: async (): Promise<Record<string, string | string[]>> => {
+        if (multi && !account) pick();
+        return publicFields(auth, await credential(key));
+      },
+      account: (label: string): ServiceHandle => {
+        if (!multi) throw new Error(`계정 축이 없는 서비스입니다: ${name} — services[].auth.accounts: true 를 선언해야 계정을 고를 수 있습니다`);
+        return serviceHandle(name, judgeAccount(label));
+      },
+      accounts: async (): Promise<string[]> => {
+        if (!multi) throw new Error(`계정 축이 없는 서비스입니다: ${name} — services[].auth.accounts: true 를 선언해야 계정이 열거됩니다`);
+        return listAccounts(credential, pkg, name);
+      },
+    };
+    // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
+    // 풀어 선언된 자리(헤더·질의·폼 — attachCredential)에 싣고(oauth 번들은 만료 전 자동 회전, oauth.ts)
+    // 목적지는 apiTarget 이 선언 base(와 보조 bases) 안으로 묶는다. 신원 헤더(x-relay-*)는 싣지 않는다 —
+    // 남의 REST API 에 우리 principal 을 흘리는 축이 되고, 저쪽은 그 어휘를 모른다.
+    if ("api" in svc && svc.api != null) {
+      const a = svc as Extract<ServiceDecl, { api: string }>;
+      return {
+        url: a.api,
+        call: () => {
+          throw new Error(`api 서비스는 MCP 문이 아닙니다: ${name} — REST 요청은 ctx.service("${name}").fetch(경로, init)`);
+        },
+        fetch: async (p, init) => {
+          if (multi && !account) pick();
+          const target = apiTarget(a.api, p, name, a.bases ?? []);
+          const req = await attachCredential(authority, pkg, name, a.auth, account, target, init ?? {});
+          return await fetch(req.url, req.init);
+        },
+        ...axis,
+      };
+    }
+    // url 형 — 신원(caller)이 실리고, 자격은 선언된 auth 의 해석(호출 시점 — oauth 번들은 만료 전 자동 회전)
+    const u = svc as Extract<ServiceDecl, { url: string }>;
+    return {
+      url: u.url,
+      call: async (tool, args) => {
+        if (multi && !account) pick();
+        return mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth, account), caller);
+      },
+      fetch: noFetch,
+      ...axis,
+    };
+  };
   return {
     pkg,
     caller,
@@ -297,70 +409,7 @@ export function makeCtx(
     // 서비스 선언 네 형이 한 접근자를 지난다 — 저작자가 "몸이 url 이냐 api 냐 source 냐"를
     // 외우지 않아야 자격·신원이 한 문으로 모인다. 형마다 다른 접근자를 두면 그 문을 안 지나는
     // 몸이 생기고, 신원 없이 불리는 비대칭이 바로 거기서 난다.
-    service: (name) => {
-      const svc = (m.services ?? []).find((s) => s.name === name);
-      if (!svc) throw new Error(`미선언 서비스: ${name}`);
-      // dir 형 = 폴더 문. 기판이 프로세스 안에서 직접 세우므로 네트워크 홉이 없고, 감금·연산의
-      // 정본은 dirs.ts 한 벌이다. 이 문을 지나는 입구는 동사뿐이다 — 세션에 폴더 도구는 서지
-      // 않는다(폴더는 동사가 감싸서만 소비된다). 자격·신원 축은 없다: 나가는 요청이 아니다.
-      // 자격 축이 없는 형(dir·source)의 connected/fields — 없는 축을 물으면 사유를 실어 되돌린다
-      const noAuthAxis = (form: string) => async (): Promise<never> => {
-        throw new Error(`${form} 형에는 자격 축이 없습니다: ${name} — connected()·fields() 는 밖으로 나가는 url·api 서비스의 문입니다`);
-      };
-      // 밖으로 나가는 두 형의 자격 문 — 값은 기판만 보고(헤더 조립), 동사는 있음/없음과 비밀 아닌 칸만 본다
-      const outwardAuth = (auth: AuthDecl | undefined) => ({
-        connected: async () => !auth || auth.kind === "none" || (await authority.credential(credKey(pkg, name))) != null,
-        fields: async () => publicFields(auth, await authority.credential(credKey(pkg, name))),
-      });
-      if ("dir" in svc && svc.dir != null) {
-        const root = ensureDirRoot(resolveDirService(ledger, pkg, m, name));
-        return {
-          url: `dir://${name}`,
-          call: (op, args) => dirCall(root, op, (args ?? {}) as Record<string, unknown>),
-          fetch: async () => {
-            throw new Error(`폴더 문에는 fetch 가 없습니다: ${name} — 파일 연산은 ctx.service("${name}").call("read"|"list"|"write"|"remove", 인자)`);
-          },
-          connected: noAuthAxis("dir"),
-          fields: noAuthAxis("dir"),
-        };
-      }
-      // api 형 = REST 몸. 자격이 동사의 손을 지나지 않는 유일한 형이다: 기판이 호출 시점에
-      // 풀어 헤더로 붙이고(oauth 번들은 만료 60초 전 자동 회전, oauth.ts) 목적지는 apiTarget 이
-      // 선언 base 안으로 묶는다. 신원 헤더(x-relay-*)는 싣지 않는다 — 남의 REST API 에 우리
-      // principal 을 흘리는 축이 되고, 저쪽은 그 어휘를 모른다.
-      if ("api" in svc && svc.api != null) {
-        const a = svc as Extract<ServiceDecl, { api: string }>;
-        return {
-          url: a.api,
-          call: () => {
-            throw new Error(`api 서비스는 MCP 문이 아닙니다: ${name} — REST 요청은 ctx.service("${name}").fetch(경로, init)`);
-          },
-          fetch: async (p, init) => {
-            const target = apiTarget(a.api, p, name);
-            const headers = new Headers(init?.headers);
-            const authHeader = await serviceAuthHeader(authority, pkg, name, a.auth);
-            if (authHeader) headers.set("authorization", authHeader);
-            return await fetch(target, { ...init, headers });
-          },
-          ...outwardAuth(a.auth),
-        };
-      }
-      // 신원(caller)은 남은 두 형에서 같은 규칙으로 실린다: 원격 몸이 "누구로서"를 모르면
-      // 자격 하나로 모든 행을 본다. 자격만 형마다 출처가 다르다 —
-      // url 형은 선언된 auth 의 해석(호출 시점 — oauth 번들은 만료 60초 전 자동 회전, oauth.ts),
-      // source 형은 문법에 auth 자리가 없어 이음새가 주는 것뿐이다(없으면 없는 대로).
-      const noFetch = (): never => {
-        throw new Error(`MCP 문에는 fetch 가 없습니다: ${name} — 도구 호출은 ctx.service("${name}").call(도구, 인자)`);
-      };
-      if ("url" in svc && svc.url != null) {
-        const u = svc as Extract<ServiceDecl, { url: string }>;
-        return { url: u.url, call: async (tool, args) => mcpCall(u.url, tool, args, await serviceAuthHeader(authority, pkg, name, u.auth), caller), fetch: noFetch, ...outwardAuth(u.auth) };
-      }
-      const src = svc as Extract<ServiceDecl, { source: string }>;
-      const body = io.body(pkg, name, src.port ?? null);
-      if (!body) throw new Error(`몸 주소 없음: ${name} — source 서비스는 port 를 선언해야 기판이 문을 세웁니다`);
-      return { url: body.url, call: (tool, args) => mcpCall(body.url, tool, args, body.authorization, caller), fetch: noFetch, connected: noAuthAxis("source"), fields: noAuthAxis("source") };
-    },
+    service: (name) => serviceHandle(name, null),
     // 남의 동사 — 선언(edges[])이 캡이고 결재(grants)가 승인이다. 판정은 세션 문과 같은
     // 한 벌(callEdgeTool)을 지난다. provider 는 edges[].provider 에 적은 참조 그대로 쓰면 된다
     // (설치 이름·매니페스트 이름·버전 꼬리표 셋 다 해석한다 — 저작자가 설치 이름을 외울 필요가 없다)
@@ -496,9 +545,9 @@ function seedFor(ledger: Ledger, pkg: string, m: Manifest, ctx: ScriptCtx, io: S
       dirs[s.name] = resolveDirService(ledger, pkg, m, s.name);
       services[s.name] = { url: `dir://${s.name}` };
     } else if ("api" in s && s.api != null) {
-      services[s.name] = { url: s.api };
+      services[s.name] = { url: s.api, ...(s.auth?.accounts ? { accounts: true } : {}) };
     } else if ("url" in s && s.url != null) {
-      services[s.name] = { url: s.url };
+      services[s.name] = { url: s.url, ...(s.auth?.accounts ? { accounts: true } : {}) };
     } else {
       const src = s as Extract<ServiceDecl, { source: string }>;
       const body = io.body(pkg, s.name, src.port ?? null);

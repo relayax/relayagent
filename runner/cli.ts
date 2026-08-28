@@ -62,6 +62,17 @@ function has(name: string): boolean {
   return args.includes("--" + name);
 }
 
+/** 계정 축(services[].auth.accounts)의 좌표 — 선언된 서비스는 --account 가 있어야 하고, 없는 서비스에 실으면 거절한다 */
+function accountArg(multi: boolean, service: string, judge: (v: unknown) => string): string | null {
+  const raw = flag("account");
+  if (multi) {
+    if (!raw) throw new Error(`계정 축이 선언된 서비스입니다: ${service} — --account <계정> 으로 어느 계정의 자격인지 적으세요`);
+    return judge(raw);
+  }
+  if (raw) throw new Error(`계정 축이 없는 서비스입니다: ${service} — services[].auth.accounts: true 를 선언해야 계정을 둘 수 있습니다`);
+  return null;
+}
+
 /** 반복 가능한 플래그 수집 (--bind a=b --bind c=d) */
 function flagAll(name: string): string[] {
   const out: string[] = [];
@@ -94,8 +105,10 @@ function printDisclosure(d: import("./supply/manifest.ts").Disclosure, name: str
   // 서비스 이름이 곧 vault 좌표라 옛 커넥터 줄이 하던 안내가 모든 외부 접점으로 넓어졌다
   const connectHint = (n: { name: string; auth: string }): string =>
     n.auth === "token" ? ` — relay connect ${name} ${n.name}` : n.auth === "oauth" ? ` — relay oauth ${name} ${n.name}` : "";
-  for (const n of d.network) lines.push(`    외부    ${n.url} 로 나갑니다 (자격: ${n.auth}${connectHint(n)})`);
+  for (const n of d.network) lines.push(`    외부    ${[n.url, ...(n.bases ?? [])].join(" · ")} 로 나갑니다 (자격: ${n.auth}${connectHint(n)})`);
   for (const w of d.wakeups) lines.push(`    자동    ${w.when} 에 스스로 깨어납니다 (${w.id})`);
+  // GET 문은 아무 웹페이지나 두드릴 수 있는 들어오는 문이다 — 나가는 접점과 같은 무게로 적는다
+  for (const g of d.gets) lines.push(`    주소    GET /pkg/${name}/script/${g} 를 브라우저·리다이렉트·웹훅에서 받습니다`);
   for (const s of d.spawns) lines.push(`    실행    ${s} 를 띄웁니다`);
   for (const b of d.borrows) lines.push(`    차용    ${b} — 활성화는 별도 결재(grant)`);
   if (d.hostMethods.length) lines.push(`    기판    host 브리지 선언: ${d.hostMethods.join(", ")}`);
@@ -267,7 +280,7 @@ async function main(): Promise<void> {
 
     case "oauth": {
       const [pkg, service] = args;
-      if (!pkg || !service) throw new Error("사용법: relay oauth <패키지> <서비스> — auth.kind: oauth 인 url·api 서비스의 인가 흐름");
+      if (!pkg || !service) throw new Error("사용법: relay oauth <패키지> <서비스> [--account <계정>] — auth.kind: oauth 인 url·api 서비스의 인가 흐름");
       const rec = ledger.packages[pkg];
       if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
       const m = loadManifest(rec.path);
@@ -275,18 +288,44 @@ async function main(): Promise<void> {
       // 디스커버리 기점은 선언 주소의 origin 하나다(oauth.ts discoverMeta) — MCP 문이든 REST 베이스든 같은 흐름
       const outward = svc ? outwardService(svc) : null;
       if (!outward) throw new Error(`밖으로 나가는 서비스 아님(url·api 형만): ${service}`);
-      if (outward.auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${outward.auth?.kind ?? "none"}) — token 형은 relay connect`);
-      const { runOAuthFlow } = await import("./runtime/oauth.ts");
-      const bundle = await runOAuthFlow(outward.base, outward.auth, {
-        clientId: async () => {
-          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-          const v = await new Promise<string>((resolve) => rl.question("등록된 앱의 client_id: ", resolve));
-          rl.close();
-          return v;
-        },
-      });
-      await authority.setCredential(credKey(pkg, service), JSON.stringify(bundle));
-      console.log(`연결됨: ${credKey(pkg, service)} (vault — access${bundle.refresh_token ? "+refresh" : ""}${bundle.expires_at ? ", 자동 회전" : ""})`);
+      const auth = outward.auth;
+      if (auth?.kind !== "oauth") throw new Error(`oauth 자격 서비스 아님(${auth?.kind ?? "none"}) — token 형은 relay connect`);
+      const { loopbackRedirect, runOAuthFlow } = await import("./runtime/oauth.ts");
+      const { assembleFields, judgeAccount, rememberAccount } = await import("./runtime/credential.ts");
+      const account = accountArg(auth.accounts === true, service, judgeAccount);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+      // 등록된 앱 — 선언(oauth_client.client_id)이 없을 때만 client_id 를 묻고, 비밀은 늘 묻는다(공개 클라이언트면 비워 둔다)
+      const registered = auth.client === "registered";
+      const clientId = registered && !auth.oauth_client?.client_id ? (await ask("등록된 앱의 client_id: ")).trim() : undefined;
+      const clientSecret = registered ? (await ask("등록된 앱의 client_secret (공개 클라이언트면 비워 두세요): ")).trim() : "";
+      // 부속 칸(auth.fields) — 로그인이 주지 않는 값(계정 번호·저장소 좌표)을 흐름 전에 받아 번들에 앉힌다
+      let fields: Record<string, string | string[]> | undefined;
+      if (auth.fields?.length) {
+        const values: Record<string, string> = {};
+        for (const f of auth.fields) values[f.key!] = await ask(`${f.label}${f.required ? " (필수)" : ""}${f.list ? " (쉼표 구분)" : ""}: `);
+        const r = assembleFields(auth.fields, values);
+        if (!r.ok) throw new Error(`빈 칸: ${r.missing.join(", ")}`);
+        fields = r.value;
+      }
+      rl.close();
+      // 콜백은 이 프로세스가 받는다(RFC 8252 loopback) — 데몬의 고정 문은 데몬이 소유한다. 등록된 앱은
+      // redirect_uri 가 미리 적혀 있어야 하므로 그 주소를 먼저 보여 준다: 안 맞으면 제공자는 사유 없이 되돌린다
+      const redirect = await loopbackRedirect();
+      if (registered) {
+        console.log(`콜백 주소: ${redirect.uri}`);
+        console.log("  등록된 앱의 redirect_uri 에 이 주소가 있어야 합니다. 주소를 고정해야 하면 콘솔의 연결 화면에서 이으세요(데몬의 고정 문을 씁니다).");
+      }
+      const bundle = await runOAuthFlow(outward.base, auth, {
+        clientId: clientId != null ? async () => clientId : undefined,
+        clientSecret: clientSecret || undefined,
+        fields,
+        redirect,
+      }).finally(() => redirect.close());
+      const key = credKey(pkg, service, account);
+      await authority.setCredential(key, JSON.stringify(bundle));
+      if (account) await rememberAccount(authority, pkg, service, account);
+      console.log(`연결됨: ${key} (vault — access${bundle.refresh_token ? "+refresh" : ""}${bundle.expires_at ? ", 자동 회전" : ""})`);
       break;
     }
 
@@ -306,7 +345,7 @@ async function main(): Promise<void> {
 
     case "connect": {
       const [pkg, service] = args;
-      if (!pkg || !service) throw new Error("사용법: relay connect <패키지> <서비스|채널>");
+      if (!pkg || !service) throw new Error("사용법: relay connect <패키지> <서비스|채널> [--account <계정>]");
       const rec = ledger.packages[pkg];
       if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
       // 칸 선언(services[].auth.fields)이 있으면 칸마다 묻고 화면과 같은 한 벌(credential.ts)로
@@ -315,7 +354,8 @@ async function main(): Promise<void> {
       const svc = (loadManifest(rec.path).services ?? []).find((s) => s.name === service);
       const auth = svc ? outwardService(svc)?.auth : undefined;
       if (auth?.kind === "oauth") throw new Error(`oauth 자격 서비스 — 인가 흐름은 relay oauth ${pkg} ${service}`);
-      const { assembleCredential } = await import("./runtime/credential.ts");
+      const { assembleCredential, judgeAccount, rememberAccount } = await import("./runtime/credential.ts");
+      const account = accountArg(auth?.accounts === true, service, judgeAccount);
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
       const values: Record<string, string> = {};
@@ -330,8 +370,10 @@ async function main(): Promise<void> {
       rl.close();
       const r = assembleCredential(fields, values);
       if (!r.ok) throw new Error(`빈 칸: ${r.missing.join(", ")}`);
-      await authority.setCredential(credKey(pkg, service), r.value);
-      console.log(`저장됨: ${credKey(pkg, service)} (vault)`);
+      const key = credKey(pkg, service, account);
+      await authority.setCredential(key, r.value);
+      if (account) await rememberAccount(authority, pkg, service, account);
+      console.log(`저장됨: ${key} (vault)`);
       break;
     }
 

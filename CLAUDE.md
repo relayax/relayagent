@@ -39,6 +39,8 @@ runner/                 the substrate (CLI + daemon). Plain .ts, run with --expe
     pack.ts sign.ts registry.ts store.ts   envelope, signature, remote shelf, its HTTP surface
   spawn.ts                the only place a process is started (Git Bash on Windows)
   vault.ts                the only place a secret is kept
+  tls.ts                  the self-signed cert behind the optional TLS door (RELAY_TLS_PORT) —
+                          it exists for one reason: OAuth callbacks that must be https
   protocol.ts http.ts                      shared vocabulary · HTTP idioms
   authority.ts authority-contract.ts       the seam an embedder swaps
 

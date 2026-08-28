@@ -85,7 +85,8 @@ export interface Manifest {
     workdir?: string;
   };
   agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
-  scripts?: { source: string };
+  /** get — GET 으로도 열리는 동사 목록. 브라우저 주소·리다이렉트·웹훅 검증처럼 GET 으로 오는 호출의 문(고지서에 선다) */
+  scripts?: { source: string; get?: string[] };
   services?: ServiceDecl[];
   triggers?: TriggerDecl[];
   missions?: { name: string; description?: string }[];
@@ -116,7 +117,7 @@ export interface HarnessVariant {
 export type ServiceDecl =
   | { name: string; source: string; dockerfile?: string; entry?: string; disk?: string; resources?: { memory?: string; cpu?: number }; port?: number }
   | { name: string; url: string; tools?: string[]; auth?: AuthDecl }
-  | { name: string; api: string; auth?: AuthDecl }
+  | { name: string; api: string; bases?: string[]; auth?: AuthDecl }
   | { name: string; dir: string };
 
 export interface AuthDecl {
@@ -127,15 +128,44 @@ export interface AuthDecl {
   help?: { url?: string; note?: string };
   verify?: { url: string; headers?: Record<string, string> };
   client?: string;
-  oauth_client?: unknown;
+  oauth_client?: OAuthClientDecl;
   /** org 기판 자격 브로커의 서비스 키 — 브로커 없는 기판은 무시 */
   service?: string;
   /** 없으면 이 패키지의 주 기능이 서지 않는 자격인가 — 미선언 = true. false 면 없어도 돌고 그 기능만
    *  꺼진다(무엇이 켜지는지는 help.note 가 말한다). 연결 화면이 "필요"와 "선택"을 가르는 축 */
   required?: boolean;
-  /** token 형의 입력 칸 형태 — 미선언 = 토큰 문자열 한 칸. key 있는 칸들이면 vault 에 JSON 으로 앉고
-   *  header 칸만 헤더로 나가며, 나머지 비밀 아닌 칸은 동사가 ctx.service(이름).fields() 로 읽는다 */
+  /** 입력 칸 형태 — 미선언 = token 형은 토큰 문자열 한 칸, oauth 형은 인가 흐름뿐. key 있는 칸들이면 token 형은
+   *  vault 에 JSON 으로 앉고 header 칸만 헤더로 나가며, oauth 형은 인가 번들의 fields 로 앉는다(header 칸 없음 —
+   *  헤더는 번들의 access_token 이다). 비밀 아닌 칸은 두 형 다 동사가 ctx.service(이름).fields() 로 읽는다 */
   fields?: CredentialField[];
+  /** 계정 축 — 한 서비스에 자격이 여럿(계정마다 하나). 좌표는 <pkg>/<서비스>@<계정>, 동사는
+   *  ctx.service(이름).account(계정) 으로 고르고 .accounts() 로 열거한다. services[].auth 에서만 */
+  accounts?: boolean;
+  /** 자격이 요청의 어디에 실리는가 — 미선언 = Authorization 헤더(scheme 접두). query·form 은 그 파라미터 이름으로
+   *  실린다(토큰을 질의 문자열이나 폼 본문으로 받는 API). api 형에서만 — MCP 문은 헤더로만 말한다 */
+  inject?: { query: string } | { form: string };
+}
+
+/** auth.oauth_client — 인가 흐름의 선언. 표준(디스커버리·DCR·PKCE·refresh)은 선언 없이 돌고, 여기는 표준이
+ *  답하지 못하는 것만 적는다: 등록된 앱의 공개 식별자, 콜백 프로토콜 요구, 그리고 제공자 방언(장기 교환·토큰 회전) */
+export interface OAuthClientDecl {
+  scopes?: string[];
+  /** 등록된 앱의 공개 식별자 — 비밀이 아니라 트리에 살 수 있다. 있으면 사람이 넣을 것은 client_secret 뿐이다 */
+  client_id?: string;
+  /** 콜백(redirect_uri)에 HTTPS 를 요구하는 제공자 — 기판의 TLS 문(RELAY_TLS_PORT)이 없으면 흐름이 사유와 함께 서지 않는다 */
+  https?: boolean;
+  auth_meta?: {
+    authorization_endpoint?: string;
+    token_endpoint?: string;
+    registration_endpoint?: string;
+    authorize_params?: Record<string, string>;
+    /** 코드 교환 직후 한 번 더 — 단기 토큰을 장기 토큰으로 바꾸는 제공자(메타 계열 ig_exchange_token) */
+    exchange_endpoint?: string;
+    exchange_params?: Record<string, string>;
+    /** refresh_token 없이 access_token 으로 회전하는 제공자(메타 계열 ig_refresh_token) */
+    refresh_endpoint?: string;
+    refresh_params?: Record<string, string>;
+  };
 }
 
 export interface TriggerDecl {
@@ -200,11 +230,15 @@ export function validCron(expr: string): boolean {
 // token 형에 fields 를 적었고 판정은 통과했지만, 그 칸을 그리는 화면도 읽는 러너도 없었다
 const AUTH_KEYS: Record<string, Set<string>> = {
   none: new Set(["kind"]),
-  token: new Set(["kind", "env", "scheme", "service", "help", "verify", "required", "fields"]),
-  oauth: new Set(["kind", "env", "client", "service", "oauth_client", "help", "verify", "required"]),
+  token: new Set(["kind", "env", "scheme", "service", "help", "verify", "required", "fields", "accounts", "inject"]),
+  oauth: new Set(["kind", "env", "client", "service", "oauth_client", "help", "verify", "required", "fields", "accounts", "inject"]),
 };
 const FIELD_KEYS = new Set(["key", "label", "placeholder", "secret", "list", "required", "header"]);
 const FIELD_KEY = /^[a-z][a-z0-9_]*$/;
+/** 질의·폼 파라미터 이름 — 제공자의 어휘라 대소문자를 가리지 않되 공백·구분자는 막는다 */
+const PARAM = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+const OAUTH_CLIENT_KEYS = new Set(["scopes", "client_id", "https", "auth_meta"]);
+const AUTH_META_KEYS = new Set(["authorization_endpoint", "token_endpoint", "registration_endpoint", "authorize_params", "exchange_endpoint", "exchange_params", "refresh_endpoint", "refresh_params"]);
 
 /**
  * 자격 입력 칸 판정 — 채널 credential.fields 와 서비스 auth.fields 가 같은 한 벌을 지난다.
@@ -213,7 +247,7 @@ const FIELD_KEY = /^[a-z][a-z0-9_]*$/;
  * 하나가 헤더로 나가야 하고(없으면 기판이 무엇을 Authorization 에 넣을지 모른다), 채널에는
  * 그 축이 없다(어댑터가 자격 전체를 받는다).
  */
-function judgeFields(fields: unknown, label: string, issues: string[], where: "channel" | "service"): void {
+function judgeFields(fields: unknown, label: string, issues: string[], where: "channel" | "service" | "oauth"): void {
   if (!Array.isArray(fields) || fields.length === 0) {
     issues.push(`${label}: 칸 목록(fields)은 비어 있지 않은 배열`);
     return;
@@ -232,6 +266,8 @@ function judgeFields(fields: unknown, label: string, issues: string[], where: "c
         );
       } else if (k === "header" && where === "channel") {
         issues.push(`${label}: header 는 services[].auth 의 칸에서만 — 채널 어댑터는 자격 전체를 RELAY_CRED_<이름> 으로 받습니다`);
+      } else if (k === "header" && where === "oauth") {
+        issues.push(`${label}: oauth 형의 칸에는 header 가 없습니다 — Authorization 은 인가 번들의 access_token 이 나갑니다`);
       }
     }
     if (typeof f.label !== "string" || !f.label.trim()) issues.push(`${label}: 칸마다 label 필수`);
@@ -247,6 +283,9 @@ function judgeFields(fields: unknown, label: string, issues: string[], where: "c
   if (bare.some((f) => f.list)) issues.push(`${label}: list 는 key 있는 필드에만 씁니다 — 문자열 자격은 배열이 될 수 없습니다`);
   const dupKey = keyed.map((f) => f.key).find((k, i, a) => a.indexOf(k) !== i);
   if (dupKey) issues.push(`${label}: key 중복: ${dupKey}`);
+  if (where === "oauth" && bare.length) {
+    issues.push(`${label}: oauth 형의 칸은 전부 key 가 있어야 합니다 — 인가 번들 안에 JSON 으로 앉는 부속 값입니다`);
+  }
   if (where === "service") {
     const headers = keyed.filter((f) => f.header);
     if (keyed.length && headers.length !== 1) {
@@ -259,8 +298,9 @@ function judgeFields(fields: unknown, label: string, issues: string[], where: "c
 
 /** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다.
  *  where 는 어휘가 갈리는 유일한 축이다: scheme·fields·required 는 화면과 헤더의 말이라 서비스 자격에만 뜻이 있다 */
-function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], where: "service" | "llm" = "service"): void {
+function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], where: "url" | "api" | "llm"): void {
   if (!a) return;
+  const service = where !== "llm";
   if (!["none", "token", "oauth"].includes(a.kind)) {
     issues.push(`${label}.kind 닫힌집합 위반(none|token|oauth): ${a.kind}`);
     return;
@@ -269,20 +309,62 @@ function judgeAuth(a: AuthDecl | undefined, label: string, issues: string[], whe
     if (!AUTH_KEYS[a.kind].has(k)) issues.push(`미지 ${label} 키(${a.kind} 형): ${k}`);
   }
   if (a.required != null) {
-    if (where !== "service") issues.push(`${label}.required: services[].auth 에서만 — 연결 화면이 필수·선택을 가르는 축입니다`);
+    if (!service) issues.push(`${label}.required: services[].auth 에서만 — 연결 화면이 필수·선택을 가르는 축입니다`);
     else if (typeof a.required !== "boolean") issues.push(`${label}.required: true | false`);
   }
   if (a.fields != null) {
-    // 소비자 없는 선언은 통과시키지 않는다 — llm 자격은 화면이 아니라 env 로 잇고, oauth 는 인가 흐름이 자격을 만든다
-    if (where !== "service") issues.push(`${label}.fields: services[].auth 에서만 — llm 자격은 화면이 아니라 env 로 잇습니다`);
-    else if (a.kind !== "token") issues.push(`${label}.fields: token 형에서만 — oauth 는 인가 흐름이 자격을 만듭니다`);
+    // 소비자 없는 선언은 통과시키지 않는다 — llm 자격은 화면이 아니라 env 로 잇는다. oauth 형의 칸은 로그인이 주지
+    // 않는 부속 값(계정 번호·저장소 좌표)의 자리라 header 가 없고 전부 key 가 있다
+    if (!service) issues.push(`${label}.fields: services[].auth 에서만 — llm 자격은 화면이 아니라 env 로 잇습니다`);
+    else if (a.kind === "oauth") judgeFields(a.fields, `${label}.fields`, issues, "oauth");
     else judgeFields(a.fields, `${label}.fields`, issues, "service");
   }
   if (a.scheme != null) {
     // 소비자 없는 선언은 통과시키지 않는다 — 통과하면 "Client-ID 로 나간다" 가 광고가 된다
-    if (where !== "service") issues.push(`${label}.scheme: services[].auth 에서만 — llm 자격은 헤더가 아니라 env 로 나갑니다`);
+    if (!service) issues.push(`${label}.scheme: services[].auth 에서만 — llm 자격은 헤더가 아니라 env 로 나갑니다`);
     else if (a.kind !== "token") issues.push(`${label}.scheme: token 형에서만(oauth 는 RFC 6750 이 Bearer 를 정합니다): ${a.kind}`);
     else if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(a.scheme)) issues.push(`${label}.scheme 형식 위반(헤더 접두 한 단어, 예 Bearer·Client-ID): ${a.scheme}`);
+    else if (a.inject != null) issues.push(`${label}.scheme 은 헤더의 접두라 inject(질의·폼)와 함께 쓸 수 없습니다 — 자격이 헤더로 안 나가면 접두가 붙을 자리가 없습니다`);
+  }
+  if (a.accounts != null) {
+    if (!service) issues.push(`${label}.accounts: services[].auth 에서만 — 계정 축은 바깥 서비스의 자격에 있습니다`);
+    else if (typeof a.accounts !== "boolean") issues.push(`${label}.accounts: true | false`);
+  }
+  if (a.inject != null) {
+    // 자격이 실리는 자리는 기판이 집행하는 것이라 선언이 정확해야 한다 — 둘을 다 적으면 무엇이 나갈지 정해지지 않는다
+    const inj = a.inject as Record<string, unknown>;
+    const keys = typeof inj === "object" && inj != null && !Array.isArray(inj) ? Object.keys(inj) : [];
+    if (where !== "api") issues.push(`${label}.inject: api 형 서비스에서만 — MCP 문과 llm 자격은 헤더·env 로만 나갑니다`);
+    else if (keys.length !== 1 || !["query", "form"].includes(keys[0])) issues.push(`${label}.inject: { query: <파라미터> } 또는 { form: <파라미터> } 중 하나`);
+    else if (typeof inj[keys[0]] !== "string" || !PARAM.test(inj[keys[0]] as string)) issues.push(`${label}.inject.${keys[0]}: 파라미터 이름 형식 위반: ${String(inj[keys[0]])}`);
+  }
+  if (a.oauth_client != null) {
+    const oc = a.oauth_client as Record<string, unknown>;
+    if (a.kind !== "oauth") issues.push(`${label}.oauth_client: oauth 형에서만`);
+    else if (typeof oc !== "object" || Array.isArray(oc)) issues.push(`${label}.oauth_client: 객체만`);
+    else {
+      for (const k of Object.keys(oc)) if (!OAUTH_CLIENT_KEYS.has(k)) issues.push(`미지 ${label}.oauth_client 키: ${k}`);
+      if (oc.scopes != null && (!Array.isArray(oc.scopes) || oc.scopes.some((x) => typeof x !== "string" || !x))) issues.push(`${label}.oauth_client.scopes: 문자열 목록`);
+      if (oc.client_id != null && (typeof oc.client_id !== "string" || !oc.client_id.trim())) issues.push(`${label}.oauth_client.client_id: 비어 있지 않은 문자열`);
+      if (oc.https != null && typeof oc.https !== "boolean") issues.push(`${label}.oauth_client.https: true | false`);
+      const meta = oc.auth_meta as Record<string, unknown> | undefined;
+      if (meta != null) {
+        if (typeof meta !== "object" || Array.isArray(meta)) issues.push(`${label}.oauth_client.auth_meta: 객체만`);
+        else {
+          for (const k of Object.keys(meta)) if (!AUTH_META_KEYS.has(k)) issues.push(`미지 ${label}.oauth_client.auth_meta 키: ${k}`);
+          for (const k of ["authorization_endpoint", "token_endpoint", "registration_endpoint", "exchange_endpoint", "refresh_endpoint"]) {
+            if (meta[k] != null && (typeof meta[k] !== "string" || !/^https?:\/\//.test(meta[k] as string))) issues.push(`${label}.oauth_client.auth_meta.${k}: http(s) URL 필요`);
+          }
+          for (const k of ["authorize_params", "exchange_params", "refresh_params"]) {
+            const v = meta[k] as Record<string, unknown> | undefined;
+            if (v != null && (typeof v !== "object" || Array.isArray(v) || Object.values(v).some((x) => typeof x !== "string"))) issues.push(`${label}.oauth_client.auth_meta.${k}: 문자열 값의 객체`);
+          }
+          // 파라미터는 주소에 붙는 것이라 주소 없이는 실릴 자리가 없다 — 반쪽 선언은 조용히 무시되지 않고 막힌다
+          if (meta.exchange_params != null && meta.exchange_endpoint == null) issues.push(`${label}.oauth_client.auth_meta.exchange_params 는 exchange_endpoint 와 함께만`);
+          if (meta.refresh_params != null && meta.refresh_endpoint == null) issues.push(`${label}.oauth_client.auth_meta.refresh_params 는 refresh_endpoint 와 함께만`);
+        }
+      }
+    }
   }
   if (a.env != null && !/^[A-Z][A-Z0-9_]*$/.test(a.env)) {
     // kind 를 가리지 않는다 — oauth 변형도 무인 기판이 자격을 댈 env 이름을 선언할 수 있다
@@ -546,8 +628,20 @@ export function judge(m: Manifest, pkgPath?: string): void {
   }
 
   if (m.scripts) {
+    for (const k of Object.keys(m.scripts)) if (!["source", "get"].includes(k)) issues.push(`미지 scripts 키: ${k}`);
     if (!m.scripts.source || badPath(m.scripts.source)) issues.push("scripts.source: 상대경로 필수");
     else mustExist(m.scripts.source, "scripts.source");
+    // GET 문은 아무 웹페이지나 두드릴 수 있는 문이다(브라우저는 GET 에 Origin 을 싣지 않는다) — 선언으로만 열리고,
+    // 실재하는 동사만 가리킨다. 없는 동사를 열어 두면 문은 있는데 답이 없다
+    if (m.scripts.get != null) {
+      if (!Array.isArray(m.scripts.get) || m.scripts.get.length === 0) issues.push("scripts.get: 비어 있지 않은 동사 이름 목록");
+      else {
+        for (const g of m.scripts.get) {
+          if (typeof g !== "string" || !SLUG.test(g)) issues.push(`scripts.get 형식 위반(동사 이름): ${String(g)}`);
+          else if (scriptNames && !scriptNames.includes(g)) issues.push(`scripts.get 실체 없음: ${g}`);
+        }
+      }
+    }
   }
 
   const svcNames = new Set<string>();
@@ -571,13 +665,23 @@ export function judge(m: Manifest, pkgPath?: string): void {
     if ("url" in s && s.url != null) {
       if (!/^https?:\/\//.test(s.url)) issues.push(`services[${s.name}].url: http(s) URL 필요`);
       for (const t of s.tools ?? []) if (!SLUG.test(t)) issues.push(`services[${s.name}].tools 형식 위반: ${t}`);
-      judgeAuth(s.auth, `services[${s.name}].auth`, issues);
+      judgeAuth(s.auth, `services[${s.name}].auth`, issues, "url");
     }
     // api 형 = REST 베이스. base 는 집행의 근거다 — 동사의 요청이 이 접두 밖으로 못 나가므로
     // (scripts.ts apiTarget) 고지서의 "이 주소로 나갑니다"가 선언이 아니라 사실이 된다
     if ("api" in s && s.api != null) {
       if (!/^https?:\/\//.test(s.api)) issues.push(`services[${s.name}].api: http(s) URL 필요`);
-      judgeAuth(s.auth, `services[${s.name}].auth`, issues);
+      // 보조 베이스 — 같은 자격이 나가는 다른 접두(토큰 교환이 다른 호스트에 사는 제공자). 고지서에 같이 선다
+      if (s.bases != null) {
+        if (!Array.isArray(s.bases) || s.bases.length === 0) issues.push(`services[${s.name}].bases: 비어 있지 않은 URL 목록`);
+        else {
+          for (const b of s.bases) {
+            if (typeof b !== "string" || !/^https?:\/\//.test(b)) issues.push(`services[${s.name}].bases: http(s) URL 필요: ${String(b)}`);
+            else if (b.replace(/\/+$/, "") === s.api.replace(/\/+$/, "")) issues.push(`services[${s.name}].bases: api 와 같은 주소는 적지 않습니다: ${b}`);
+          }
+        }
+      }
+      judgeAuth(s.auth, `services[${s.name}].auth`, issues, "api");
     }
     if ("dir" in s && s.dir != null && badPath(s.dir, true)) issues.push(`services[${s.name}].dir: 상대경로 또는 ~ 경로만`);
   }
@@ -748,7 +852,7 @@ export interface Disclosure {
   folders: { name: string; path: string }[];
   /** services[].url(MCP 문) · services[].api(REST 베이스) — 밖으로 나가는 접점과 자격의 형태.
    *  name 은 자격 좌표이기도 하다(vault <pkg>/<name>) — 화면이 "무엇으로 연결하는가"를 그린다 */
-  network: { name: string; url: string; auth: string }[];
+  network: { name: string; url: string; auth: string; /** api 형의 보조 베이스 — 같은 자격이 나가는 다른 접두 */ bases?: string[] }[];
   /** triggers — 사용자가 없어도 스스로 깨어나는 시점 */
   wakeups: { id: string; when: string }[];
   /** harness.variants[].llm — 사용자의 어느 계정으로 도는가 */
@@ -763,6 +867,8 @@ export interface Disclosure {
   channels: string[];
   /** host_methods — 기판 host 브리지 게이트 선언 */
   hostMethods: string[];
+  /** scripts.get — GET 으로 열리는 동사. 아무 웹페이지나 두드릴 수 있는 들어오는 문이라 고지한다 */
+  gets: string[];
   /** 요구 범위. 위험이 아니라 넓이 — 화면 미터가 이 값을 그린다 */
   risk: "low" | "medium" | "high";
 }
@@ -779,7 +885,7 @@ export function disclosure(m: Manifest): Disclosure {
   for (const s of m.services ?? []) {
     if ("dir" in s && s.dir != null) folders.push({ name: s.name, path: s.dir });
     else if ("url" in s && s.url != null) network.push({ name: s.name, url: s.url, auth: s.auth?.kind ?? "none" });
-    else if ("api" in s && s.api != null) network.push({ name: s.name, url: s.api, auth: s.auth?.kind ?? "none" });
+    else if ("api" in s && s.api != null) network.push({ name: s.name, url: s.api, auth: s.auth?.kind ?? "none", ...(s.bases?.length ? { bases: s.bases } : {}) });
     else if ("source" in s && s.source != null) spawns.push(`${s.name} (${s.dockerfile ? "컨테이너" : "프로세스"})`);
   }
   const wakeups = (m.triggers ?? []).map((t) => ({
@@ -799,18 +905,19 @@ export function disclosure(m: Manifest): Disclosure {
   );
   const channels = (m.surfaces?.channels ?? []).map((c) => c.name);
   const hostMethods = m.host_methods ?? [];
+  const gets = m.scripts?.get ?? [];
 
   // 요구 범위 판정. high = 사용자 시야 밖에서 움직일 수 있는 선언(자동 실행, 외부 접점,
   // 자기 프로세스, 타 패키지 차용, 기판 host 브리지). medium = 호스트나 대화 표면을 넓게
   // 쓰는 선언. 나머지 low
   const risk: Disclosure["risk"] =
-    wakeups.length || network.length || spawns.length || borrows.length || hostMethods.length
+    wakeups.length || network.length || spawns.length || borrows.length || hostMethods.length || gets.length
       ? "high"
       : host.length || channels.length
         ? "medium"
         : "low";
 
-  return { folders, network, wakeups, llm, host, borrows, spawns, channels, hostMethods, risk };
+  return { folders, network, wakeups, llm, host, borrows, spawns, channels, hostMethods, gets, risk };
 }
 
 

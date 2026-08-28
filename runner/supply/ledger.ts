@@ -97,6 +97,16 @@ export function discoverApiPort(env: NodeJS.ProcessEnv = process.env): number {
 }
 export const API_PORT = discoverApiPort();
 export const API_URL = `http://127.0.0.1:${API_PORT}`;
+// TLS 문 — 선택. 켜면 데몬이 같은 라우트를 https://localhost:<포트> 에서도 듣는다(자가서명, runner/tls.ts).
+// 존재 이유는 하나다: 인가 콜백(redirect_uri)에 HTTPS 를 요구하는 제공자(메타 계열)가 있어서다.
+export const TLS_PORT: number | null = process.env.RELAY_TLS_PORT ? Number(process.env.RELAY_TLS_PORT) : null;
+if (TLS_PORT != null && (!Number.isInteger(TLS_PORT) || TLS_PORT < 1 || TLS_PORT > 65535 || TLS_PORT === API_PORT)) {
+  throw new Error(`RELAY_TLS_PORT: 포트가 아니거나 RELAY_PORT 와 같다: ${process.env.RELAY_TLS_PORT}`);
+}
+/** 인가 콜백의 **고정** 주소 — 등록형 OAuth 앱(auth.client: registered)의 redirect_uri 로 제공자에 적는 값.
+ *  임시 포트(RFC 8252 loopback)는 등록이 안 되므로 데몬의 문 자체가 콜백을 받는다(GET /oauth/cb).
+ *  TLS 문이 켜져 있으면 https 쪽이 정본이다 — 한 기판에 콜백 주소는 하나다 */
+export const OAUTH_CALLBACK_URL = TLS_PORT != null ? `https://localhost:${TLS_PORT}/oauth/cb` : `${API_URL}/oauth/cb`;
 // 폴더 결재의 기본 홈. workspace 미기록 패키지의 cwd 와 stage 가 이 아래 앉는다.
 // 인스턴스별 분리 대상이 아니다: workspace 는 패키지별 결재로 이미 재지정 가능
 const WORKSPACE_HOME = path.join(os.homedir(), "Relay");

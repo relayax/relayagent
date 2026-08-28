@@ -276,9 +276,20 @@ export interface ServiceStatusView {
   help: { url?: string; note?: string } | null;
   /** oauth 의 client 축: "registered" 면 사람이 client_id 를 공급해야 한다(DCR 불가) */
   client: string | null;
+  /** 선언된 공개 client_id — 있으면 화면이 묻지 않는다(사람이 넣을 것은 client_secret 뿐) */
+  clientId: string | null;
+  /** 콜백에 HTTPS 를 요구하는 제공자 — 기판의 TLS 문이 없으면 인가가 서지 않는다 */
+  https: boolean;
+  /** 이 기판의 인가 콜백 주소 — 제공자의 앱 설정에 적을 값(oauth 형만) */
+  callback: string | null;
+  /** 자격이 실리는 자리 — 선언(auth.inject)이 정한다 */
+  inject: "header" | "query" | "form";
+  /** 계정 축 — null 이면 축 없음. 있으면 앉아 있는 계정들(각각의 인가 진행 포함) */
+  accounts: { name: string; oauth: OAuthRunView | null }[] | null;
   /** auth.verify 선언 여부 — 없으면 기판이 유효를 판정할 수 없다(저장만) */
   verifiable: boolean;
   tools: string[];
+  /** 자격이 앉아 있는가 — 계정 축이 있으면 "계정이 하나라도" */
   hasCred: boolean;
   oauth: OAuthRunView | null;
 }
@@ -289,7 +300,7 @@ export function serviceStatus(pkg: string): Promise<{ services: ServiceStatusVie
 
 /** token 형 자격 저장만 — 유효 판정은 verify 소관. 칸 선언(fields)이 있으면 칸별 값을, 없으면 토큰 문자열을 보낸다 —
  *  조립은 기판이 한다(runtime/credential.ts — CLI 와 같은 한 벌). 필수 칸이 비면 400 + missing */
-export function connectService(pkg: string, service: string, payload: { token?: string; fields?: Record<string, string> }): Promise<{ ok: boolean }> {
+export function connectService(pkg: string, service: string, payload: { token?: string; fields?: Record<string, string>; account?: string }): Promise<{ ok: boolean }> {
   return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/connect`, payload);
 }
 
@@ -314,21 +325,27 @@ export function fetchConnections(): Promise<ConnectionsOverview> {
 }
 
 /** auth.verify 선언대로 실왕복 한 번 */
-export function verifyService(pkg: string, service: string): Promise<{ ok: boolean; note: string }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/verify`, {});
+export function verifyService(pkg: string, service: string, account?: string): Promise<{ ok: boolean; note: string }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/verify`, account ? { account } : {});
 }
 
-export function disconnectService(pkg: string, service: string): Promise<{ ok: boolean }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/disconnect`, {});
+export function disconnectService(pkg: string, service: string, account?: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/disconnect`, account ? { account } : {});
 }
 
-/** 인가 흐름을 연다 — 브라우저는 데몬이 띄운다. 즉시 돌아오고 진행은 폴링으로 본다 */
-export function startServiceOAuth(pkg: string, service: string, clientId?: string): Promise<OAuthRunView> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth`, clientId ? { client_id: clientId } : {});
+/** 인가 흐름을 연다 — 브라우저는 데몬이 띄우고 콜백은 데몬의 고정 문으로 온다. 즉시 돌아오고 진행은 폴링으로 본다.
+ *  부속 칸(auth.fields)과 등록된 앱의 비밀은 흐름 전에 실어 보낸다 — 인가가 주지 않는 값이다 */
+export function startServiceOAuth(
+  pkg: string,
+  service: string,
+  payload: { client_id?: string; client_secret?: string; account?: string; fields?: Record<string, string> } = {},
+): Promise<OAuthRunView> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth`, payload);
 }
 
-export function serviceOAuthStatus(pkg: string, service: string): Promise<OAuthRunView> {
-  return getJson(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth/status`);
+export function serviceOAuthStatus(pkg: string, service: string, account?: string): Promise<OAuthRunView> {
+  const q = account ? `?account=${encodeURIComponent(account)}` : "";
+  return getJson(`/pkg/${encodeURIComponent(pkg)}/service/${encodeURIComponent(service)}/oauth/status${q}`);
 }
 
 // 마켓 화면은 OSS 콘솔에서 걷어냈다 (스토어 UI 는 데스크탑 앱의 몫).

@@ -80,16 +80,23 @@ function hostMirror(runId: string, path: string[]): HostBridge {
 }
 
 function mirrorCtx(runId: string, seed: CtxSeed): ScriptCtx {
-  const service = (name: string): ServiceHandle => {
+  const service = (name: string, account: string | null = null): ServiceHandle => {
     const s = seed.services[name];
     if (!s) throw new Error(`미선언 서비스: ${name}`);
     if (s.fault) throw new Error(s.fault);
+    const at = account ? { account } : {};
     return {
       url: s.url,
-      call: (tool, args) => door(runId, { kind: "service.call", name, tool, args }),
-      fetch: async (p, init) => responseFromWire((await door(runId, { kind: "service.fetch", name, path: p, init: await initToWire(init) })) as WireResponse),
-      connected: () => door(runId, { kind: "service.connected", name }) as Promise<boolean>,
-      fields: () => door(runId, { kind: "service.fields", name }) as Promise<Record<string, string | string[]>>,
+      call: (tool, args) => door(runId, { kind: "service.call", name, ...at, tool, args }),
+      fetch: async (p, init) => responseFromWire((await door(runId, { kind: "service.fetch", name, ...at, path: p, init: await initToWire(init) })) as WireResponse),
+      connected: () => door(runId, { kind: "service.connected", name, ...at }) as Promise<boolean>,
+      fields: () => door(runId, { kind: "service.fields", name, ...at }) as Promise<Record<string, string | string[]>>,
+      // 계정 축의 유무는 씨앗이 답한다(동기 — 거울이 손잡이를 바로 돌려줘야 한다). 이름 판정과 자격은 문 너머 기판의 몫
+      account: (label) => {
+        if (!s.accounts) throw new Error(`계정 축이 없는 서비스입니다: ${name} — services[].auth.accounts: true 를 선언해야 계정을 고를 수 있습니다`);
+        return service(name, String(label));
+      },
+      accounts: () => door(runId, { kind: "service.accounts", name }) as Promise<string[]>,
     };
   };
   return {
