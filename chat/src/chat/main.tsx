@@ -24,7 +24,7 @@ import { createRoot } from "react-dom/client";
 import { ChatApp } from "./Chat";
 import { Desk } from "./Desk";
 import { Home } from "./Home";
-import { ChatTabs, type OpenReq } from "./ChatTabs";
+import { ChatTabs, type OpenReq, type PageDecl } from "./ChatTabs";
 import { getCtx, injectedCoords, type RelayCtx } from "./runtime";
 import "./tw.css";
 import "./chat.css";
@@ -116,8 +116,8 @@ function boot() {
 // autoFloat 는 OSS 의 **크롬**이다(view-bridge.md §1-1) — 뷰 발신 wire 의 착지를 소유한다:
 //   · relay:chat-open(§4-8) — 패널 열기 + 대상 해석 + prefill/send 를 postMessage 로 중계
 //     (재시도-until-ack, §4-10 — 수신부는 Chat.tsx 컴포저).
-//   · relay:scope(§5-17) — "페이지가 곧 대화": 선언 슬롯을 preview 탭으로 끌어온다.
-//     패널이 닫혀 있으면 이월해 열릴 때 착지한다.
+//   · relay:scope(§5-17) — 페이지가 자기 대화 좌표를 **알려 온다**. 탭·활성은 건드리지 않고
+//     좌표만 위젯에 넘긴다(declarePage) — 무대상 prefill/send 의 착지와 "+ 새 대화"의 기준.
 // relayos 쌍둥이 크롬은 agent.tsx ChatChrome — 같은 wire 를 같은 규칙으로 착지한다.
 const FLOAT_CSS = `
 .rc-float-dock{position:fixed;right:20px;bottom:20px;z-index:2147483000}
@@ -202,11 +202,10 @@ function autoFloat() {
   /** 페이지가 선언한 슬롯(relay:scope) — 무대상 prefill/send 의 착지 판정(view-bridge §4-8).
    *  null = 선언 없음. */
   let declaredSlot: string | null = null;
-  /** 패널이 닫혀 있는 동안 도착한 마지막 선언 — 열릴 때 착지(view-bridge §5-17). */
-  let pendingScope: OpenReq | null = null;
-  /** 크롬 쪽 선언 dedupe — 같은 페이지에 머무는 동안 재발화하지 않아 사용자가 손으로 고른
-   *  탭을 빼앗지 않는다(발신 쪽 dedupe 와 이중 방어). */
-  let lastScopeKey = "";
+  /** 페이지가 알려 온 좌표(view-bridge §5-17). 위젯이 아직 없으면 들고 있다가 마운트 때 넘긴다 —
+   *  탭을 여는 것이 아니라 기준을 세우는 것이라 이월에 시한이 없다. */
+  let declaredPage: { instanceId: string; conversationId: string; targets?: string[] } | null = null;
+  const pushPage = () => { if (declaredPage) handle?.declarePage(declaredPage); };
   const ensureMounted = () => {
     if (mounted) return;
     mounted = true;
@@ -215,6 +214,7 @@ function autoFloat() {
       onCollapse: () => setOpen(false),
       onAllClosed: () => setOpen(false),
     });
+    pushPage();
   };
   // 열림 상태도 기억한다(relay-dock-open) — 채팅을 열어 둔 채 다른 화면에 갔다 와도 그대로
   // 열려 있어야 한다. 탭은 ChatTabs 가 이미 localStorage 로 복원하므로 패널만 다시 열면 된다.
@@ -224,11 +224,6 @@ function autoFloat() {
     dock.classList.toggle("open", v);
     reserve(v, animate);
     try { localStorage.setItem(OPEN_KEY, v ? "1" : "0"); } catch { /* 무시 */ }
-    if (v && pendingScope && handle) {
-      const req = pendingScope;
-      pendingScope = null;
-      handle.openTab(req);
-    }
   };
   // 창 폭이 바뀌면 예약을 다시 잰다 — 열 때 한 번만 재면, 넓은 창에서 열고 좁힌 화면은 예약을
   // 그대로 들고 있어 본문 폭이 음수가 되고(가로 스크롤), 좁은 창에서 열고 넓힌 화면은 영영
@@ -328,10 +323,13 @@ function autoFloat() {
     if (send) relayToWidget("relay:chat-send", send);
   });
 
-  // ── relay:scope 착지(view-bridge §5-17) — "페이지가 곧 대화": 선언 변화(SPA 이동 포함)마다
-  // 그 슬롯을 preview 탭으로 끌어온다. 선언 부재(null)는 상위 좌표("main")로 같은 푸시 —
-  // 건너뛰면 대화가 직전에 보던 다른 에이전트 탭에서 계속된다. 좌표 없는 문서(instanceId
-  // 미주입)는 탭 좌표를 만들 수 없어 건너뛴다(선언 슬롯 기억은 유지 — prefill 라우팅용).
+  // ── relay:scope 착지(view-bridge §5-17) — 페이지는 자기 대화 좌표를 **알려 줄 뿐**이다.
+  // 종전에는 이 선언이 preview 탭을 밀어 활성 대화를 갈아치웠다("페이지가 곧 대화"). 그러면
+  // 사이드바로 화면을 옮기는 것만으로 보던 대화가 사라지고, 무엇보다 **위임을 걸어 둔 대화**가
+  // 눈앞에서 없어진다 — 위임의 📬 배달 주소는 페이지가 아니라 발신 슬롯이라, 화면이 페이지를
+  // 따라가면 결과가 어디로 갔는지 볼 자리가 없다(2026-08-29 개정). 이제 탭·활성은 사람의
+  // 것이고, 선언은 좌표 기준("+ 새 대화"·칩 피커·무대상 prefill 라우팅)으로만 산다.
+  // 좌표 없는 문서(instanceId 미주입)도 declaredSlot 은 기억한다 — prefill 라우팅용.
   window.addEventListener("relay:scope", (ev) => {
     const d = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
     const conversation = typeof d.conversation === "string" && d.conversation ? d.conversation : null;
@@ -340,17 +338,12 @@ function autoFloat() {
       : [];
     declaredSlot = conversation;
     if (!ctx.instanceId) return;
-    const key = JSON.stringify([conversation, targets]);
-    if (key === lastScopeKey) return;
-    lastScopeKey = key;
-    const req: OpenReq = {
+    declaredPage = {
       instanceId: ctx.instanceId,
       conversationId: conversation ?? "main",
-      preview: true,
       ...(targets.length ? { targets } : {}),
     };
-    if (opened && handle) handle.openTab(req);
-    else pendingScope = req;
+    pushPage();
   });
   // 부팅 레이스 봉합(view-bridge §5-16-a) — 선언은 변화 때만 흐르고 이 번들은 async 로
   // 늦게 뜰 수 있다: 리스너 등록 직후 현재 선언의 재방송을 요청한다. 바인딩 층이 없는
@@ -384,12 +377,19 @@ export type RelayTabsMountOptions = {
   onCollapse?: () => void;
 };
 
+type TabsHandle = { openTab: (r: OpenReq) => void; declarePage: (r: PageDecl) => void };
+
 export function mountTabs(el: HTMLElement, opts: RelayTabsMountOptions = {}) {
-  let inner: { openTab: (r: OpenReq) => void } | null = null;
+  let inner: TabsHandle | null = null;
   let pending: OpenReq[] = [];
-  const register = (h: { openTab: (r: OpenReq) => void } | null) => {
+  // 선언은 latest-wins 라 큐가 아니라 자리 하나다 — 마운트 전에 페이지를 여럿 지나쳐도
+  // 넘길 것은 마지막 좌표뿐이다
+  let pendingPage: PageDecl | null = null;
+  const register = (h: TabsHandle | null) => {
     inner = h;
-    if (h && pending.length) { pending.forEach((p) => h.openTab(p)); pending = []; }
+    if (!h) return;
+    if (pending.length) { pending.forEach((p) => h.openTab(p)); pending = []; }
+    if (pendingPage) { h.declarePage(pendingPage); pendingPage = null; }
   };
   const initial: OpenReq | undefined = opts.instanceId
     ? { instanceId: opts.instanceId, conversationId: opts.conversation, title: opts.title }
@@ -410,6 +410,7 @@ export function mountTabs(el: HTMLElement, opts: RelayTabsMountOptions = {}) {
   return {
     unmount: () => root.unmount(),
     openTab: (r: OpenReq) => { if (inner) inner.openTab(r); else pending.push(r); },
+    declarePage: (r: PageDecl) => { if (inner) inner.declarePage(r); else pendingPage = r; },
   };
 }
 

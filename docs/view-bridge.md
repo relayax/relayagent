@@ -6,6 +6,26 @@
 (relayos `chat/src/agent.tsx`). 두 구현체는 이 문서에 맞춰 정렬되며, 어느 쪽의
 현행 wire 도 정본이 아니다.
 
+> **개정 이력 — 2026-08-29 (§5-17 거동 변경 · additive 아님).** 페이지 선언의 착지가
+> **"페이지가 곧 대화"에서 "페이지는 좌표를 알려 줄 뿐"으로** 바뀌었다. 크롬은 이제 선언마다
+> preview 탭을 밀지 않고 좌표만 위젯에 넘긴다(`declarePage`) — 탭과 활성 대화는 사람의
+> 것이다. 어휘(`relay:scope` 이벤트·detail)는 한 바이트도 안 바뀌었고 뷰 쪽은 무변경이다.
+> *왜 바꾸나: 종전 규칙은 사이드바로 화면을 옮기는 것만으로 보던 대화를 갈아치웠고, 그 대가가
+> 가장 컸던 자리가 **위임**이다. 위임(a2a·서브에이전트)의 📬 배달 주소는 발신 슬롯 —
+> 페이지가 아니라 대화 — 인데, 화면이 페이지를 따라가면 맡긴 일이 어디서 도는지 볼 자리가
+> 사라진다. 두 규칙(배달은 대화로, 화면은 페이지로)이 정면으로 어긋났던 것이지 UX 취향의
+> 문제가 아니었다. 짝이 되는 기판 개정은 client-protocol §2-6-a(`baseFor` 주입) 다 — 그게
+> 없으면 위젯이 한 번에 한 패키지만 볼 수 있어 "탭을 안 뺏는다"가 성립하지 않는다.*
+> **relayos 에 정렬할 코드는 없다 — 남는 것은 핀 하나다** [2026-08-29 실측]. §8-22-5 가 적어
+> 둔 "서빙 번들의 정본은 OSS 릴리스 아티팩트"가 그 사이 종착까지 갔다: relayos 트리에는 크롬
+> 소스(`agent.tsx`·`ChatChrome`·`useDeclaredScope`)가 더 이상 없고, `runner/oss/` 는
+> **gitignore 된 전개 자리**다 — `deploy/release.sh` 가 `deploy/relayagent.lock` 의 핀으로
+> `runner`·`chat-widget` 아티팩트를 받아 푼다(구 `vendor-relayagent.mjs` 는 2026-08-24 은퇴).
+> 그러므로 이 개정이 relayos 박스에 닿는 절차는 **릴리스 컷 + lock 의 `releases.chat-widget`·
+> `releases.runner` digest bump** 이고, 그전까지 relayos 는 옛 거동(선언이 preview 탭을 미는
+> 판)을 그대로 돈다. 아래 §8·부록 A 의 `relayos 현행` 좌표(agent.tsx …)는 **그 수렴 이전의
+> 역사 근거**로만 읽는다.
+
 현재 계약 버전: **1** (초안). 이 축은 client-protocol(브라우저↔기판, HTTP —
 [client-protocol.md](client-protocol.md))·하네스 봉투(기판↔어댑터 —
 [harness-protocol.md](harness-protocol.md))와 **별개의 축**이다. client-protocol §1-3 이
@@ -76,7 +96,7 @@
 | `chat.open` | 뷰 → 크롬 | 패널 열기 + 대상 (인스턴스×대화) 탭 포커스 |
 | `chat.prefill` | 뷰 → 크롬 → 위젯 | 컴포저 채움 — 사용자가 검토 후 전송 |
 | `chat.send` | 뷰 → 크롬 → 위젯 | 자동 전송 — 컴포저 submit 과 같은 큐 의미론 |
-| `scope.declare` | 뷰 → 크롬 | 페이지 정체성 선언 — "이 화면의 대화는 이것" |
+| `scope.declare` | 뷰 → 크롬 | 페이지 정체성 선언 — "이 화면의 대화는 이것" (알림이지 명령이 아니다, §5-17) |
 | `scene.set` | 뷰 → 위젯 | 화면 맥락 서문 공급 — turn.send 의 `scene` 필드 |
 | `turn.signal` | 위젯 → 뷰 | 턴 수명주기 힌트 — "에이전트가 일을 시작했다/끝냈다" (§6-a, 유일한 역방향) |
 
@@ -159,19 +179,41 @@
     (`/assets/chat-app.js`)이 분리라 context 가 못 건넌다. wire 로 두면 non-React 뷰도
     선언할 수 있다(임베더 테스트). relayos 크롬이 내부 context 를 유지하는 것은 같은 트리
     안의 합법적 구현이되, 선언 컴포넌트 자체는 OSS 정본을 소비한다(§8).*
-17. 크롬의 착지 — **"페이지가 곧 대화"**: 선언 변화(SPA 이동 포함)마다 위젯에
-    `openTab({ instanceId, conversationId, preview: true, targets })` 로 끌어온다.
-    선언이 없으면 상위 좌표("main")로 같은 푸시를 한다 — 선언 없는 페이지를 건너뛰면
-    대화가 직전에 보던 다른 에이전트 탭에서 계속된다(agent.tsx:191-210). 패널이 닫혀
-    있으면 pending 으로 이월해 **열릴 때** 착지한다 — 같은 페이지에 머무는 동안 재발화하지
-    않으므로 사용자가 손으로 고른 탭을 빼앗지 않는다.
-    **preview 탭 의미론**: 페이지 이동이 연 탭은 미리보기다 — 동시에 한 자리만 존재하고
-    (다음 이동이 재사용), 영속되지 않으며, 사람이 관여하는 순간(첫 발화·이름변경·드래그)
-    고정 탭으로 승격한다(ChatTabs.tsx:47-49, 600-610). *왜: 이게 없으면 페이지를 순회만
-    해도 말 걸어본 적 없는 빈 대화가 탭으로 쌓이고 새로고침마다 되살아난다.*
-18. 위젯의 소비: preview 요청이 `pageSlot`/`pageTargets` 를 갱신하고(ChatTabs.tsx:721-724),
-    그 좌표가 "지금 페이지에 맞추기" 피커·"+ 새 대화" 대상 판정·"대상 추가" 후보의
-    정본이 된다(Chat.tsx:1435, 1518-1521). `targets` 는 "갈 수 있는 곳"의 선언이다 —
+17. 크롬의 착지 — **선언은 알림이지 명령이 아니다** [2026-08-29 개정]. 선언 변화(SPA 이동
+    포함)마다 크롬은 위젯에 **좌표만** 넘긴다(`declarePage({ instanceId, conversationId,
+    targets })` — 발신 chat/main.tsx autoFloat · 수신 ChatTabs.tsx declarePage). 선언이
+    없으면 상위 좌표("main")로 같은 알림을 한다. 위젯이 아직 없으면 크롬이 들고 있다가
+    마운트 때 넘긴다(latest-wins — 자리 하나).
+    **탭과 활성 대화는 건드리지 않는다.** 페이지 이동은 탭을 열지도, 닫지도, 활성을 옮기지도
+    않는다. 탭을 만드는 주체는 사람이다(보관함·"+ 새 대화"·칩·`chat.open`).
+    **선언의 발신자가 뷰뿐인 것은 아니다** [2026-08-29]: 화면 없는 대화형 패키지의 문서
+    (runner `view.ts` `chatFallbackDoc`)에는 `<AgentScope>` 를 쏠 뷰 번들이 없으므로, 그
+    문서를 굽는 기판이 크롬 자리에서 `declarePage` 를 직접 부른다. 그 선언은 **인스턴스 축만**
+    이다 — 그 문서는 "이 패키지의 대화 화면"이지 특정 슬롯의 페이지가 아니고, 대화까지 못박으면
+    "+ 새 대화"가 보던 탭이 아니라 페이지 좌표에서 갈라진다. 슬롯 문자열을 기판이 조립하지
+    않는다는 §2-5 도 이 선택으로 함께 지켜진다.
+    *왜 종전 규칙("페이지가 곧 대화")을 버렸나: 배달과 화면의 주소가 어긋났다. 위임(a2a·
+    서브에이전트)이 끝나면 결과는 **발신 슬롯**에 📬 로 앉는데(runner/runtime/tools.ts
+    deliverOnSettle), 그 슬롯은 페이지가 아니라 대화다. 화면이 페이지를 따라가면 맡긴 일이
+    도는 대화가 눈앞에서 사라지고 — 탭은 keep-alive 로 살아 있으나 활성이 아니다 — 사용자는
+    "진행중인가요?"를 반복해 묻게 된다(Delegations.tsx 머리의 실사용 보고와 같은 공백).
+    이 조항이 없으면 그 공백은 화면 하나를 더 만들어도 안 닫힌다: 원인이 표시가 아니라
+    **좌표 주인**이기 때문이다.*
+    **preview 탭 의미론은 남는다** — 다만 이제 그것을 만드는 것은 페이지 이동이 아니라
+    빈 상태의 첫 마운트 시드뿐이다(ChatTabs.tsx:47-49, 저장된 탭이 없을 때의 useState 시드).
+    미리보기는 동시에 한 자리만 존재하고, 영속되지 않으며, 사람이 관여하는 순간(첫 발화·
+    이름변경·드래그) 고정 탭으로 승격한다.
+18. 위젯의 소비 — **기준과 안내 둘**. `declarePage` 가 `pageSlot`/`pageTargets` 를 갱신하고:
+    - **기준**: "지금 페이지에 맞추기" 피커·"+ 새 대화" 대상 판정·"대상 추가" 후보의 정본이 된다.
+    - **안내** [2026-08-29]: 그 인스턴스가 내놓는 말 상대 중 **아직 탭으로 안 연 것**을 한 줄로
+      늘어놓는다(ChatTabs.tsx `PageAgents` — 도킹 전용). 목록의 원천은 열거 행의 `agents[]`
+      (client-protocol §5.6-32)이고, 선언된 상대는 선언 좌표 그대로(page 가 실은 param 포함),
+      나머지는 param 없는 씨앗 좌표로 연다. 여는 것은 사람의 클릭이다.
+    *왜 안내가 필요한가: §5-17 이 자동 개설을 거둔 뒤 선언에 남는 쓸모가 이것이다 — 화면을
+    옮겼을 때 "여기서 누구와 말할 수 있는가"는 여전히 그 화면만 아는 지식이고, 사이드바도
+    보관함도 그 답을 갖고 있지 않다(보관함은 **대화**를 세는 자리라 말 걸어본 적 없는 상대가
+    서지 않는다 — ChatTabs.tsx `loadPickerRows` 주석, 2026-08-28 사용자 지적). 열어 주는 것과
+    알려 주는 것을 가른 자리다.* `targets` 는 "갈 수 있는 곳"의 선언이다 —
     param 은 서버에서 임의 스레드 키라 후보의 일반해가 없고, 아는 쪽(뷰)이 선언하는 것이
     정본이다(agent.tsx:22-26). 대화 이력 열거는 "가 본 곳"만 알지만 이건 "갈 수 있는
     곳"을 안다.
@@ -291,4 +333,5 @@ OSS 열은 §8-22 ②③ 컷(2026-08-24) 이후의 현 트리 실측이다. rela
 | `relay:scope-request` | 발신 chat/main.tsx(autoFloat) · 응답 bridge.tsx | 발신 useDeclaredScope(agent.tsx) · 응답 벤더 bridge |
 | `relay:scene` | 발신 bridge.tsx:68-70 · 소비 chat/runtime.ts:899-909, 1295-1296 | 발신·소비 전부 벤더 사본(bridge·chat/runtime) |
 | `relay:turn` | 발신 chat/runtime.ts(signalTurn — makeAdapter onEvent) · 수신 bridge.tsx onAgentTurn · 소비 studio/page.tsx | 발신·수신 전부 벤더 사본 — 서빙 번들 반영은 릴리스 digest bump 와 함께(§8-22-5) |
-| (openTab preview 푸시) | 수신 ChatTabs.tsx:703-731 · 발신 chat/main.tsx:243-262 | 발신 useChatDock(agent.tsx) · 수신은 벤더 chat/ChatTabs.tsx |
+| (declarePage 좌표 푸시, §5-17) | 수신 ChatTabs.tsx declarePage · 발신 chat/main.tsx autoFloat pushPage · 화면 없는 패키지 문서는 view.ts `chatFallbackDoc` 이 직접 | 릴리스 소비 — 핀 bump 와 함께 |
+| (선언의 안내 소비, §5-18) | ChatTabs.tsx `PageAgents` × runtime.ts `agentsOfInstance` | 릴리스 소비 — 핀 bump 와 함께 |
