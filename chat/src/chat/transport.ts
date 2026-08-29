@@ -118,7 +118,12 @@ export type SessionEntry = { session: string; label: string; updated: number; ar
   draft?: boolean;
   /** §5.3-25 additive — 사람이 연 대화가 아닌, 기계가 판 슬롯. 없으면 사람의 대화.
    *  슬롯 접두 스니핑은 금지(세션 id 는 불투명) — 기판이 밝힌 이 축만 본다. */
-  origin?: "dispatch" | "mission" };
+  origin?: "dispatch" | "mission";
+  /** §5.3-26 additive — 이 대화가 지금 살아 있는가. 없음 = 미상이 아니라 안 돌고 있음.
+   *  busy 는 진행 중 턴, lastEvent 는 마지막 활동, lastAlive 는 봉투 박동(epoch ms).
+   *  lastEvent 만 오래됐으면 "오래 걸리는 중", 둘 다 오래됐으면 "멈춤"이다 — 스피너 하나로
+   *  접으면 동결이 진행으로 보인다. parent 는 이 위임을 판 부모 대화(같은 인스턴스). */
+  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string };
 
 /** §5.3-22 additive — 민팅 시 대화 바인딩. param 은 agent 없이 설 수 없다(기판 판정).
  *  draft = 작업 사본 위에 민팅(기판이 그 나무로 세션을 세운다) */

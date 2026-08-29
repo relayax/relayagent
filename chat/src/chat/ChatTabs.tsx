@@ -36,6 +36,7 @@ import { ChatApp, OpenConversationCtx, PaneTargetCtx, type DeskTurnStatus, type 
 import {
   loadInbox, loadInstances, renameConversation, deleteConversation, loadConversationTitle,
   seedConversation, isLocalConversation, onSessionMinted, viewUrlForInstance,
+  livenessOf, livenessLabel, livenessTitle,
   type InboxRow, type RelayCtx,
 } from "./runtime";
 import { displayBinding, siblingThread, threadFamily } from "./routematch";
@@ -345,6 +346,7 @@ function InboxPicker({
       );
     }
     const isOpen = existing.has(k);
+    const live = livenessOf(r);
     const go = () => { if (!isOpen) onOpen(tabOf(r)); close(); };
     return (
       <Item key={k} role="menuitem" tabIndex={0} size="xs"
@@ -357,7 +359,12 @@ function InboxPicker({
         </ItemContent>
         {/* 우측 = 시간(평소) ↔ 액션(hover/focus, 터치 기기는 상시) — 같은 자리를 나눠 써 행 폭을 유지. */}
         <ItemActions className="shrink-0 gap-0.5">
-          {isOpen
+          {/* 진행 중이면 마지막 시각이 아니라 생존을 말한다 — last_started_at(이력 mtime)은
+              턴이 끝나야 늘어서, 30분째 도는 위임이 "30분 전"으로 보였다(§5.3-26). */}
+          {live.state !== "idle"
+            ? <span className={cn("text-[11px] tabular-nums", live.state === "stalled" ? "text-[var(--rc-err)]" : "text-[var(--rc-accent)]")}
+                    title={livenessTitle(live)}>{livenessLabel(live)}</span>
+            : isOpen
             ? <Badge variant="secondary" className="group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">열림</Badge>
             : r.last_started_at && (
               <span className="text-[11px] tabular-nums text-muted-foreground group-hover/item:hidden group-focus-within/item:hidden [@media(hover:none)]:hidden">{relTime(r.last_started_at)}</span>
@@ -410,7 +417,14 @@ function InboxPicker({
                                 onClick={() => toggleSubs(g.instance)}
                                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); toggleSubs(g.instance); } }}>
                             <ItemContent className="min-w-0">
-                              <ItemTitle className="w-full font-normal text-[12px] text-muted-foreground">에이전트에게 맡긴 일 {g.subs.length}개</ItemTitle>
+                              {/* 접혀 있어도 "지금 도는 것이 있다" 는 보여야 한다 — 접기는 조용히 하려는
+                                  것이지 감추려는 것이 아니다. 진행 수는 펼치지 않고도 읽힌다. */}
+                              <ItemTitle className="w-full font-normal text-[12px] text-muted-foreground">
+                                에이전트에게 맡긴 일 {g.subs.length}개
+                                {g.subs.some((r) => r.busy) && (
+                                  <span className="ml-1 text-[var(--rc-accent)]">· {g.subs.filter((r) => r.busy).length}개 진행 중</span>
+                                )}
+                              </ItemTitle>
                             </ItemContent>
                             <ItemActions className="shrink-0">
                               <span className="text-[10px] text-muted-foreground">{subsOpen ? "▾" : "▸"}</span>

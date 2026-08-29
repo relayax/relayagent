@@ -211,7 +211,7 @@ export function isLocalConversation(id: string): boolean {
 // 직접 들고 있으므로(민팅 시 relay-session-minted 로 재바인딩 + last-session 기억) 무손실이다.
 const _minted = new Map<string, string>();
 
-function wireSessionForId(conversation: string): string | null {
+export function wireSessionForId(conversation: string): string | null {
   if (!isLocalConversation(conversation)) return conversation;
   return _minted.get(conversation) ?? null;
 }
@@ -544,6 +544,8 @@ export type InboxRow = {
   param?: string;
   /** 기계가 판 슬롯인가(§5.3-25) — 목록은 이 축으로 위임 대화를 인스턴스 아래 접는다 */
   origin?: "dispatch" | "mission";
+  /** 살아 있는가(§5.3-26) — 접어 둔 위임이 "돌고 있음"을 말할 수 있는 유일한 근거 */
+  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string;
 };
 
 export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
@@ -564,6 +566,10 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
         ...(c.agent ? { agent: c.agent } : {}),
         ...(c.param ? { param: c.param } : {}),
         ...(c.origin ? { origin: c.origin } : {}),
+        ...(c.busy ? { busy: true } : {}),
+        ...(c.lastEvent ? { lastEvent: c.lastEvent } : {}),
+        ...(c.lastAlive ? { lastAlive: c.lastAlive } : {}),
+        ...(c.parent ? { parent: c.parent } : {}),
       });
     }
   }));
@@ -575,7 +581,9 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
 
 export type ConversationRow = { conversation_id: string; session_count?: number; last_started_at?: string; title?: string; agent?: string; param?: string;
   /** §5.3-25 — 기판이 밝힌 슬롯 출신: 위임(dispatch)·미션 수신(mission). 사람의 대화는 없다 */
-  origin?: "dispatch" | "mission" };
+  origin?: "dispatch" | "mission";
+  /** §5.3-26 — 생존 실측. 서버 시계의 epoch ms 다(내 시계와 어긋날 수 있어 음수는 0 으로 접는다) */
+  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string };
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
@@ -614,6 +622,12 @@ export async function loadConversationsOf(instanceId: string, _principal: string
       ...(typeof s.param === "string" && s.param ? { param: s.param } : {}),
       // 사람이 연 대화인가 기계가 판 슬롯인가 — 판정은 기판 몫, 화면은 받아 접기만 한다
       ...(s.origin === "dispatch" || s.origin === "mission" ? { origin: s.origin } : {}),
+      // 생존 — 축이 없으면 "안 돌고 있음"이다(기판은 자기 상주를 전부 안다). 미상으로 읽고
+      // 스피너를 돌리면 죽은 위임이 영원히 도는 것처럼 보인다
+      ...(s.busy === true ? { busy: true } : {}),
+      ...(typeof s.lastEvent === "number" && s.lastEvent > 0 ? { lastEvent: s.lastEvent } : {}),
+      ...(typeof s.lastAlive === "number" && s.lastAlive > 0 ? { lastAlive: s.lastAlive } : {}),
+      ...(typeof s.parent === "string" && s.parent ? { parent: s.parent } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0
@@ -625,6 +639,62 @@ export async function loadConversationsOf(instanceId: string, _principal: string
 
 export async function loadConversations(ctx: RelayCtx): Promise<ConversationsInfo> {
   return loadConversationsOf(ctx.instanceId, ctx.principal);
+}
+
+/**
+ * 대화 하나의 생존 판정(§5.3-26).
+ *
+ * 화면에 상태가 **둘뿐이던 것**이 문제였다: 스피너가 돌거나, 안 돌거나. 그래서 30분째 도는
+ * 위임과 6분째 멈춘 위임이 똑같이 생겼고, 사용자에게는 화면을 믿을 근거가 없었다. 두 침묵을
+ * 가르는 축이 `lastEvent`(마지막 활동)와 `lastAlive`(봉투 박동)이고, 이 함수가 그 둘을 읽어
+ * 사람이 구분해서 볼 수 있는 네 상태로 접는다.
+ *
+ * - `running` — 돌고 있고 방금 무언가 했다
+ * - `slow` — 돌고 있고 봉투도 살아 있는데 활동이 오래 끊겼다(도구 하나가 오래 무는 중)
+ * - `stalled` — 돌고 있다는데 박동조차 끊겼다(고착 의심 — 기판 워치독이 곧 끊는다)
+ * - `idle` — 안 돌고 있다. 축이 통째로 없는 행도 여기다: 없음은 미상이 아니라 "안 돎"이다
+ *
+ * 시각은 **서버 시계의** epoch ms 라 내 시계와 어긋날 수 있다 — 음수는 0 으로 접는다.
+ * (같은 절충을 updated→relTime 이 이미 하고 있다.)
+ */
+export type LivenessState = "idle" | "running" | "slow" | "stalled";
+export type Liveness = { state: LivenessState; silentMs: number; beatMs: number };
+
+/** 활동이 이만큼 끊기면 "오래 걸리는 중" — 도구 한 번의 정상 왕복보다 넉넉히 잡는다 */
+const SLOW_MS = 90_000;
+/** 박동이 이만큼 끊기면 고착 의심 — 봉투는 15초마다 뛴다(harness-protocol `alive`) */
+const STALLED_MS = 60_000;
+
+export function livenessOf(
+  row: { busy?: boolean; lastEvent?: number; lastAlive?: number },
+  now: number = Date.now(),
+): Liveness {
+  if (!row.busy) return { state: "idle", silentMs: 0, beatMs: 0 };
+  const silentMs = row.lastEvent ? Math.max(0, now - row.lastEvent) : 0;
+  const beatMs = row.lastAlive ? Math.max(0, now - row.lastAlive) : 0;
+  // 박동 축이 없는 기판(구 어댑터)은 stalled 로 떨어뜨리지 않는다 — 없는 신호를 고착의
+  // 증거로 읽으면 멀쩡한 세션이 전부 "응답 없음"이 된다
+  if (row.lastAlive && beatMs > STALLED_MS) return { state: "stalled", silentMs, beatMs };
+  if (silentMs > SLOW_MS) return { state: "slow", silentMs, beatMs };
+  return { state: "running", silentMs, beatMs };
+}
+
+const mins = (ms: number): number => Math.max(1, Math.floor(ms / 60000));
+
+/** 행 오른쪽에 서는 짧은 한 마디 — 좁은 목록에 들어가야 하므로 한 뼘을 넘기지 않는다. */
+export function livenessLabel(l: Liveness): string {
+  if (l.state === "idle") return "";
+  if (l.state === "stalled") return "응답 없음";
+  if (l.state === "slow") return `${mins(l.silentMs)}분째 한 작업`;
+  return "진행 중";
+}
+
+/** 툴팁에 들어가는 긴 설명 — 짧은 라벨이 감춘 근거를 그대로 말한다. */
+export function livenessTitle(l: Liveness): string {
+  if (l.state === "idle") return "";
+  if (l.state === "stalled") return `${mins(l.beatMs)}분째 아무 신호가 없어요. 멈춘 것 같아요`;
+  if (l.state === "slow") return `${mins(l.silentMs)}분째 같은 작업을 하고 있어요. 살아는 있어요`;
+  return l.silentMs < 10000 ? "방금 무언가 했어요" : `${Math.floor(l.silentMs / 1000)}초 전에 무언가 했어요`;
 }
 
 /** 특정 대화의 현재 표시명(자동 제목 pop-in 용) — 없으면 "". best-effort(목록 재사용). */
@@ -1221,6 +1291,26 @@ function substrateTool(toolName: string): { icon: string; label: string } | null
     case "mcp": return { icon: "⚙", label: rest.join(" · ") };
     default: return null;
   }
+}
+
+/**
+ * 위임 도구인가 — 이름 문법(§8-41)의 **마지막 마디**로 판정한다.
+ *
+ * 종전 판정은 `toolName === "agent_dispatch"` 였다. 그런데 봉투에 실려 오는 이름은 문을
+ * 통과한 형태(`mcp__relay__agent_dispatch`)다: 어댑터는 CLI 가 부른 이름을 그대로 싣고,
+ * 기판은 `label` 만 덧붙일 뿐 이름을 바꾸지 않는다(harness-protocol §Events — "the only field
+ * the substrate adds"). 그래서 그 비교는 한 번도 참이 된 적이 없고, 위임의 대화를 탭으로 여는
+ * 길(openDispatchConversation)이 통째로 죽은 코드였다 — 위임을 걸어도 화면에는 아무 일도
+ * 일어나지 않았다(2026-08-29 실측).
+ *
+ * 문 이름("relay")은 어댑터 내부 사정이라 여기서 못 박지 않는다. 접두는 계약 상수 넷뿐이고
+ * (§8-41) 위임은 기판이 자기 문으로 세우는 동사이므로, `mcp__…__agent_dispatch` 와 접두 없는
+ * `agent_dispatch` 둘만 받는다.
+ */
+export function isDispatchTool(toolName: string): boolean {
+  const seg = (toolName || "").split("__");
+  if (seg[seg.length - 1] !== "agent_dispatch") return false;
+  return seg.length === 1 || seg[0] === "mcp";
 }
 
 export function stepMeta(toolName: string, args: any, result?: unknown, isError?: boolean, given?: string): StepMeta {

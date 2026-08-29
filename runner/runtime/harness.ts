@@ -377,6 +377,11 @@ interface Resident {
   tasks: Set<string>;
   /** 마지막 봉투 이벤트 시각 — 스톨 워치독의 근거 */
   lastEvent: number;
+  /** 마지막 박동(alive) 시각. lastEvent 와 **갈라 두는 것이 요점**이다: 도구 하나가 오래
+   *  물면 실제 이벤트는 끊기지만 봉투는 살아 있다. 한 축으로 접으면 둘 중 하나가 거짓말한다 —
+   *  접어서 갱신하면 워치독이 영영 안 울고(동결이 정상으로 보인다), 안 갱신하면 화면이
+   *  "죽었다"고 말한다. 워치독은 lastEvent 를, 화면의 생존은 이 축을 본다 */
+  lastAlive: number;
   /**
    * 유휴 중에 열린 자발 턴 — 주입 없이 하네스가 스스로 연 턴이다(백그라운드 완료의 continuation,
    * 그리고 남은 경계가 없어 다음 턴으로 미뤄진 얹기의 답).
@@ -403,6 +408,10 @@ const STALL_MS = (() => {
 // 검사 주기는 판정선보다 촘촘해야 한다 — 60초 고정이면 RELAY_TURN_STALL_S=5 로 줄여도 첫
 // 검사가 60초 뒤라 그 설정이 아무 일도 하지 않는다(시험도 못 한다)
 const STALL_TICK_MS = Math.min(60_000, Math.max(250, STALL_MS));
+// 어댑터에 요청하는 박동 주기(초). 화면이 "몇 분째 조용한가"를 분 단위로 말하므로 그보다
+// 촘촘하면 된다 — 판정선(STALL_MS)과는 무관하다: 박동은 고착을 재는 자가 아니라 그 반대편,
+// "실제 이벤트가 없는 동안에도 살아는 있다"를 증언하는 축이다
+const HEARTBEAT_S = 15;
 
 /**
  * 질문이 서 있는 슬롯(`pkg/slot`) — 스톨 시계를 멈추는 근거.
@@ -509,6 +518,21 @@ export function isSessionBusy(pkg: string, slot: string): boolean {
   return live.has(`${pkg}/${slot}`);
 }
 
+/**
+ * 대화 하나의 생존 실측 — 목록 행이 "돌고 있나 · 마지막으로 무언가 한 게 언제인가" 를 말하는
+ * 근거(§5.3-26). 지금까지 이 값들은 이 파일의 메모리에만 있었고 목록은 디스크만 읽었다:
+ * 두 축이 만나는 자리가 없어서, 30분째 도는 위임과 죽은 위임이 화면에서 똑같이 생겼다.
+ *
+ * null = 이 슬롯에 상주도 진행 중 턴도 없다(확실히 안 돌고 있다 — 미상이 아니다).
+ * lastEvent 0 = 상주 없이 도는 1회용 턴이라 활동 시각을 모른다(busy 만 참).
+ */
+export function sessionLiveness(pkg: string, slot: string): { busy: boolean; lastEvent: number; lastAlive: number } | null {
+  const key = `${pkg}/${slot}`;
+  const r = residents.get(key);
+  if (!r) return live.has(key) ? { busy: true, lastEvent: 0, lastAlive: 0 } : null;
+  return { busy: live.has(key), lastEvent: r.lastEvent, lastAlive: r.lastAlive };
+}
+
 /** ask(질문) 회송 — 위젯 답변을 진행 중 봉투의 제어 채널로 넣는다 */
 export function deliverAnswer(pkg: string, slot: string, id: string, answers: unknown): boolean {
   const child = live.get(`${pkg}/${slot}`);
@@ -613,7 +637,7 @@ function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string
   }
   if (cur) retireEntry(key, cur);
   const child = spawnEntry(entry, ["serve"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now(), spont: null };
+  const r: Resident = { child, pkg, slot, io, fp, idle: null, sink: null, stderrTail: "", tasks: new Set(), lastEvent: Date.now(), lastAlive: Date.now(), spont: null };
   child.stdin?.on("error", () => { /* EPIPE — 실패는 close 가 sink 로 배달한다 */ });
   const rl = readline.createInterface({ input: child.stdout! });
   rl.on("line", (line) => {
@@ -626,7 +650,16 @@ function acquireResident(io: SessionIO, pkg: string, slot: string, entry: string
       return;
     }
     if (!ev || typeof ev.event !== "string") return;
+    // 박동은 이야기가 아니다 — 장부에 적지 않고 tap 으로도 흘리지 않는다(15초마다 한 줄이면
+    // 긴 도구 하나가 턴 장부를 박동으로 채우고, 재생이 그 침묵을 진행으로 오독한다).
+    // lastEvent 를 갱신하지 않는 것이 이 분기의 전부다: 갱신하면 스톨 워치독이 영영 울지 않아
+    // 동결이 정상으로 보인다. 박동이 증언하는 것은 "봉투가 살아 있다" 하나뿐이다
+    if (ev.event === "alive") {
+      r.lastAlive = Date.now();
+      return;
+    }
     r.lastEvent = Date.now();
+    r.lastAlive = Date.now();
     // 백그라운드 원장 — 턴 중이든 유휴든 항상 접는다. 유휴 은퇴·강제 종료 유예의 근거다
     if (ev.event === "task" && typeof ev.id === "string" && ev.id) {
       if (ev.status === "started") r.tasks.add(ev.id);
@@ -864,6 +897,12 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     RELAY_TOKEN: token,
     RELAY_SESSION: slot,
     RELAY_BUNDLE: bundle,
+    // 박동 요청(harness-protocol §Events `alive`) — 기판이 **요청할 때만** 어댑터가 뛴다.
+    // 선언 게이트인 이유: 박동을 모르는 기판은 그것을 활동으로 세고, 그러면 스톨 워치독이
+    // 영영 울지 않아 동결이 정상으로 보인다. 새 어댑터를 옛 기판에 얹는 것은 실제로 일어나는
+    // 일이다 — 어댑터 사본은 패키지마다 따로 살고 기판과 따로 갱신된다(supply/draft.ts
+    // openDraft 는 사본을 1회만 심는다). 이 축이 없으면 그 조합에서 안전장치가 조용히 죽는다
+    RELAY_HEARTBEAT_S: String(HEARTBEAT_S),
   };
   // 기판이 대는 도구가 있으면 PATH 앞에 — 호스트의 깨진 전역 설치보다 먼저 걸려야 한다.
   // 이 축은 이음새에 없다: 기판 사본 디렉토리가 없으면 PATH 를 건드리지 않는 항등이라,
@@ -974,7 +1013,6 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       let errEvent = "";
       const rl = readline.createInterface({ input: child.stdout! });
       rl.on("line", (line) => {
-        lastLine = Date.now();
         let ev: { event?: unknown; [k: string]: unknown } | null = null;
         if (line.startsWith("{")) {
           try {
@@ -982,9 +1020,16 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
           } catch { /* 봉투 아님 */ }
         }
         if (!ev || typeof ev.event !== "string") {
+          // 구형 통짜 출력(protocol 1)도 활동이다 — 봉투가 아닐 뿐 무언가 나오고 있다
+          lastLine = Date.now();
           raw += line + "\n";
           return;
         }
+        // 박동은 활동이 아니다 — 상주 경로(acquireResident)와 같은 판정이다. 여기서 lastLine 을
+        // 갱신하면 1회용 턴의 워치독도 영영 울지 않아 고착이 정상으로 보인다. 장부에도 적지
+        // 않는다: 재생이 그 침묵을 진행으로 오독한다
+        if (ev.event === "alive") return;
+        lastLine = Date.now();
         // 위 가드(typeof ev.event !== "string" 조기 반환)가 이미 증명한 형 — 인덱스 시그니처라 좁혀지지 않는다
         ev = labelTool(ev as { event: string; [k: string]: unknown }, toolLabels);
         trackAsk(key, ev.event as string);
