@@ -713,7 +713,13 @@ export function ChatTabs({
   const [focus, setFocus] = useState<0 | 1>(0); // 포커스 그룹 — 새 탭·크럼 강조·desk 뷰 대상
   const [status, setStatus] = useState<Record<string, DeskTurnStatus>>({});
   const [unread, setUnread] = useState<Record<string, boolean>>({});
-  const [picking, setPicking] = useState(false); // 보관함 피커(Popover) 열림
+  // 보관함 피커(Popover) — **어느 트리거가 열었는가**. 불리언 하나로 두면 같은 화면에 트리거가
+  // 둘 있을 때(빈 상태: 바 아이콘 + 가운데 큰 버튼) 두 Popover 가 동시에 열려 목록이 겹쳐 뜨고,
+  // 뒤 팝오버의 바깥클릭 판정이 앞 팝오버의 pointerdown 을 "바깥"으로 읽어 둘 다 닫아 버린다 —
+  // 행의 click 이 영영 안 닿아 "대화를 못 여는" 화면이 된다(2026-08-29 실사용 보고).
+  // 자리 이름을 열쇠로 두면 동시에 하나만 열린다: 새 트리거를 다는 사람은 새 이름을 골라야 한다.
+  type PickerAt = "" | "bar" | "empty";
+  const [picking, setPicking] = useState<PickerAt>("");
   const [editingKey, setEditingKey] = useState<string | null>(null); // 탭/브레드크럼 인라인 이름편집
   const [dragTab, setDragTab] = useState<string | null>(null); // 드래그 중인 탭(반투명 표시)
 
@@ -1191,7 +1197,7 @@ export function ChatTabs({
     const activeTab = flat.find((t) => t.key === focusedActive) || flat[0] || null;
     const target = newConversationTarget(pageSlotRef.current, activeTab);
     if (!target) { // 열 대상 인스턴스가 없으면 보관함 피커로 유도
-      setPicking(true);
+      setPicking("bar");
       return;
     }
     // 로컬 드래프트 좌표(빈 로컬 상태) — 서버 세션은 첫 발화 직전 session.create 가 민팅한다.
@@ -1313,15 +1319,25 @@ export function ChatTabs({
     );
   };
 
-  // 보관함 피커 — 트리거만 자리마다 다르다(바 아이콘 · 빈 화면 큰 버튼). 열림 상태는 picking 하나.
-  const picker = (trigger: ReactElement) => (
-    <InboxPicker principal={principal} existing={existing} open={picking} onOpenChange={setPicking}
+  // 보관함 피커 — 트리거만 자리마다 다르다(바 아이콘 · 빈 화면 큰 버튼). **자리 이름이 열쇠**라
+  // 한 번에 하나만 열린다(위 PickerAt 주석의 겹침 사고).
+  const picker = (at: Exclude<PickerAt, "">, trigger: ReactElement) => (
+    <InboxPicker principal={principal} existing={existing} open={picking === at}
+                 onOpenChange={(o) => setPicking(o ? at : "")}
                  trigger={trigger} onOpen={addTab} onMutated={onInboxMutated} />
   );
 
+  // 안내 줄 — 탭이 있든 없든 **탭 바 바로 밑** 같은 자리다. 특히 빈 상태에서 필요하다:
+  // 대화를 전부 닫은 사람에게 보관함은 "가 본 곳"만 말하고, 이 화면에서 처음 말 걸 상대는
+  // 말해 주지 못한다(loadPickerRows 주석 — 대화함은 대화를 센다).
+  const pageAgentsRow = variant === "dock" ? (
+    <PageAgents instanceId={pageInstance} slot={pageSlot} openAgents={openPageAgents}
+                onOpen={(instanceId, conv) => addTab({ key: keyOf(instanceId, conv), instanceId, conversationId: conv, title: "" })} />
+  ) : null;
+
   const actions = (
     <div className="rc-tabs-actions">
-      {picker(
+      {picker("bar",
         <Button type="button" variant="ghost" size="icon-sm" className={BAR_BTN} aria-label="대화 목록" title="대화 목록 · 모든 에이전트의 대화">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M3 13h5l2 3h4l2-3h5" /><path d="M5 6h14l2 7v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5z" />
@@ -1370,10 +1386,11 @@ export function ChatTabs({
             <div className="rc-tab-ghead" style={{ flex: "1 1 auto" }} />
             {actions}
           </div>
+          {pageAgentsRow}
           <div className="rc-desk-empty">
             <div className="rc-empty-ic" aria-hidden>✦</div>
             <div className="rc-empty-t">에이전트를 열어 시작하세요</div>
-            {picker(
+            {picker("empty",
               <Button type="button" variant="outline" className="font-semibold text-[var(--rc-accent-strong)] hover:border-[var(--rc-accent)] hover:bg-[var(--rc-accent-soft)]">
                 대화 목록에서 열기
               </Button>,
@@ -1401,11 +1418,8 @@ export function ChatTabs({
               </div>
             )}
             {/* 안내 줄(dock 전용) — 페이지가 알려 온 맥락에서 아직 안 연 상대들. 열면 사라진다.
-                /desk 는 페이지가 없어 pageSlot 이 null 이라 자연히 서지 않는다 */}
-            {variant === "dock" && (
-              <PageAgents instanceId={pageInstance} slot={pageSlot} openAgents={openPageAgents}
-                          onOpen={(instanceId, conv) => addTab({ key: keyOf(instanceId, conv), instanceId, conversationId: conv, title: "" })} />
-            )}
+                /desk 는 페이지가 없어 pageInstance 가 비어 자연히 서지 않는다 */}
+            {pageAgentsRow}
             {/* row3 — pane 은 그룹 트리에 중첩하지 않고 평면 유지(keep-alive). 보이는 pane 만
                 flex 폭을 갖고, 분할 스플리터는 order 로 두 pane 사이에 낀다. */}
             <div className="rc-desk-panes">
