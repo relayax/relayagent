@@ -30,8 +30,52 @@ import { resultText, fmtTok, modelLabelOf, type AnyPart } from "./parts";
  *  문자열이 style 로 흘러가기 전의 유일한 검증이다(모델이 쓴 텍스트 → CSS 주입 방지). */
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+/** 확인 경로 — agent-builder 페르소나(AGENT.md)가 발행 답변의 마지막 줄에 이 형식 그대로 달도록
+ *  못박은 두 링크다: `[열기](/pkg/<이름>/view/) · [고치기](/pkg/system/view/?p=<이름>&face=detail)`.
+ *  기판 안의 이 주소 모양만 통과시킨다 — 모델이 쓴 임의의 링크가 버튼 옷을 입는 경로는 없다. */
+const ACTION_HREF = /^\/pkg\/[^/]+\/view\/(?:\?[^\s]*)?$/;
+/** 링크 사이를 잇는 글자만 허용 — 가운뎃점·구분자·공백. 산문이 한 글자라도 섞이면 승격하지 않는다. */
+const ACTION_SEP = /^[\s·•|]*$/;
+
+/** 문단 하나가 확인 경로 줄인지 판정하고, 맞으면 [주소, 라벨] 목록을 준다. 판정은 렌더된 자식이
+ *  아니라 hast 노드에서 한다 — 원문 주소와 라벨이 거기에만 온전히 있다. 라벨은 순수 텍스트일
+ *  때만 받는다(버튼 안에 마크업이 서지 않게). */
+function actionLinks(node: any): { href: string; label: string }[] | null {
+  const kids: any[] = node?.children ?? [];
+  const out: { href: string; label: string }[] = [];
+  for (const k of kids) {
+    if (k.type === "text") {
+      if (!ACTION_SEP.test(k.value ?? "")) return null;
+      continue;
+    }
+    if (k.type !== "element" || k.tagName !== "a") return null;
+    const href = String(k.properties?.href ?? "");
+    if (!ACTION_HREF.test(href)) return null;
+    const inner: any[] = k.children ?? [];
+    if (!inner.length || inner.some((c: any) => c.type !== "text")) return null;
+    const label = inner.map((c: any) => c.value ?? "").join("").trim();
+    if (!label) return null;
+    out.push({ href, label });
+  }
+  return out.length ? out : null;
+}
+
 const mdComponents = {
   a: ({ node: _n, ...props }: any) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+  // 확인 경로 줄은 링크가 아니라 버튼 줄로 선다 — 페르소나가 "화면이 이것을 버튼으로 그린다"고
+  // 약속한 자리다(발행 뒤 "어디서 보나"가 산문 속 파란 글자로 묻히던 문제). 첫 칸(열기)이 실물을
+  // 여는 길이라 채운 버튼, 나머지는 테두리만. 승격 조건이 하나라도 어긋나면 평범한 문단으로 둔다.
+  p: ({ node, children, ...props }: any) => {
+    const acts = actionLinks(node);
+    if (!acts) return <p {...props}>{children}</p>;
+    return (
+      <div className="rc-acts">
+        {acts.map((a, i) => (
+          <a key={i} href={a.href} className={i === 0 ? "rc-act rc-act-go" : "rc-act"} target="_blank" rel="noopener noreferrer">{a.label}</a>
+        ))}
+      </div>
+    );
+  },
   // 인라인 코드 내용이 통째로 색이면 앞에 견본 한 조각 — 대화에서 "#1E5BD6" 이 무슨 색인지
   // 눈으로 확인하게 한다(브랜딩 대화가 hex 나열이 되던 문제). 내용 **전체**가 hex 일 때만
   // 걸리므로 코드펜스·산문은 대상이 아니고, span 은 여기서 직접 만든다(모델 문자열이

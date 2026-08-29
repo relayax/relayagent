@@ -159,6 +159,22 @@ html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity
   text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--rc-link) 35%, transparent);
 }
 .rc-md a:hover { color: var(--rc-link-hover); text-decoration-color: currentColor; }
+/* 확인 경로 줄 — Trace.tsx 가 문단째 버튼 줄로 승격시킨 자리(발행 답변의 마지막 줄). 파랑 링크는
+   문장 안에서 쓰는 옷이라, 답을 다 읽고 나서 누를 자리는 눌리는 물건 모양이어야 한다. align-items
+   가운데 정렬은 스트리밍 caret(::after)이 버튼 높이만큼 늘어나지 않게 하는 몫도 겸한다. */
+.rc-md .rc-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
+.rc-md a.rc-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 30px; padding: 0 12px; flex: 0 0 auto;
+  border: 1px solid var(--rc-line-strong); border-radius: var(--rc-radius);
+  background: var(--rc-bg); color: var(--rc-ink);
+  font: 500 13px/1 var(--rc-sans); text-decoration: none;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.rc-md a.rc-act:hover { background: var(--rc-hover); border-color: var(--rc-accent); color: var(--rc-ink); text-decoration: none; }
+/* 첫 칸(열기) — 실물을 여는 길 하나만 채운다. 둘 다 채우면 어느 쪽이 본길인지 사라진다. */
+.rc-md a.rc-act-go { background: var(--rc-accent); border-color: var(--rc-accent); color: var(--rc-bg); }
+.rc-md a.rc-act-go:hover { background: var(--rc-accent-strong); border-color: var(--rc-accent-strong); color: var(--rc-bg); }
 .rc-md code { font-family: var(--rc-mono); font-size: 0.86em; background: var(--rc-ground); border: 1px solid var(--rc-line-soft); border-radius: 4px; padding: 1px 5px; }
 /* 색 견본 — 인라인 코드가 통째로 hex 일 때 Chat.tsx 가 앞에 끼운다. 크기는 em 이라 코드
    글자와 함께 커지고, 흰/투명 견본도 보이도록 테두리를 준다. */
