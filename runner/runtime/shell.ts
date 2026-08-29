@@ -28,6 +28,13 @@ import type { Suite } from "../supply/suites.ts";
  *  (ledger.ts consoleInstall — 1인 기판 `system`, 임베더는 다를 수 있다) */
 export const consoleHref = (ledger: Ledger, rest = ""): string => `/pkg/${encodeURIComponent(consoleInstall(ledger))}/view/${rest}`;
 
+/** 주입 조각 — 인스턴스 id → 그 인스턴스의 문 주소(client-protocol §2-6-a). 마운트 문법을
+ *  아는 쪽은 기판이므로 조립도 여기서 한다: 위젯은 함수를 받아 부르기만 하고 문법을 모른다
+ *  (§2-6 의 "클라이언트 코드에 마운트 문법이 새면 계약 위반" 규율은 그대로 지켜진다).
+ *  이 주입이 없으면 위젯은 자기 문서의 패키지 말고는 문 주소를 몰라 한 번에 한 패키지만 본다 —
+ *  보관함이 "전 인스턴스"라 적혀 있어도 현재 패키지 것만 나오던 자리(2026-08-29). */
+export const BASE_FOR_JS = 'baseFor:function(i){return "/pkg/"+encodeURIComponent(i)}';
+
 export type Face = "view" | "chat" | "live" | "parts";
 
 export interface ShellItem {
@@ -317,7 +324,7 @@ export function homeDoc(ledger: Ledger): string {
 <title>Relay</title><link rel="icon" href="/pkg/${enc}/view/icon.svg">
 <link rel="stylesheet" href="/assets/chat-app.css">
 </head><body><div id="relay-home"></div>
-<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + enc)},root:"",instanceId:${JSON.stringify(console)}};</script>
+<script>window.__RELAY_CONTEXT={base:${JSON.stringify("/pkg/" + enc)},root:"",instanceId:${JSON.stringify(console)},${BASE_FOR_JS}};</script>
 <script type="module" src="/assets/chat-app.js" async></script>
 </body></html>`);
 }

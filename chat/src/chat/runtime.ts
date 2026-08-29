@@ -128,8 +128,10 @@ function rootOf(ctx: RelayCtx): string {
 }
 
 /** 인스턴스 id → base URL. 주입 baseFor > 현재 ctx/전역 컨텍스트의 자기 인스턴스 > null(미상).
- *  null 이면 그 인스턴스의 문을 두드리지 않는다 — 마운트 문법 조립 금지(§2-6). */
-function baseForInstance(instanceId: string, ctx?: RelayCtx): string | null {
+ *  null 이면 그 인스턴스의 문을 두드리지 않는다 — 마운트 문법 조립 금지(§2-6).
+ *  탭 셸이 pane 마다 자기 base 를 싣는 데도 쓴다(ChatTabs) — 안 실으면 다른 패키지 탭이
+ *  getCtx 폴백으로 **지금 보고 있는 문서의** 문에 말을 건다. */
+export function baseForInstance(instanceId: string, ctx?: RelayCtx): string | null {
   const inj = injectedCoords();
   if (inj.baseFor) {
     try {
@@ -605,8 +607,10 @@ export async function loadConversationsOf(instanceId: string, _principal: string
   if (base == null) return { conversations: [] };
   const r = await transportFor(base, injectedCoords().root || base).session.list();
   if (isError(r)) return { conversations: [] };
-  // 작업 사본의 문에서는 작업 사본 세션만, 설치본의 문에서는 설치본 세션만 — 두 판의 대화를 섞지 않는다
-  const onDraft = injectedCoords().draft;
+  // 작업 사본의 문에서는 작업 사본 세션만, 설치본의 문에서는 설치본 세션만 — 두 판의 대화를 섞지 않는다.
+  // 단 이 판정은 **이 문서의 패키지**에만 건다: baseFor 로 남의 인스턴스를 열거할 때 그쪽 초안
+  // 세션을 내면, 내가 A 의 미리보기를 보고 있다는 이유로 B 의 초안 대화가 목록에 선다
+  const onDraft = injectedCoords().draft && instanceId === getCtx().instanceId;
   const conversations: ConversationRow[] = (Array.isArray(r.sessions) ? r.sessions : [])
     .filter((s) => s && typeof s.session === "string" && s.session && !!s.draft === onDraft)
     .map((s) => {
@@ -1462,11 +1466,25 @@ export type AgentEntry = { name: string; default: boolean };
 // §8-42 — 클라이언트 재판정 금지). best-effort: 실패/미선언 = [] (피커만 안 열림).
 export async function loadAgents(ctx: RelayCtx): Promise<AgentEntry[]> {
   const row = await instanceRow(ctx);
-  if (!row) return [];
-  const agents = Array.isArray(row.agents) ? row.agents : [];
-  return agents
+  return row ? agentEntries(row) : [];
+}
+
+/** 인스턴스 하나가 내놓는 말 상대 — 열거 행(§5.6-32)의 `agents[]` 와 착지 판정 `agent`.
+ *  착지 에이전트가 맨 앞이다: 그 화면에서 "그냥 말 걸면" 닿는 상대라 안내의 첫 줄이 그것이어야 한다. */
+function agentEntries(row: InstanceEntry): AgentEntry[] {
+  const rows = (Array.isArray(row.agents) ? row.agents : [])
     .filter((n): n is string => typeof n === "string" && !!n)
     .map((n) => ({ name: n, default: n === row.agent }));
+  return rows.sort((a, b) => Number(b.default) - Number(a.default));
+}
+
+/** 인스턴스 id 로 그 말 상대들을 묻는다 — 자기 인스턴스가 아니어도 답한다(열거는 root 축이라
+ *  인스턴스별 문을 두드리지 않는다). "이 화면에서 열 수 있는 대화" 안내가 읽는 자리.
+ *  best-effort: 미선언·실패·미상 인스턴스 = [] (안내만 침묵, 나머지는 정상). */
+export async function agentsOfInstance(instanceId: string): Promise<AgentEntry[]> {
+  if (!instanceId) return [];
+  const row = (await instanceRowsCached()).find((x) => x && x.id === instanceId);
+  return row ? agentEntries(row) : [];
 }
 
 /** 봉투 file 이벤트 산출물의 다운로드 URL — file.download(§5.4-27, ?dl=1 attachment 처분).

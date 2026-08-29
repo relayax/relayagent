@@ -87,6 +87,19 @@ OSS 데몬(`runner/daemon.ts`)과 relayos deployd(`runtime/deployd/`). 두 구�
    유지해야 한다. base 주입이면 기판이 마운트를 마음대로 바꾼다.*
    relayos 의 `X-Relay-Instance` 헤더(relayos chat/src/chat/transport.ts:257-262)는
    base 주입이 해결하는 문제의 기판 내부 구현으로 강등된다 — 계약 표면에서 제거.
+6-a. **[현행 v1] 여러 인스턴스를 한 화면에서 보려면 `baseFor` 주입이 필요하다.**
+   클라이언트가 자기 문서의 인스턴스 **말고 다른 인스턴스**의 스코프 동사를 부르려면 그
+   인스턴스의 base 를 알아야 하는데, §2-6 이 금지한 것이 정확히 그 조립이다. 그래서 주입
+   좌표에 함수 하나를 더 둔다: `window.__RELAY_CONTEXT.baseFor = (instanceId) => base | null`.
+   조립은 기판이 한다 — OSS 실측은 `baseFor:function(i){return "/pkg/"+encodeURIComponent(i)}`
+   (runner/runtime/shell.ts `BASE_FOR_JS`, 주입 지점은 `viewContextTag`·`homeDoc` 둘).
+   미주입이면 클라이언트는 자기 인스턴스만 안다 — 종전 동작 그대로이므로 **additive** 다.
+   *왜 함수인가: 지도(id→base)를 통째로 주입하면 설치 목록이 문서에 굳어, 주입 뒤에 깔린
+   패키지가 영영 미상으로 남는다. 열거의 정본은 §5.6 이고 주소 해석은 지연되어야 한다.*
+   *왜 계약에 올리나: 이게 없는 동안 "전 인스턴스 대화함"(§5.6 을 딛는 화면)은 이름만
+   그랬고 실제로는 현재 인스턴스 것만 냈다 — 열거는 되는데 그 인스턴스의 문을 두드릴 주소가
+   없어 빈 목록으로 접혔다(OSS 실측, 2026-08-29). 계약이 열거 동사를 root 에 둔 이상
+   그 결과를 쓸 수 있게 하는 주입도 계약이어야 한다.*
 
 ## 3. 개막과 판정 — capabilities 문
 

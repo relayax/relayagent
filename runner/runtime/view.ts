@@ -7,7 +7,7 @@ import { loadManifest, landingAgentName, type Manifest } from "../supply/manifes
 
 import { MIME, json, streamFile, streamFileRevalidated } from "../http.ts";
 import { jail } from "./dirs.ts";
-import { injectShell } from "./shell.ts";
+import { injectShell, BASE_FOR_JS } from "./shell.ts";
 
 export interface BuildResult {
   ok: boolean;
@@ -572,11 +572,29 @@ function componentImportMapTag(imports: Record<string, string>): string {
 }
 
 function viewContextTag(pkg: string, api: string, draft = false): string {
-  return `<script>window.__RELAY_CONTEXT={base:${JSON.stringify(api)},root:"",instanceId:${JSON.stringify(pkg)}${draft ? ",draft:true" : ""}};</script>`;
+  // baseFor 동승(§2-6-a) — 이 문서의 패키지 말고 **다른 인스턴스**의 문 주소도 위젯이 알아야
+  // 탭 하나가 자기 패키지에 말을 건다. 작업 사본 문서에서도 문 주소는 설치본의 것이다
+  // (draft 는 base 가 아니라 별개 축 — 세션이 어느 나무 위에 서느냐를 가른다)
+  return `<script>window.__RELAY_CONTEXT={base:${JSON.stringify(api)},root:"",instanceId:${JSON.stringify(pkg)},${BASE_FOR_JS}${draft ? ",draft:true" : ""}};</script>`;
 }
 
-/** 화면 없는 대화형 패키지의 기본 대화 문서 — 위젯만 얹은 한 장. 설치본(/pkg)과 작업 사본(/draft)
- *  두 문이 같은 장을 낸다; draft 면 위젯이 세션을 작업 사본 위에 민팅한다 */
+/**
+ * 화면 없는 대화형 패키지의 기본 대화 문서 — 위젯만 얹은 한 장. 설치본(/pkg)과 작업 사본(/draft)
+ * 두 문이 같은 장을 낸다; draft 면 위젯이 세션을 작업 사본 위에 민팅한다.
+ *
+ * **탭 셸로 통일한다**(2026-08-29). 종전에는 이 문서만 `mount`(단일 pane)라, 화면 있는 패키지가
+ * 얻는 것을 전부 놓쳤다 — 탭도, 보관함도, "이 화면에서 열 수 있는 대화" 안내도 없었다. 하필
+ * 이 문서가 **화면 전체가 대화**인 패키지의 것이라, 에이전트를 여럿 둔 패키지에서 나머지
+ * 상대에게 갈 문이 하나도 없었다(그 패키지엔 사이드바 항목도 하나뿐이다).
+ * 탭 상태는 `variant="dock"` 의 저장소를 그대로 쓴다 — 화면 있는 패키지의 부유 도크와 **같은
+ * 탭 묶음**이라, 화면을 오가도 열어 둔 대화가 따라온다.
+ *
+ * 선언은 **인스턴스 축만** 한다(declarePage — 대화 축 없음). 이 문서에는 `<AgentScope>` 를 쏠
+ * 뷰 번들이 없어 `relay:scope` 가 오지 않으므로 크롬 자리에서 대신 알린다. 대화를 못박지 않는
+ * 이유는 그것이 사실이기 때문이다: 이 문서는 "이 패키지의 대화 화면"이지 특정 슬롯의 페이지가
+ * 아니다. 못박으면 "+ 새 대화"가 보던 탭이 아니라 페이지 좌표에서 갈라진다(ChatTabs PageDecl).
+ * 슬롯 문자열을 기판이 조립하지 않는 규율(view-bridge §2-5)도 이 선택으로 함께 지켜진다.
+ */
 function chatFallbackDoc(pkg: string, m: Manifest, api: string, fav: string, draft: boolean): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   return injectShell(`<!doctype html>
@@ -584,10 +602,12 @@ function chatFallbackDoc(pkg: string, m: Manifest, api: string, fav: string, dra
 <link rel="icon" href="${esc(fav)}">
 <title>${esc(m.display_name ?? pkg)}${draft ? " · 작업 사본" : ""}</title>
 <link rel="stylesheet" href="/assets/chat-app.css">
-<style>html,body{height:100%;margin:0;background:#fafafa}#chat{height:100%;max-width:760px;margin:0 auto;padding:14px;box-sizing:border-box}</style>
+<style>html,body{height:100%;margin:0;background:#fafafa}#chat{height:100%;max-width:860px;margin:0 auto;box-sizing:border-box;border-left:1px solid var(--rc-line);border-right:1px solid var(--rc-line)}</style>
 </head><body><div id="chat"></div>
 ${viewContextTag(pkg, api, draft)}<script>window.RELAY_CHAT_MANUAL=1;</script>
-<script type="module">import { mount } from "/assets/chat-app.js"; mount(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });</script>
+<script type="module">import { mountTabs } from "/assets/chat-app.js";
+const h = mountTabs(document.getElementById("chat"), { instanceId: ${JSON.stringify(pkg)} });
+h.declarePage({ instanceId: ${JSON.stringify(pkg)} });</script>
 </body></html>`);
 }
 

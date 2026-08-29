@@ -18,11 +18,16 @@
  *     세로 휠→가로 스크롤, 활성 탭 자동 시야 유지도 그룹별로 동작.
  *   · 이름은 서버 제목이 없으면 첫 사용자 메시지로 자동 생성(Claude 세션식) + 영속. 더블클릭으로 덮어쓰기.
  *   · 보관함 = 전 인스턴스(에이전트 넘나듦) 대화 목록(loadInbox) — 행 클릭=탭 열기, hover=이름변경·삭제.
+ *   · 안내 줄(dock 전용, PageAgents) = 페이지 선언이 준 인스턴스의 **아직 안 연** 말 상대들.
+ *     페이지는 탭을 열지 않고 알려만 준다(view-bridge §5-17, 2026-08-29).
  *   · +새대화 = 포커스 그룹 활성 탭 인스턴스에 sibling 스레드 민팅 → 새 탭.
- *   · **미리보기 탭(VSCode 식)**: 탭을 만드는 주체는 사람이고, 페이지 이동은 "미리보기" 한 자리만
- *     빌려 쓴다(기울임 라벨). 다음 이동이 그 자리를 재사용하므로 순회해도 빈 탭이 쌓이지 않고,
- *     localStorage 에도 저장되지 않아 새로고침이 빈 탭을 복원하지 않는다. 첫 발화(턴 시작)·이름
- *     변경·드래그처럼 사람이 그 대화에 관여하는 순간 고정 탭으로 승격한다.
+ *   · **미리보기 탭(VSCode 식)**: 탭을 만드는 주체는 사람이고, 사람이 아닌 열기(빈 상태의 첫
+ *     시드·임베더의 mount 초기 좌표)는 "미리보기" 한 자리만 빌려 쓴다(기울임 라벨). 다음
+ *     미리보기가 그 자리를 재사용하므로 빈 탭이 쌓이지 않고, localStorage 에도 저장되지 않아
+ *     새로고침이 빈 탭을 복원하지 않는다. 첫 발화(턴 시작)·이름변경·드래그처럼 사람이 그 대화에
+ *     관여하는 순간 고정 탭으로 승격한다.
+ *     **페이지 이동은 더 이상 여기 오지 않는다**(view-bridge §5-17 개정, 2026-08-29) — 선언은
+ *     declarePage 로 좌표만 남기고, 화면에는 위의 안내 줄로 선다.
  *   · 탭 전부 닫힘 → dock=onAllClosed(패널 닫힘), desk=빈 상태.
  *   · variant="desk" 만 우측 뷰 iframe split(드래그 크기조절) 노출 — 뷰는 포커스 그룹의 활성 탭을 따른다.
  *   · 탭 드래그 = 같은 그룹 안 순서 이동 + **그룹 간 이동**(다른 스트립 위에 놓기 — 놓으면 활성화).
@@ -35,11 +40,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { ChatApp, OpenConversationCtx, PaneTargetCtx, type DeskTurnStatus, type PaneTarget } from "./Chat";
 import {
   loadInbox, loadInstances, renameConversation, deleteConversation, loadConversationTitle,
-  seedConversation, isLocalConversation, onSessionMinted, viewUrlForInstance,
-  livenessOf, livenessLabel, livenessTitle,
-  type InboxRow, type RelayCtx,
+  seedConversation, isLocalConversation, onSessionMinted, viewUrlForInstance, baseForInstance,
+  livenessOf, livenessLabel, livenessTitle, agentsOfInstance, serverAgentOf,
+  type InboxRow, type RelayCtx, type AgentEntry,
 } from "./runtime";
-import { displayBinding, siblingThread, threadFamily } from "./routematch";
+import { agentLabelOf } from "./parts";
+import { displayBinding, siblingThread, threadFamily, withTargets } from "./routematch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -63,8 +69,16 @@ export type ChatTabsVariant = "dock" | "desk";
  *  시작되는 순간(첫 발화·이름변경·드래그) 고정 탭으로 승격한다. */
 export type Tab = { key: string; instanceId: string; conversationId: string; title: string; preview?: boolean };
 /** 열기 요청 — 외부(relay:chat-open·도킹 openTab)가 특정 (인스턴스×대화) 탭을 열고 포커스한다.
- *  preview=페이지 이동이 끌어온 슬롯(미리보기로 착지), 생략=사람이 고른 대화(고정 탭). */
+ *  preview=사람이 고르지 않은 열기(빈 상태 시드·임베더 초기 좌표 — 미리보기로 착지),
+ *  생략=사람이 고른 대화(고정 탭). */
 export type OpenReq = { instanceId: string; conversationId?: string; title?: string; preview?: boolean; targets?: string[] };
+/** 페이지 선언(view-bridge §5-17) — "지금 보고 있는 화면은 여기". **탭은 건드리지 않는다**:
+ *  좌표만 남아 "+ 새 대화"·칩 피커·안내 줄의 기준이 된다. 종전에는 이 선언이 preview 탭을 밀어
+ *  페이지를 옮길 때마다 보던 대화를 빼앗았다(2026-08-29 개정).
+ *  **대화 축은 선택이다**: 인스턴스만 선언하는 화면(화면 없는 대화형 패키지의 문서 — 그 문서가
+ *  곧 대화이지 특정 대화를 못박는 페이지가 아니다)이 있고, 거기서 "+ 새 대화"는 페이지가 아니라
+ *  보던 탭에서 갈라져야 한다(안 그러면 에이전트 대화에서 눌러도 main 패밀리가 나온다). */
+export type PageDecl = { instanceId: string; conversationId?: string; targets?: string[] };
 
 const keyOf = (instanceId: string, conversationId: string) => instanceId + "|" + conversationId;
 const tabsKey = (v: ChatTabsVariant) => `relay-${v}-tabs`;
@@ -241,6 +255,59 @@ async function loadPickerRows(principal: string): Promise<PickerRow[]> {
     for (const r of rows) { const d = shown.get(r.instance); if (d) r.display = d; }
   } catch { /* 열거 실패 — 설치 이름으로 선다 */ }
   return rows;
+}
+
+/**
+ * 안내 한 줄 — "이 화면에서 열 수 있는 대화". 페이지 선언(view-bridge §5-17)이 준 인스턴스의
+ * 말 상대를 늘어놓되, **이미 탭으로 열린 상대는 뺀다**. 남는 게 없으면 줄 자체가 사라진다.
+ *
+ * 왜 안내인가: 페이지가 탭을 여는 것은 사람의 자리를 빼앗는 일이라 은퇴했다(§5-17 개정,
+ * 2026-08-29). 그렇다고 선언을 버리면 "이 화면에서 누구와 말할 수 있는가"를 알 길이 사라진다 —
+ * 선언이 계속 살아야 하는 이유가 정확히 그것 하나다. 열어 주는 것이 아니라 알려 주는 것.
+ *
+ * 왜 보관함이 아닌가: 대화함은 **대화**를 세는 자리다. 말 걸어본 적 없는 에이전트를 거기 섞으면
+ * "대화 없음"이 목록의 대부분을 차지해 정작 대화가 밀린다(2026-08-28 사용자 지적 —
+ * loadPickerRows 주석). 안내는 페이지 맥락에만 서고 열면 사라지므로 그 목록과 겹치지 않는다.
+ */
+function PageAgents({ instanceId, slot, openAgents, onOpen }: {
+  /** 페이지가 알려 온 인스턴스 — 빈 값이면(선언 없는 문서·/desk) 줄이 서지 않는다 */
+  instanceId: string;
+  /** 페이지가 **대화까지** 못박았으면 그 좌표. 인스턴스만 선언한 화면에서는 null */
+  slot: Slot | null;
+  /** 이 인스턴스에서 이미 탭으로 열려 있는 에이전트 이름 */
+  openAgents: Set<string>;
+  onOpen: (instanceId: string, conversationId: string) => void;
+}) {
+  const [agents, setAgents] = useState<AgentEntry[]>([]);
+  useEffect(() => {
+    if (!instanceId) { setAgents([]); return; }
+    let alive = true;
+    agentsOfInstance(instanceId).then((a) => { if (alive) setAgents(a); });
+    return () => { alive = false; };
+  }, [instanceId]);
+
+  if (!instanceId) return null;
+  const rest = agents.filter((a) => !openAgents.has(a.name));
+  if (rest.length === 0) return null;
+  // 선언된 상대는 선언 좌표 그대로 연다 — 페이지가 실은 작업 대상(param)이 거기 들어 있다.
+  // 나머지는 param 없는 씨앗 좌표다(대상은 그 대화 안에서 칩으로 붙인다).
+  const declaredAgent = slot ? displayBinding(slot.conversationId).agent : "";
+  const convFor = (name: string) => (slot && name === declaredAgent ? slot.conversationId : withTargets(name, []));
+
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1"
+         aria-label="이 화면에서 열 수 있는 대화">
+      <span className="shrink-0 text-[11px] text-[var(--rc-faint)]">이 화면에서 열 수 있는 대화</span>
+      {rest.map((a) => (
+        <Button key={a.name} type="button" variant="ghost" size="xs"
+                className="h-5 px-1.5 text-[11.5px] text-[var(--rc-soft)]"
+                title={`${a.name} 와(과) 대화를 엽니다`}
+                onClick={() => onOpen(instanceId, convFor(a.name))}>
+          {agentLabelOf(a.name)}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 /** 보관함 피커 — 전 에이전트 대화 나열 + 열기 + 이름변경·삭제(구 SessionMenu list UI 이식).
@@ -618,8 +685,8 @@ export function ChatTabs({
   /** 패널 접기(도킹) — 탭은 유지한 채 패널만 닫는다. 재오픈 시 localStorage 에서 복원. */
   onCollapse?: () => void;
   principal?: string;
-  /** 외부 명령 핸들 등록(도킹 openTab). 마운트 시 1회 넘겨받고, 언마운트 시 해제. */
-  registerHandle?: (h: { openTab: (r: OpenReq) => void } | null) => void;
+  /** 외부 명령 핸들 등록(도킹 openTab·declarePage). 마운트 시 1회 넘겨받고, 언마운트 시 해제. */
+  registerHandle?: (h: { openTab: (r: OpenReq) => void; declarePage: (r: PageDecl) => void } | null) => void;
 }) {
   const [tabs, setTabs] = useState<Tab[]>(() => {
     const persisted = loadTabs(variant);
@@ -666,9 +733,17 @@ export function ChatTabs({
   const focusRef = useRef(focus);
   focusRef.current = focus;
   const dragKeyRef = useRef<string | null>(null); // 탭 DnD 원본(state 는 표시용, ref 가 정본)
-  // 지금 보고 있는 페이지의 슬롯(도킹만 — /desk 는 페이지가 없어 null 유지). openReq 의
-  // preview 요청이 갱신하며, "+ 새 대화"·칩 피커가 대상의 정본으로 읽는다.
-  const pageSlotRef = useRef<Slot | null>(null);
+  // 지금 보고 있는 페이지의 슬롯(도킹만 — /desk 는 페이지가 없어 null 유지). 페이지 선언
+  // (declarePage)과 빈 상태 시드가 갱신하며, "+ 새 대화"·칩 피커·안내 줄이 대상의 정본으로 읽는다.
+  // 안내 줄이 이 값에 따라 다시 그려져야 해서 state 이고, 콜백이 최신값을 읽도록 ref 거울을 둔다
+  // (active0Ref 와 같은 관용구).
+  const [pageSlot, setPageSlot] = useState<Slot | null>(null);
+  const pageSlotRef = useRef<Slot | null>(pageSlot);
+  pageSlotRef.current = pageSlot;
+  // 페이지의 **인스턴스** 축 — 대화까지 못박지 않은 선언(화면 없는 대화형 패키지의 문서)도
+  // 이건 안다. 안내 줄이 읽는 자리라 pageSlot 과 갈라 둔다: 없는 대화를 지어내 "+ 새 대화"의
+  // 기준으로 삼으면 에이전트 대화에서 눌러도 main 패밀리가 갈라져 나온다
+  const [pageInstance, setPageInstance] = useState("");
   // 페이지가 선언한 작업 대상 전체(<AgentScope targets>) — "대상 추가" 후보의 정본.
   // 대화 이력 열거는 "가 본 곳"만 알지만 이건 "갈 수 있는 곳"을 안다.
   const pageTargetsRef = useRef<string[]>([]);
@@ -686,6 +761,18 @@ export function ChatTabs({
     [g2Keys, tabs],
   );
   const split = group1.length > 0;
+  // 안내 줄이 뺄 상대들 — 이 페이지 인스턴스에서 이미 탭으로 열린 에이전트. 좌표의 로컬 문법이
+  // 먼저고, 기판이 발급한 불투명 슬롯은 서버가 밝힌 정체성(§5.3-24)이 답한다.
+  const openPageAgents = useMemo(() => {
+    const out = new Set<string>();
+    if (!pageInstance) return out;
+    for (const t of tabs) {
+      if (t.instanceId !== pageInstance) continue;
+      const a = displayBinding(t.conversationId).agent || serverAgentOf(t.conversationId);
+      if (a) out.add(a);
+    }
+    return out;
+  }, [tabs, pageInstance]);
 
   useEffect(() => { try { localStorage.setItem(tabsKey(variant), JSON.stringify(persistableTabs(tabs))); } catch { /* quota */ } }, [tabs, variant]);
   useEffect(() => { try { localStorage.setItem(activeStorageKey(variant), active0); } catch { /* quota */ } }, [active0, variant]);
@@ -724,8 +811,7 @@ export function ChatTabs({
       const a1 = dropped.get(active1Ref.current); if (a1) setActive1(a1);
       setG2((prev) => prev.filter((k) => !dropped.has(k)));
     }
-    const slot = pageSlotRef.current;
-    if (slot && slot.conversationId === conversation) pageSlotRef.current = { ...slot, conversationId: session };
+    setPageSlot((prev) => (prev && prev.conversationId === conversation ? { ...prev, conversationId: session } : prev));
   }), []);
 
   // 닫힌 탭이 그룹1 명단에 남지 않게 상시 정리(복원 키가 낡은 경우 포함).
@@ -874,11 +960,12 @@ export function ChatTabs({
       hit = cur && sameInstance(cur) ? cur : tabsRef.current.find(sameInstance);
       conv = hit ? hit.conversationId : seedConversation(r.instanceId);
     }
-    // preview 요청 = 페이지가 "이 화면의 대화는 이것" 이라고 알려 온 것. 탭을 새로 열든 이미
-    // 있어 활성화만 하든 좌표는 남겨 둔다 — "+ 새 대화"·칩 피커가 참조하는 페이지 정본이다
-    // (mountTabs initial 은 패널 열릴 때 1회 캡처라 SPA 이동을 못 따라간다).
+    // preview 요청 = 사람이 고르지 않은 열기(빈 상태 시드·임베더 초기 좌표). 탭을 새로 열든
+    // 이미 있어 활성화만 하든 좌표는 남겨 둔다 — "+ 새 대화"·칩 피커가 참조하는 기준이다.
+    // 페이지 선언은 이 길로 오지 않는다(declarePage — 탭을 건드리지 않는 쪽).
     if (r.preview) {
-      pageSlotRef.current = { instanceId: r.instanceId, conversationId: conv };
+      setPageSlot({ instanceId: r.instanceId, conversationId: conv });
+      setPageInstance(r.instanceId);
       pageTargetsRef.current = r.targets || [];
     }
     if (hit) {
@@ -898,16 +985,26 @@ export function ChatTabs({
     openInstance: (instanceId) => openReq({ instanceId }),
   }), [retarget, openReq]);
 
-  // 도킹 openTab 핸들 등록 — 패널이 닫혀 있다 열릴 때 마운트 후 이 핸들로 대상 탭을 연다.
-  useEffect(() => {
-    registerHandle?.({ openTab: openReq });
-    return () => registerHandle?.(null);
-  }, [registerHandle, openReq]);
+  /** 페이지 선언의 착지 — 좌표만 기록한다. 탭·활성은 사람의 것이라 손대지 않는다
+   *  (view-bridge §5-17). 인스턴스가 비면 선언 부재로 읽어 기준을 지운다. */
+  const declarePage = useCallback((r: PageDecl) => {
+    setPageInstance(r.instanceId || "");
+    setPageSlot(r.instanceId && r.conversationId ? { instanceId: r.instanceId, conversationId: r.conversationId } : null);
+    pageTargetsRef.current = r.targets || [];
+  }, []);
 
-  // 페이지의 슬롯(뷰의 <AgentScope> 선언, 없으면 상위 = 인스턴스 front "main" → mountTabs
-  // initial)은 **저장된 탭이 있어도** 열고 활성화한다. 위 시드(useState)는 "저장된 탭이 있으면
-  // 그것"이라 슬롯을 통째로 버렸고, 그러면 대화가 마지막에 쓰던 탭 — 직전 세션의 다른 에이전트 —
-  // 에서 시작됐다(페이지가 곧 대화라는 계약 파기). openReq 은 패밀리 단위 멱등이라 이미 그
+  // 도킹 핸들 등록 — 패널이 닫혀 있다 열릴 때 마운트 후 이 핸들로 대상 탭을 열고, 페이지
+  // 선언을 넘겨받는다.
+  useEffect(() => {
+    registerHandle?.({ openTab: openReq, declarePage });
+    return () => registerHandle?.(null);
+  }, [registerHandle, openReq, declarePage]);
+
+  // 임베더가 mount 좌표로 **대화까지 못박은** 경우(mountTabs 의 conversation)는 저장된 탭이
+  // 있어도 그 대화를 열고 활성화한다 — 위 시드(useState)는 "저장된 탭이 있으면 그것"이라
+  // 명시 좌표를 통째로 버린다. 이것은 페이지 이동이 아니라 **호스트의 명시 지시**다: 페이지
+  // 선언은 declarePage 로 가고 탭을 건드리지 않는다(view-bridge §5-17). OSS 부유 크롬은
+  // instanceId 만 넘기므로 이 길이 서지 않는다. openReq 은 패밀리 단위 멱등이라 이미 그
   // 대화를 보고 있으면 아무 일도 일어나지 않는다. (desk 는 initial 이 없어 종전대로 복원만.)
   const declared = useMemo<OpenReq | null>(
     () =>
@@ -1303,10 +1400,20 @@ export function ChatTabs({
                 {split && activeTab1 && crumbCell(activeTab1, "crumb1", { flex: "1 1 0" })}
               </div>
             )}
+            {/* 안내 줄(dock 전용) — 페이지가 알려 온 맥락에서 아직 안 연 상대들. 열면 사라진다.
+                /desk 는 페이지가 없어 pageSlot 이 null 이라 자연히 서지 않는다 */}
+            {variant === "dock" && (
+              <PageAgents instanceId={pageInstance} slot={pageSlot} openAgents={openPageAgents}
+                          onOpen={(instanceId, conv) => addTab({ key: keyOf(instanceId, conv), instanceId, conversationId: conv, title: "" })} />
+            )}
             {/* row3 — pane 은 그룹 트리에 중첩하지 않고 평면 유지(keep-alive). 보이는 pane 만
                 flex 폭을 갖고, 분할 스플리터는 order 로 두 pane 사이에 낀다. */}
             <div className="rc-desk-panes">
               {tabs.map((t) => {
+                // 이 탭의 문 주소 — 주입(baseFor)이 있으면 인스턴스별로 갈린다. 안 실으면
+                // getCtx 폴백이 **지금 보고 있는 문서의** base 를 써서, 다른 패키지 탭이
+                // 남의 문에 자기 대화 슬롯을 들고 말을 건다. null = 미주입(종전 폴백 그대로)
+                const tabBase = baseForInstance(t.instanceId);
                 const gi: 0 | 1 = g2set.has(t.key) ? 1 : 0;
                 const visible = gi === 0 ? t.key === active0 : t.key === active1;
                 const style: CSSProperties = { display: visible ? "flex" : "none", order: gi === 1 ? 3 : 1 };
@@ -1321,7 +1428,7 @@ export function ChatTabs({
                       value={(conv) => addTab({ key: keyOf(t.instanceId, conv), instanceId: t.instanceId, conversationId: conv, title: "" })}>
                       <PaneTargetCtx.Provider value={paneTargetOf(t.key)}>
                       <ChatApp
-                        ctxOverrides={{ instanceId: t.instanceId, conversationId: t.conversationId, principal, title: t.title }}
+                        ctxOverrides={{ instanceId: t.instanceId, conversationId: t.conversationId, principal, title: t.title, ...(tabBase != null ? { base: tabBase } : {}) }}
                         embedded
                         active={visible && (!split || focus === gi)}
                         onStatus={(s) => reportStatus(t.key, s)}
