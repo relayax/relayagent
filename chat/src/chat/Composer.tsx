@@ -7,6 +7,7 @@
  * 팝오버·메뉴는 body 로 포탈되므로 도크 패널의 overflow 에 잘리지 않는다 — 옛 `stack` 측정이 사라진 이유.
  */
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useThread, useThreadRuntime } from "@assistant-ui/react";
 import type { RelayCtx, ModelOption, AgentEntry, SlashCommand, ActiveTurn, NavInstance } from "./runtime";
 import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, fileInlineUrl, loadCommands, loadAgents, setAttachTurn, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, hasSteer, steerTurn,
@@ -622,6 +623,51 @@ let _prefillComposer: ((text: string) => void) | null = null;
 // 외부(셸 openChat send) 발 자동 전송 — 컴포저와 같은 큐 의미론(턴 실행 중=큐잉)을 태운다.
 let _sendExternal: ((text: string) => void) | null = null;
 
+// ── 파일 끌어놓기 공용부 ───────────────────────────────────────────────────
+// 드롭과 붙여넣기는 같은 추출기를 쓴다. dataTransfer.files 가 정석이지만 WebKit(맥 사파리·
+// WKWebView)은 자리에 따라 items 만 채워 오는 경우가 있어 폴백을 둔다 — 폴백이 없으면
+// "끌어다 놓으면 표시는 뜨는데 첨부는 안 붙는" 무증상 실패가 된다.
+function filesFrom(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return [];
+  const out: File[] = [];
+  if (dt.files && dt.files.length) {
+    for (let i = 0; i < dt.files.length; i++) out.push(dt.files[i]);
+    return out;
+  }
+  const items = dt.items;
+  for (let i = 0; i < (items ? items.length : 0); i++) {
+    const it = items[i];
+    if (it.kind === "file") { const f = it.getAsFile(); if (f) out.push(f); }
+  }
+  return out;
+}
+
+/** 지금 끌려오는 것이 파일인가 — 글자 선택·탭 DnD(text/plain)에는 반응하지 않는다. */
+const dragHasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
+
+// 판 밖으로 빗나간 파일 드롭의 기본 동작을 막는 창 수준 가드.
+//
+// 브라우저·웹뷰의 기본값은 "떨어뜨린 파일로 문서를 갈아치우기"다. 데스크톱 웹뷰에는 주소창도
+// 뒤로가기도 없어 그렇게 날아간 대화로는 되돌아올 길이 없다. 그래서 dragover/drop 의 기본 동작만
+// 죽인다(전파는 막지 않는다 — 임베드 호스트의 제 드롭 처리는 그대로 산다).
+// 컴포저가 하나라도 살아 있는 동안만 걸고, 마지막 컴포저가 내려가면 흔적 없이 뗀다.
+let _dropGuardRefs = 0;
+const _dropGuard = (e: DragEvent) => { if (dragHasFiles(e)) e.preventDefault(); };
+function useDropGuard() {
+  useEffect(() => {
+    if (_dropGuardRefs++ === 0) {
+      window.addEventListener("dragover", _dropGuard);
+      window.addEventListener("drop", _dropGuard);
+    }
+    return () => {
+      if (--_dropGuardRefs === 0) {
+        window.removeEventListener("dragover", _dropGuard);
+        window.removeEventListener("drop", _dropGuard);
+      }
+    };
+  }, []);
+}
+
 /** Composer — 턴이 도는 중에도 입력을 잠그지 않는다. 제출된 말이 가는 길은 둘이고, 갈림은
  *  기판의 capability `steer` 가 정한다(client-protocol §5.1-16-a):
  *
@@ -658,6 +704,8 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0); // dragenter/leave fire per child — count to avoid overlay flicker.
   const fileRef = useRef<HTMLInputElement>(null);
+  // 컴포저 뿌리 — 슬래시/@ 팝오버의 "바깥 클릭" 판정과 드롭 표적(.rc-root) 탐색의 기점.
+  const rootRef = useRef<HTMLDivElement>(null);
   // The queue is a LIST of distinct messages (each becomes its own turn), not one merged
   // string. Each carries its own attachments. queueRef is the source of truth; `queued` mirrors it.
   // 큐는 conversationId(리액티브 슬롯) 단위로 localStorage 에 영속 — 슬롯/pane 전환으로 이 Composer 가
@@ -1076,31 +1124,69 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   // Clipboard paste of an image/file → capture as an attachment (and swallow the paste so a
   // pasted screenshot doesn't drop into the textarea as nothing). Plain text paste is untouched.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const dt = e.clipboardData;
-    if (!dt) return;
-    const files: File[] = [];
-    if (dt.files && dt.files.length) { for (let i = 0; i < dt.files.length; i++) files.push(dt.files[i]); }
-    else { for (let i = 0; i < dt.items.length; i++) { const it = dt.items[i]; if (it.kind === "file") { const f = it.getAsFile(); if (f) files.push(f); } } }
+    const files = filesFrom(e.clipboardData);
     if (files.length) { e.preventDefault(); void addFiles(files); }
   };
 
-  // Drag-and-drop onto the composer. Only react when files are being dragged (not text/selection).
-  const dragHasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
-  const onDragEnter = (e: React.DragEvent) => { if (!dragHasFiles(e)) return; e.preventDefault(); dragDepth.current++; setDragging(true); };
-  const onDragOver = (e: React.DragEvent) => { if (dragHasFiles(e)) e.preventDefault(); };
-  const onDragLeave = (e: React.DragEvent) => { if (dragDepth.current > 0) { dragDepth.current--; if (dragDepth.current === 0) setDragging(false); } };
-  const onDrop = (e: React.DragEvent) => {
-    if (!dragHasFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragging(false);
-    if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
-  };
+  // ── 파일 끌어놓기 ────────────────────────────────────────────────────────
+  // 표적은 컴포저 한 줄이 아니라 **채팅 판 전체**(.rc-root)다. 사람은 대화 흐름 한가운데에
+  // 파일을 떨어뜨리지, 높이 몇 십 px 짜리 입력 카드를 조준하지 않는다 — 좁은 표적은 대부분의
+  // 드롭이 빗나가고, 빗나간 드롭은 문서를 그 파일로 갈아치운다(가드는 useDropGuard 가 진다).
+  //
+  // 리스너를 React 합성 이벤트가 아니라 네이티브로 다는 이유: 판(.rc-root)은 이 컴포넌트의
+  // 조상이라 props 로는 못 건다. 판을 못 찾으면(임의 마운트) 컴포저 자신으로 물러선다.
+  //
+  // addFiles 는 매 렌더 새로 만들어지고 atts(총량 누계)를 닫아 잡으므로, []deps 리스너가 낡은
+  // 클로저를 잡지 않도록 ref 로 최신판을 본다(이 파일의 activeRef 관용구와 같다).
+  useDropGuard();
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+  const [dropHost, setDropHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const host = (rootRef.current?.closest(".rc-root") as HTMLElement | null) ?? rootRef.current;
+    if (!host) return;
+    setDropHost(host);
+    // dragenter/leave 는 자식마다 뜬다 — 계수로 오버레이 깜빡임을 막는다.
+    const onEnter = (e: DragEvent) => { if (!dragHasFiles(e)) return; e.preventDefault(); dragDepth.current++; setDragging(true); };
+    const onOver = (e: DragEvent) => {
+      if (!dragHasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!dragHasFiles(e)) return;
+      if (dragDepth.current > 0 && --dragDepth.current === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!dragHasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      const files = filesFrom(e.dataTransfer);
+      if (files.length) void addFilesRef.current(files);
+    };
+    // 끌던 것이 창 밖에서 놓이거나(Esc·취소) 창이 포커스를 잃으면 dragleave 가 짝을 못 맞춰
+    // 오버레이가 굳는다 — 계수를 0 으로 되돌린다.
+    const reset = () => { dragDepth.current = 0; setDragging(false); };
+    host.addEventListener("dragenter", onEnter);
+    host.addEventListener("dragover", onOver);
+    host.addEventListener("dragleave", onLeave);
+    host.addEventListener("drop", onDrop);
+    window.addEventListener("dragend", reset);
+    window.addEventListener("blur", reset);
+    return () => {
+      host.removeEventListener("dragenter", onEnter);
+      host.removeEventListener("dragover", onOver);
+      host.removeEventListener("dragleave", onLeave);
+      host.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragend", reset);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
 
 
   // 슬래시·@ 목록은 입력 카드 위에 붙는 Popover — 열림은 본문 텍스트가 정하고(트리거는 자리 표시용
   // 0px 앵커), 닫힘만 Popover 에서 받는다: Esc·바깥 클릭. 카드 안(글칸) 클릭은 계속 연 채로 둔다.
-  const rootRef = useRef<HTMLDivElement>(null);
   const onPickerOpenChange = (o: boolean, d: { reason: string; event: Event }) => {
     if (o) return;
     const t = d.event?.target as Node | null;
@@ -1112,14 +1198,17 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   const uploading = atts.some((a) => a.uploading);
 
   return (
-    <div className="rc-composer" ref={rootRef} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-      {dragging && (
+    <div className="rc-composer" ref={rootRef}>
+      {/* 드롭 표시는 표적과 같은 넓이여야 한다 — 판(.rc-root) 위에 포탈한다. 컴포저 안에만
+          그리면 "여기"가 입력 카드를 가리켜, 실제로는 판 어디든 되는데도 조준하게 만든다. */}
+      {dragging && dropHost && createPortal(
         <div className="rc-drop" aria-hidden>
           <Empty className="gap-1 border-0 p-4">
             <EmptyMedia variant="icon" className="mb-0 size-8 bg-transparent text-[var(--rc-accent-strong)]"><DownloadIcon /></EmptyMedia>
             <EmptyTitle className="text-[13px] font-semibold text-[var(--rc-accent-strong)]">여기에 파일을 놓으세요</EmptyTitle>
           </Empty>
-        </div>
+        </div>,
+        dropHost,
       )}
       {queued.length > 0 && (
         <ItemGroup className="gap-1.5">
