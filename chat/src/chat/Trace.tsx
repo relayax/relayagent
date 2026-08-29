@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TurnMeta, TurnUsageLive } from "./runtime";
-import { stepMeta, onTurnPhase, onTurnUsage, loadConversationsOf } from "./runtime";
+import { stepMeta, isDispatchTool, onTurnPhase, onTurnUsage, loadConversationsOf } from "./runtime";
 import { useRelayCtx } from "./ctx";
 import { resultText, fmtTok, modelLabelOf, type AnyPart } from "./parts";
 
@@ -102,15 +102,18 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
   const [open, setOpen] = useState(false);
   const done = part.result !== undefined || part.isError;
   const ctx = useRelayCtx();
+  // 위임은 다른 대화에서 돈다 — 그 대화를 탭으로 열어 주지 않으면 보고도 질문도 놓친다.
+  // 판정은 이름 문법으로(isDispatchTool): 봉투의 이름은 문을 통과한 `mcp__…__agent_dispatch` 다
+  const dispatch = isDispatchTool(part.toolName);
   useEffect(() => {
-    if (!running || done || part.toolName !== "agent_dispatch") return;
+    if (!running || done || !dispatch) return;
     const id = part.toolCallId || "";
     if (!id || openedDispatch.has(id)) return;
     const sub = String(part.args?.agent || "");
     if (!sub || !ctx.instanceId) return;
     openedDispatch.add(id);
     void openDispatchConversation(ctx.instanceId, ctx.principal, sub, String(part.args?.target || ""));
-  }, [running, done, part.toolName, part.toolCallId, part.args, ctx.instanceId, ctx.principal]);
+  }, [running, done, dispatch, part.toolCallId, part.args, ctx.instanceId, ctx.principal]);
   const meta = stepMeta(part.toolName, part.args, part.result, part.isError, part.label);
   const argDisplay = part.argsText && part.argsText.trim()
     ? part.argsText
@@ -124,7 +127,9 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
       className={cn("rc-step motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-200", err && "err")}>
       <Marker render={<CollapsibleTrigger />} className={ROW}>
         <MarkerIcon className={cn("rc-step-ic inline-flex items-center justify-center text-xs", err ? "text-[var(--rc-err)]" : done ? "text-muted-foreground/70" : "text-muted-foreground")}>
-          {live ? <Busy /> : err ? <XIcon /> : done ? <LCheck /> : meta.icon}
+          {/* 위임이 끝난 자리에는 체크를 찍지 않는다 — 아래 요약과 같은 판정이다. 아직
+              안 끝난 위임은 종전 아이콘 그대로(그 자리는 거짓말하지 않았다) */}
+          {live ? <Busy /> : err ? <XIcon /> : done ? (dispatch ? <span aria-hidden>↗</span> : <LCheck />) : meta.icon}
         </MarkerIcon>
         <MarkerContent className={cn("flex min-w-0 items-baseline gap-1.5 truncate", live ? "text-foreground/80" : "text-foreground/60")}>
           {meta.target
@@ -132,7 +137,13 @@ export function StepRow({ part, running }: { part: AnyPart; running: boolean }) 
             : <span className="truncate">{meta.label}</span>}
         </MarkerContent>
         <span className="ml-auto flex min-w-0 max-w-[45%] shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/80">
-          {done && meta.summary && <span className={cn("min-w-0 truncate", err && "text-[var(--rc-err)]")}>{meta.summary}</span>}
+          {/* 위임은 도구가 돌아왔다고 끝난 것이 아니다 — 시한(180초)에 걸리면 "계속 돌고 있다"는
+              문자열이 **정상 반환**되고, 종전 화면은 그 자리에 체크를 찍었다. 30분을 더 도는
+              일이 4분 만에 성공한 것처럼 보였다(2026-08-29). 여기서는 완료를 주장하지 않고
+              일이 옮겨 갔다고만 말한다 — 살아있음은 작성창 위 현황 줄(DelegationStrip)이 말한다. */}
+          {done && dispatch
+            ? <span className={cn("min-w-0 truncate", err && "text-[var(--rc-err)]")}>{err ? meta.summary : "다른 대화에서 진행"}</span>
+            : done && meta.summary && <span className={cn("min-w-0 truncate", err && "text-[var(--rc-err)]")}>{meta.summary}</span>}
           {live && liveTick.elapsed >= 3 ? <span>{liveTick.elapsed}s</span> : null}
           {live ? liveTick.tick : null}
           {hasDetail && <Caret open={open} />}

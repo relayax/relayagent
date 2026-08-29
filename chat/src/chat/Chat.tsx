@@ -24,6 +24,7 @@ import { HistorySkeleton } from "./Trace";
 import { ChatHeader } from "./Menus";
 import { UserMessage, AssistantMessage } from "./Messages";
 import { Composer, AttachOnMount } from "./Composer";
+import { DelegationStrip } from "./Delegations";
 // shadcn 프리미티브(base-ui) — 버튼·배지·입력·팝오버. 룩은 Tailwind 변형이 칠하고, 배치가 필요한
 // 자리는 기존 rc-* 클래스를 함께 단다(chat.css 는 레이어 밖이라 배치 규칙이 항상 이긴다).
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,10 @@ function ChatThread({ ctx, initialMessages, attach, onSwitch, onStatus, embedded
               </MessageScrollerButton>
             </MessageScroller>
           </MessageScrollerProvider>
+          {/* 맡긴 일의 현황 — 작성창 바로 위, 스크롤 밖. 위임은 다른 대화에서 도는데 그 사실을
+              말할 자리가 로그 안에 없다(턴이 종결되면 카드는 이력이 된다). 진행 중인 것이
+              없으면 통째로 사라진다 — 빈 자리를 차지하지 않는다. */}
+          <DelegationStrip ctx={ctx} />
           <Composer resumingTurn={!!attach} onSwitch={onSwitch} />
         </ThreadPrimitive.Root>
        </ActivePaneCtx.Provider>

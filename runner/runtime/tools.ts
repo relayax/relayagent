@@ -398,6 +398,11 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // 이 대화의 정체성 — runSession 의 agent 폴백과 세션 목록 행(§5.3-21 additive)이 읽는다
         fs.writeFileSync(path.join(sdir, "agent"), sub);
         if (param) fs.writeFileSync(path.join(sdir, "param"), param);
+        // 부모 대화 — 이 위임이 어디로 📬 를 보내는지(§5.3-26). 종전엔 이 관계가 아래
+        // deliverOnSettle 의 클로저에만 살아서 데몬과 함께 죽었다. 그러면 다시 뜬 화면은
+        // 진행 중인 위임을 보고도 "누가 시킨 일인지" 를 말하지 못한다 — 목록이 위임을
+        // 부모 대화 아래 세우려면 재기동을 견디는 자리에 있어야 한다
+        if (callerSlot) fs.writeFileSync(path.join(sdir, "parent"), callerSlot);
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;

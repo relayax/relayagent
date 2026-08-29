@@ -271,7 +271,8 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
 ### 5.3 세션과 이력
 
 21. **[현행 v1]** `session.list` = `GET {base}/sessions`
-    → `{sessions: [{session, label, updated, archived, pinned, agent?, param?, origin?}]}`.
+    → `{sessions: [{session, label, updated, archived, pinned, agent?, param?, origin?,
+    busy?, lastEvent?, lastAlive?, parent?}]}`.
     `agent`·`param`(additive, 2026-08-20) = 이 대화의 정체성 — 위임(agent_dispatch)이 만든
     세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 org param 축의 쌍둥이("빌더인데
     무엇의 빌더인가") — slug 목록(`[a-z0-9-]` csv, 쉼표 무공백)일 때만 목록으로 해석하고,
@@ -288,6 +289,18 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
     어휘라(:22 — 세션 id 는 불투명) 클라이언트가 접두를 스니핑하면 안 되고, 판정 정본은
     runner/protocol.ts `slotOrigin` 한 벌이다. 화면은 이 축으로 위임 세션을 사람의 대화와
     같은 무게로 늘어놓는 대신 인스턴스 아래 접는다(보관함 피커 — 2026-08-28).
+    `busy`·`lastEvent`·`lastAlive`·`parent`(additive, 2026-08-29) = **이 대화가 지금 살아
+    있는가**. 종전에 이 목록은 디스크만 읽었고 생존은 기판 메모리에만 있어서, 30분째 도는
+    위임과 죽은 위임이 행에서 똑같이 생겼다 — 위임을 접어 둔 화면에는 그 차이를 말할 자리가
+    아예 없었다. `busy` = 진행 중 턴이 있다(없으면 미상이 아니라 **안 돌고 있음**이다 — 기판은
+    자기 상주를 전부 안다). `lastEvent` = 마지막 하네스 활동 시각(epoch ms)으로, `updated`
+    (이력 mtime)와 **다른 축이다**: `updated` 는 턴이 끝나야 늘고 `lastEvent` 는 도구 하나가
+    도는 중에도 는다. `lastAlive` = 봉투 박동(harness `alive`)의 마지막 시각 — `lastEvent` 는
+    오래됐는데 `lastAlive` 가 방금이면 "오래 걸리는 중"이고, 둘 다 오래됐으면 "멈춤"이다.
+    화면은 그 둘을 다르게 말해야 한다: 스피너 하나로 접으면 동결이 진행으로 보인다.
+    `parent` = 이 대화를 판 부모 대화의 슬롯(**같은 인스턴스 안**). `origin:"mission"` 에는
+    없다 — 부모가 이 목록 밖이라 슬롯 하나로 못 가리킨다. 상주 없는 대화에는 네 축이 통째로
+    빠진다(없음 = 안 돌고 있음).
     정렬: 고정 우선, 그 안에서 최근순(runner/runtime/wire.ts:459 현행 유지). 라벨 우선순위
     (사용자 label > auto-label > 첫 발화, client-wire.ts:437-449)는 기판 내부 규칙이다 —
     클라이언트는 `label` 을 그대로 그린다.

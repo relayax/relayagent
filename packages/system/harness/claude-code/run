@@ -289,8 +289,16 @@ fs.writeFileSync(B + "/deny-guard.mjs", [
   "let d = \"\";",
   "process.stdin.on(\"data\", (c) => (d += c));",
   "process.stdin.on(\"end\", () => {",
-  "  let input = {};",
-  "  try { input = JSON.parse(d).tool_input ?? {}; } catch {}",
+  "  let input = {}; let tool = \"\";",
+  "  try { const j = JSON.parse(d); input = j.tool_input ?? {}; tool = j.tool_name ?? \"\"; } catch {}",
+  // 백그라운드 위임 금지 — 턴 계약의 구조적 강제. 도구 설명이 \"끝나면 알림이 온다\"고 해도
+  // 그 알림은 턴이 살아 있는 동안만 온다. 턴을 끝내면 결과를 받을 사람이 없다. 실측 2026-08-27:
+  // 총괄이 백그라운드로 위임하고 턴을 끝내 후속이 증발했다. cardnews-studio 사본에서 태어난
+  // 규칙인데 패키지 하나의 사정이 아니다 — 어느 패키지든 턴이 끝나면 받을 사람이 없다
+  "  if ((tool === \"Agent\" || tool === \"Task\") && input.run_in_background === true) {",
+  "    process.stderr.write(\"relay 턴 계약: 백그라운드 위임 금지 — 턴이 끝나면 결과를 받을 사람이 없다. run_in_background 를 빼고 다시 위임해, 이 턴 안에서 결과를 받아라.\");",
+  "    process.exit(2);",
+  "  }",
   "  for (const k of [\"file_path\", \"path\", \"notebook_path\"]) {",
   "    if (typeof input[k] !== \"string\") continue;",
   "    const r = resolve(process.cwd(), input[k]);",
@@ -635,7 +643,33 @@ function onSystem(j) {
   }
 }
 
+// 박동 — 턴이 열려 있는 동안 봉투가 살아 있음을 주기적으로 증언한다. 필요한 이유는
+// **침묵의 두 가지 뜻**이다: 도구 하나가 6분을 물면 이 스트림엔 아무 프레임도 안 오고,
+// 그 침묵은 고착의 침묵과 글자 그대로 구별되지 않는다. 장고(thinking) 구간은 이미 usage
+// 티커가 덮지만(thinking_delta 를 문자수로 태운다) 도구 왕복은 덮이지 않는다.
+// since = 마지막 본류 프레임 이후 흐른 ms. 이 값을 실어 보내는 것이 요점이다 — 받는 쪽이
+// "살아 있다"와 "무언가 진행됐다"를 갈라 볼 수 있어야 스톨 판정이 박동에 속지 않는다.
+// 유휴엔 뛰지 않는다: 아무 턴도 없는데 뛰는 박동은 증명하는 것이 없다.
+//
+// **기판이 요청할 때만 뛴다**(RELAY_HEARTBEAT_S). 박동을 모르는 기판은 이것을 활동으로 세고,
+// 그러면 그 기판의 스톨 워치독이 영영 울지 않아 동결이 정상으로 보인다 — 안전장치가 조용히
+// 죽는다. 어댑터 사본은 패키지마다 따로 살면서 기판과 따로 갱신되므로(새 어댑터 + 옛 기판)
+// 그 조합은 가정이 아니라 일상이다. 그래서 additive 이벤트인데도 선언 게이트를 둔다
+let lastFrame = Date.now();
+const HEARTBEAT_MS = (() => {
+  const v = Number(process.env.RELAY_HEARTBEAT_S);
+  return Number.isFinite(v) && v > 0 ? v * 1000 : 0;
+})();
+if (HEARTBEAT_MS > 0) {
+  const heartbeat = setInterval(() => {
+    if (!turn || turn.done) return;
+    emit({ event: "alive", since: Date.now() - lastFrame });
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
+}
+
 const onLine = (line) => {
+  lastFrame = Date.now();
   let j;
   try { j = JSON.parse(line); } catch { return; }
 

@@ -14,7 +14,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { RELAY_HOME, packagesPath, sessionDir, sessionPath, saveLedger, type Ledger } from "../supply/ledger.ts";
-import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
+import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, sessionLiveness, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
 import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
 import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX, slotOrigin, type SessionOrigin } from "../protocol.ts";
@@ -93,6 +93,23 @@ export interface SessionRow {
    *  판정은 슬롯 문법이지만 그건 기판 내부 어휘라(SLOT_RE 의 왜) 계약에는 이 축만 나간다.
    *  사람이 연 대화는 이 필드가 없다 — 목록은 그것으로 위임 세션을 접는다. */
   origin?: SessionOrigin;
+  /** 지금 턴이 돌고 있는가(§5.3-26 additive). 없으면 미상이 아니라 **안 돌고 있음**이다 —
+   *  기판은 자기 상주를 전부 알기 때문이다. 목록이 위임을 접어 두고도 진행 중인 것만
+   *  세울 수 있는 근거. */
+  busy?: boolean;
+  /** 마지막 하네스 활동 시각(epoch ms, §5.3-26 additive). updated 와 다른 축이다:
+   *  updated 는 이력 파일의 mtime 이라 **턴이 끝나야** 늘고, 이 축은 도구 하나가 도는
+   *  중에도 늘어난다. 30분 도는 대화와 30분 멈춘 대화를 가르는 것이 이 차이다. */
+  lastEvent?: number;
+  /** 마지막 박동 시각(epoch ms, §5.3-26 additive) — 봉투가 살아 있음의 근거.
+   *  lastEvent 는 오래됐는데 이 값이 방금이면 "오래 걸리는 중"이고, 둘 다 오래됐으면
+   *  "멈춤"이다. 화면이 그 둘을 다르게 말하라고 나누어 둔다. */
+  lastAlive?: number;
+  /** 이 대화를 판 부모 대화의 슬롯(§5.3-26 additive) — 위임이 어디로 보고하는지.
+   *  **같은 인스턴스 안의 슬롯**이라 목록이 그대로 짝지을 수 있다. 다른 인스턴스가 미션으로
+   *  연 대화(origin=mission)에는 없다 — 부모가 이 목록 밖에 있어 슬롯 하나로는 못 가리킨다.
+   *  종전엔 이 관계가 배달 클로저의 메모리에만 있어 데몬이 죽으면 함께 사라졌다. */
+  parent?: string;
 }
 
 /** 개설 시점의 대화 바인딩(§5.3-22) — 판정을 통과한 값만 온다 */
@@ -749,12 +766,20 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
         }
         const rowAgent = meta(dir, "agent");
         const rowParam = meta(dir, "param");
+        const rowParent = meta(dir, "parent");
         const origin = slotOrigin(e.name);
+        // 목록은 디스크를 읽고 생존은 메모리에 있다 — 행을 세우는 이 자리가 둘이 만나는
+        // 유일한 지점이다. 상주가 없으면 축이 통째로 빠진다(없음 = 안 돌고 있음)
+        const liveness = sessionLiveness(pkg, e.name);
         rows.push({
           session: e.name,
           ...(rowAgent ? { agent: rowAgent } : {}),
           ...(rowParam ? { param: rowParam } : {}),
+          ...(rowParent ? { parent: rowParent } : {}),
           ...(origin ? { origin } : {}),
+          ...(liveness?.busy ? { busy: true } : {}),
+          ...(liveness?.lastEvent ? { lastEvent: liveness.lastEvent } : {}),
+          ...(liveness?.lastAlive ? { lastAlive: liveness.lastAlive } : {}),
           ...(fs.existsSync(path.join(dir, "draft")) ? { draft: true } : {}),
           label: label || e.name,
           updated: fs.statSync(fs.existsSync(hist) ? hist : dir).mtimeMs,
