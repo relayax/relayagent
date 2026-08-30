@@ -106,7 +106,7 @@
 ## 4. wire — 이벤트 어휘
 
 7. **[현행 v1]** `chat.open` = `CustomEvent("relay:chat-open", { detail })`,
-   `detail: { instance?, conversation?, prefill?, send? }`. 발신 공개 API 는
+   `detail: { instance?, conversation?, prefill?, send?, atts?, harness?, model? }`. 발신 공개 API 는
    `openChat(opts)` 하나다(정본: chat/src/bridge.tsx:59-63 · relayos 현행:
    agent.tsx:89-92 — 정렬 컷에서 재벤더링 수렴, §8-22-5). dispatch 실패(미배선 환경)는
    무시한다 — 브리지는 UX 어포던스이지 데이터 경로가 아니다.
@@ -126,9 +126,24 @@
    에이전트에게 간다(agent.tsx:171-173 의 판정).*
    소비 실례: 스튜디오 오류 배너의 원클릭 "빌더에게"(prefill — agent.tsx:749-753), 지도
    "+ 패키지"(instance 열기).
+8-a. **`atts`/`model` 은 `send` 의 동승 필드다**(2026-08-30 — 홈 "무엇을 만들까요?" 입력이
+   사이드 챗 컴포저와 같은 세 가지 어포던스를 갖게 되면서). `prefill` 에는 뜻이 없다.
+   - `atts: PendingAtt[]` — **스테이징을 마친** 첨부다. 인라인은 `dataUrl`, 사이드밴드는
+     업로드가 끝난 참조(`path`). 전송 payload(`attToPayload`)로의 변환은 **받는 쪽이 한 번만**
+     한다 — 보내는 쪽이 미리 바꾸면 이중 인코딩이 된다.
+     *왜 File 을 싣지 않나: 크롬→위젯 구간이 postMessage 라 바이트를 나르는 자리가 아니다.
+     업로드는 보내는 쪽이 끝내고, 이 이벤트는 그 결과만 나른다.*
+   - `harness`/`model` — 착지한 위젯이 `harness.set` 으로 앉힌다. **모델 어휘는 하네스에
+     딸리므로**(Claude·Codex·Gemini 의 모델 id 는 서로 남이다) 둘은 한 축이다: `harness` 가
+     오면 `setHarnessAndModel`, 모델만 오면 `setModel`. 빈 값/생략은 기판이 쓰던 것 그대로.
+     *적용 범위 주의 — 오버라이드가 앉는 자리는 대화가 아니라 **인스턴스 행**이다
+     (`instances.list`, runtime.instanceRow). 사이드 챗의 모델 버튼과 같은 축이고, 대화
+     하나만 갈아입히는 축은 이 계약에 없다. 홈에서 고른 모델은 그 인스턴스의 다른 대화에도
+     걸린다.*
 9. **[현행-위젯]** `chat.prefill`/`chat.send` 의 크롬→위젯 구간 =
    `window.postMessage({ type: "relay:chat-prefill" | "relay:chat-send", text, nonce },
-   origin)` — same-origin 검사 필수. 위젯은 수신 즉시 `ev.source` 로
+   origin)` — same-origin 검사 필수. `chat.send` 는 §4-8-a 의 `atts`/`harness`/`model` 을
+   같은 메시지에 동승시킨다(있을 때만). 위젯은 수신 즉시 `ev.source` 로
    `{ type: "relay:chat-prefill-ack" | "relay:chat-send-ack" }` 를 회신한다
    (Chat.tsx:2152-2199).
 10. **재시도-until-ack** — 크롬은 ack 수신까지 250ms 간격으로 같은 `nonce` 를 재전송하고,
