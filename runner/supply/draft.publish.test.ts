@@ -37,7 +37,7 @@ const ADAPTER = [
 
 const NAME = "pubfix";
 saveLedger({ secret: "s", packages: {}, grants: [] });
-openDraft(loadLedger(), NAME, {
+await openDraft(loadLedger(), NAME, {
   files: {
     "relay.yaml": [
       "schema: relay/v1",

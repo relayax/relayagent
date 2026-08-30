@@ -32,7 +32,7 @@
   "scripts": {
     "relay": "node --experimental-strip-types runner/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test runner/**/*.test.ts packages/system/surfaces/view/lib/*.test.ts",
+    "test": "node --experimental-strip-types --test runner/*.test.ts runner/**/*.test.ts packages/system/surfaces/view/lib/*.test.ts",
     "validate": "node --experimental-strip-types tools/validate-all.ts",
     "build:widget": "npm --prefix chat install --silent && npm --prefix chat run build:chat",
     "typecheck:widget": "npm --prefix chat install --silent && npm --prefix chat run typecheck",
