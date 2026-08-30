@@ -7,9 +7,10 @@
  * 팝오버·메뉴는 body 로 포탈되므로 도크 패널의 overflow 에 잘리지 않는다 — 옛 `stack` 측정이 사라진 이유.
  */
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useThread, useThreadRuntime } from "@assistant-ui/react";
 import type { RelayCtx, ModelOption, AgentEntry, SlashCommand, ActiveTurn, NavInstance } from "./runtime";
-import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, uploadAttachment, fileInlineUrl, loadCommands, loadAgents, setAttachTurn, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, hasSteer, steerTurn,
+import { loadEffort, setEffort, EFFORT_LEVELS, loadModel, setModel, modelOptions, loadModelOptions, lastConnectedModel, contextWindowFor, setPendingAttachments, fileInlineUrl, loadCommands, loadAgents, setAttachTurn, parseBuiltin, executeBuiltin, onOverridesChanged, notifyOverridesChanged, hasSteer, steerTurn,
   loadHarnessVariants,
   loadHarnessName,
   loadModelOptionsFor,
@@ -20,6 +21,7 @@ import { loadEffort, setEffort, loadAttTotalLimit, EFFORT_LEVELS, loadModel, set
   loadInbox, loadInstances } from "./runtime";
 import { threadFamily, siblingThread, displayBinding, paramTargets, withTargets, targetCandidates } from "./routematch";
 import { useRelayCtx, ActivePaneCtx, OpenConversationCtx, PaneTargetCtx, type PaneTarget } from "./ctx";
+import { useAttachments, useDropGuard, useFileDrop, filesFrom } from "./attach";
 import { modelLabelOf, providerLabelOf, harnessShortOf, instanceLabelOf, agentLabelOf, withRo, fmtSize, fmtTok, attToPayload, loadQueue, saveQueue, type Chip, type PendingAtt, type QItem } from "./parts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -582,45 +584,12 @@ function ModelPicker() {
   );
 }
 
-let _attSeq = 0;
-/** Read a File (from any source) into a PendingAtt. A clipboard image often has no name → we
- *  synthesize one (`pasted-…`) so the byte path never depends on a source filesystem path. */
-function readFileAsAtt(file: File): Promise<PendingAtt> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      let name = file.name;
-      if (!name) {
-        const ext = (file.type.split("/")[1] || "bin").replace("jpeg", "jpg");
-        name = `pasted-${Date.now()}-${_attSeq}.${ext}`;
-      }
-      resolve({ id: `a${++_attSeq}`, name, mime: file.type || "application/octet-stream",
-                dataUrl: String(reader.result || ""), size: file.size });
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-/** 인라인(파일당) 상한 — 이하이면 base64 인라인(왕복 없음·per-turn Secret ≈1MB etcd 상한 안),
- *  초과하면 사이드밴드 업로드(스트리밍 — Secret 비경유)로 자동 전환. */
-const ATT_INLINE_FILE_LIMIT = 500 * 1024;
-/** 인라인 합계 상한 — Secret 상한 방어(소형 여러 개도 합치면 넘칠 수 있다). 넘치는 파일은
- *  개별 크기와 무관하게 사이드밴드로 밀어낸다. */
-const ATT_INLINE_TOTAL_LIMIT = 700 * 1024;
-/** 첨부 총량 상한(인라인+사이드밴드)의 **폴백** — 서버(Setting KV chat_limits, fleet 이 편집)가
- *  정본이고 이 상수는 서버 미도달/미배선 때만 쓰인다(loadEffort 의 CLAUDE_CODE_DEFAULT_EFFORT
- *  폴백과 같은 관용구). control-ts ChatLimitsService.DEFAULT_TOTAL_BYTES 와 같은 값 —
- *  한쪽만 바꾸면 미설정 org 와 오프라인 폴백이 서로 다른 상한을 갖게 된다.
- *
- *  주의: 이건 UX 노브지 보안 경계가 아니다. 바이트 fail-closed 는 서버 안전망
- *  (RELAY_UPLOAD_MAX_BYTES, 기본 1GiB — deployd·엔진·control 3곳)이 따로 집행한다. */
-const ATT_TOTAL_LIMIT_FALLBACK = 30 * 1024 * 1024;
 
 // 빈 화면 스타터 칩 → 컴포저 프리필 직결. postMessage 대신 모듈 콜백 — 씬클라 file:// 오리진에선
 // same-origin postMessage 검사가 어긋날 수 있고, 웹뷰 하나당 JS 컨텍스트 하나라 모듈 전역이 안전하다.
 let _prefillComposer: ((text: string) => void) | null = null;
 // 외부(셸 openChat send) 발 자동 전송 — 컴포저와 같은 큐 의미론(턴 실행 중=큐잉)을 태운다.
-let _sendExternal: ((text: string) => void) | null = null;
+let _sendExternal: ((text: string, atts?: PendingAtt[], model?: string, harness?: string) => void) | null = null;
 
 /** Composer — 턴이 도는 중에도 입력을 잠그지 않는다. 제출된 말이 가는 길은 둘이고, 갈림은
  *  기판의 capability `steer` 가 정한다(client-protocol §5.1-16-a):
@@ -641,23 +610,11 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   const activeRef = useRef(active);
   activeRef.current = active;
   const [text, setText] = useState("");
-  // Staged attachments for the NEXT message (file picker / drag-drop / clipboard paste).
-  const [atts, setAtts] = useState<PendingAtt[]>([]);
-  // 첨부 실패/거절 사유 — sandbox(allow-modals 부재)에서 window.alert 가 무음 증발하던
-  // 자리의 대체. 인라인 배너로 항상 보인다.
-  const [attError, setAttError] = useState<string | null>(null);
-  // 첨부 총량 상한 — 서버(fleet 편집)가 정본. 도달 전/실패 시 폴백 상수로 동작하고 도착하면
-  // 갱신된다. state 가 아니라 ref 인 이유: 이 값은 렌더에 안 쓰이고 addFiles(async) 안에서만
-  // 읽힌다 — state 로 두면 낡은 클로저를 잡을 뿐 재렌더 이득이 없다.
-  const attTotalLimitRef = useRef(ATT_TOTAL_LIMIT_FALLBACK);
-  useEffect(() => {
-    let alive = true;
-    loadAttTotalLimit(ATT_TOTAL_LIMIT_FALLBACK).then((n) => { if (alive) attTotalLimitRef.current = n; });
-    return () => { alive = false; };
-  }, []);
-  const [dragging, setDragging] = useState(false);
-  const dragDepth = useRef(0); // dragenter/leave fire per child — count to avoid overlay flicker.
+  // 다음 메시지에 실을 첨부(피커 · 드롭 · 붙여넣기) — 스테이징 규칙은 홈 입력과 공용(attach.ts).
+  const { atts, addFiles, removeAtt, clear: clearAtts, error: attError, setError: setAttError } = useAttachments();
   const fileRef = useRef<HTMLInputElement>(null);
+  // 컴포저 뿌리 — 슬래시/@ 팝오버의 "바깥 클릭" 판정과 드롭 표적(.rc-root) 탐색의 기점.
+  const rootRef = useRef<HTMLDivElement>(null);
   // The queue is a LIST of distinct messages (each becomes its own turn), not one merged
   // string. Each carries its own attachments. queueRef is the source of truth; `queued` mirrors it.
   // 큐는 conversationId(리액티브 슬롯) 단위로 localStorage 에 영속 — 슬롯/pane 전환으로 이 Composer 가
@@ -900,10 +857,16 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   // 것과 다른 이유).
   useEffect(() => {
     if (!active) return;
-    _sendExternal = (t: string) => {
+    _sendExternal = (t: string, atts?: PendingAtt[], model?: string, harness?: string) => {
       const promptText = t.trim();
       if (!promptText) return;
-      deliver(promptText, []);
+      // 홈("무엇을 만들까요?")에서 넘어온 하네스·모델 선택 — 모델 어휘는 하네스에 딸리므로
+      // 공급자가 함께 왔으면 둘을 한 번에 앉힌다(setHarnessAndModel 이 카탈로그도 무효화한다).
+      // 앉는 자리는 **인스턴스 행**이다(사이드 챗 모델 버튼과 같은 축) — 대화 단위 축은 없다.
+      // 발송을 기다리지 않는다: 세션은 첫 발화에 민팅되고 harness.set 은 그 앞에 줄을 선다.
+      if (harness) void setHarnessAndModel(ctx, harness, model || "").then(() => notifyOverridesChanged());
+      else if (model) void setModel(ctx, model).then(() => notifyOverridesChanged());
+      deliver(promptText, atts && atts.length ? atts : []);
     };
     return () => { if (_sendExternal) _sendExternal = null; };
   });
@@ -919,60 +882,17 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
       const nonce = String(d.nonce || d.text);
       if (nonce === lastSendNonce.current) return; // 재시도 중복 수신 = no-op(이중 전송 방지)
       lastSendNonce.current = nonce;
-      _sendExternal?.(d.text);
+      // 첨부는 이미 참조(path)나 인라인(dataUrl)으로 스테이징을 마친 상태로 건너온다 —
+      // 중계는 postMessage 라 File 객체는 실을 수 없다(구조화 복제로도 보내지 않는다).
+      const atts: PendingAtt[] = Array.isArray(d.atts) ? d.atts : [];
+      const model = typeof d.model === "string" && d.model ? d.model : undefined;
+      const harness = typeof d.harness === "string" && d.harness ? d.harness : undefined;
+      _sendExternal?.(d.text, atts, model, harness);
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, []);
 
-  // 하이브리드 스테이징 — 소형(≤500KB, 인라인 합계 700KB 안)은 base64 인라인, 그 외는
-  // 사이드밴드 업로드(진행률 칩 → 완료 시 참조 승격). 거절/실패는 alert 대신 인라인 배너
-  // (sandbox allow-modals 부재로 alert 는 무음 증발한다 — 다운로드 차단과 같은 클래스).
-  const addFiles = async (files: FileList | File[]) => {
-    const arr = Array.from(files);
-    if (!arr.length) return;
-    setAttError(null);
-
-    const current = atts.reduce((s, a) => s + a.size, 0);
-    const incoming = arr.reduce((s, f) => s + f.size, 0);
-    const limit = attTotalLimitRef.current;
-    if (current + incoming > limit) {
-      setAttError(`첨부 용량이 너무 커요 (합계 최대 ${fmtSize(limit)}). 일부 파일을 빼 주세요.`);
-      return;
-    }
-
-    let inlineTotal = atts.reduce((s, a) => (a.path || a.uploading ? s : s + a.size), 0);
-    for (const f of arr) {
-      const inline = f.size <= ATT_INLINE_FILE_LIMIT && inlineTotal + f.size <= ATT_INLINE_TOTAL_LIMIT;
-      if (inline) {
-        inlineTotal += f.size;
-        try {
-          const att = await readFileAsAtt(f);
-          setAtts((prev) => [...prev, att]);
-        } catch (e: any) {
-          setAttError(`"${f.name || "첨부"}" 읽기 실패: ${e?.message ?? e}`);
-        }
-        continue;
-      }
-      // 사이드밴드 — 플레이스홀더 칩을 먼저 올리고 업로드 진행률을 흘린다.
-      const id = `a${++_attSeq}`;
-      const name = f.name || `pasted-${Date.now()}-${_attSeq}`;
-      setAtts((prev) => [...prev, {
-        id, name, mime: f.type || "application/octet-stream", dataUrl: "", size: f.size,
-        uploading: true, progress: 0,
-      }]);
-      const patch = (p: Partial<PendingAtt>) =>
-        setAtts((prev) => prev.map((a) => (a.id === id ? { ...a, ...p } : a)));
-      try {
-        const up = await uploadAttachment(f, name, (pct) => patch({ progress: pct }));
-        patch({ path: up.path, uploading: false, progress: 100 });
-      } catch (e: any) {
-        setAtts((prev) => prev.filter((a) => a.id !== id));
-        setAttError(`"${name}" 업로드 실패: ${e?.message ?? e}`);
-      }
-    }
-  };
-  const removeAtt = (id: string) => setAtts((prev) => prev.filter((a) => a.id !== id));
 
   // 컨텍스트 미터 — 현재 점유량은 "마지막 스텝"의 프롬프트 크기다. claude -p 의 result.usage 는
   // 턴 전체 누적(툴 왕복마다 cache_read 가 더해짐)이라 실제보다 몇 배 부풀어 100%로 고착됐다 —
@@ -1032,7 +952,7 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
     const promptText = t || "첨부한 파일을 봐 줘.";
     const sendAtts = atts;
     setText("");
-    setAtts([]);
+    clearAtts();
     requestAnimationFrame(grow);
     // "@에이전트 메시지" — 바인딩 대화로 라우팅(민팅+전환). 개입 안 하면 일반 경로.
     if (routeMention(promptText, sendAtts)) return;
@@ -1076,31 +996,21 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   // Clipboard paste of an image/file → capture as an attachment (and swallow the paste so a
   // pasted screenshot doesn't drop into the textarea as nothing). Plain text paste is untouched.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const dt = e.clipboardData;
-    if (!dt) return;
-    const files: File[] = [];
-    if (dt.files && dt.files.length) { for (let i = 0; i < dt.files.length; i++) files.push(dt.files[i]); }
-    else { for (let i = 0; i < dt.items.length; i++) { const it = dt.items[i]; if (it.kind === "file") { const f = it.getAsFile(); if (f) files.push(f); } } }
+    const files = filesFrom(e.clipboardData);
     if (files.length) { e.preventDefault(); void addFiles(files); }
   };
 
-  // Drag-and-drop onto the composer. Only react when files are being dragged (not text/selection).
-  const dragHasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
-  const onDragEnter = (e: React.DragEvent) => { if (!dragHasFiles(e)) return; e.preventDefault(); dragDepth.current++; setDragging(true); };
-  const onDragOver = (e: React.DragEvent) => { if (dragHasFiles(e)) e.preventDefault(); };
-  const onDragLeave = (e: React.DragEvent) => { if (dragDepth.current > 0) { dragDepth.current--; if (dragDepth.current === 0) setDragging(false); } };
-  const onDrop = (e: React.DragEvent) => {
-    if (!dragHasFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragging(false);
-    if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
-  };
-
+  // ── 파일 끌어놓기 ─────────────────────────────────────────────────────────
+  // 표적은 컴포저 한 줄이 아니라 **채팅 판 전체**(.rc-root)다 — 규칙과 이유는 attach.ts.
+  // 판을 못 찾으면(임의 마운트) 컴포저 자신으로 물러선다.
+  useDropGuard();
+  const { dragging, dropHost } = useFileDrop(
+    () => (rootRef.current?.closest(".rc-root") as HTMLElement | null) ?? rootRef.current,
+    addFiles,
+  );
 
   // 슬래시·@ 목록은 입력 카드 위에 붙는 Popover — 열림은 본문 텍스트가 정하고(트리거는 자리 표시용
   // 0px 앵커), 닫힘만 Popover 에서 받는다: Esc·바깥 클릭. 카드 안(글칸) 클릭은 계속 연 채로 둔다.
-  const rootRef = useRef<HTMLDivElement>(null);
   const onPickerOpenChange = (o: boolean, d: { reason: string; event: Event }) => {
     if (o) return;
     const t = d.event?.target as Node | null;
@@ -1112,14 +1022,17 @@ export function Composer({ resumingTurn, onSwitch }: { resumingTurn: boolean; on
   const uploading = atts.some((a) => a.uploading);
 
   return (
-    <div className="rc-composer" ref={rootRef} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-      {dragging && (
+    <div className="rc-composer" ref={rootRef}>
+      {/* 드롭 표시는 표적과 같은 넓이여야 한다 — 판(.rc-root) 위에 포탈한다. 컴포저 안에만
+          그리면 "여기"가 입력 카드를 가리켜, 실제로는 판 어디든 되는데도 조준하게 만든다. */}
+      {dragging && dropHost && createPortal(
         <div className="rc-drop" aria-hidden>
           <Empty className="gap-1 border-0 p-4">
             <EmptyMedia variant="icon" className="mb-0 size-8 bg-transparent text-[var(--rc-accent-strong)]"><DownloadIcon /></EmptyMedia>
             <EmptyTitle className="text-[13px] font-semibold text-[var(--rc-accent-strong)]">여기에 파일을 놓으세요</EmptyTitle>
           </Empty>
-        </div>
+        </div>,
+        dropHost,
       )}
       {queued.length > 0 && (
         <ItemGroup className="gap-1.5">

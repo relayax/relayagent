@@ -288,14 +288,21 @@ function autoFloat() {
     const kind = ACK_OF[String((ev.data as any)?.type || "")];
     if (kind) stopRelay(kind);
   });
-  const relayToWidget = (kind: "relay:chat-prefill" | "relay:chat-send", text: string) => {
+  // extra 는 send 에만 실린다 — 홈이 붙인 첨부(스테이징을 마친 참조·인라인)와 모델 선택.
+  // File 객체는 절대 싣지 않는다: 이 중계는 postMessage 라 바이트를 나르는 자리가 아니고,
+  // 첨부는 보내는 쪽에서 이미 업로드를 끝낸다.
+  const relayToWidget = (
+    kind: "relay:chat-prefill" | "relay:chat-send",
+    text: string,
+    extra?: { atts?: unknown[]; model?: string; harness?: string },
+  ) => {
     stopRelay(kind);
     let tries = 0;
     const nonce = String(Date.now()) + Math.random().toString(36).slice(2);
     const fire = () => {
       tries += 1;
       if (tries > 32) { stopRelay(kind); return; }
-      try { window.postMessage({ type: kind, text, nonce }, window.location.origin); } catch { /* noop */ }
+      try { window.postMessage({ type: kind, text, nonce, ...(extra || {}) }, window.location.origin); } catch { /* noop */ }
     };
     relayTimers.set(kind, setInterval(fire, 250));
     fire();
@@ -310,6 +317,10 @@ function autoFloat() {
     const conv = typeof d.conversation === "string" && d.conversation ? d.conversation : "";
     const prefill = typeof d.prefill === "string" ? d.prefill : "";
     const send = typeof d.send === "string" ? d.send : "";
+    // 첨부·모델은 send 와 함께만 뜻이 있다(§4-8) — 홈의 "무엇을 만들까요?" 가 싣는다.
+    const atts = Array.isArray(d.atts) ? (d.atts as unknown[]) : [];
+    const model = typeof d.model === "string" && d.model ? d.model : undefined;
+    const harness = typeof d.harness === "string" && d.harness ? d.harness : undefined;
     if (inst || conv) {
       // 명시 대상 존중 — instance 생략은 크롬 자신의 좌표(주입 instanceId)로 해석(§4-8).
       const instanceId = inst || ctx.instanceId;
@@ -320,7 +331,7 @@ function autoFloat() {
       handle?.openTab({ instanceId: ctx.instanceId, conversationId: declaredSlot });
     }
     if (prefill) relayToWidget("relay:chat-prefill", prefill);
-    if (send) relayToWidget("relay:chat-send", send);
+    if (send) relayToWidget("relay:chat-send", send, { ...(atts.length ? { atts } : {}), ...(model ? { model } : {}), ...(harness ? { harness } : {}) });
   });
 
   // ── relay:scope 착지(view-bridge §5-17) — 페이지는 자기 대화 좌표를 **알려 줄 뿐**이다.

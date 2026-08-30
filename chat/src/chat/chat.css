@@ -64,6 +64,8 @@ html body :where(.rc-tw) :is(button, input, textarea, select):focus { outline: n
 html body :where(.rc-tw) :is(button, input, textarea, select):disabled { opacity: 1; }
 
 .rc-root {
+  /* relative — 파일 드롭 표시(.rc-drop)가 판 전체를 덮는 기준면이다(Composer 가 여기로 포탈). */
+  position: relative;
   display: flex; flex-direction: column; height: 100%; min-height: 0;
   background: var(--rc-bg); color: var(--rc-ink);
   font: 14px/1.6 var(--rc-sans);
@@ -365,10 +367,12 @@ div:has(> [data-slot="context-menu-content"]), div:has(> [data-slot="context-men
 .rc-att-error-tx { flex: 1; min-width: 0; font: 12px/1.4 var(--rc-sans); word-break: break-all; }
 .rc-att-error-x { flex: 0 0 auto; cursor: pointer; color: var(--rc-err); font-size: 15px; }
 
-/* drag-and-drop overlay */
+/* 파일 드롭 표시 — 판(.rc-root) 전체를 덮는다. 표적이 판 전체이므로 표시도 판 전체여야 한다.
+   pointer-events:none 이 필수다 — 이 판이 커서 밑에 깔리면서 dragleave/dragenter 를 새로 쏘면
+   계수가 어긋나 표시가 깜빡인다. z-index 는 대화·컴포저(정적 흐름) 위, 포탈 팝오버 아래. */
 .rc-drop {
-  position: absolute; inset: 4px; z-index: 5; border-radius: 12px;
-  border: 2px dashed var(--rc-accent); background: color-mix(in srgb, var(--rc-accent) 5%, transparent);
+  position: absolute; inset: 6px; z-index: 5; border-radius: 14px;
+  border: 2px dashed var(--rc-accent); background: color-mix(in srgb, var(--rc-accent) 8%, transparent);
   display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 

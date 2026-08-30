@@ -16,15 +16,21 @@
  * 목록은 relay:turn(settled)·relay:nav-refresh·탭 복귀마다 다시 읽는다 — 사이드바와 같은 조건.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileText, Pencil, RefreshCw, Store, Trash2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Check as CheckIcon, ChevronDown, FileIcon, FileText, Pencil, Plus, RefreshCw, Store, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { cn } from "@/lib/utils";
 import { fetchNav, type ShellItem, type ShellNav } from "./nav";
+import { useAttachments, useDropGuard, useFileDrop, filesFrom } from "./attach";
+import { fmtSize, providerLabelOf } from "./parts";
+import { loadHarnessName, loadHarnessVariants, loadModelOptions, loadModelOptionsFor, modelOptions, type ModelOption } from "./runtime";
 import { siblingThread } from "./routematch";
 import { cardAction, describe, draftLine, examplesAt, initialOf, isEmptyNav, splitDrafts, todoOf, updateCount, type CardAction, type DraftRef } from "./home-model";
 
@@ -67,7 +73,7 @@ function useNav(): { nav: ShellNav | null; err: string | null } {
 export function Home() {
   const { nav, err } = useNav();
   return (
-    <div className="rc-home min-h-screen text-sm leading-relaxed text-foreground" style={{ fontFamily: "var(--rc-sans)" }}>
+    <div className="rc-home relative min-h-screen text-sm leading-relaxed text-foreground" style={{ fontFamily: "var(--rc-sans)" }}>
       {nav ? <Ask nav={nav} /> : null}
       {err ? (
         <Empty className="mx-5 my-4 rounded-xl border border-border bg-background">
@@ -84,6 +90,46 @@ function Ask({ nav }: { nav: ShellNav }) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
   const [page, setPage] = useState(0);
+  // 첨부·끌어놓기·모델 — 사이드 챗의 컴포저와 같은 세 가지를 이 입력에도 둔다. 스테이징
+  // 규칙(인라인/사이드밴드·용량 상한)은 attach.ts 한 벌을 함께 쓴다: 규칙이 갈리면 홈에서
+  // 붙인 첨부만 대화에 착지할 때 다르게 취급된다.
+  const { atts, addFiles, removeAtt, clear: clearAtts, error: attError, setError: setAttError, uploading } = useAttachments();
+  const fileRef = useRef<HTMLInputElement>(null);
+  useDropGuard();
+  // 표적은 입력 카드가 아니라 홈 판 전체 — 사람은 화면 한가운데에 파일을 떨어뜨린다.
+  const { dragging, dropHost } = useFileDrop(() => document.querySelector<HTMLElement>(".rc-home"), addFiles);
+  // 모델 — 모델 어휘는 **하네스에 딸린다**(Claude·Codex·Gemini…). 그래서 축이 둘이다:
+  // 공급자(하네스 변형) 줄에 그 변형의 모델 목록이 붙는다. 한 축만 보여 주면 Claude 를 쓰지
+  // 않는 사람에게 남의 모델 목록이 뜬다(2026-08-30 피드백).
+  //
+  // 적용 범위는 사이드 챗의 모델 버튼과 같다 — 즉 **인스턴스 단위**다(오버라이드는
+  // instances.list 의 행에 앉는다, runtime.instanceRow). 대화 하나만 갈아입히는 축은 없다.
+  const [variants, setVariants] = useState<{ name: string; provider?: string }[]>([]);
+  const [soloName, setSoloName] = useState<string | null>(null);
+  // 공급자별 카탈로그 — undefined = 아직 안 물음, null = 미도달. 서브메뉴를 열 때 한 번만 묻는다.
+  const [byVariant, setByVariant] = useState<Record<string, ModelOption[] | null>>({});
+  const [soloModels, setSoloModels] = useState<ModelOption[]>(() => modelOptions());
+  const [hover, setHover] = useState<string | null>(null);
+  // 고른 것 — 빈 값이면 손대지 않는다(기판 기본값 그대로).
+  const [pick_, setPick] = useState<{ harness: string; model: string; label: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void loadHarnessVariants().then((r) => {
+      if (!alive) return;
+      setVariants(r.variants);
+      if (r.variants.length === 0) {
+        void loadHarnessName().then((n) => { if (alive) setSoloName(n); });
+        void loadModelOptions().then((m) => { if (alive && m.length) setSoloModels(m); });
+      }
+    });
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!hover || hover in byVariant) return;
+    let alive = true;
+    void loadModelOptionsFor(hover).then((o) => { if (alive) setByVariant((m) => ({ ...m, [hover]: o })); });
+    return () => { alive = false; };
+  }, [hover, byVariant]);
   const focus = useCallback(() => {
     const el = ta.current; if (!el) return;
     try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* jsdom 등 */ }
@@ -100,14 +146,30 @@ function Ask({ nav }: { nav: ShellNav }) {
   const submit = () => {
     const t = text.trim();
     if (!t) { focus(); return; }
+    // 아직 올라가는 중인 첨부가 있으면 보내지 않는다 — 참조(path)가 없는 칩을 실으면
+    // 그 첨부만 조용히 빠진 채 턴이 시작된다.
+    if (uploading) { setAttError("첨부를 올리는 중이에요. 잠시 뒤 다시 눌러 주세요."); return; }
     // 같은 번들의 autoFloat 가 착지한다(view-bridge §4-8) — 종전의 RelayChat 대기 루프는 불요.
     // 좌표를 실어 보낸다: 홈은 페이지 슬롯을 선언하지 않아(relay:scope 없음) 좌표 없는 send 는
     // "지금 활성인 탭" — 대개 마지막에 보던 무관한 에이전트의 대화 — 로 들어갔다(2026-08-28).
     // 홈의 한 문장은 언제나 **새 대화 하나**다: sibling 스레드를 민팅해 새 탭으로 착지시킨다
     // (인스턴스 축은 크롬 자신의 좌표=콘솔로 해석된다, §4-8). 지연 민팅이라 첫 발화 직전에야
     // 서버 세션이 생기고, 탭 이름은 그 첫 문장에서 자동으로 붙는다.
-    window.dispatchEvent(new CustomEvent("relay:chat-open", { detail: { conversation: siblingThread("main"), send: t } }));
+    // 첨부·모델은 send 와 함께 실린다(view-bridge §4-8). 넘기는 것은 스테이징을 마친
+    // PendingAtt 그대로다 — 바이트/참조를 실은 평범한 객체라 postMessage 를 건너간다.
+    // 전송 payload(attToPayload)로의 변환은 받는 쪽이 한 번만 한다: 여기서 미리 바꾸면
+    // 컴포저가 다시 변환해 이중 인코딩이 된다.
+    window.dispatchEvent(new CustomEvent("relay:chat-open", {
+      detail: {
+        conversation: siblingThread("main"),
+        send: t,
+        ...(atts.length ? { atts } : {}),
+        ...(pick_?.harness ? { harness: pick_.harness } : {}),
+        ...(pick_?.model ? { model: pick_.model } : {}),
+      },
+    }));
     setText("");
+    clearAtts();
   };
   const pick = (sentence: string) => {
     setText(sentence);
@@ -117,25 +179,131 @@ function Ask({ nav }: { nav: ShellNav }) {
   };
   return (
     <section className="mx-auto max-w-[620px] px-5 pt-14 pb-7">
+      {dragging && dropHost ? createPortal(
+        <div className="rc-drop" aria-hidden>
+          <span className="text-[13px] font-semibold text-[var(--rc-accent-strong)]">여기에 파일을 놓으세요</span>
+        </div>,
+        dropHost,
+      ) : null}
       <h2 className="m-0 mb-4 text-center text-[22px] font-bold tracking-tight">무엇을 만들까요?</h2>
       <form
         className="flex flex-col gap-2.5 rounded-xl border border-border bg-background px-3.5 pt-3.5 pb-2.5 shadow-xs transition-[box-shadow,border-color] focus-within:border-blue-600 focus-within:ring-3 focus-within:ring-blue-600/20"
         onSubmit={(e) => { e.preventDefault(); submit(); }}
       >
+        {attError ? (
+          <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
+            <span className="min-w-0 flex-1 break-all leading-relaxed">{attError}</span>
+            <Button type="button" variant="ghost" size="icon-xs" aria-label="닫기" className="shrink-0 text-destructive" onClick={() => setAttError(null)}><X /></Button>
+          </div>
+        ) : null}
+        {atts.length > 0 ? (
+          <AttachmentGroup className="flex-wrap gap-1.5 overflow-visible py-0">
+            {atts.map((a) => {
+              const img = a.mime.startsWith("image/") && !!a.dataUrl;
+              return (
+                <Attachment key={a.id} size="xs" state={a.uploading ? "uploading" : "done"} className="min-w-0 max-w-60">
+                  <AttachmentMedia variant={img ? "image" : "icon"}>
+                    {img ? <img src={a.dataUrl} alt={a.name} /> : <FileIcon aria-hidden />}
+                  </AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle title={a.name}>{a.name}</AttachmentTitle>
+                    <AttachmentDescription>{a.uploading ? `업로드 ${a.progress ?? 0}%` : fmtSize(a.size)}</AttachmentDescription>
+                  </AttachmentContent>
+                  <AttachmentActions>
+                    <AttachmentAction aria-label="첨부 제거" onClick={() => removeAtt(a.id)}><X /></AttachmentAction>
+                  </AttachmentActions>
+                </Attachment>
+              );
+            })}
+          </AttachmentGroup>
+        ) : null}
         <Textarea
           ref={ta}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
+          onPaste={(e) => { const f = filesFrom(e.clipboardData); if (f.length) { e.preventDefault(); void addFiles(f); } }}
           maxLength={2000}
           rows={2}
           placeholder="만들고 싶은 에이전트를 적어 주세요"
           aria-label="만들 것을 말로 설명"
           className="min-h-[58px] resize-none border-0 bg-transparent px-0.5 py-0 text-[14.5px] leading-[1.55] shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-[14.5px]"
         />
-        <div className="flex items-center justify-end gap-2">
+        {/* 아래 줄 — 왼쪽 [+ 첨부], 오른쪽 [모델] [시작]. 사이드 챗 컴포저와 같은 배치라
+            두 입력을 오가도 손이 같은 자리를 찾는다. */}
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ""; }}
+          />
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="파일 첨부" title="파일 첨부"
+            className="size-7 shrink-0 cursor-pointer rounded-full text-muted-foreground hover:text-foreground"
+            onClick={() => fileRef.current?.click()}>
+            <Plus />
+          </Button>
+          <span className="flex-1" />
+          <DropdownMenu onOpenChange={(o) => { if (!o) setHover(null); }}>
+            <DropdownMenuTrigger
+              render={
+                <Button type="button" variant="ghost" size="sm"
+                  className="h-7 shrink-0 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground">
+                  {pick_ ? pick_.label : "모델"}
+                  <ChevronDown className="size-3.5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="min-w-44">
+              {/* 아무것도 고르지 않는 것도 선택지다 — 기판이 쓰던 하네스·모델 그대로 */}
+              <DropdownMenuItem onClick={() => setPick(null)}>
+                기본값 {pick_ ? null : <CheckIcon className="ml-auto size-3.5" />}
+              </DropdownMenuItem>
+              {variants.length > 0 ? (
+                // 공급자 → 그 공급자의 모델. 목록은 줄에 들어갈 때 한 번만 묻는다.
+                variants.map((v) => {
+                  const list = byVariant[v.name];
+                  return (
+                    <DropdownMenuSub key={v.name}>
+                      <DropdownMenuSubTrigger onMouseEnter={() => setHover(v.name)} onFocus={() => setHover(v.name)}>
+                        {providerLabelOf(v)}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="min-w-40">
+                        {list === undefined ? (
+                          <DropdownMenuItem disabled>불러오는 중…</DropdownMenuItem>
+                        ) : list === null || list.length === 0 ? (
+                          // 카탈로그를 못 읽어도 공급자는 고를 수 있어야 한다 — 모델은 그쪽 기본값.
+                          <DropdownMenuItem onClick={() => setPick({ harness: v.name, model: "", label: providerLabelOf(v) })}>
+                            {providerLabelOf(v)} 기본 모델
+                          </DropdownMenuItem>
+                        ) : (
+                          list.map((m) => (
+                            <DropdownMenuItem key={m.id}
+                              onClick={() => setPick({ harness: v.name, model: m.id, label: m.label })}>
+                              {m.label}
+                            </DropdownMenuItem>
+                          ))
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  );
+                })
+              ) : (
+                // 변형이 하나뿐(capability 미선언) — 공급자 축이 없으니 모델만 편다.
+                soloModels.map((m) => (
+                  <DropdownMenuItem key={m.id} onClick={() => setPick({ harness: "", model: m.id, label: m.label })}>
+                    {m.label}
+                  </DropdownMenuItem>
+                ))
+              )}
+              {variants.length === 0 && soloName ? (
+                <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">{soloName}</DropdownMenuLabel>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* 포인트 컬러(블루)는 살짝만 — 시작 버튼·입력 포커스 둘뿐. 나머지는 neutral */}
-          <Button type="submit" size="sm" className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
+          <Button type="submit" size="sm" disabled={uploading} className="shrink-0 rounded-full bg-blue-600 px-3.5 text-white hover:bg-blue-700">시작</Button>
         </div>
       </form>
       <div className="mt-3 flex flex-wrap justify-center gap-1.5">
