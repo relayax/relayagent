@@ -233,10 +233,16 @@ export function describe(m: Manifest, ctx: DescribeCtx, opt: { editing?: boolean
     items: (m.missions ?? []).map((x) => ({ text: x.name, sub: x.description })),
   });
 
-  const active = (m.harness?.variants ?? []).find((v) => v.name === ctx.activeHarness) ?? m.harness?.variants?.[0];
+  // 폴백하지 않는다. 종전에는 활성 이름이 동봉 선언에 없으면 `?? variants[0]` 으로 첫 번째를
+  // 그렸는데, 어댑터가 기판 풀에서 오면서 그 경우가 일상이 됐다 — 장부는 kimi 인데 화면은
+  // claude-code 를 말했다(러너에서 은퇴시킨 조용한 폴백이 화면에 남아 있던 자리, 2026-08-30).
+  // 풀 변형은 이 매니페스트에 없으므로 provider 를 못 찾는다: 그때는 하네스 이름을 그대로 쓴다.
+  // 틀린 제공사를 말하느니 덜 말하는 쪽이다
+  const active = (m.harness?.variants ?? []).find((v) => v.name === ctx.activeHarness) ?? null;
+  const engineText = active?.llm?.provider ? providerLabel(active.llm.provider) : ctx.activeHarness;
   rows.push({
     key: "engine", q: "동작 엔진", sec: "harness", empty: "아직 없음",
-    items: active?.llm?.provider ? [{ text: providerLabel(active.llm.provider), sub: undefined }] : [],
+    items: engineText ? [{ text: engineText, sub: undefined }] : [],
   });
 
   rows.push({
@@ -414,8 +420,9 @@ export function sentences(m: Manifest, ctx: DescribeCtx): Para[] {
   // 엔진은 **하나**다. harness.variants 는 후보 목록이고 실제로 도는 것은 그중 하나뿐이라,
   // 넷을 나열하면 "넷으로 동시에 돈다" 는 틀린 말이 된다. 게다가 낱말 넷이 전부 같은 카드를
   // 여는 문이어서, 밑줄 넷이 서로 다른 목적지처럼 보였다(2026-08-28). 후보는 그 카드가 보여준다.
-  const variants = m.harness?.variants ?? [];
-  const activeName = ctx.activeHarness && variants.some((v) => v.name === ctx.activeHarness) ? ctx.activeHarness : variants[0]?.name;
+  // 활성 이름은 **장부가 정본**이다. 동봉 선언에 있는지로 거르지 않는다 — 어댑터가 기판 풀에서
+  // 오면 그 이름은 이 매니페스트에 없는 것이 정상이고, 걸러 내면 첫 후보로 조용히 떨어진다
+  const activeName = ctx.activeHarness ?? m.harness?.variants?.[0]?.name;
   const engines: Tok[] = activeName ? [{ t: engineLabel(activeName), sec: "harness", item: activeName }] : [];
   const helpers: Tok[] = (m.agents ?? []).filter((a) => a.name !== ctx.landing).map((a) => ({ t: a.name, sec: "agents", item: a.name }));
   const verb: Tok | null = ctx.scripts.length ? { t: `${ctx.scripts.length}가지 일`, sec: "scripts" } : null;

@@ -3,7 +3,7 @@ import path from "node:path";
 import { binaryEnv } from "../supply/binaries.ts";
 import { vaultGet } from "../vault.ts";
 import { RELAY_HOME } from "../supply/ledger.ts";
-import { loadManifest, type HarnessVariant, type Manifest } from "../supply/manifest.ts";
+import { loadManifest, type BinaryRequire, type HarnessVariant, type Manifest } from "../supply/manifest.ts";
 
 /**
  * 어댑터를 부르는 두 답 — **실행 파일이 어디 있나**와 **어떤 env 로 부르나**.
@@ -31,6 +31,13 @@ const localCredential: CredentialLookup = async (scope) => vaultGet(scope);
  *  풀을 거기 두면 `codex` 라는 이름의 앱을 지우는 순간 풀의 codex 어댑터가 함께 날아간다. */
 export const POOL_DIR = path.join(RELAY_HOME, "adapters");
 
+/** 풀 어댑터의 선언 — 동봉 변형의 선언에 **레시피 사본**이 더 붙는다.
+ *  풀은 매니페스트를 잃으므로 requires.binaries 참조를 이름만으로는 풀 수 없다 */
+export interface PoolVariant extends HarnessVariant {
+  /** binary 가 가리키는 requires.binaries 항목의 사본 — 조달이 이것으로 돈다 */
+  recipe?: BinaryRequire;
+}
+
 /** 어댑터 하나의 실행 좌표 */
 export interface HarnessSite {
   variant: HarnessVariant;
@@ -53,15 +60,21 @@ export function poolEntry(name: string): string | null {
 
 /** 풀 어댑터의 선언 — 패키지 relay.yaml 의 variants 항목에서 source·entry 를 뺀 나머지.
  *  풀은 패키지가 아니므로 선언이 앉을 매니페스트가 없다: 어댑터 옆에 harness.json 으로 둔다 */
-export function poolVariant(name: string): HarnessVariant | null {
+export function poolVariant(name: string): PoolVariant | null {
   const entry = poolEntry(name);
   if (!entry) return null;
   const dir = path.join(POOL_DIR, name);
-  let decl: Partial<HarnessVariant> = {};
+  let decl: Partial<PoolVariant> = {};
   try {
     decl = JSON.parse(fs.readFileSync(path.join(dir, "harness.json"), "utf8"));
   } catch { /* 선언 없는 어댑터 — 이름만으로 돈다(자격 주입도 provider 표시도 없다) */ }
   return { ...decl, name, source: dir, entry: "run" };
+}
+
+/** 풀 변형이 동봉 조달 레시피를 찾을 때의 답 — 풀에 실린 사본을 돌려준다.
+ *  없으면 null 이고, 그때는 소비 패키지의 requires.binaries 가 답할 차례다(동봉 변형의 길) */
+export function poolRecipe(name: string): BinaryRequire | null {
+  return poolVariant(name)?.recipe ?? null;
 }
 
 /** 풀에 깔린 어댑터 이름들 (정렬) */
@@ -176,6 +189,14 @@ function dirSig(dir: string): string {
   return rows.join("\n");
 }
 
+/** 풀 선언(harness.json)의 스키마 판. **지문에 섞는다.**
+ *
+ *  지문이 어댑터 소스의 mtime·size 만 보면 seedPool 의 **변환 코드**가 바뀐 것을 못 본다 —
+ *  소스는 그대로인데 담아야 할 것이 늘었을 때 조기 반환해서 낡은 harness.json 이 남는다.
+ *  실사고 2026-08-30: protocol·capabilities 를 담도록 고쳐도 이미 펴진 기판은 안 고쳐졌다.
+ *  이 상수를 올리면 다음 기동이 전부 다시 편다. **선언에 축을 더할 때마다 올린다.** */
+const DECL_SCHEMA = 2;
+
 export interface PoolSeed {
   /** 이번에 편 어댑터 이름들 */
   seeded: string[];
@@ -204,7 +225,8 @@ export function seedPool(
   const variants = m.harness?.variants ?? [];
   if (!variants.length) return null;
 
-  const sig = variants.map((v) => dirSig(path.resolve(rec.path, v.source))).join("\n--\n");
+  // 판을 앞에 섞는다 — 소스가 그대로여도 변환이 바뀌면 다시 편다
+  const sig = `decl=${DECL_SCHEMA}\n` + variants.map((v) => dirSig(path.resolve(rec.path, v.source))).join("\n--\n");
   const stamp = path.join(POOL_DIR, ".source");
   try {
     if (fs.readFileSync(stamp, "utf8") === sig) return null; // 그대로다
@@ -223,9 +245,24 @@ export function seedPool(
     if (v.entry !== "run") fs.cpSync(path.join(src, v.entry), path.join(dst, "run"));
     try { fs.chmodSync(path.join(dst, "run"), 0o755); } catch { /* Windows */ }
 
+    // 선언은 **손실 없이** 옮긴다. 풀 변형은 relay.yaml 을 잃으므로 여기 안 담긴 것은
+    // 그대로 사라진다 — 그리고 harnessCandidates 가 poolVariant 로 동봉 선언을 통째로
+    // 대체하므로, 빠뜨린 축은 "풀이 펴진 순간 선언이 증발" 로 나타난다.
+    // 실사고 2026-08-30: protocol·capabilities 를 빠뜨려 harness.requires 가 전부 실패했다
+    // (후보 넷이 모두 "능력 미선언" 이 되어 requires 를 선언한 패키지의 세션이 서지 않았다).
     const decl: Record<string, unknown> = {};
-    if (v.binary) decl.binary = v.binary;
+    if (v.protocol != null) decl.protocol = v.protocol;
+    if (v.capabilities) decl.capabilities = [...v.capabilities];
     if (v.llm) decl.llm = { ...v.llm };
+    // binary 는 **이름만으로는 못 쓴다**: 그 이름이 가리키는 레시피는 콘솔 패키지의
+    // requires.binaries 에 사는데, 풀 변형을 쓰는 쪽은 자기 매니페스트에서 그 이름을 찾는다
+    // (provisionForVariant 는 소비 패키지의 m 을 본다). 그래서 이름과 레시피를 함께 싣는다 —
+    // 그러지 않으면 "도구 없음" 화면의 설치 버튼이 영원히 같은 오류를 되풀이한다
+    if (v.binary) {
+      decl.binary = v.binary;
+      const recipe = (m.requires?.binaries ?? []).find((b) => b.name === v.binary);
+      if (recipe) decl.recipe = { ...recipe };
+    }
     for (const [key, rel] of [["icon", v.icon], ["llmIcon", v.llm?.icon]] as const) {
       if (!rel) continue;
       const file = path.basename(rel);

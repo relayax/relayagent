@@ -144,9 +144,22 @@ export async function ensureBinary(pkg: string, b: BinaryRequire): Promise<Ensur
  * 존재 검사(ensureBinary ③)는 껍데기 설치를 통과시키므로, "있는데 안 도는" 부류는 여기가
  * 유일한 회복 경로다. 참조가 없으면 null(기판이 대줄 것이 없다 — 어댑터의 처방이 답이다).
  */
-export async function provisionForVariant(pkg: string, m: Manifest, variantBinary: string | undefined): Promise<EnsureResult | null> {
+export async function provisionForVariant(
+  pkg: string,
+  m: Manifest,
+  variantBinary: string | undefined,
+  /** 풀 변형이 실어 온 레시피 사본 — 소비 패키지의 매니페스트가 답할 수 없을 때의 답.
+   *
+   *  풀 어댑터의 `binary` 는 **콘솔 패키지**의 requires.binaries 를 가리키는데, 조달은
+   *  소비 패키지의 m 을 본다. 그래서 card-forge(requires.binaries = [python3])가 풀의
+   *  claude-code 를 고르면 "claude" 참조가 영원히 미해석이고, 설치 버튼이 같은 "도구 없음"
+   *  을 되풀이한다(실사고 2026-08-30). 이름은 이름대로 두고 레시피를 함께 나른다. */
+  poolRecipe?: BinaryRequire | null,
+): Promise<EnsureResult | null> {
   if (!variantBinary) return null;
-  const b = (m.requires?.binaries ?? []).find((x) => x.name === variantBinary);
+  // 소비 패키지의 선언이 먼저다 — 자기 매니페스트에 같은 이름을 적어 둔 패키지는 그 뜻을
+  // 존중한다(핀 버전이 다를 수 있다). 없을 때만 풀이 실어 온 사본으로 떨어진다
+  const b = (m.requires?.binaries ?? []).find((x) => x.name === variantBinary) ?? poolRecipe ?? null;
   if (!b || !hasRecipe(b)) return null;
   if (substrateBinaryReady(pkg, b)) return null; // 이미 기판 사본인데도 실패 — 도구 문제가 아니다
   const forced: BinaryRequire = { ...b, version: b.version ?? "latest" };

@@ -791,7 +791,13 @@ export function createApi(
         return void json(res, 200, { ok: true, provider });
       }
       if (pc && req.method === "DELETE") {
-        await authority.setCredential(`llm/${decodeURIComponent(pc[1])}`, "");
+        // 폐기는 deleteCredential 이다. 빈 문자열을 앉히면 금고에 "" 가 남고, 연결 판정은
+        // `!= null` 이라 그것을 자격으로 센다 — 끊었는데 화면이 "연결됨" 이라 말한다.
+        // 서비스 축의 연결 해제(위 disconnect)와 같은 관용구여야 한다(실사고 2026-08-30)
+        if (typeof authority.deleteCredential !== "function") {
+          return void json(res, 501, { error: "이 기판의 권위는 자격 폐기를 구현하지 않습니다" });
+        }
+        await authority.deleteCredential(`llm/${decodeURIComponent(pc[1])}`);
         return void json(res, 200, { ok: true });
       }
 

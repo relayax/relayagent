@@ -1359,8 +1359,11 @@ export const WIRE_ROUTES: WireRoute[] = [
       // models 만 `?variant=` 로 활성 아닌 선언 변형의 카탈로그를 묻는다(§5.5-29) — 모델 피커가
       // 공급자에 호버했을 때 전환 없이 그 목록을 보여주는 자리. 선언 밖 이름은 요청 결함.
       const variant = verb === "models" ? (url.searchParams.get("variant") || undefined) : undefined;
-      if (variant && !(man.harness?.variants ?? []).some((v) => v.name === variant)) {
-        throw new WireError(400, "E_BAD_REQUEST", `미선언 하네스: ${variant}`);
+      // 후보로 검증한다 — 두 줄 위의 chooseHarness 와 같은 집합이어야 한다. 동봉만 보면
+      // 풀 전용 하네스(대부분의 패키지에서 codex·kimi·pi)에 400 이 나가, 피커가 넓어졌는데
+      // 그 목록을 물으면 거절당한다(실사고 2026-08-30). 콘솔 문은 같은 갈림을 이미 닫았다
+      if (variant && !choice.candidates.some((v) => v.name === variant)) {
+        throw new WireError(400, "E_BAD_REQUEST", `쓸 수 없는 하네스: ${variant}`);
       }
       const r = await io.harnessQuery(pkg, verb, variant);
       if (verb === "commands") {

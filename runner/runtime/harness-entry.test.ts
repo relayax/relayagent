@@ -171,3 +171,88 @@ test("준비 상태는 어댑터의 답을 provider 축으로 접는다 — 한 
   assert.deepEqual(got.anthropic.account, { email: "a@b.c" });
   assert.equal(Object.keys(got).length, 1, "provider 를 말하지 않는 어댑터는 접히지 않는다");
 });
+
+// ── seedPool 왕복 ──────────────────────────────────────────────────────────
+// 위 시험들이 못 잡은 부류: putPool() 이 harness.json 을 **손으로** 써서, 실제 변환
+// (seedPool → poolVariant)을 지나는 시험이 하나도 없었다. 그래서 seedPool 이 선언을
+// 떨어뜨려도 16개가 전부 통과했다(실사고 2026-08-30). 여기서는 진짜 seedPool 을 태운다.
+const { seedPool, poolRecipe } = await import("./harness-entry.ts");
+
+/** 콘솔 패키지 흉내 — 어댑터 하나를 동봉하고 relay.yaml 로 선언한다 */
+function fakeConsole(dir: string, yaml: string): { packages: Record<string, { path: string }> } {
+  fs.mkdirSync(path.join(dir, "harness", "demo"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "harness", "demo", "run"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "relay.yaml"), yaml);
+  return { packages: { system: { path: dir } } };
+}
+
+const DECL = `schema: relay/v1
+name: "@relay/demo"
+version: 0.1.0
+display_name: 데모
+description: 왕복 시험용 가짜 콘솔 패키지
+requires:
+  binaries:
+    - name: demo-cli
+      manager: npm
+      package: "@demo/cli"
+      install: "npm i -g @demo/cli"
+harness:
+  variants:
+    - name: demo
+      source: harness/demo
+      entry: run
+      binary: demo-cli
+      protocol: 3
+      capabilities: [cancel, vision, steer]
+      llm:
+        provider: demoprov
+        auth: { kind: token, env: DEMO_KEY }
+`;
+
+test("seedPool 왕복 — 선언이 손실 없이 풀에 실린다 (protocol·capabilities·레시피)", () => {
+  clearPool();
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "relay-seed-"));
+  const seeded = seedPool(fakeConsole(src, DECL), "system");
+  assert.deepEqual(seeded?.seeded, ["demo"]);
+
+  const v = poolVariant("demo")!;
+  // 이 셋이 종전에 증발했다 — 그래서 harness.requires 가 전부 실패했다
+  assert.equal(v.protocol, 3, "protocol 이 풀에 실려야 한다");
+  assert.deepEqual(v.capabilities, ["cancel", "vision", "steer"], "capabilities 가 풀에 실려야 한다");
+  assert.equal(v.llm?.provider, "demoprov");
+  assert.equal(v.llm?.auth?.env, "DEMO_KEY");
+
+  // 레시피 — 이름만 나르면 소비 패키지가 그 이름을 자기 매니페스트에서 못 찾는다
+  const r = poolRecipe("demo");
+  assert.equal(r?.name, "demo-cli");
+  assert.equal(r?.manager, "npm");
+  assert.equal(r?.package, "@demo/cli");
+});
+
+test("풀을 지난 뒤에도 requires 가 산다 — 왕복이 끝난 상태로 후보를 거른다", () => {
+  clearPool();
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "relay-seed-"));
+  seedPool(fakeConsole(src, DECL), "system");
+
+  assert.equal(chooseHarness({ harness: { requires: ["vision"] } } as never).variant?.name, "demo");
+  const miss = chooseHarness({ harness: { requires: ["remote"] } } as never);
+  assert.equal(miss.variant, null, "없는 능력은 여전히 걸러야 한다");
+  assert.match(miss.reason ?? "", /remote/);
+});
+
+test("변환 코드가 바뀌면 다시 편다 — 지문이 소스 mtime 만 보면 낡은 선언이 남는다", () => {
+  clearPool();
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "relay-seed-"));
+  const ledger = fakeConsole(src, DECL);
+  seedPool(ledger, "system");
+  assert.equal(seedPool(ledger, "system"), null, "그대로면 다시 펴지 않는다");
+
+  // 낡은 판으로 펴진 기판을 흉내낸다 — 어댑터 소스는 그대로인데 선언만 옛것이다
+  fs.writeFileSync(path.join(POOL_DIR, "demo", "harness.json"), JSON.stringify({ llm: { provider: "demoprov" } }));
+  const stamp = path.join(POOL_DIR, ".source");
+  fs.writeFileSync(stamp, fs.readFileSync(stamp, "utf8").replace(/^decl=\d+/, "decl=1"));
+
+  assert.notEqual(seedPool(ledger, "system"), null, "선언 스키마 판이 다르면 다시 편다");
+  assert.deepEqual(poolVariant("demo")?.capabilities, ["cancel", "vision", "steer"]);
+});

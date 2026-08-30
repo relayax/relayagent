@@ -10,7 +10,7 @@ import { conformHarness } from "./conform.ts";
 import { spawnEntrySync, runEntry, runCommand } from "../spawn.ts";
 import { ensureBinary, binaryEnv, provisionForVariant, removeBinaries } from "./binaries.ts";
 import { vaultGet, vaultSet } from "../vault.ts";
-import { harnessEntry, harnessEnv, harnessCandidates, chooseHarness, selectHarness, poolNames } from "../runtime/harness-entry.ts";
+import { harnessEntry, harnessEnv, harnessCandidates, chooseHarness, selectHarness, poolNames, poolRecipe } from "../runtime/harness-entry.ts";
 import { sha256File, unpackArtifact } from "./pack.ts";
 import { parse as parseYaml } from "yaml";
 
@@ -142,7 +142,7 @@ async function electHarness(pkgName: string, pkgPath: string, m: Manifest): Prom
     if (r.status !== 0) {
       // setup 실패 + 변형이 requires 를 참조 — "있는데 안 도는" 부류(네이티브 바이너리 빠진
       // npm 래퍼 실사고)일 수 있다. 참조된 레시피를 기판 사본으로 강제 승격하고 한 번 재시도.
-      const t = await provisionForVariant(pkgName, m, v.binary);
+      const t = await provisionForVariant(pkgName, m, v.binary, poolRecipe(v.name));
       if (t) {
         note = ` · ${t.out}`;
         if (t.ok) r = await setup();
@@ -653,7 +653,7 @@ export async function setHarness(ledger: Ledger, name: string, variant: string):
   let r = await run();
   let note = "";
   if (r.status !== 0) {
-    const t = await provisionForVariant(name, m, v.binary);
+    const t = await provisionForVariant(name, m, v.binary, poolRecipe(v.name));
     if (t) {
       note = t.ok ? "" : `\n${t.out}`;
       if (t.ok) r = await run();
@@ -905,7 +905,7 @@ export async function provisionHarness(
   if (!v.binary) {
     return { ok: false, out: `${v.name} 은 기판이 대신 깔 수 있는 도구를 선언하지 않았습니다 — 도구를 직접 설치한 뒤 다시 점검하세요` };
   }
-  const t = await provisionForVariant(name, m, v.binary);
+  const t = await provisionForVariant(name, m, v.binary, poolRecipe(v.name));
   if (!t) {
     // 참조는 있는데 레시피가 없거나(설치 안내만 있는 항목) 이미 기판 사본이다 —
     // 후자면 도구 문제가 아니므로 setup 을 다시 물어 사유를 그대로 낸다

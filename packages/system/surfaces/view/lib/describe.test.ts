@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentSub, buildCron, cronToKorean, describe, parseCron, facts, matchScripts, providerLabel, scriptNamesFromFiles, scriptNamesFromTree, sentences, triggerTarget, type Para, type Row, type Tok } from "./describe.ts";
+import { agentSub, buildCron, cronToKorean, describe, engineLabel, parseCron, facts, matchScripts, providerLabel, scriptNamesFromFiles, scriptNamesFromTree, sentences, triggerTarget, type Para, type Row, type Tok } from "./describe.ts";
 import type { Manifest } from "./types";
 
 test("cronToKorean — 스펙의 표", () => {
@@ -315,4 +315,36 @@ test("sentences — 사이드바 자리 문단은 접혔거나 숨겼거나 못�
   assert.deepEqual(seat.parts, [{ t: "사이드바", sec: "identity" }, "에서는 카드뉴스 스튜디오 밑에 접혀 있습니다."]);
   assert.equal(sentences({ shell: { nav: "never" } }, base).find((p) => p.key === "seat")!.parts[1], "에는 숨겨져 있습니다 — 상세와 직접 주소로만 엽니다.");
   assert.equal(sentences({ ...withParts, shell: { nav: "always" } }, { ...base, mountedIn: ["studio"] }).find((p) => p.key === "seat")!.parts[1], "에 늘 최상위로 섭니다.");
+});
+
+// ── 풀 어댑터: 활성 하네스가 이 매니페스트에 없는 것이 정상이다 ────────────
+// 어댑터가 기판 풀에서 오면서(RELAY_HOME/adapters) 활성 이름이 harness.variants 밖인 경우가
+// 일상이 됐다. 종전에는 `?? variants[0]` 로 조용히 첫 후보를 그려서, 장부는 kimi 인데 화면은
+// claude-code 를 말했다 — 러너에서 은퇴시킨 조용한 폴백이 화면에 살아 있던 자리(2026-08-30).
+const poolCtx = {
+  workspace: "/w", scripts: [], edges: [], landing: null, files: [],
+  labelOf: (n: string) => n,
+};
+const bundledOnly: Manifest = {
+  harness: { variants: [{ name: "claude-code", source: "harness/claude-code", entry: "run", llm: { provider: "anthropic" } }] },
+} as Manifest;
+
+test("풀 전용 하네스를 골라도 동봉 첫 후보로 조용히 떨어지지 않는다", () => {
+  const rows = describe(bundledOnly, { ...poolCtx, activeHarness: "kimi" } as never);
+  const engine = rows.find((r) => r.key === "engine");
+  // 이 매니페스트에 kimi 가 없으니 provider 는 모른다 — 그래도 claude 라고 말해선 안 된다
+  assert.equal(engine?.items.length, 1);
+  assert.equal(engine?.items[0].text, "kimi", "모르면 하네스 이름을 그대로 — 틀린 제공사를 말하지 않는다");
+});
+
+test("동봉 변형을 고르면 종전대로 제공사 이름이 선다", () => {
+  const rows = describe(bundledOnly, { ...poolCtx, activeHarness: "claude-code" } as never);
+  assert.equal(rows.find((r) => r.key === "engine")?.items[0].text, providerLabel("anthropic"));
+});
+
+test("문장도 장부의 활성 이름을 따른다 — 동봉 목록으로 거르지 않는다", () => {
+  const paras = sentences(bundledOnly, { ...poolCtx, activeHarness: "kimi" } as never);
+  const flat = paras.flatMap((p) => p.parts).map((x) => (typeof x === "string" ? x : x.t)).join("");
+  assert.ok(flat.includes(engineLabel("kimi")), `kimi 가 문장에 서야 한다: ${flat}`);
+  assert.ok(!flat.includes(engineLabel("claude-code")), "동봉 첫 후보가 새어나오면 안 된다");
 });
