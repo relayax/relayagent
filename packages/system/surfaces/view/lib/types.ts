@@ -168,6 +168,11 @@ export interface Pkg {
   ring: number | null;
   model: string | null;
   harness: string | null;
+  /** 이 패키지가 실제로 고를 수 있는 하네스 — 기판이 계산한다(동봉 ∪ 풀). 화면은 매니페스트만
+   *  보면 풀을 모르므로, 이 축이 없으면 동봉 선언만 보고 "엔진 하나"를 그리게 된다 */
+  harnessCandidates?: { name: string; provider: string | null; icon: string | null; llmIcon: string | null }[];
+  /** 지금 실제로 돌 변형 — 장부·prefers·전역 선호·requires 를 전부 지난 답 */
+  harnessRunning?: string | null;
   manifest: Manifest | null;
   error: string | null;
 }

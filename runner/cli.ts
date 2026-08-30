@@ -383,9 +383,14 @@ async function main(): Promise<void> {
       const { setHarness } = await import("./supply/install.ts");
       const m = loadManifest(ledger.packages[pkg].path);
       if (!name) {
-        const active = ledger.packages[pkg].harness ?? m.harness?.variants?.[0]?.name;
-        for (const v of m.harness?.variants ?? []) {
-          console.log(`${v.name === active ? "*" : " "} ${v.name}\t(llm: ${v.llm?.provider ?? "어댑터 기본"})`);
+        // 후보는 동봉 ∪ 기판 풀이고, 활성은 chooseHarness 가 답한다 — 종전에는 동봉만 찍고
+        // 활성을 은퇴한 `?? variants[0]` 규칙으로 계산해 실제 실행 변형과 어긋났다
+        const { chooseHarness } = await import("./runtime/harness-entry.ts");
+        const choice = chooseHarness(m, ledger.packages[pkg].harness, ledger.preferences?.harness);
+        if (!choice.candidates.length) console.log(choice.reason ?? "쓸 수 있는 하네스가 없습니다");
+        for (const v of choice.candidates) {
+          const mark = v.name === choice.variant?.name ? "*" : " ";
+          console.log(`${mark} ${v.name}\t(llm: ${v.llm?.provider ?? "어댑터 기본"})`);
         }
       } else {
         const r = await setHarness(ledger, pkg, name);

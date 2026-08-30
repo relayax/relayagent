@@ -1005,8 +1005,14 @@ export const WIRE_ROUTES: WireRoute[] = [
         // 변형 선택은 자격 행위가 아니라 설정이다(§5.5-30-a) — 매니페스트가 후보를 선언하고
         // 장부가 활성 하나를 든다. 후보가 둘 이상일 때만 고를 것이 있다.
         try {
-          const man = loadManifest(deps.getLedger().packages[pkg].path);
-          if ((man.harness?.variants ?? []).length > 1) caps.push("harness-variants");
+          const l2 = deps.getLedger();
+          const man = loadManifest(l2.packages[pkg].path);
+          // 후보로 센다 — 동봉 개수로 세면 스캐폴드가 준 한 줄짜리 패키지(설치본 대다수)가
+          // 풀 덕에 실제로는 넷을 고를 수 있는데도 축이 통째로 닫힌다. 쓰기 문(setHarness)은
+          // 그 넷을 다 받으므로 읽기와 쓰기가 갈린다
+          if (chooseHarness(man, l2.packages[pkg].harness, l2.preferences?.harness).candidates.length > 1) {
+            caps.push("harness-variants");
+          }
         } catch { /* 판정 실패 설치본 — 선언 못 하는 것이 정직 */ }
       }
       json(res, 200, { protocol: CLIENT_PROTOCOL, capabilities: caps });
@@ -1382,13 +1388,18 @@ export const WIRE_ROUTES: WireRoute[] = [
       const l = deps.getLedger();
       const rec = requirePkg(l, pkg);
       const man = loadManifest(rec.path);
-      const variants = (man.harness?.variants ?? []).map((v) => ({
+      // 목록도 활성도 후보 계산 한 곳에서 나온다. 종전에는 동봉만 나열하고 활성을
+      // `rec.harness ?? variants[0]` 으로 답했는데, 그것은 은퇴한 activeHarness 규칙을
+      // 인라인으로 베낀 것이라 실제 실행 변형(chooseHarness — prefers·전역 선호·requires 를
+      // 지난다)과 어긋났다. 같은 설정 축의 GET 과 POST 가 다른 답을 하면 계약이 거짓말한다
+      const choice = chooseHarness(man, rec.harness, l.preferences?.harness);
+      const variants = choice.candidates.map((v) => ({
         name: v.name,
         ...(v.llm?.provider ? { provider: v.llm.provider } : {}),
       }));
       // 준비 상태(도구 실재·로그인)는 이 문의 소관이 아니다(§5.5-30-a) — 프로브는 프로세스
       // 전수 스폰이라 채팅 문이 감당할 비용이 아니고, 기판 소유 콘솔에 그 표면이 이미 있다.
-      json(res, 200, { ok: true, value: { active: rec.harness ?? variants[0]?.name ?? null, variants } });
+      json(res, 200, { ok: true, value: { active: choice.variant?.name ?? null, variants } });
     },
   },
   {

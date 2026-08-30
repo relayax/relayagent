@@ -183,11 +183,16 @@ export async function installPkg(ledger: Ledger, dir: string, opts: InstallOpts 
   };
   saveLedger(ledger);
   let setup: { ok: boolean; out: string } | undefined;
-  const variants = harnessCandidates(m);
+  // **재는 집합과 고르는 집합이 같아야 한다.** 종전에는 여기서 harnessCandidates(requires
+  // 미필터)로 재고 electHarness 는 chooseHarness().candidates(requires 필터)로 골라, requires 가
+  // 전부를 걸러낸 패키지에서 length>0 으로 들어와 null 을 단언해 설치가 TypeError 로 죽었다
+  // (그것도 saveLedger 뒤라 장부엔 등재된 채 남는다)
+  const variants = chooseHarness(m).candidates;
   const current = ledger.packages[name].harness;
-  // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 선출한다
+  // 활성 하네스가 후보에 살아 있으면 사용자의 선택을 존중하고, 없으면 선출한다
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = (await electHarness(name, abs, m))!;
+    const elected = await electHarness(name, abs, m);
+    if (!elected) throw new ManifestError([chooseHarness(m).reason ?? `쓸 수 있는 하네스가 없습니다: ${name}`]);
     ledger.packages[name].harness = elected.picked ?? variants[0].name;
     saveLedger(ledger);
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[name].harness}\n` + elected.out };
@@ -422,10 +427,12 @@ export async function activatePrepared(ledger: Ledger, p: Prepared, opts: Instal
   }
   // 활성 하네스가 새 선언에 살아 있으면 사용자의 선택을 존중하고, 없으면 재선출한다
   let setup: { ok: boolean; out: string } | undefined;
-  const variants = harnessCandidates(m);
+  // 위 installPkg 과 같은 규율 — 재는 집합과 고르는 집합이 하나여야 단언이 안 터진다
+  const variants = chooseHarness(m).candidates;
   const current = ledger.packages[p.name].harness;
   if (variants.length && (!current || !variants.some((v) => v.name === current))) {
-    const elected = (await electHarness(p.name, p.dir, m))!;
+    const elected = await electHarness(p.name, p.dir, m);
+    if (!elected) throw new ManifestError([chooseHarness(m).reason ?? `쓸 수 있는 하네스가 없습니다: ${p.name}`]);
     ledger.packages[p.name].harness = elected.picked ?? variants[0].name;
     setup = { ok: elected.picked != null, out: `활성 하네스: ${ledger.packages[p.name].harness}\n` + elected.out };
   }
@@ -879,7 +886,26 @@ export function registryData(ledger: Ledger): unknown {
     } catch (e) {
       error = String(e);
     }
-    return { name, path: rec.path, workspace: workspacePath(ledger, name), ring: rec.ring ?? null, model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null, origin: rec.origin ?? null, manifest, error };
+    // 하네스 후보를 함께 싣는다. 매니페스트만 보는 화면은 풀을 모르므로, 종전에는 그래프·
+    // 상세·스튜디오가 전부 동봉 선언만 보고 "엔진 하나" 또는 "엔진 없음" 을 그렸다.
+    // 값은 후보 이름과 provider 뿐이고 계산은 파일 읽기다(어댑터를 띄우지 않는다)
+    const choice = manifest ? chooseHarness(manifest, rec.harness, ledger.preferences?.harness) : null;
+    return {
+      name, path: rec.path, workspace: workspacePath(ledger, name), ring: rec.ring ?? null,
+      model: rec.model ?? null, effort: rec.effort ?? null, harness: rec.harness ?? null,
+      origin: rec.origin ?? null, manifest, error,
+      /** 이 패키지가 실제로 고를 수 있는 하네스 — 동봉 ∪ 기판 풀, requires 로 걸러진 뒤 */
+      harnessCandidates: (choice?.candidates ?? []).map((v) => {
+        // 풀 자산은 패키지 밑에 없다 — 주소가 갈리므로 기판이 조립해서 보낸다
+        const at = (rel: string | undefined): string | null =>
+          !rel ? null
+            : poolNames().includes(v.name) ? `/harness/${encodeURIComponent(v.name)}/asset/${rel}`
+            : `/pkg/${encodeURIComponent(name)}/asset/${rel}`;
+        return { name: v.name, provider: v.llm?.provider ?? null, icon: at(v.icon), llmIcon: at(v.llm?.icon) };
+      }),
+      /** 지금 실제로 돌 변형 — 화면이 "무엇이 켜졌나" 를 이 값으로 그린다 */
+      harnessRunning: choice?.variant?.name ?? null,
+    };
   });
   return { packages, grants: ledger.grants };
 }

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { runCommand, runEntry } from "../spawn.ts";
 import { loadManifest, HARNESS_CAPS, HARNESS_CAP_SET, type HarnessVariant } from "./manifest.ts";
-import { harnessEntry } from "../runtime/harness-entry.ts";
+
 import type { Ledger } from "./ledger.ts";
 
 export interface ConformResult {
@@ -24,8 +24,11 @@ const KNOWN_CAPS = HARNESS_CAP_SET;
  * 세션 봉투 자체는 LLM 자격이 필요해 여기서 돌리지 않는다 — 조건부 검사는 추후 세션 스모크가 맡는다.
  */
 export async function conformHarness(pkgPath: string, v: HarnessVariant): Promise<ConformResult> {
-  // cwd 를 임시 무대로 옮기므로 entry 는 절대경로여야 한다
-  const entry = harnessEntry(pkgPath, v);
+  // cwd 를 임시 무대로 옮기므로 entry 는 절대경로여야 한다.
+  // **harnessEntry 를 쓰지 않는다** — 그쪽은 풀을 우선하는 실행 좌표이고, 적합성은 실행이
+  // 아니라 **이 패키지가 실은 파일**을 판정하는 문이다. 풀을 보면 저자가 동봉한 어댑터가
+  // 한 번도 판정되지 않고, 같은 이름의 풀 사본이 대신 통과해 준다(설치 게이트가 뚫린다)
+  const entry = path.resolve(pkgPath, v.source, v.entry);
   const checks: ConformResult["checks"] = [];
   // 오염 검사의 무대: 모든 동사를 임시 cwd 에서 돌리고 마지막에 잔여물을 본다
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));

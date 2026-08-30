@@ -48,9 +48,10 @@ export default async function (input: Input, ctx: any) {
       throw new Error(`이미 있는 대상입니다: ${input.name} — manifest 없이 열어 draft-write 로 고치세요`);
     }
 
-    if ((m.agents ?? []).length > 0 && !m.harness?.variants?.length) {
-      m.harness = { ...(m.harness ?? {}), variants: [{ name: "claude-code", source: "harness/claude-code", entry: "run" }] };
-    }
+    // 어댑터를 동봉시키지 않는다. 미선언 = 기판 풀 전체가 후보이고, 그것이 기본값이어야 한다 —
+    // 종전에는 에이전트가 있으면 claude-code 한 줄을 자동으로 꽂았고(당시엔 동봉이 의무였다),
+    // 그 한 줄이 사용자에게는 "이 앱은 claude 로만 돈다" 로 도달했다. 특정 하네스가 필요하면
+    // 저자가 harness.requires(능력)로 이유를 말하거나, 풀에 없는 어댑터를 직접 동봉한다
     for (const v of m.harness?.variants ?? []) {
       if (!v.llm && HARNESS_LLM[v.source]) v.llm = HARNESS_LLM[v.source];
     }

@@ -256,3 +256,17 @@ test("변환 코드가 바뀌면 다시 편다 — 지문이 소스 mtime 만 �
   assert.notEqual(seedPool(ledger, "system"), null, "선언 스키마 판이 다르면 다시 편다");
   assert.deepEqual(poolVariant("demo")?.capabilities, ["cancel", "vision", "steer"]);
 });
+
+// ── 재는 집합과 고르는 집합은 하나여야 한다 ──────────────────────────────
+// installPkg 이 harnessCandidates(requires 미필터)로 재고 electHarness 는 requires 로 걸러
+// 골라서, 만족하는 후보가 없으면 length>0 으로 들어와 null 을 단언해 설치가 터졌다.
+test("requires 가 전부를 걸러내면 후보는 0이다 — 재는 쪽과 고르는 쪽이 같은 답이어야 한다", () => {
+  clearPool();
+  putPool("only-basic", { capabilities: ["cancel"] });
+  const m = { harness: { requires: ["remote"] } } as never;
+  // 종전 불일치의 재현: harnessCandidates 는 1, chooseHarness().candidates 는 0 이었다
+  assert.equal(harnessCandidates(m).length, 1, "필터 전 후보는 있다");
+  assert.equal(chooseHarness(m).candidates.length, 0, "필터 뒤에는 없다");
+  // 설치 경로는 후자를 재야 한다 — 전자를 재면 null 단언이 터진다
+  assert.equal(chooseHarness(m).variant, null);
+});

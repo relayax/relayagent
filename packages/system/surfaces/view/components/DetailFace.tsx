@@ -191,11 +191,11 @@ export default function DetailFace({
   // 지금 도는 엔진 — 장부의 값이라 작업 사본과 무관하다. 전환은 즉시 반영되므로 응답으로 앞선다
   const [active, setActive] = useState<string | null>(pkg.harness);
   useEffect(() => { setActive(pkg.harness); }, [pkg.harness]);
-  // 설치본에 선 엔진들 — 장부가 아는 이름만 활성으로 고를 수 있다(사본에만 있으면 적용이 먼저다)
-  const liveEngines = (pkg.manifest?.harness?.variants ?? []).map((v) => v.name);
-  // 장부에 고른 값이 없거나 그 이름이 사라졌으면 첫 변형이 돈다 — 실행이 그렇게 고른다
-  // (supply/manifest.ts activeHarness). 화면이 그 규칙을 모르면 "아무것도 안 켜진" 줄이 뜬다
-  const running = active && liveEngines.includes(active) ? active : liveEngines[0] ?? null;
+  // 후보와 활성은 **기판이 답한다**. 종전에는 동봉 선언만 후보로 보고 활성을 `?? [0]` 으로
+  // 계산했는데(은퇴한 activeHarness 규칙의 복제), 어댑터가 풀에서 오면서 그 둘이 전부 틀렸다 —
+  // 풀 전용 하네스는 목록에 없고, 장부가 그것을 가리키면 화면은 동봉 첫 줄을 켜진 것으로 그렸다
+  const liveEngines = (pkg.harnessCandidates ?? pkg.manifest?.harness?.variants ?? []).map((v) => v.name);
+  const running = pkg.harnessRunning ?? (active && liveEngines.includes(active) ? active : liveEngines[0] ?? null);
   const activateEngine = (name: string) => {
     if (engineBusy || name === running) return;
     setEngineBusy(true);

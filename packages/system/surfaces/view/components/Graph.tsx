@@ -455,10 +455,15 @@ export default function Graph({
                 onPointerDown={(e) => cardDown(e, p.name)}
                 title={`${m?.name ?? p.name} v${m?.version ?? "?"}`}
               >
-                {m?.harness?.variants?.length
+                {/* 후보는 기판이 답한다 — 동봉 선언만 보면 풀로만 도는 패키지(스캐폴드 기본)에
+                    알약이 통째로 안 뜬다. 아이콘 주소도 기판이 조립해 준다(풀 자산은 패키지 밑에 없다) */}
+                {(p.harnessCandidates?.length || m?.harness?.variants?.length)
                   ? (() => {
-                      const av = m.harness!.variants!.find((v) => v.name === p.harness) ?? m.harness!.variants![0];
-                      const asset = (rel: string) => `/pkg/${encodeURIComponent(p.name)}/asset/${rel}`;
+                      const cands = p.harnessCandidates?.length
+                        ? p.harnessCandidates
+                        : (m!.harness!.variants!).map((v) => ({ name: v.name, provider: v.llm?.provider ?? null, icon: v.icon ? `/pkg/${encodeURIComponent(p.name)}/asset/${v.icon}` : null, llmIcon: v.llm?.icon ? `/pkg/${encodeURIComponent(p.name)}/asset/${v.llm.icon}` : null }));
+                      const av = cands.find((v) => v.name === (p.harnessRunning ?? p.harness)) ?? cands[0];
+                      const asset = (rel: string) => (rel.startsWith("/") ? rel : `/pkg/${encodeURIComponent(p.name)}/asset/${rel}`);
                       return (
                         <span
                           className="gx-pill llm"
@@ -470,10 +475,10 @@ export default function Graph({
                           }}
                         >
                           {av.icon ? <img src={asset(av.icon)} alt="" /> : null}
-                          <span className="gx-pill-tx">{p.harness ?? av.name}</span>
+                          <span className="gx-pill-tx">{p.harnessRunning ?? p.harness ?? av.name}</span>
                           {p.model ? (
                             <>
-                              {av.llm?.icon ? <img src={asset(av.llm.icon)} alt="" /> : <span>·</span>}
+                              {av.llmIcon ? <img src={asset(av.llmIcon)} alt="" /> : <span>·</span>}
                               <span className="gx-pill-tx">{p.model}</span>
                             </>
                           ) : null}

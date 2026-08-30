@@ -165,7 +165,10 @@ export function CommitDialog({
 function HarnessReadiness({ pkg, installed, manifest }: { pkg: string; installed: boolean; manifest: Manifest | null }) {
   const [rows, setRows] = useState<HarnessVariantView[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const wanted = (manifest?.harness?.variants ?? []).map((v) => v.name);
+  // 확인 대상은 **기판이 답한 후보**다. 종전에는 동봉 선언 이름으로만 서서, 어댑터를 하나도
+  // 동봉하지 않은 앱(풀만 쓰는 기본형)에서는 이 줄이 통째로 사라졌다 — 발행 관문이 "이 앱을
+  // 무엇이 돌리나" 를 아예 안 묻는 상태가 된다. getHarness 는 이미 후보를 답한다(daemon.ts)
+  const declared = (manifest?.harness?.variants ?? []).map((v) => v.name);
   useEffect(() => {
     let on = true;
     // 설치본이면 그 패키지를, 첫 적용이면 같은 어댑터를 가진 콘솔 패키지를 실제로 돌려본다
@@ -176,9 +179,11 @@ function HarnessReadiness({ pkg, installed, manifest }: { pkg: string; installed
       on = false;
     };
   }, [pkg, installed]);
-  if (!wanted.length) return null;
   if (failed) return <p className="text-xs text-muted-foreground">실행 도구 상태를 확인하지 못했습니다</p>;
   if (rows == null) return <p className="text-xs text-muted-foreground">실행 도구 확인 중…</p>;
+  // 동봉을 선언했으면 그 이름만(저자가 데려온 어댑터의 상태가 관심사다), 아니면 후보 전부
+  const wanted = declared.length ? declared : rows.map((r) => r.name);
+  if (!wanted.length) return null;
   const hit = wanted.map((n) => rows.find((r) => r.name === n) ?? null);
   const anyReady = hit.some((r) => r?.ready);
   return (
