@@ -11,6 +11,7 @@ import { relTime, instanceLabelOf, agentLabelOf } from "./parts";
 import { HeadDot } from "./Trace";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ContextMeter } from "./ContextMeter";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Item, ItemGroup, ItemSeparator, ItemMedia, ItemContent, ItemTitle, ItemDescription, ItemActions } from "@/components/ui/item";
@@ -393,6 +394,9 @@ export function ChatHeader({ ctx, live, onSwitch }: { ctx: RelayCtx; live: boole
         )}
       </span>
       <span className="rc-head-sp" />
+      {/* 컨텍스트 미터 — 이 대화가 얼마나 찼나. 재작성에서 컴포저 하단 도구줄과 함께 사라졌던
+          자리를 머리줄로 옮겨 되살렸다(도구줄이 없어졌으므로). 데이터·CSS 는 남아 있었다 */}
+      <ContextMeter />
       <InboxMenu ctx={ctx} onSwitch={onSwitch} />
       {onSwitch && <SessionMenu ctx={ctx} onSwitch={onSwitch} />}
       {/* 신원을 주입한 기판만 계정 표면이 있다(§2-5) — 무신원 기판에서 죽은 메뉴를 그리지 않는다. */}

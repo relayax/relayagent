@@ -6,7 +6,8 @@
    미준비 활성 어댑터에는 처방(token 입력 또는 터미널 로그인 명령)을 연다 */
 
 import { useCallback, useEffect, useState } from "react";
-import { connectHarness, getHarness, loginHarness, harnessModels, setHarnessActive, setModel, type HarnessVariantView } from "@/lib/api";
+import { connectHarness, getHarness, installHarnessTool, harnessModels, setHarnessActive, setModel, type HarnessVariantView } from "@/lib/api";
+import HarnessLogin from "@/components/HarnessLogin";
 import type { Pkg } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,7 +24,8 @@ export default function HarnessDialog({
   onChanged: () => void;
 }) {
   const [variants, setVariants] = useState<HarnessVariantView[]>([]);
-  const asset = (rel: string) => `/pkg/${encodeURIComponent(pkg.name)}/asset/${rel}`;
+  // 풀 어댑터의 아이콘은 패키지 아래 있지 않다 — 기판이 절대 주소로 실어 보내고, 그건 그대로 쓴다
+  const asset = (rel: string) => (rel.startsWith("/") ? rel : `/pkg/${encodeURIComponent(pkg.name)}/asset/${rel}`);
   const [active, setActive] = useState<string | null>(pkg.harness);
   const [models, setModels] = useState<string[]>([]);
   const [model, setModelState] = useState<string | null>(pkg.model);
@@ -33,6 +35,8 @@ export default function HarnessDialog({
   const [note, setNote] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 열려 있는 로그인 대화 — null 이면 닫힘. switch 는 계정 전환 */
+  const [login, setLogin] = useState<{ variant: string; switch: boolean } | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -104,14 +108,26 @@ export default function HarnessDialog({
     setBusy(false);
   }
 
-  async function doLogin(sw = false) {
-    if (busy) return;
+  // 로그인은 이제 앱 안에서 끝난다 — 대화창이 어댑터의 출력을 보여주고 입력을 넣는다.
+  // 종전에는 여기서 응답의 launched·note·command 를 읽었는데 기본 경로(headless)의 응답에는
+  // 그 셋이 없어 화면에 `undefined — undefined` 가 떴다(계약 두 갈래를 한 모양으로 읽었다)
+  function doLogin(sw = false) {
+    if (busy || !activeV) return;
+    setErr(null);
+    setNote("");
+    setLogin({ variant: activeV.name, switch: sw });
+  }
+
+  // "도구 없음" 의 처방 — 자동 설치는 진작 있었고 부를 문만 없었다
+  async function doInstall() {
+    if (busy || !activeV) return;
     setBusy(true);
     setErr(null);
-    setNote("터미널 창을 여는 중...");
+    setNote("도구를 설치하는 중… (수백 MB 를 받을 수 있습니다)");
     try {
-      const r = await loginHarness(pkg.name, sw);
-      setNote(r.launched ? "터미널 창에서 로그인을 마친 뒤 다시 점검을 누르세요" : `${r.note} — ${r.command}`);
+      const r = await installHarnessTool(pkg.name, activeV.name);
+      setNote(r.out || (r.ok ? "설치했습니다" : "설치하지 못했습니다"));
+      await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setNote("");
@@ -120,6 +136,8 @@ export default function HarnessDialog({
   }
 
   const activeV = variants.find((v) => v.name === active) ?? null;
+  // 저자가 verified 를 아예 선언하지 않았으면 "미검증" 을 붙이지 않는다(모두가 미검증이면 무의미하다)
+  const anyVerified = variants.some((v) => v.verified);
   const loginCmd = `relay login ${pkg.name}`;
 
   return (
@@ -142,6 +160,10 @@ export default function HarnessDialog({
                         {v.provider ?? "자체 로그인"}
                         {v.ready != null ? (v.ready ? " · 준비됨" : " · 준비 안 됨") : ""}
                         {v.account?.email ? ` · ${v.account.email}${v.account.plan ? ` (${v.account.plan})` : ""}` : ""}
+                        {/* 저자가 돌려본 것과 안 돌려본 것은 다르다 — 막지는 않고 표시만 한다.
+                            선언이 아예 없는 앱(대부분)은 아무 말도 하지 않는다: 모른다는 것과
+                            안 된다는 것을 뭉뚱그리면 그 표시가 잠금처럼 읽힌다 */}
+                        {anyVerified ? (v.verified ? " · 저자 검증" : " · 미검증") : ""}
                       </span>
                     </span>
                     <span className="lv-ring" />
@@ -154,7 +176,18 @@ export default function HarnessDialog({
             {activeV && activeV.ready === false ? (
               <div className="flex flex-col gap-1.5">
                 {activeV.note ? <p className="text-sm text-destructive">{activeV.note}</p> : null}
-                {activeV.reason === "no-tool" ? null : activeV.auth === "token" ? (
+                {activeV.reason === "no-tool" ? (
+                  // 종전에는 이 분기가 null 이라 "codex CLI 없음" 이라고만 뜨고 설치 버튼도
+                  // 명령도 없는 막다른 길이었다 — 기판은 진작 깔 수 있었고 문만 없었다
+                  <div className="lv-in">
+                    <Button size="sm" disabled={busy || !activeV.binary} onClick={() => void doInstall()}>
+                      도구 설치
+                    </Button>
+                    <span className="text-xs text-muted-foreground self-center">
+                      {activeV.binary ? "기판이 자기 자리에 깔고 이 앱에만 씁니다" : "이 하네스는 기판이 대신 깔 도구를 선언하지 않았습니다 — 직접 설치한 뒤 다시 점검하세요"}
+                    </span>
+                  </div>
+                ) : activeV.auth === "token" ? (
                   <div className="lv-in">
                     <Input
                       type="password"
@@ -289,6 +322,16 @@ export default function HarnessDialog({
           <Button variant="outline" size="sm" onClick={onClose}>닫기</Button>
         </DialogFooter>
       </DialogContent>
+      {login ? (
+        <HarnessLogin
+          pkg={pkg.name}
+          label={login.variant}
+          variant={login.variant}
+          switchAccount={login.switch}
+          onClose={() => setLogin(null)}
+          onDone={() => void load()}
+        />
+      ) : null}
     </Dialog>
   );
 }

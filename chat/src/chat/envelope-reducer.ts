@@ -59,6 +59,24 @@ export type EnvelopeTurnMeta = TurnMeta & {
   origin?: "task";
   /** error 이벤트의 사유. 배너 렌더는 어댑터 몫이고 리듀서는 사유만 보관한다. */
   error?: string;
+  /** 하네스가 알린 사용 한도(capability `limits`). 한도는 턴이 아니라 **계정**의 상태라
+   *  마지막으로 들은 값이 정본이고, 턴이 끝나도 지우지 않는다 — 막힌 사유는 다음 턴을
+   *  열기 전에 읽혀야 한다. resets_at 이 핵심이다: "막혔다"보다 "언제 풀리나"가
+   *  사람이 다음 행동을 정하는 근거다. */
+  limit?: TurnLimit;
+};
+
+/** 사용 한도 한 줄 — harness-protocol.md §Events `limit` 의 클라이언트 투영 */
+export type TurnLimit = {
+  status: "ok" | "warn" | "blocked";
+  /** 어느 창의 한도인가(five_hour · weekly …). 도구 어휘라 기판은 문자열로 나른다 */
+  scope: string | null;
+  /** 풀리는 시각 — 유닉스 초 */
+  resetsAt: number | null;
+  /** 한도를 넘겨도 유료로 계속 가는 중인가 */
+  overage?: boolean;
+  /** 막힌 사유(도구 어휘) */
+  note?: string;
 };
 
 /** 라이브 토큰 티커 — runtime.ts:948 TurnUsageLive 와 동형(RunningStatus 가 그대로 구독). */
@@ -201,10 +219,25 @@ export class EnvelopeReducer {
       case "file": return this.file(ev);
       case "reply": return this.reply(ev);
       case "error": return this.error(ev);
+      case "limit": return this.limit(ev);
       // 미지의 event 는 그리지 않되 E_PROTOCOL 로 승격하지도 않는다 — 하네스 축은 additive 로
       // 자란다(client-protocol §6-37). 불투명 진행으로 흘려보낸다.
       default: return;
     }
+  }
+
+  /** 한도 이벤트 — 상태만 담는다. 파트를 세우지 않는 이유: 대화의 한 조각이 아니라 계정의
+   *  상태이고, 파트로 세우면 턴 본문 사이에 끼어 재생 때마다 그 자리에 다시 그려진다 */
+  private limit(ev: Record<string, unknown>): void {
+    const st = str(ev.status);
+    this.meta.limit = {
+      // 모르는 status 는 ok 로 떨어뜨린다 — 도구 어휘가 늘어도 화면이 겁을 주지 않는다
+      status: st === "blocked" ? "blocked" : st === "warn" ? "warn" : "ok",
+      scope: str(ev.scope) || null,
+      resetsAt: typeof ev.resets_at === "number" ? ev.resets_at : null,
+      ...(ev.overage === true ? { overage: true } : {}),
+      ...(str(ev.note) ? { note: str(ev.note) } : {}),
+    };
   }
 
   private lifecycle(ev: Record<string, unknown>): void {

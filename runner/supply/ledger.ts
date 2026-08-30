@@ -229,6 +229,10 @@ export interface PkgRecord {
   /** 추론 강도 — RELAY_EFFORT 로 전달. 어댑터가 모르는 값은 무시한다 (capabilities: effort) */
   effort?: string;
   harness?: string;
+  /** 하네스별로 기억하는 모델. 모델 어휘는 하네스 소속이라 전환 시 현행 model 을 못 쓰는데,
+   *  종전에는 그것을 **지웠다** — 돌아와도 다시 골라야 했다. 전역 선호가 생기면서 전환이
+   *  잦아지므로 지우는 대신 옮겨 둔다(돌아오면 그때 고른 모델이 그대로 선다) */
+  models?: Record<string, string>;
   /** 원격 제어 상주 켜짐 — 데몬 재기동이 잇는다(harness.ts remote) */
   remote?: boolean;
   dirBindings?: Record<string, string>;
@@ -248,6 +252,9 @@ export interface Ledger {
   secret: string;
   packages: Record<string, PkgRecord>;
   grants: Grant[];
+  /** 사용자 선호 — 앱 소속이 아닌 것들. 하네스는 앱마다 고를 수 있지만 대개 사람은 "나는
+   *  claude 로 일한다" 를 한 번만 말하고 싶어 한다. 앱별 선택(PkgRecord.harness)이 이것을 이긴다 */
+  preferences?: { harness?: string };
 }
 
 const LEDGER = path.join(RELAY_HOME, "ledger.json");

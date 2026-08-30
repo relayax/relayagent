@@ -83,6 +83,14 @@ export interface Manifest {
   harness?: {
     variants?: HarnessVariant[];
     workdir?: string;
+    /** 이 패키지가 성립하려면 하네스가 가져야 하는 능력. 만족하지 않는 후보는 걸러진다.
+     *  **하네스 이름이 아니라 능력을 적는다** — 이름으로 잠그면 나중에 다른 하네스가 같은
+     *  능력을 구현해도 열리지 않고, 무엇보다 잠근 이유가 선언에 남지 않는다 */
+    requires?: string[];
+    /** 저자가 만든 자리 — 기본 선택. 잠금이 아니라 선호라 사용자가 바꿀 수 있다 */
+    prefers?: string;
+    /** 저자가 실제로 돌려본 하네스. 나머지는 화면에서 "미검증" 으로 표시된다 */
+    verified?: string[];
   };
   agents?: { name: string; persona: string; greeting?: string; skills?: string; commands?: string; dispatch?: string[]; scripts?: string[]; default?: boolean }[];
   /** get — GET 으로도 열리는 동사 목록. 브라우저 주소·리다이렉트·웹훅 검증처럼 GET 으로 오는 호출의 문(고지서에 선다) */
@@ -110,6 +118,11 @@ export interface HarnessVariant {
   /** 어댑터 도구 아이콘 (패키지 상대경로 이미지) */
   icon?: string;
   llm?: { provider: string; auth?: AuthDecl; /** provider(모델) 아이콘 */ icon?: string };
+  /** 이 어댑터가 말하는 봉투 판. info.protocol 과 같아야 한다(적합성 판정이 대조) */
+  protocol?: number;
+  /** 이 어댑터의 물리적 능력 — 닫힌 어휘(HARNESS_CAPS). info.capabilities 와 같아야 한다.
+   *  선언이 있어야 기판이 **스폰 없이** 후보를 거를 수 있다(harness.requires) */
+  capabilities?: string[];
 }
 
 /** 서비스 네 형. 바깥으로 나가는 둘(url = MCP 문, api = REST 베이스)만 자격 계약을 갖고,
@@ -295,6 +308,20 @@ function judgeFields(fields: unknown, label: string, issues: string[], where: "c
     if (headers.some((f) => f.list)) issues.push(`${label}: header 칸은 list 가 될 수 없습니다 — 헤더는 문자열 하나입니다`);
   }
 }
+
+/**
+ * 하네스 능력의 닫힌 어휘 — **여기가 정본이다.**
+ *
+ * 종전에는 이 목록이 supply/conform.ts 와 docs/harness-protocol.md 두 곳에 따로 살았고,
+ * 실제로 갈렸다: 어댑터가 steer 를 광고하기 시작한 뒤(v0.3.7) conform 쪽만 낡아 시스템
+ * 패키지의 설치·발행이 계약 위반으로 막혔다. harness.requires 가 들어오면서 이 어휘는
+ * 오타 검사를 넘어 **후보를 거르는 집행력**을 갖는다 — 사본이 세 벌이 되기 전에 하나로 모은다.
+ *
+ * 어휘를 늘리는 문턱: 한 하네스만 가진 능력은 이름이 되지 않는다(어댑터 안에 남는다).
+ * 두 번째 구현자가 나타나 뜻이 협상될 때 여기와 계약 문서에 같이 오른다.
+ */
+export const HARNESS_CAPS = ["cancel", "vision", "effort", "resume", "ask", "tasks", "steer", "remote", "limits"] as const;
+export const HARNESS_CAP_SET: ReadonlySet<string> = new Set(HARNESS_CAPS);
 
 /** auth 블록 공용 판정 — services[].auth(url·api 형)와 harness llm.auth 가 같은 어휘를 쓴다.
  *  where 는 어휘가 갈리는 유일한 축이다: scheme·fields·required 는 화면과 헤더의 말이라 서비스 자격에만 뜻이 있다 */
@@ -531,7 +558,8 @@ export function judge(m: Manifest, pkgPath?: string): void {
   // 미지 키는 거부한다 — 최상위·surfaces 와 같은 규율(194·205·465행). 조용히 받으면
   // 은퇴한 어휘가 계속 저작되고 "판정 통과" 가 그것을 승인해 준다. 실사고: dockerfile 은
   // 스키마에만 있고 판정·소비·봉투가 전부 없었는데, 워크드 예제가 그걸 가르치고 있었다.
-  const VARIANT_KEYS = new Set(["name", "source", "entry", "binary", "icon", "llm"]);
+  const HARNESS_KEYS = new Set(["variants", "workdir", "requires", "prefers", "verified"]);
+  const VARIANT_KEYS = new Set(["name", "source", "entry", "binary", "icon", "llm", "protocol", "capabilities"]);
   const MANAGERS = new Set(["npm", "uv"]);
   const LLM_KEYS = new Set(["provider", "auth", "icon"]);
   for (const v of variants) {
@@ -562,14 +590,36 @@ export function judge(m: Manifest, pkgPath?: string): void {
         issues.push(`harness.variants[${v.name}].binary 참조 미해석: "${v.binary}" — requires.binaries 에 같은 name 이 없습니다`);
       }
     }
+    if (v.protocol != null && !Number.isInteger(v.protocol)) {
+      issues.push(`harness.variants[${v.name}].protocol 은 정수여야 합니다: ${JSON.stringify(v.protocol)}`);
+    }
+    if (v.capabilities != null) {
+      if (!Array.isArray(v.capabilities)) issues.push(`harness.variants[${v.name}].capabilities 는 배열입니다`);
+      else for (const c of v.capabilities) {
+        if (!HARNESS_CAP_SET.has(c)) issues.push(`미지 harness 능력: ${c} (닫힌 어휘: ${HARNESS_CAPS.join("|")})`);
+      }
+    }
     if (v.llm) {
       if (!SLUG.test(v.llm.provider ?? "")) issues.push(`harness.variants[${v.name}].llm.provider 형식 위반: ${v.llm.provider}`);
       judgeAuth(v.llm.auth, `harness.variants[${v.name}].llm.auth`, issues, "llm");
       if (v.llm.icon) mustExist(v.llm.icon, `harness.variants[${v.name}].llm.icon`);
     }
   }
-  if ((m.agents ?? []).length > 0 && variants.length === 0) {
-    issues.push("에이전트 패키지는 하네스를 동봉해야 합니다: harness.variants [{name, source, entry}]");
+  // 동봉은 더 이상 의무가 아니다. 어댑터는 기판 풀(콘솔 패키지가 동봉한 넷을 기판이 편 것)에서도
+  // 오므로, 미선언 = "풀 전체가 후보" 다. 문법은 풀을 모른다 — 풀은 인스턴스 설정(RELAY_HOME
+  // 하위)이고 판정은 그것을 알면 안 된다(CLAUDE.md 규율 6). 그래서 여기서는 조건 없이 허용한다.
+  // 종전 의무가 만든 결과: 스캐폴드가 준 claude-code 한 줄이 사용자에게는 잠금으로 도달했다.
+  for (const k of Object.keys(h ?? {})) {
+    if (!HARNESS_KEYS.has(k)) issues.push(`미지 harness 키: ${k}`);
+  }
+  for (const c of h?.requires ?? []) {
+    if (!HARNESS_CAP_SET.has(c)) issues.push(`미지 harness.requires 능력: ${c} (닫힌 어휘: ${HARNESS_CAPS.join("|")})`);
+  }
+  // prefers·verified 는 **동봉 이름을 가리킬 필요가 없다** — 풀의 이름일 수 있고, 문법은 풀을
+  // 모른다. 형식만 본다. 실재 판정은 선택 시점(runtime/harness-entry.ts selectHarness)이다
+  if (h?.prefers != null && !SLUG.test(h.prefers)) issues.push(`harness.prefers 형식 위반: ${h.prefers}`);
+  for (const n of h?.verified ?? []) {
+    if (!SLUG.test(n)) issues.push(`harness.verified 이름 형식 위반: ${n}`);
   }
   if (h?.workdir && badPath(h.workdir)) issues.push(`harness.workdir: workspace 하위 상대경로만: ${h.workdir}`);
 

@@ -121,6 +121,7 @@ client-side field invented downstream is how two substrates end up meaning diffe
 | `steer` | `text` | The substrate's `steer` control line reached the conversation. Echoed at the moment of injection, so the ledger — and every observer replaying it — shows the user's mid-turn words where they actually landed, between two tool calls. Emit exactly once per accepted `steer`, and never for one that was dropped. |
 | `alive` | `since` (ms) | Heartbeat: the envelope is still up. **Emit only when the substrate asks for it** — `RELAY_HEARTBEAT_S` in the environment gives the interval in seconds; absent or `0` means beat not at all. The gate exists because an adapter copy lives inside each package and is refreshed independently of the substrate, so a new adapter running against an older substrate is routine — and an older substrate counts every event as activity, which would silence its stall watchdog and make a frozen session look healthy. An additive event is normally safe to emit unasked; this one is not, so it is declared. `since` is the time elapsed since the adapter last saw a frame from its CLI. Emit only while a turn is open (≈15 s) — a heartbeat with no turn under it proves nothing. **The substrate must not treat this as activity**: it consumes the event, refreshes only its liveness clock, and leaves its stall clock reading the real silence. Folding the two together is what makes a frozen session look healthy. It is not written to the turn ledger and never reaches replay — a long tool call would otherwise fill the ledger with beats and a replay would read that silence as progress. |
 | `file` | `path` (stage-relative) | A successful write landed in the file-exchange stage. |
+| `limit` | `status: "ok"\|"warn"\|"blocked"`, `scope?`, `resets_at?` (unix s), `overage?`, `note?` | The account's usage limit as the tool reports it (capability `limits`). **Account state, not turn state** — emit it whenever the tool says so, and the substrate carries the last value forward; it is not cleared when a turn settles. `resets_at` is the point of the event: "blocked" without "until when" gives the user nothing to decide on. `scope` is the tool's own word for which window (`five_hour`, `weekly`, …) and stays opaque — the substrate does not translate it. `status` is narrowed by the adapter from whatever vocabulary its tool uses; a value the adapter does not recognize degrades to `ok`, never to `blocked` (a false alarm costs more than a missed warning here, because the user's remedy for a false block is to stop working). |
 | `reply` | `text`, `session`, `model`, `usage {input, output, context_window, cache_read?, cache_creation?, cost_usd?}`, `context {input, window}`, `origin?: "task"` | Turn settlement. `usage` is the turn's billing ledger (cumulative); `context` is the occupancy of the conversation (last main-line state) — gauges must use `context`, not `usage`. `usage.input` stays cache-inclusive for compatibility; `cache_read` / `cache_creation` break the cached tokens out (non-cache input = `input − cache_read − cache_creation`) and `cost_usd` is the CLI's own cost ledger when it reports one — all three additive. `origin: "task"` marks a spontaneous continuation (below). |
 | `error` | `message` | Turn failure. Exactly one of `reply`/`error` settles a turn. Failures are never disguised as text. |
 
@@ -205,9 +206,16 @@ client-side field invented downstream is how two substrates end up meaning diffe
 ## Declarations
 
 `info.protocol`: integer. 3 = the vocabulary above. `info.capabilities` is a closed vocabulary
-judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`, `steer`, `remote`. Declare only
+judged by conformance: `cancel`, `vision`, `resume`, `effort`, `ask`, `tasks`, `steer`, `remote`, `limits`. Declare only
 what is physically implemented — the console enables UI per capability, and a declared-but-dead capability
 is a broken screen.
+
+**Adding a capability word.** The vocabulary is closed, and since `harness.requires` reads it to
+filter which harnesses a package may run on, a false entry reaches the user as "this app does not
+work on your harness". So the bar for a *gating* capability is a **second implementer**: a power one
+harness alone has stays inside its adapter, and becomes a word only when a second implementation
+negotiates what the word means. A purely *reporting* event like `limit` does not carry that bar —
+the cost of a wrong claim there is one panel that does not render, not an app that will not open.
 
 ## Reference
 

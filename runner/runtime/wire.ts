@@ -15,7 +15,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { RELAY_HOME, packagesPath, sessionDir, sessionPath, saveLedger, type Ledger } from "../supply/ledger.ts";
 import { runSession, cancelSession, autoTitleSession, deliverAnswer, deliverSteer, isSessionBusy, sessionLiveness, retireResident, retireResidents, localSessionIO, type SessionIO, type SessionResult, startRemote, stopRemote, remoteStatus } from "./harness.ts";
-import { loadManifest, landingAgentName, landingGreeting, activeHarness, type Manifest } from "../supply/manifest.ts";
+import { loadManifest, landingAgentName, landingGreeting, type Manifest } from "../supply/manifest.ts";
+import { chooseHarness, selectHarness, harnessEntry } from "./harness-entry.ts";
 import { harnessVerb, setHarness } from "../supply/install.ts";
 import { SLOT_RE, UPLOADS_DIR, UPLOADS_PREFIX, slotOrigin, type SessionOrigin } from "../protocol.ts";
 import type { Authority } from "../authority-contract.ts";
@@ -832,7 +833,8 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
     },
 
     harnessCapabilities: async (pkg) => {
-      const rec = getLedger().packages[pkg];
+      const l = getLedger();
+      const rec = l.packages[pkg];
       if (!rec) return null;
       let m: Manifest;
       try {
@@ -840,9 +842,9 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
       } catch {
         return null;
       }
-      const v = activeHarness(m, rec.harness);
+      const v = selectHarness(m, rec.harness, l.preferences?.harness);
       if (!v) return null; // 하네스 미동봉 — harness 조회 동사 자체가 없다
-      const entry = path.join(rec.path, v.source, v.entry);
+      const entry = harnessEntry(rec.path, v);
       let mtime: number;
       try {
         mtime = fs.statSync(entry).mtimeMs;
@@ -1316,7 +1318,8 @@ export const WIRE_ROUTES: WireRoute[] = [
       const man = loadManifest(rec.path);
       // capability 미선언(하네스 미동봉) 동사 호출은 404 + 봉투(§3-8) — 코드는 기판 소유 어휘.
       // 선언(BOM)의 판정은 이 파일이 쥔다 — 이음새는 "무엇이 답인가"만 답한다
-      if (!activeHarness(man, rec.harness)) throw new WireError(404, "E_NO_HARNESS", `하네스 미동봉 패키지: ${pkg}`);
+      const choice = chooseHarness(man, rec.harness, deps.getLedger().preferences?.harness);
+      if (!choice.variant) throw new WireError(404, "E_NO_HARNESS", choice.reason ?? `하네스 없음: ${pkg}`);
       const verb = m[1] as "info" | "models" | "commands";
       // models 만 `?variant=` 로 활성 아닌 선언 변형의 카탈로그를 묻는다(§5.5-29) — 모델 피커가
       // 공급자에 호버했을 때 전환 없이 그 목록을 보여주는 자리. 선언 밖 이름은 요청 결함.

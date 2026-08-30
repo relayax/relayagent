@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runCommand, runEntry } from "../spawn.ts";
-import { loadManifest, type HarnessVariant } from "./manifest.ts";
+import { loadManifest, HARNESS_CAPS, HARNESS_CAP_SET, type HarnessVariant } from "./manifest.ts";
+import { harnessEntry } from "../runtime/harness-entry.ts";
 import type { Ledger } from "./ledger.ts";
 
 export interface ConformResult {
@@ -12,9 +13,10 @@ export interface ConformResult {
 }
 
 const REQUIRED_VERBS = ["session", "setup", "models", "commands", "info"];
-// 닫힌 어휘의 정본은 docs/harness-protocol.md(capabilities 절)다 — 어댑터가 steer 를 광고하기 시작한
-// 뒤(v0.3.7) 여기만 낡아 시스템 패키지의 설치·발행이 계약 위반으로 막혔다(validate 는 conform 을 돌리지 않는다)
-const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "tasks", "steer", "remote"]);
+// 닫힌 어휘의 정본은 supply/manifest.ts(HARNESS_CAPS)다. 종전에는 사본이 여기 있었고 실제로
+// 갈렸다 — 어댑터가 steer 를 광고하기 시작한 뒤(v0.3.7) 이쪽만 낡아 시스템 패키지의 설치·발행이
+// 계약 위반으로 막혔다(validate 는 conform 을 돌리지 않아 늦게 드러났다)
+const KNOWN_CAPS = HARNESS_CAP_SET;
 
 /**
  * 하네스 계약 적합성 판정 — 어댑터가 동사 프로토콜을 지키는지 기계로 검사한다.
@@ -23,7 +25,7 @@ const KNOWN_CAPS = new Set(["cancel", "vision", "effort", "resume", "ask", "task
  */
 export async function conformHarness(pkgPath: string, v: HarnessVariant): Promise<ConformResult> {
   // cwd 를 임시 무대로 옮기므로 entry 는 절대경로여야 한다
-  const entry = path.resolve(pkgPath, v.source, v.entry);
+  const entry = harnessEntry(pkgPath, v);
   const checks: ConformResult["checks"] = [];
   // 오염 검사의 무대: 모든 동사를 임시 cwd 에서 돌리고 마지막에 잔여물을 본다
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "relay-conform-"));
@@ -51,11 +53,29 @@ export async function conformHarness(pkgPath: string, v: HarnessVariant): Promis
         : bad ? "name 또는 provider 누락"
         : missing.length ? `verbs 에 필수 동사 누락: ${missing.join(", ")}`
         : badProto ? `protocol 은 정수여야 합니다: ${JSON.stringify(j.protocol)}`
-        : badCaps ? `capabilities 형식 위반 (닫힌 어휘 ${[...KNOWN_CAPS].join("|")}): ${JSON.stringify(j.capabilities)}`
+        : badCaps ? `capabilities 형식 위반 (닫힌 어휘 ${HARNESS_CAPS.join("|")}): ${JSON.stringify(j.capabilities)}`
         : `${j.name} (${j.provider})${j.protocol ? ` · protocol ${j.protocol}` : ""}${caps.length ? ` · ${caps.join(",")}` : ""}${verbs.includes("login") ? " · login 지원" : ""}`,
     });
   } catch {
     checks.push({ verb: "info", ok: false, note: "JSON 아님 — {name, provider, verbs} 를 내야 합니다" });
+  }
+
+  // 선언(매니페스트) 대 실제(info) 대조. harness.requires 가 이 선언을 읽어 후보를 거르므로,
+  // 어긋난 선언 하나는 "이 앱은 당신 하네스에서 못 씁니다" 로 사용자에게 도달한다.
+  // 선언이 없으면 검사하지 않는다 — 선언은 선택이고, 있을 때만 계약이 된다
+  if (v.protocol != null || v.capabilities != null) {
+    let j: { protocol?: unknown; capabilities?: unknown } = {};
+    try { j = JSON.parse(info.stdout || "{}"); } catch { /* 위 info 검사가 이미 잡았다 */ }
+    const real = new Set(Array.isArray(j.capabilities) ? j.capabilities.map(String) : []);
+    const over = (v.capabilities ?? []).filter((c) => !real.has(c));
+    const protoBad = v.protocol != null && j.protocol !== v.protocol;
+    checks.push({
+      verb: "선언 대조",
+      ok: !over.length && !protoBad,
+      note: protoBad ? `protocol 선언 ${v.protocol} ≠ info ${JSON.stringify(j.protocol)}`
+        : over.length ? `선언했으나 info 가 말하지 않는 능력: ${over.join(", ")}`
+        : "선언과 info 가 일치",
+    });
   }
 
   const setup = await run(["setup"]);

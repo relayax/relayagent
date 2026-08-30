@@ -14,6 +14,13 @@ async function post(path: string, body: unknown): Promise<any> {
   return data;
 }
 
+async function del(path: string): Promise<any> {
+  const res = await fetch(path, { method: "DELETE" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data?.error ?? `${res.status} ${path}`), { data, status: res.status });
+  return data;
+}
+
 export async function fetchRegistry(): Promise<Registry> {
   const res = await fetch("/registry", { cache: "no-store" });
   if (!res.ok) throw new Error(`registry ${res.status}`);
@@ -177,6 +184,12 @@ export interface HarnessVariantView {
   capabilities?: string[];
   login?: boolean;
   auth?: string | null;
+  /** requires 레시피 참조 — 있으면 "도구 설치" 버튼이 실물이다 */
+  binary?: string | null;
+  /** 기판 풀이 대는 어댑터인가, 앱이 동봉한 것인가 */
+  origin?: "pool" | "bundled";
+  /** 저자가 이 하네스로 돌려봤다고 선언했나(harness.verified) */
+  verified?: boolean;
 }
 
 export function getHarness(pkg: string, probe = false): Promise<{ active: string | null; variants: HarnessVariantView[] }> {
@@ -200,9 +213,47 @@ export function setModel(pkg: string, model: string | null): Promise<{ ok: boole
   return post(`/pkg/${encodeURIComponent(pkg)}/model`, { model: model ?? "" });
 }
 
-/** 대화형 로그인 발화 — 기판이 터미널 창을 연다 (인증은 그 창이 소유) */
-export function loginHarness(pkg: string, sw = false): Promise<{ launched: boolean; command: string; note: string }> {
-  return post(`/pkg/${encodeURIComponent(pkg)}/harness/login`, { switch: sw });
+/** 대화형 로그인 발화. 두 갈래이고 **응답 모양이 다르다** — 종전에는 선언이 terminal 모양
+ *  하나뿐이라, 기본값(headless)이 돌아오면 화면이 `undefined — undefined` 를 그렸다 */
+export type LoginStarted =
+  | { mode: "terminal"; launched: boolean; command: string; note: string }
+  | { mode: "headless"; ok: true; variant: string; pty: boolean };
+
+export function loginHarness(pkg: string, sw = false, mode?: "terminal", variant?: string): Promise<LoginStarted> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/harness/login`, { switch: sw, ...(mode ? { mode } : {}), ...(variant ? { variant } : {}) });
+}
+
+/** 로그인 대화 중계 — 어댑터가 pty(또는 파이프) 안에서 도는 동안 출력을 읽고 입력을 넣는다.
+ *  from 은 **절대 줄번호**다(링버퍼가 앞을 잘라도 어긋나지 않는다) */
+export function loginRead(pkg: string, from: number): Promise<{ lines: string[]; from: number; done: boolean; code: number | null; running: boolean }> {
+  return getJson(`/pkg/${encodeURIComponent(pkg)}/harness/login/read?from=${from}`);
+}
+
+export function loginInput(pkg: string, text: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/harness/login/input`, { text });
+}
+
+export function loginStop(pkg: string): Promise<{ ok: boolean }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/harness/login/stop`, {});
+}
+
+/** 제공사 자격 저장 — 앱이 아니라 provider 로 주소를 잡는다(자격이 실제로 앉는 자리) */
+export function connectProvider(provider: string, token: string): Promise<{ ok: boolean; provider: string }> {
+  return post(`/provider/${encodeURIComponent(provider)}/connect`, { token });
+}
+
+export function disconnectProvider(provider: string): Promise<{ ok: boolean }> {
+  return del(`/provider/${encodeURIComponent(provider)}`);
+}
+
+/** 사용자 전역 하네스 선호 — 앱별 선택이 이것을 이긴다 */
+export function setHarnessPreference(harness: string | null): Promise<{ ok: boolean }> {
+  return post("/preferences", { harness });
+}
+
+/** "도구 없음" 의 처방 — 기판이 requires 레시피로 사본을 깐다 */
+export function installHarnessTool(pkg: string, variant?: string): Promise<{ ok: boolean; out: string }> {
+  return post(`/pkg/${encodeURIComponent(pkg)}/harness/install`, variant ? { variant } : {});
 }
 
 // 채널 운영면 — 하네스 설정과 같은 기판 API 패턴. 저작(스튜디오)이 아니라 상태·자격·재기동
@@ -306,7 +357,26 @@ export function connectService(pkg: string, service: string, payload: { token?: 
 
 // ── 자격 전경 — 전 패키지의 바깥 서비스·창구. 사이드바 배지와 같은 집계(/connections) ──────────
 
+/** AI 제공사 한 줄 — **패키지 소속이 아니다.** 자격 좌표가 llm/<provider> 라 앱 간 공유된다.
+ *  목록의 출처는 기판이 아니라 어댑터들이다(기판은 어떤 provider 가 있는지 모른다) */
+export interface ProviderStatusView {
+  provider: string;
+  /** 이 provider 를 대는 하네스 이름들 */
+  harnesses: string[];
+  /** oauth = 도구 자신의 로그인(구독) · token = 금고에 키 · null = 선언 없음 */
+  kind: "oauth" | "token" | null;
+  /** 자격이 앉아 있는가. **값은 실리지 않는다** */
+  hasCred: boolean;
+  help: { url?: string; note?: string } | null;
+  icon: string | null;
+  origin: "pool" | "bundled";
+}
+
 export interface ConnectionsOverview {
+  /** AI 제공사 — 최상위다(패키지 안이 아니다) */
+  providers: ProviderStatusView[];
+  /** 제공사 로그인을 발화할 패키지 좌표(콘솔 패키지의 설치 이름) */
+  consolePkg: string;
   packages: {
     pkg: string;
     label: string;

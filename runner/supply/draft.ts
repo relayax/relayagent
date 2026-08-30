@@ -8,6 +8,7 @@ import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
 import { runCommand, runEntry } from "../spawn.ts";
+import { harnessEntry, harnessEnv, harnessCandidates } from "../runtime/harness-entry.ts";
 import { buildSurfaces, judgeRequires, validateDir } from "./install.ts";
 import { draftViewBase, type BuildResult } from "../runtime/view.ts";
 
@@ -603,7 +604,7 @@ export async function landRelease(
   if (rec) rec.path = snapshot;
   else ledger.packages[name] = { path: snapshot };
   // 활성 하네스가 새 선언에서 사라졌으면 재선출한다. 남아 있으면 사용자의 선택을 존중한다
-  const variants = m.harness?.variants ?? [];
+  const variants = harnessCandidates(m);
   let setup: PublishResult["setup"] = null;
   if (variants.length) {
     const current = ledger.packages[name].harness;
@@ -611,7 +612,7 @@ export async function landRelease(
       const reports: string[] = [];
       let picked: string | null = null;
       for (const hv of variants) {
-        const r = await runEntry(path.join(snapshot, hv.source, hv.entry), ["setup"]);
+        const r = await runEntry(harnessEntry(snapshot, hv), ["setup"], { env: await harnessEnv(hv, name) });
         reports.push(`${hv.name}: ${r.status === 0 ? "준비됨" : "불가"}`);
         if (r.status === 0 && !picked) picked = hv.name;
       }

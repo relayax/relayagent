@@ -490,7 +490,7 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
 
 35. `turn.stream`/`turn.attach` 에 실리는 이벤트는 **하네스 봉투 protocol 3 의 어휘를
     그대로 재사용한다**: `delta` · `tool` · `usage` · `task` · `ask` · `steer` · `file` ·
-    `reply` · `error` — 필드 포함 전부 harness-protocol.md §Events 가 정본이다.
+    `limit` · `reply` · `error` — 필드 포함 전부 harness-protocol.md §Events 가 정본이다.
     프레이밍만 JSONL(stdout)→SSE(§5.2)로 바뀐다.
     *왜: 어댑터가 만든 이벤트를 기판이 번역 없이 나른다 — 번역기가 없으면 번역 드리프트도
     없다. 구 OSS 폴링 응답의 `events[]` 도 이미 이 봉투 원본이었다(구 wire — 삭제됨, 컷 2639dae).*

@@ -344,13 +344,39 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      requires:
+        description: |
+          이 패키지가 성립하려면 하네스가 가져야 하는 능력. 만족하지 않는 후보는 걸러지고,
+          하나도 남지 않으면 세션이 사유를 말하고 서지 않는다(조용한 강등 금지).
+          **하네스 이름이 아니라 능력을 적는다.** 이름으로 잠그면 ① 잠근 이유가 선언에 남지
+          않고 ② 나중에 다른 하네스가 같은 능력을 구현해도 열리지 않는다. 어휘는 아래
+          variants[].capabilities 와 같은 닫힌 집합이다
+        type: array
+        items:
+          enum: [cancel, vision, effort, resume, ask, tasks, steer, remote, limits]
+      prefers:
+        description: |
+          저자가 만든 자리 — 기본 선택. 잠금이 아니라 선호이므로 사용자가 바꿀 수 있다.
+          "hermes 관용구로 쓴 페르소나라 거기서 제일 잘 돈다" 같은 사정이 앉는 자리이고,
+          "없으면 안 돈다" 는 requires 로 적는다(둘은 사용자 경험이 달라야 한다)
+        $ref: '#/$defs/slug'
+      verified:
+        description: |
+          저자가 실제로 돌려본 하네스 이름들. 화면이 나머지를 "미검증" 으로 표시한다.
+          막는 것이 아니다 — 안 돌아본 것과 안 돌아가는 것은 다르고, 후자만 requires 다
+        type: array
+        items:
+          $ref: '#/$defs/slug'
       variants:
         description: |
-          동봉한 하네스 어댑터 후보들(agents 선언 시 최소 1). 선언 = 후보 목록(BOM), 활성 선택 = 장부.
-          설치가 각 후보의 setup 을 순서대로 점검해 첫 통과를 활성으로 고르고,
-          relay harness <패키지> [이름] 으로 바꾼다
+          동봉한 하네스 어댑터. **미선언이면 기판 풀 전체가 후보다** — 어댑터는 콘솔 패키지가
+          동봉하고 기판이 홈 하위로 펴서 모든 앱이 공유한다. 동봉은 풀에 없는 하네스를 데려올
+          때 쓴다(그 길이 새 하네스의 문이다).
+          동봉 이름이 풀에도 있으면 그 선언은 "이 하네스로 시험했다" 로 읽고 후보를 풀 전체로
+          연다 — 종전에는 이 둘을 가르는 자리가 없어서 스캐폴드가 준 한 줄이 사용자에게 잠금으로
+          도달했다(피커에 선택지가 하나). 잠글 의도가 있으면 requires 로 이유를 말한다.
+          활성 선택은 장부이고, relay harness <패키지> [이름] 으로 바꾼다
         type: array
-        minItems: 1
         items:
           type: object
           additionalProperties: false
@@ -422,6 +448,28 @@ properties:
                 격리는 자격이 기판 손(env 주입)에 있을 때만 성립한다. hooks.deny 는 네이티브 권한
                 규칙 + 훅 가드로 이중 번역한다 (가드레일이지 샌드박스가 아니다)
               $ref: '#/$defs/relpath'
+            protocol:
+              description: |
+                이 어댑터가 말하는 봉투 판(info.protocol 과 같은 값). 선언과 실제가 다르면
+                적합성 판정이 막는다
+              type: integer
+            capabilities:
+              description: |
+                이 어댑터의 **물리적** 능력. 적합성 판정이 info.capabilities 와 대조하는데, 대조는
+                한쪽 방향이다 — 선언했는데 info 가 말하지 않으면 위반, 그 반대는 아니다.
+                능력이 환경을 탄다: codex 어댑터는 CLI 판이 아는 경우에만 effort 를 광고하므로
+                PATH 에 어느 사본이 걸리느냐로 답이 갈린다. 그래서 여기 적는 것은 **바닥**이다 —
+                어디서나 되는 것만 적고, 조건부 능력은 적지 않는다. 덜 적은 쪽의 대가는 requires
+                가 그 하네스를 지나치는 것이고, 더 적은 쪽의 대가는 안 되는 앱을 된다고 하는 것이다.
+                선언이 있어야 기판이 어댑터를 **띄우지 않고** 후보를 거를 수 있다(harness.requires) —
+                실행해야만 알 수 있으면 피커가 준비 상태를 실을 수 없다.
+                닫힌 어휘다. 새 이름을 여는 문턱은 **두 번째 구현자**다: 한 하네스만 가진 능력은
+                이름이 되지 않고 어댑터 안에 남는다. 두 구현이 뜻을 협상할 때 이 목록과
+                docs/harness-protocol.md 에 같이 오른다 — requires 가 이 어휘로 앱을 거르므로,
+                뜻이 하네스마다 다르면 거짓 잠금이 사용자에게 도달한다
+              type: array
+              items:
+                enum: [cancel, vision, effort, resume, ask, tasks, steer, remote, limits]
             binary:
               description: |
                 이 변형이 모는 실행 파일 — requires.binaries[].name **참조**. 레시피(manager·

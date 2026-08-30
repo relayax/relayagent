@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { API_URL, RELAY_HOME, loadLedger, saveLedger, packagesPath, sessionDir, sessionPath, workspaceDir, stageDir, type Ledger } from "../supply/ledger.ts";
-import { loadManifest, landingAgentName, activeHarness, type Manifest } from "../supply/manifest.ts";
+import { loadManifest, landingAgentName, type Manifest } from "../supply/manifest.ts";
+import { chooseHarness, harnessEntry, harnessEnv } from "./harness-entry.ts";
 import { spawnEntry, spawnEntrySync, runEntry } from "../spawn.ts";
 // 동사의 뜻은 기판만 안다 — 어댑터는 이름만 싣고 지나간다(verbLabels)
 import { verbLabels } from "./scripts.ts";
@@ -880,13 +881,14 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const workdir = path.join(io.workspaceDir(input.pkg), m.harness?.workdir ?? "");
   fs.mkdirSync(workdir, { recursive: true });
   const stage = io.stageDir(input.pkg);
-  const variant = activeHarness(m, rec.harness);
-  if (!variant) throw new Error(`하네스 미동봉 패키지: ${input.pkg} — relay.yaml 에 harness.variants 를 선언하고 어댑터를 동봉하세요`);
+  const choice = chooseHarness(m, rec.harness, input.ledger.preferences?.harness);
+  if (!choice.variant) throw new Error(`${choice.reason} (${input.pkg})`);
+  const variant = choice.variant;
   // 인수인계 판정은 번들 조립보다 앞이어야 한다 — 회전(번들 삭제)이 조립 뒤에 오면
   // 이 턴이 방금 조립된 번들을 지우고, 앞에 오면 조립이 빈 자리를 새로 채운다
   const handoff = harnessHandoff(io, input.pkg, slot, variant.name);
   const bundle = composeBundle(io, tree, m, agent, slot, input.pkg, token, { cwd: workdir, stage });
-  const entry = path.join(tree, variant.source, variant.entry);
+  const entry = harnessEntry(tree, variant);
 
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
@@ -1289,11 +1291,12 @@ export async function startRemote(authority: Authority, io: SessionIO, pkg: stri
   const rec = l.packages[pkg];
   if (!rec) throw new Error(`미설치 패키지: ${pkg}`);
   const m = loadManifest(rec.path);
-  const variant = activeHarness(m, rec.harness);
-  if (!variant) throw new Error(`하네스 미동봉 패키지: ${pkg}`);
+  const choice = chooseHarness(m, rec.harness, l.preferences?.harness);
+  if (!choice.variant) throw new Error(`${choice.reason} (${pkg})`);
+  const variant = choice.variant;
   const workdir = path.join(io.workspaceDir(pkg), m.harness?.workdir ?? "");
   fs.mkdirSync(workdir, { recursive: true });
-  const entry = path.join(rec.path, variant.source, variant.entry);
+  const entry = harnessEntry(rec.path, variant);
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     RELAY_NAME: pkg,

@@ -84,6 +84,10 @@ harness:
     - name: claude-code
       source: harness/claude-code
       entry: run
+      # 계약 선언 — 어댑터 info 의 답과 같아야 하고 적합성 판정이 대조한다.
+      # 이 선언이 있어야 기판이 스폰 없이 후보를 거른다(harness.requires)
+      protocol: 3
+      capabilities: [cancel, vision, resume, ask, tasks, steer, remote, limits]
       binary: claude
       icon: harness/claude-code/icon.png
       llm:
@@ -95,6 +99,10 @@ harness:
     - name: codex
       source: harness/codex
       entry: run
+      # 계약 선언 — 어댑터 info 의 답과 같아야 하고 적합성 판정이 대조한다.
+      # 이 선언이 있어야 기판이 스폰 없이 후보를 거른다(harness.requires)
+      protocol: 2
+      capabilities: [cancel, vision, resume]
       binary: codex
       icon: harness/codex/icon.png
       llm:
@@ -104,6 +112,10 @@ harness:
     - name: pi
       source: harness/pi
       entry: run
+      # 계약 선언 — 어댑터 info 의 답과 같아야 하고 적합성 판정이 대조한다.
+      # 이 선언이 있어야 기판이 스폰 없이 후보를 거른다(harness.requires)
+      protocol: 2
+      capabilities: [cancel, resume]
       binary: pi-pods
       llm:
         provider: vllm
@@ -112,6 +124,10 @@ harness:
     - name: kimi
       source: harness/kimi
       entry: run
+      # 계약 선언 — 어댑터 info 의 답과 같아야 하고 적합성 판정이 대조한다.
+      # 이 선언이 있어야 기판이 스폰 없이 후보를 거른다(harness.requires)
+      protocol: 2
+      capabilities: [cancel, resume]
       icon: harness/kimi/icon.png
       llm:
         provider: moonshot

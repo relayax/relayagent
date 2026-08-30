@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TurnMeta, TurnUsageLive } from "./runtime";
+import type { EnvelopeTurnMeta } from "./envelope-reducer";
 import { stepMeta, isDispatchTool, onTurnPhase, onTurnUsage, loadConversationsOf } from "./runtime";
 import { useRelayCtx } from "./ctx";
 import { resultText, fmtTok, modelLabelOf, type AnyPart } from "./parts";
@@ -393,6 +394,44 @@ export function HeadDot() {
  *  "완료"처럼 조용히 보이던 문제(멈춘 건지 끝난 건지 구분 불가)를 메운다. 완료 칩은 토큰/시간도 겸한다.
  *  status 가 undefined 인 경우(리플레이 초기 메시지)는 터미널로 취급 — running 만 제외.
  *  모양은 Badge(ghost) — 배경 없이 글자색으로만 종류를 가른다. */
+/** 사용 한도 알림 — 하네스가 `limit` 이벤트로 알린 계정 상태(capability `limits`).
+ *
+ *  턴의 결과가 아니라 **계정의 상태**라 성공한 턴에도 뜬다: 경고는 막히기 전에 읽혀야 쓸모가
+ *  있고, 막힘은 다음 발화를 하기 전에 읽혀야 한다. 그리고 요점은 "막혔다"가 아니라
+ *  **언제 풀리나**다 — 그것이 사람이 기다릴지 다른 하네스로 갈지 정하는 근거다.
+ *  status 가 ok 면 아무것도 그리지 않는다(상시 표시는 곧 안 읽히는 표시가 된다). */
+export function TurnLimitNotice() {
+  const meta = useMessage((m) => (m.metadata?.custom as EnvelopeTurnMeta | undefined));
+  const limit = meta?.limit;
+  if (!limit || limit.status === "ok") return null;
+  const blocked = limit.status === "blocked";
+  const when = limit.resetsAt ? fmtResetsIn(limit.resetsAt) : null;
+  const label = blocked
+    ? `사용 한도에 걸렸습니다${when ? ` — ${when} 풀립니다` : ""}`
+    : `사용 한도에 가까워졌습니다${when ? ` — ${when} 초기화` : ""}`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1" role="status">
+      <Badge variant="ghost"
+        className={cn("h-auto min-h-5 gap-1.5 whitespace-normal px-0 py-0 text-[11.5px] font-normal tabular-nums hover:bg-transparent hover:text-current",
+          blocked ? "text-[var(--rc-err)] font-medium" : "text-[var(--rc-warn)]")}>
+        <TriangleAlertIcon />
+        <span>{label}</span>
+      </Badge>
+      {limit.overage ? <span className="text-[11px] text-foreground/60">추가 사용분으로 계속 도는 중</span> : null}
+    </div>
+  );
+}
+
+/** 남은 시간 — 분 단위 아래로는 세지 않는다(초까지 세는 카운트다운은 읽는 부담만 준다) */
+function fmtResetsIn(unixSec: number): string {
+  const mins = Math.round((unixSec * 1000 - Date.now()) / 60_000);
+  if (mins <= 0) return "곧";
+  if (mins < 60) return `${mins}분 뒤`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}시간 ${m}분 뒤` : `${h}시간 뒤`;
+}
+
 export function TurnStatusChip() {
   const statusType = useMessage((m) => m.status?.type);
   const reason = useMessage((m) => (m.status as any)?.reason as string | undefined);

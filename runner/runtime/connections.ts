@@ -7,11 +7,13 @@
 // 자격 값은 어느 응답에도 실리지 않는다 — hasCred 뿐이다. 칸 선언(fields)은 형태라 그대로 나간다.
 import fs from "node:fs";
 import path from "node:path";
-import { OAUTH_CALLBACK_URL, RELAY_HOME, type Ledger } from "../supply/ledger.ts";
+import { OAUTH_CALLBACK_URL, RELAY_HOME, consoleInstall, type Ledger } from "../supply/ledger.ts";
 import { loadManifest, outwardService, type CredentialDecl, type CredentialField, type Manifest } from "../supply/manifest.ts";
 import { credKey } from "../vault.ts";
 import { channelPid } from "./services.ts";
 import { serviceOAuthStatus } from "./oauth.ts";
+import { poolNames, poolVariant } from "./harness-entry.ts";
+import type { HarnessVariant } from "../supply/manifest.ts";
 import { listAccounts } from "./credential.ts";
 
 /** 자격의 있음/없음만 묻는 문 — 권위 이음새(authority.credential)의 형이다 */
@@ -117,6 +119,11 @@ export function attentionOf(services: ServiceStatus[], channels: ChannelStatus[]
 }
 
 export interface ConnectionsOverview {
+  /** AI 제공사 — 패키지 소속이 아니라 최상위다(자격 좌표가 llm/<provider> 로 앱 간 공유되므로) */
+  providers: ProviderStatus[];
+  /** 제공사 로그인을 발화할 좌표. login 동사는 어댑터의 것이고 어댑터는 패키지 env 로 돈다 —
+   *  콘솔 패키지가 풀의 어댑터를 다 후보로 가지므로 어느 제공사든 여기로 발화하면 된다 */
+  consolePkg: string;
   packages: {
     pkg: string;
     label: string;
@@ -154,7 +161,11 @@ export async function connectionsOverview(ledger: Ledger, credential: Credential
       channels,
     });
   }
-  return { packages, attention };
+  const providers = await providerStatuses(ledger, credential);
+  // 연결 안 된 제공사는 "신경 쓸 것" 이다 — 하나도 없으면 어떤 앱도 대화를 못 연다. 다만
+  // 하나라도 연결돼 있으면 나머지는 선택이므로 세지 않는다(배지가 상시 켜지면 무의미해진다)
+  if (providers.length && !providers.some((p) => p.hasCred)) attention += 1;
+  return { providers, consolePkg: consoleInstall(ledger), packages, attention };
 }
 
 // 채널 로그에서 밖으로 나갈 문자열의 비밀을 지운다 — 토큰과 사용자 절대경로. fail-loud 하되
@@ -186,4 +197,81 @@ export function channelLastError(pkg: string, channel: string): string | null {
     if (j.out || j.exit === 0) return null; // 최근 사건이 건강하면 오류 없음
   }
   return null;
+}
+
+// ── AI 제공사(하네스) 축 ────────────────────────────────────────────────────
+// 연결 센터의 세 번째 축. 서비스·채널과 달리 **패키지 소속이 아니다** — 자격 좌표가
+// `llm/<provider>` 라 앱을 가리지 않고 공유된다(스키마 harness.variants[].llm 절).
+// 그래서 이 목록은 packages[] 안이 아니라 최상위에 선다.
+//
+// 목록의 출처는 기판이 아니라 **어댑터들**이다. 기판은 어떤 provider 가 있는지 모르고, 알면
+// 안 된다 — 새 하네스가 들어올 때마다 기판을 고쳐야 하는 형이 되고, 그것이 하네스 중립을
+// 정확히 뒤집는다. 어댑터가 자기를 말하고(info.provider·auth 선언) 기판은 그것을 모을 뿐이다.
+
+export interface ProviderStatus {
+  provider: string;
+  /** 이 provider 를 대는 하네스 이름들 — 한 provider 를 여러 어댑터가 쓸 수 있다 */
+  harnesses: string[];
+  /** 자격형 — oauth = 도구 자신의 로그인(구독) · token = 금고에 키 · null = 선언 없음 */
+  kind: "oauth" | "token" | null;
+  /** 금고에 자격이 앉아 있는가. **값은 절대 싣지 않는다** */
+  hasCred: boolean;
+  /** 자격을 어디서 얻는지 — 화면이 링크와 안내로 보여준다 */
+  help: { url?: string; note?: string } | null;
+  /** provider 아이콘 주소 — 풀 어댑터면 /harness/<name>/asset/<file> */
+  icon: string | null;
+  /** 기판 풀이 대는 어댑터인가(아니면 어느 패키지가 동봉한 것인가) */
+  origin: "pool" | "bundled";
+}
+
+/**
+ * 이 기판에서 연결할 수 있는 AI 제공사 전부.
+ *
+ * 후보는 **풀 ∪ 설치 패키지가 동봉한 것**이다. 풀만으로도 목록이 서므로 앱을 하나도 안 깔아도
+ * 화면이 빈 채로 뜨지 않는다 — 종전에는 provider 를 설치 패키지에서 역산할 수밖에 없어서,
+ * 아무것도 안 깔면 아무것도 안 보이고 깔아도 한 줄만 나왔다(온보딩이 거꾸로 서 있었다).
+ */
+export async function providerStatuses(ledger: Ledger, credential: Credential): Promise<ProviderStatus[]> {
+  const seen = new Map<string, ProviderStatus>();
+  const add = (v: HarnessVariant, origin: "pool" | "bundled", assetBase: string | null): void => {
+    const llm = v.llm;
+    if (!llm?.provider) return; // provider 를 말하지 않는 어댑터 — 연결할 것이 없다
+    const cur = seen.get(llm.provider);
+    if (cur) {
+      if (!cur.harnesses.includes(v.name)) cur.harnesses.push(v.name);
+      // 풀이 이긴다 — 사본의 낡은 선언이 화면의 정본이 되지 않게
+      if (origin === "pool" && cur.origin !== "pool") cur.origin = "pool";
+      return;
+    }
+    seen.set(llm.provider, {
+      provider: llm.provider,
+      harnesses: [v.name],
+      kind: llm.auth?.kind === "oauth" || llm.auth?.kind === "token" ? llm.auth.kind : null,
+      hasCred: false,
+      help: llm.auth?.help ?? null,
+      icon: llm.icon && assetBase ? `${assetBase}/${llm.icon}` : null,
+      origin,
+    });
+  };
+
+  for (const name of poolNames()) {
+    const v = poolVariant(name);
+    if (v) add(v, "pool", `/harness/${encodeURIComponent(name)}/asset`);
+  }
+  for (const [pkg, rec] of Object.entries(ledger.packages)) {
+    let m: Manifest;
+    try {
+      m = loadManifest(rec.path);
+    } catch {
+      continue; // 판정 실패한 설치 — 패키지 축에서 사유가 이미 선다
+    }
+    for (const v of m.harness?.variants ?? []) {
+      if (poolNames().includes(v.name)) continue; // 풀이 정본
+      add(v, "bundled", `/pkg/${encodeURIComponent(pkg)}/asset`);
+    }
+  }
+
+  const out = [...seen.values()].sort((a, b) => a.provider.localeCompare(b.provider));
+  for (const p of out) p.hasCred = (await credential(`llm/${p.provider}`)) != null;
+  return out;
 }

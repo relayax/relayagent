@@ -17,7 +17,7 @@ case "$VERB" in
     LOGIN="$LOGIN" EFFORT="$EFFORT" node --input-type=module -e '
 let a = {};
 try { a = JSON.parse(process.env.LOGIN || "{}"); } catch { /* 형식이 바뀌면 계정 미상으로 강등 */ }
-const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer", "remote"];
+const caps = ["cancel", "vision", "resume", "ask", "tasks", "steer", "remote", "limits"];
 if (process.env.EFFORT === "1") caps.push("effort");
 process.stdout.write(JSON.stringify({
   name: "claude-code",
@@ -685,6 +685,30 @@ const onLine = (line) => {
     sawTaskDone = false;
     steerOpen = false;
     openSpont();
+  }
+
+  // 한도 — claude 가 턴마다 흘리는 rate_limit_event 를 중립 어휘로 옮긴다.
+  // 종전에는 이 프레임을 그냥 버렸다. 버리면 사용자가 한도에 닿는 순간을 알 길이 없고,
+  // "왜 갑자기 안 되지" 가 원문 오류 한 줄로만 도달한다. resetsAt 이 요점이다 — 막혔다는
+  // 사실보다 **언제 풀리나** 가 사람이 다음 행동을 정하는 근거다.
+  if (j.type === "rate_limit_event" && j.rate_limit_info) {
+    const r = j.rate_limit_info;
+    // status 어휘는 도구 것이다(allowed·allowed_warning·rejected …). 기판이 쓰는 것은 셋뿐이라
+    // 여기서 좁힌다 — 도구의 새 값이 늘어도 기판은 "모르면 ok" 로 안전하게 지나간다
+    const status = r.status === "rejected" || r.status === "blocked" ? "blocked"
+      : typeof r.status === "string" && r.status.includes("warning") ? "warn"
+      : "ok";
+    emit({
+      event: "limit",
+      status,
+      scope: typeof r.rateLimitType === "string" ? r.rateLimitType : null,
+      resets_at: typeof r.resetsAt === "number" ? r.resetsAt : null,
+      // 초과분(overage) — 한도를 넘겨도 유료로 계속 가는 길이 열려 있는지. 막혔으면 사유까지
+      ...(r.isUsingOverage === true ? { overage: true } : {}),
+      ...(r.overageStatus === "rejected" && typeof r.overageDisabledReason === "string"
+        ? { note: r.overageDisabledReason } : {}),
+    });
+    return;
   }
 
   // 중간 텍스트는 부분 청크에서 뽑는다. 서브에이전트(parent_tool_use_id 있음)의 말은

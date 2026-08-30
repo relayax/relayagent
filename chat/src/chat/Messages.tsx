@@ -8,7 +8,7 @@ import type { TurnMeta } from "./runtime";
 import { iconUrlForInstance } from "./runtime";
 import { useRelayCtx } from "./ctx";
 import { fmtTime, groupParts, type AnyPart } from "./parts";
-import { MdBlock, TraceTimeline, PlanCard, RunningStatus, TurnStatusChip, openDispatchConversation } from "./Trace";
+import { MdBlock, TraceTimeline, PlanCard, RunningStatus, TurnStatusChip, TurnLimitNotice, openDispatchConversation } from "./Trace";
 import { AskCard, SteerCard, ChoiceCard } from "./Ask";
 import { FileCard, StageFiles, AttOpenChip, ImageLightbox, NullImagePart, type UserImagePart } from "./Files";
 import { Button } from "@/components/ui/button";
@@ -318,6 +318,8 @@ export function AssistantMessage() {
           {stageFiles?.length ? <StageFiles paths={stageFiles} /> : null}
           <RunningStatus />
           <TurnStatusChip />
+          {/* 한도는 턴 결과와 별개다 — 성공한 턴에도 경고는 떠야 다음 발화 전에 읽힌다 */}
+          <TurnLimitNotice />
         </MessageContent>
       </Message>
     </MessagePrimitive.Root>

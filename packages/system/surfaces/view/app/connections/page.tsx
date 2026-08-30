@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ChannelDialog from "@/components/ChannelDialog";
 import ServiceConnect, { serviceStatusOf } from "@/components/ServiceConnect";
+import ProviderList from "@/components/ProviderList";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchConnections, type ChannelStatusView, type ConnectionsOverview, type ServiceStatusView } from "@/lib/api";
@@ -128,7 +129,7 @@ function Connections() {
       <section className="pane">
         <header className="pane-head">
           <h2>연결</h2>
-          <span className="meta">바깥 서비스와 창구의 자격 — 한 자리에서 잇습니다. 키 값은 여기서만 넣고, 앱 화면은 이리로 안내만 합니다</span>
+          <span className="meta">AI 제공사·바깥 서비스·창구의 자격 — 한 자리에서 잇습니다. 키 값은 여기서만 넣고, 앱 화면은 이리로 안내만 합니다</span>
           <div className="right">
             <Button variant="outline" size="sm" onClick={() => void load()}>다시 점검</Button>
           </div>
@@ -137,7 +138,7 @@ function Connections() {
           {!ov && !err ? <div className="pane-body center"><span className="rc-ring" /></div> : null}
           {nothing ? (
             <div className="rc-card pad">
-              <p className="hint">자격이 필요한 바깥 서비스나 창구를 가진 앱이 아직 없습니다. 앱이 바깥 서비스(services[].url · api)나 채널을 선언하면 여기에 섭니다.</p>
+              <p className="hint">바깥 서비스나 창구를 가진 앱이 아직 없습니다. 앱이 바깥 서비스(services[].url · api)나 채널을 선언하면 여기에 섭니다. AI 제공사는 위 목록에서 잇습니다.</p>
             </div>
           ) : null}
 
@@ -148,6 +149,8 @@ function Connections() {
               ))}
             </div>
           ) : null}
+
+          {ov ? <ProviderList providers={ov.providers} loginPkg={ov.consolePkg || null} onChanged={changed} /> : null}
 
           <Section title="바깥 서비스 — 연결 필요" hint="없으면 그 앱의 주 기능이 서지 않는 자격입니다. 사이드바 배지가 이 수를 셉니다." items={rows.need} />
           <Section title="바깥 서비스 — 선택" hint="없어도 앱은 돕니다. 넣으면 그 기능이 켜집니다 — 무엇이 켜지는지는 각 줄의 안내가 말합니다." items={rows.optional} />

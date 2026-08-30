@@ -20,10 +20,10 @@ import { handleMcp, sweepPendingDeliveries } from "./runtime/tools.ts";
 import { handleStore } from "./supply/store.ts";
 import { packDir, deliverToStage, updateMarketIndex } from "./supply/pack.ts";
 import type { McpIO } from "./runtime/mcp.ts";
-import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin } from "./supply/install.ts";
+import { installPkg, buildPkg, removePkg, resolveProvider, registryData, validateDir, harnessVerb, probeHarness, connectHarnessToken, launchHarnessLogin, provisionHarness } from "./supply/install.ts";
 import { openDraft, readDraft, writeDraft, diffDraft, commitDraft, validateDraft, publishDraft, stageRelease, discardDraft, listDrafts, buildDraft, draftPath, historyDraft, restoreDraft } from "./supply/draft.ts";
 import { listReleases, rollbackRelease } from "./supply/release.ts";
-import { saveLedger } from "./supply/ledger.ts";
+import { saveLedger, consoleInstall } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
 import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime/shell.ts";
 import { loadSuites, upsertSuite, removeSuite, packSuite } from "./supply/suites.ts";
@@ -35,6 +35,7 @@ import { startServices, startChannels, startOneChannel, stopChannel, channelPid,
 import { verifyChannel } from "./supply/conform.ts";
 import { Ticker } from "./runtime/triggers.ts";
 import { loginStart, loginRead, loginInput, loginStop } from "./runtime/login.ts";
+import { seedPool, poolNames, chooseHarness, POOL_DIR } from "./runtime/harness-entry.ts";
 import { localAuthority, type Authority } from "./authority.ts";
 import { fixedRedirect, receiveOAuthCallback, serviceAuthHeader, startServiceOAuth, serviceOAuthStatus, verifyService } from "./runtime/oauth.ts";
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, SLOT_RE, PARAM_SLUGS_RE } from "./protocol.ts";
@@ -532,14 +533,25 @@ export function createApi(
         const probes = url.searchParams.get("probe") === "1"
           ? new Map((await probeHarness(l, pkg)).map((x) => [x.name, x]))
           : null;
-        const variants = (m.harness?.variants ?? []).map((v) => ({
+        // 후보는 동봉분 ∪ 기판 풀이다. 선언만 읽으면 목록과 실제로 고를 수 있는 것이 갈린다 —
+        // 전환(POST)은 후보에서 고르므로, 화면에 안 뜨는 것으로 바꿀 수 있는 상태가 된다
+        const choice = chooseHarness(m, rec.harness, l.preferences?.harness);
+        const verified = new Set(m.harness?.verified ?? []);
+        const variants = choice.candidates.map((v) => ({
           name: v.name,
           provider: v.llm?.provider ?? null,
-          icon: v.icon ?? null,
-          llm_icon: v.llm?.icon ?? null,
+          // 풀 어댑터의 자산은 패키지 아래 있지 않다 — 주소가 갈린다
+          icon: v.icon ? (poolNames().includes(v.name) ? `/harness/${encodeURIComponent(v.name)}/asset/${v.icon}` : v.icon) : null,
+          llm_icon: v.llm?.icon ? (poolNames().includes(v.name) ? `/harness/${encodeURIComponent(v.name)}/asset/${v.llm.icon}` : v.llm.icon) : null,
+          verified: verified.has(v.name),
           ...(probes?.get(v.name) ?? {}),
         }));
-        return void json(res, 200, { active: rec.harness ?? variants[0]?.name ?? null, variants });
+        return void json(res, 200, {
+          active: choice.variant?.name ?? null,
+          // 후보가 비면 사유를 싣는다 — 화면이 "왜 고를 게 없나" 를 그 자리에서 말한다
+          reason: choice.reason,
+          variants,
+        });
       }
       if (hs && req.method === "POST") {
         const b = await readBody(req);
@@ -697,6 +709,60 @@ export function createApi(
         }
       }
 
+      // ── 풀 어댑터의 자산(아이콘) ──────────────────────────────────────────
+      // 풀은 패키지가 아니라 /pkg/<n>/asset 을 쓸 수 없다. 어댑터 폴더 안 파일만 낸다
+      const pa = p.match(/^\/harness\/([^/]+)\/asset\/([^/]+)$/);
+      if (pa && req.method === "GET") {
+        const name = decodeURIComponent(pa[1]);
+        const file = decodeURIComponent(pa[2]);
+        // 이름·파일 모두 한 칸짜리 이름이어야 한다 — 상위 이동은 위 정규식이 이미 막지만,
+        // 자산 문은 밖에서 오는 경로라 판정을 문 안에서 한 번 더 한다
+        if (!poolNames().includes(name) || file.includes("..")) return void json(res, 404, { error: "없는 자산" });
+        return void serveWorkspaceFile(path.join(POOL_DIR, name), file, req, res);
+      }
+
+      // ── AI 제공사 연결 — **패키지가 아니라 provider 로 주소를 잡는다** ──────
+      // 자격 좌표가 llm/<provider> 라 실제로 앱과 무관하게 앉는다. 종전 문(/pkg/<n>/harness/connect)
+      // 은 같은 자리에 쓰면서 주소만 패키지였다 — 주소를 값에 맞춘다
+      const pc = p.match(/^\/provider\/([^/]+)\/connect$/);
+      if (pc && req.method === "POST") {
+        const provider = decodeURIComponent(pc[1]);
+        const b = await readBody(req);
+        const token = String(b.token ?? "").trim();
+        if (!token) return void json(res, 400, { error: "빈 토큰" });
+        await authority.setCredential(`llm/${provider}`, token);
+        return void json(res, 200, { ok: true, provider });
+      }
+      if (pc && req.method === "DELETE") {
+        await authority.setCredential(`llm/${decodeURIComponent(pc[1])}`, "");
+        return void json(res, 200, { ok: true });
+      }
+
+      // ── 사용자 전역 선호 — "나는 claude 로 일한다" 를 한 번만 말하는 자리.
+      // 앱별 선택(PkgRecord.harness)이 이것을 이긴다 (harness-entry.ts chooseHarness)
+      if (p === "/preferences" && req.method === "POST") {
+        const b = await readBody(req);
+        const l = getLedger();
+        const want = b.harness == null ? null : String(b.harness);
+        if (want && !poolNames().includes(want)) {
+          // 풀에 없는 이름은 앱마다 있고 없고가 갈린다 — 전역 선호로 받으면 조용히 무시되는
+          // 설정이 된다. 선호는 어디서나 뜻이 같은 이름만 받는다
+          return void json(res, 400, { error: `전역 선호는 기판 풀의 하네스만 받습니다: ${poolNames().join(", ") || "(풀 비어 있음)"}` });
+        }
+        l.preferences = { ...(l.preferences ?? {}), ...(want ? { harness: want } : { harness: undefined }) };
+        if (!want) delete l.preferences.harness;
+        saveLedger(l);
+        return void json(res, 200, { ok: true, preferences: l.preferences });
+      }
+
+      // ── 도구 설치 — "도구 없음" 상태의 처방. ensureBinary 는 이미 있고 문만 없었다 ──
+      const hi = p.match(/^\/pkg\/([^/]+)\/harness\/install$/);
+      if (hi && req.method === "POST") {
+        const pkg = decodeURIComponent(hi[1]);
+        const b = await readBody(req);
+        return void json(res, 200, await provisionHarness(getLedger(), pkg, b.variant ? String(b.variant) : undefined));
+      }
+
       // 대화형 로그인 발화. 인증 자체는 터미널(TTY)이 소유하고 기판은 그 창을 열어 줄 뿐이다
       // 로그인 두 갈래: headless(pty 중계 — 브라우저 안에서 끝난다)와 terminal(창을 여는 폴백)
       const hl = p.match(/^\/pkg\/([^/]+)\/harness\/login$/);
@@ -704,9 +770,9 @@ export function createApi(
         const b = await readBody(req);
         const pkg = decodeURIComponent(hl[1]);
         if (b.mode === "terminal") {
-          return void json(res, 200, { mode: "terminal", ...(await launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch })) });
+          return void json(res, 200, { mode: "terminal", ...(await launchHarnessLogin(getLedger(), pkg, { switch: !!b.switch, variant: b.variant ? String(b.variant) : undefined })) });
         }
-        return void json(res, 200, { mode: "headless", ...loginStart(getLedger(), pkg, authority, { switch: !!b.switch }) });
+        return void json(res, 200, { mode: "headless", ...(await loginStart(getLedger(), pkg, authority, { switch: !!b.switch, variant: b.variant ? String(b.variant) : undefined })) });
       }
       const hlr = p.match(/^\/pkg\/([^/]+)\/harness\/login\/(read|input|stop)$/);
       if (hlr) {
@@ -949,6 +1015,16 @@ export function startDaemon(): void {
   markDaemonStarting();
   // 상주 하네스는 데몬만 허용한다 — CLI 1회 실행이 상주를 남기면 고아가 된다
   enableResidents();
+  // 어댑터 풀 펴기. 콘솔 패키지가 동봉한 넷을 홈 하위로 펴서 **모든 앱**이 후보로 본다.
+  // 출처 지문이 같으면 아무것도 하지 않으므로 매 기동 비용은 stat 몇 번이다.
+  // 앱이 새 판으로 갈리면 지문이 달라져 다음 기동에 다시 편다 — 이것이 어댑터 갱신 경로다
+  try {
+    const boot = loadLedger();
+    const seed = seedPool(boot, consoleInstall(boot));
+    if (seed) console.log(`하네스 풀: ${seed.seeded.join(", ")} (출처 ${seed.from})`);
+  } catch (e) {
+    console.error(`하네스 풀을 펴지 못했습니다 — 동봉 어댑터로만 돕니다: ${e instanceof Error ? e.message : e}`);
+  }
   let ticker: Ticker | null = null;
   // 데몬의 권위는 항상 신선한 장부를 본다 — CLI 1회분(위 authority)과 달리 요청마다 재적재
   const daemonAuthority = localAuthority(() => loadLedger());
