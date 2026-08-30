@@ -345,7 +345,7 @@ export interface ServiceStatusView {
   oauth: OAuthRunView | null;
 }
 
-export function serviceStatus(pkg: string): Promise<{ services: ServiceStatusView[]; canDisconnect: boolean }> {
+export function serviceStatus(pkg: string): Promise<{ services: ServiceStatusView[]; canDisconnect: boolean; tls: TlsDoorView }> {
   return getJson(`/pkg/${encodeURIComponent(pkg)}/services`);
 }
 
@@ -388,10 +388,37 @@ export interface ConnectionsOverview {
   }[];
   /** 신경 쓸 수 — 필수인데 빈 서비스 자격 + 빈 채널 자격 */
   attention: number;
+  /** TLS 문 — HTTPS 콜백을 요구하는 서비스의 callback 이 null 인 이유가 여기 있다.
+   *  화면에 이 문의 **스위치는 없다**: 문은 조건 없이 열리고, 여기 실리는 것은 상태와 못 연 사유다 */
+  tls: TlsDoorView;
+}
+
+export interface TlsDoorView {
+  open: boolean;
+  port: number | null;
+  error: string | null;
+  /** 기판이 인증서 신뢰를 대신 넣어 줄 수 있는가(macOS 만) — false 면 버튼을 **안 그린다** */
+  canTrust: boolean;
 }
 
 export function fetchConnections(): Promise<ConnectionsOverview> {
   return getJson("/connections");
+}
+
+/** 못 연 문을 다시 연다 — 화면의 [다시 시도]. 스위치가 아니라 처방이다 */
+export function openTlsDoor(): Promise<TlsDoorView & { callback: string | null }> {
+  return post("/tls/open", {});
+}
+
+/** 이 기기에서 인증서를 신뢰한다 — OS 인증 창이 뜬다. 안 눌러도 인가는 성립한다(경고에서 "계속") */
+export function trustTlsCert(): Promise<{ ok: boolean }> {
+  return post("/tls/trust", {});
+}
+
+/** 문을 다른 포트로 옮긴다 — 기록된 포트가 점유됐을 때의 유일한 탈출구.
+ *  **등록해 둔 콜백 주소를 전부 고쳐야 하는 행위**라 기판이 스스로 하지 않는다 */
+export function moveTlsDoor(port: number): Promise<TlsDoorView & { callback: string | null }> {
+  return post("/tls/move", { port });
 }
 
 /** auth.verify 선언대로 실왕복 한 번 */

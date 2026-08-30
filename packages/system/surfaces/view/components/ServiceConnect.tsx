@@ -21,7 +21,11 @@ import {
   disconnectService,
   startServiceOAuth,
   serviceOAuthStatus,
+  openTlsDoor,
+  moveTlsDoor,
+  trustTlsCert,
   type ServiceStatusView,
+  type TlsDoorView,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,12 +51,16 @@ export function serviceStatusOf(s: ServiceStatusView, note?: string): { dot: str
 export default function ServiceConnect({
   pkg,
   s,
+  tls,
   canDisconnect,
   onChanged,
   onNote,
 }: {
   pkg: string;
   s: ServiceStatusView;
+  /** 기판의 TLS 문 — HTTPS 콜백을 요구하는 제공자에게 줄 주소가 여기서 난다.
+   *  화면에 스위치는 없다: 문은 조건 없이 열리고, 이 값은 상태와 못 연 사유다 */
+  tls: TlsDoorView;
   canDisconnect: boolean;
   /** 자격이 바뀌었다 — 부르는 쪽이 상태를 다시 읽는다 */
   onChanged: () => void;
@@ -163,6 +171,7 @@ export default function ServiceConnect({
         <CredentialForm
           pkg={pkg}
           s={s}
+          tls={tls}
           multi={multi}
           busy={busy}
           onCancel={multi ? () => setAdding(false) : undefined}
@@ -206,6 +215,7 @@ export default function ServiceConnect({
 function CredentialForm({
   pkg,
   s,
+  tls,
   multi,
   busy,
   onCancel,
@@ -218,6 +228,7 @@ function CredentialForm({
 }: {
   pkg: string;
   s: ServiceStatusView;
+  tls: TlsDoorView;
   multi: boolean;
   busy: boolean;
   onCancel?: () => void;
@@ -236,8 +247,10 @@ function CredentialForm({
   const [account, setAccount] = useState("");
   const [copied, setCopied] = useState(false);
   const fieldId = (k: string) => `svc-${pkg}-${s.name}-${k}`;
-  // 콜백에 HTTPS 를 요구하는 제공자인데 기판의 문이 http 면 인가는 시작해도 제공자가 되돌린다 — 먼저 말한다
-  const needsTls = s.https && !!s.callback && !s.callback.startsWith("https://");
+  // HTTPS 를 요구하는 제공자인데 기판이 줄 주소가 없다 — 문이 안 섰다는 뜻이다(기판은 그 형에
+  // http 주소를 대신 주지 않는다: 인가를 시작해 봐야 제공자가 "주소 불일치"로 되돌리고, 그 답에는
+  // 사유가 없어 원인이 안 읽힌다). 먼저 말하고, 아래에서 **처방**까지 준다
+  const needsTls = s.https && !s.callback;
   const accountOk = !multi || /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(account.trim());
 
   /** 연결 버튼이 살아 있는 조건 — 선언된 필수 칸(required, 그리고 header 는 언제나)이 다 찼는가 */
@@ -384,12 +397,10 @@ function CredentialForm({
                   {copied ? "복사됨" : "복사"}
                 </Button>
               </div>
-              {needsTls ? (
-                <p className="text-xs text-destructive">
-                  이 제공자는 HTTPS 콜백을 요구합니다 — 기판의 TLS 문을 켜세요(RELAY_TLS_PORT 를 정하고 데몬을 다시 띄우면 이 주소가 https 로 바뀝니다).
-                </p>
-              ) : null}
+              {s.https ? <SelfSignedNote canTrust={tls.canTrust} /> : null}
             </div>
+          ) : needsTls ? (
+            <TlsPrescription tls={tls} onOpened={onChanged} />
           ) : null}
           {!s.clientId ? (
             <div className="flex flex-col gap-1.5">
@@ -428,6 +439,99 @@ function CredentialForm({
         ) : null}
         {onCancel ? <Button variant="ghost" size="sm" disabled={busy} onClick={onCancel}>취소</Button> : null}
       </div>
+    </div>
+  );
+}
+
+/** 문이 못 섰을 때의 처방 — 여기 있는 것은 **스위치가 아니다**. 문은 기동 때 조건 없이 열리고
+ *  (runner/tls.ts 머리 주석: 선언으로 여닫으면 설치·제거가 남의 등록 주소를 갈아친다), 이 자리는
+ *  "왜 못 섰는지"와 그것을 되돌릴 두 행위만 든다.
+ *
+ *  포트 이동을 기판이 스스로 하지 않는 이유가 여기 그대로 적힌다: 포트는 콜백 주소의 일부이고
+ *  그 주소는 제공자 앱에 등록된 상수다. 기판이 조용히 옮기면 등록해 둔 인가가 전부 깨진다 —
+ *  그래서 옮기는 것은 사람이 누르는 행위이고, 누를 때 그 대가를 함께 읽는다. */
+function TlsPrescription({ tls, onOpened }: { tls: TlsDoorView; onOpened: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [port, setPort] = useState("");
+
+  const run = (fn: () => Promise<{ open: boolean; error: string | null }>) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    void fn()
+      .then((d) => { if (!d.open) setErr(d.error ?? "사유 미상"); onOpened(); })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-destructive">
+        이 제공자는 HTTPS 콜백을 요구하는데 기판의 보안 문이 서지 않았습니다 — {err ?? tls.error ?? "사유 미상"}
+      </p>
+      <div className="bar">
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => run(openTlsDoor)}>
+          {busy ? "여는 중…" : "다시 시도"}
+        </Button>
+        <Input
+          value={port}
+          onChange={(e) => setPort(e.target.value)}
+          placeholder="다른 포트"
+          inputMode="numeric"
+          className="font-mono text-xs"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-none"
+          disabled={busy || !/^\d{1,5}$/.test(port.trim())}
+          title="등록해 둔 콜백 주소를 전부 이 포트로 고쳐야 합니다"
+          onClick={() => run(() => moveTlsDoor(Number(port.trim())))}
+        >
+          이 포트로 옮기기
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        포트를 옮기면 콜백 주소가 바뀝니다 — 이미 제공자 앱에 등록해 둔 주소가 있으면 그것도 함께 고쳐야 합니다.
+      </p>
+    </div>
+  );
+}
+
+/** 자가서명 경고에 대한 미리 알림 — 사용자가 승인 창의 경고에서 "내가 뭘 잘못했나" 하고 멈추는
+ *  것을 없애는 것이 이 문장의 일이다. 신뢰 등록은 **선택**이라 버튼은 옆에 서고, 이 기판이 못
+ *  하는 판(macOS 아님)에서는 아예 안 그린다 — 못 하는 것을 눌리게 두지 않는다. */
+function SelfSignedNote({ canTrust }: { canTrust: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-muted-foreground">
+        기판이 스스로 구운 인증서라 승인 창에서 브라우저가 한 번 경고합니다 — <b>계속</b>을 누르면 연결은 정상입니다
+        (제공자는 주소만 대조하지 인증서를 검사하지 않습니다).
+      </p>
+      {canTrust ? (
+        <div className="bar">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            title="이 기기의 키체인에 넣습니다 — OS 인증 창이 뜹니다. 안 해도 연결은 됩니다"
+            onClick={() => {
+              setBusy(true);
+              setNote(null);
+              void trustTlsCert()
+                .then(() => setNote("이 기기에서 신뢰됨 — 다음부터는 경고가 없습니다"))
+                .catch((e) => setNote(e instanceof Error ? e.message : String(e)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "등록 중…" : "이 기기에서 신뢰"}
+          </Button>
+          {note ? <span className="text-xs text-muted-foreground">{note}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

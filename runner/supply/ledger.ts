@@ -140,16 +140,12 @@ export function discoverApiPort(env: NodeJS.ProcessEnv = process.env): number {
 }
 export const API_PORT = discoverApiPort();
 export const API_URL = `http://127.0.0.1:${API_PORT}`;
-// TLS 문 — 선택. 켜면 데몬이 같은 라우트를 https://localhost:<포트> 에서도 듣는다(자가서명, runner/tls.ts).
-// 존재 이유는 하나다: 인가 콜백(redirect_uri)에 HTTPS 를 요구하는 제공자(메타 계열)가 있어서다.
-export const TLS_PORT: number | null = process.env.RELAY_TLS_PORT ? Number(process.env.RELAY_TLS_PORT) : null;
-if (TLS_PORT != null && (!Number.isInteger(TLS_PORT) || TLS_PORT < 1 || TLS_PORT > 65535 || TLS_PORT === API_PORT)) {
-  throw new Error(`RELAY_TLS_PORT: 포트가 아니거나 RELAY_PORT 와 같다: ${process.env.RELAY_TLS_PORT}`);
-}
-/** 인가 콜백의 **고정** 주소 — 등록형 OAuth 앱(auth.client: registered)의 redirect_uri 로 제공자에 적는 값.
- *  임시 포트(RFC 8252 loopback)는 등록이 안 되므로 데몬의 문 자체가 콜백을 받는다(GET /oauth/cb).
- *  TLS 문이 켜져 있으면 https 쪽이 정본이다 — 한 기판에 콜백 주소는 하나다 */
-export const OAUTH_CALLBACK_URL = TLS_PORT != null ? `https://localhost:${TLS_PORT}/oauth/cb` : `${API_URL}/oauth/cb`;
+/** 인가 콜백의 **고정** 경로 — 데몬의 두 문(http·TLS)이 같은 자리에서 받는다.
+ *  임시 포트(RFC 8252 loopback)는 등록형 앱의 redirect_uri 로 못 쓰므로(미리 적혀 있어야 한다)
+ *  데몬의 문 자체가 콜백을 받는다(GET /oauth/cb). 주소 조립은 runner/tls.ts `callbackUrlFor` 한 벌 —
+ *  **서비스마다 다르다**: HTTPS 를 요구하는 제공자만 TLS 문의 주소를 받는다. 한 기판에 주소를 하나만
+ *  두던 종전 판은 문이 열리고 닫히는 것이 **관계없는 제공자의 등록 주소까지** 갈아치웠다(2026-08-30). */
+export const OAUTH_CALLBACK_PATH = "/oauth/cb";
 // 폴더 결재의 기본 홈. workspace 미기록 패키지의 cwd 와 stage 가 이 아래 앉는다.
 // 인스턴스별 분리 대상이 아니다: workspace 는 패키지별 결재로 이미 재지정 가능
 const WORKSPACE_HOME = path.join(os.homedir(), "Relay");
@@ -252,6 +248,10 @@ export interface Ledger {
   secret: string;
   packages: Record<string, PkgRecord>;
   grants: Grant[];
+  /** TLS 문이 잡은 포트(runner/tls.ts). **한 번 고르면 안 바꾼다** — 이 포트가 콜백 주소의 일부이고
+   *  그 주소는 제공자 앱에 등록된 상수라, 판마다 달라지면 등록해 둔 인가가 전부 깨진다.
+   *  장부에 사는 이유도 그것이다: 앱 번들 안의 .env 는 앱을 갈면 날아간다 */
+  tls?: { port: number };
   /** 사용자 선호 — 앱 소속이 아닌 것들. 하네스는 앱마다 고를 수 있지만 대개 사람은 "나는
    *  claude 로 일한다" 를 한 번만 말하고 싶어 한다. 앱별 선택(PkgRecord.harness)이 이것을 이긴다 */
   preferences?: { harness?: string };

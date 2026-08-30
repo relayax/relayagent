@@ -7,7 +7,8 @@
 // 자격 값은 어느 응답에도 실리지 않는다 — hasCred 뿐이다. 칸 선언(fields)은 형태라 그대로 나간다.
 import fs from "node:fs";
 import path from "node:path";
-import { OAUTH_CALLBACK_URL, RELAY_HOME, consoleInstall, type Ledger } from "../supply/ledger.ts";
+import { RELAY_HOME, consoleInstall, type Ledger } from "../supply/ledger.ts";
+import { callbackUrlFor, tlsDoor, type TlsDoor } from "../tls.ts";
 import { loadManifest, outwardService, type CredentialDecl, type CredentialField, type Manifest } from "../supply/manifest.ts";
 import { credKey } from "../vault.ts";
 import { channelPid } from "./services.ts";
@@ -81,7 +82,9 @@ export async function serviceStatuses(pkg: string, m: Manifest, credential: Cred
       client: a?.client ?? null,
       clientId: a?.oauth_client?.client_id ?? null,
       https: a?.oauth_client?.https === true,
-      callback: a?.kind === "oauth" ? OAUTH_CALLBACK_URL : null,
+      // 주소는 **이 서비스의 선언**이 정한다 — HTTPS 를 요구하는 제공자만 TLS 문의 주소를 받는다.
+      // 기판에 주소를 하나만 두던 종전 판은 문이 열리고 닫히는 것이 남의 등록 주소까지 갈아쳤다
+      callback: a?.kind === "oauth" ? callbackUrlFor(a.oauth_client?.https === true) : null,
       inject: a?.inject && "query" in a.inject ? "query" : a?.inject && "form" in a.inject ? "form" : "header",
       accounts,
       verifiable: a?.verify?.url != null,
@@ -134,6 +137,8 @@ export interface ConnectionsOverview {
     channels: ChannelStatus[];
   }[];
   attention: number;
+  /** TLS 문의 상태 — HTTPS 콜백을 요구하는 서비스의 `callback` 이 null 인 이유가 여기 있다 */
+  tls: TlsDoor;
 }
 
 /** 전 패키지의 자격 전경 — 사이드바 배지와 연결 화면이 같은 답을 읽는다 */
@@ -161,11 +166,13 @@ export async function connectionsOverview(ledger: Ledger, credential: Credential
       channels,
     });
   }
+  // 문의 상태는 기판 단위 하나 — 화면이 "주소를 못 주는 이유"를 그 자리에서 말할 수 있어야 한다.
+  // 종전에는 이 사유가 데몬 콘솔에만 남아 읽는 사람이 없었다
   const providers = await providerStatuses(ledger, credential);
   // 연결 안 된 제공사는 "신경 쓸 것" 이다 — 하나도 없으면 어떤 앱도 대화를 못 연다. 다만
   // 하나라도 연결돼 있으면 나머지는 선택이므로 세지 않는다(배지가 상시 켜지면 무의미해진다)
   if (providers.length && !providers.some((p) => p.hasCred)) attention += 1;
-  return { providers, consolePkg: consoleInstall(ledger), packages, attention };
+  return { providers, consolePkg: consoleInstall(ledger), packages, attention, tls: tlsDoor() };
 }
 
 // 채널 로그에서 밖으로 나갈 문자열의 비밀을 지운다 — 토큰과 사용자 절대경로. fail-loud 하되

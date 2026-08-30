@@ -7,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIME, json, esc, readBody, streamFile } from "./http.ts";
 import { spawn } from "node:child_process";
-import { API_PORT, API_URL, OAUTH_CALLBACK_URL, RELAY_HOME, STORE_INDEX_URL, TLS_PORT, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, runningDaemonRunner, takeoverReason, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger, type RunnerId } from "./supply/ledger.ts";
-import { ensureLocalCert } from "./tls.ts";
+import { API_PORT, API_URL, RELAY_HOME, STORE_INDEX_URL, loadLedger, stageDir, sessionDir, workspacePath, artifactsDir, runningDaemonPid, runningDaemonRunner, takeoverReason, markDaemonStarting, markDaemonListening, clearDaemonMark, homeId, type Grant, type Ledger, type RunnerId } from "./supply/ledger.ts";
+import { callbackUrlFor, closeTlsDoor, moveTlsDoor, openTlsDoor, tlsDoor, trustLocalCert } from "./tls.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
@@ -117,9 +117,15 @@ const SELF_ORIGINS = new Set([
   `http://127.0.0.1:${API_PORT}`,
   `http://localhost:${API_PORT}`,
   `http://[::1]:${API_PORT}`,
-  // TLS 문(RELAY_TLS_PORT)은 같은 라우트의 두 번째 문이라 같은 오리진 집합이다
-  ...(TLS_PORT != null ? [`https://127.0.0.1:${TLS_PORT}`, `https://localhost:${TLS_PORT}`, `https://[::1]:${TLS_PORT}`] : []),
 ]);
+
+/** TLS 문이 선 뒤에 그 오리진을 자기 집합에 넣는다 — 같은 라우트의 두 번째 문이라 같은 자격이다.
+ *  상수로 미리 계산하지 않는 이유: 문은 기동 뒤에 열리고 포트도 그때 정해진다(runner/tls.ts).
+ *  빠뜨리면 조용히 깨진다 — 문은 열리는데 그 오리진에서 온 상태 변경 요청이 CSRF 로 튕긴다 */
+function adoptTlsOrigins(port: number | null): void {
+  if (port == null) return;
+  for (const host of ["127.0.0.1", "localhost", "[::1]"]) SELF_ORIGINS.add(`https://${host}:${port}`);
+}
 
 /** 문의 신뢰 좌표 — 임베더가 **넓히는 선언**만 할 수 있다. 끄는 스위치는 없다.
  *
@@ -380,6 +386,36 @@ export function createApi(
       if (p === "/connections" && req.method === "GET") return void json(res, 200, await connectionsOverview(getLedger(), (k) => authority.credential(k)));
       // 연결 딥링크 — 패키지 화면이 "연결하러 가기" 로 보내는 안정 주소. 콘솔의 설치 이름은 장부가 답하므로
       // (consoleInstall) 패키지는 콘솔 페이지 주소를 조립하지 않는다. ?p=<패키지>&s=<서비스|채널> 은 그대로 넘긴다
+      // TLS 문 두 동사 — 화면에 스위치는 없다(문은 조건 없이 열린다). 여기 있는 것은 **처방**이다:
+      // 못 열었을 때의 재시도와, 기록된 포트가 점유됐을 때의 이동. 이동은 등록해 둔 콜백 주소를
+      // 전부 고쳐야 하는 행위라 기판이 스스로 하지 않고 사람이 부르는 이 문만 지난다
+      if (p === "/tls" && req.method === "GET") return void json(res, 200, tlsDoor());
+      if (p === "/tls/open" && req.method === "POST") {
+        const d = await openTlsDoor(handle);
+        adoptTlsOrigins(d.port);
+        return void json(res, d.open ? 200 : 409, { ...d, callback: callbackUrlFor(true) });
+      }
+      // 인증서 신뢰 — 안 눌러도 인가는 성립한다(브라우저 경고에서 "계속"). 이 문은 그 경고를
+      // 없애려는 사람의 한 번의 행위이고, OS 인증 창이 곧 그 승인이다. 기판이 스스로 부르지 않는다
+      if (p === "/tls/trust" && req.method === "POST") {
+        try {
+          await trustLocalCert();
+          return void json(res, 200, { ok: true });
+        } catch (e) {
+          return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      if (p === "/tls/move" && req.method === "POST") {
+        const b = await readBody(req);
+        try {
+          const d = await moveTlsDoor(Number(b.port), handle);
+          adoptTlsOrigins(d.port);
+          return void json(res, d.open ? 200 : 409, { ...d, callback: callbackUrlFor(true) });
+        } catch (e) {
+          return void json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+
       if (p === "/connect" && req.method === "GET") {
         res.writeHead(302, { location: consoleHref(getLedger(), "connections/") + url.search, "cache-control": "no-store" });
         return void res.end();
@@ -630,6 +666,9 @@ export function createApi(
         return void json(res, 200, {
           services: await serviceStatuses(pkg, loadManifest(rec.path), (k) => authority.credential(k)),
           canDisconnect: typeof authority.deleteCredential === "function",
+          // 두 연결 표면(이 다이얼로그와 콘솔 /connections)이 같은 문 상태를 본다 — 한쪽만
+          // 알면 같은 서비스가 두 화면에서 다른 처방을 낸다
+          tls: tlsDoor(),
         });
       }
 
@@ -694,6 +733,10 @@ export function createApi(
         // oauth — 흐름을 열고 즉시 돌아온다. 브라우저는 데몬이 연다(사람과 같은 기기). 콜백은 데몬의 고정 문(/oauth/cb)으로
         // 온다 — 등록된 앱의 redirect_uri 가 그 주소다. 부속 칸(auth.fields)은 흐름 전에 조립해 번들에 앉힌다
         if (auth?.kind !== "oauth") return void json(res, 400, { error: `oauth 자격형이 아닙니다(${auth?.kind ?? "none"}) — token 은 connect 로` });
+        // 콜백 주소는 **이 서비스의 선언**이 정한다(oauth_client.https). 요구하는데 문이 없으면 흐름을
+        // 열지 않는다 — 제공자가 돌려주는 "redirect_uri 불일치"에는 사유가 없어 원인이 안 읽힌다
+        const callback = callbackUrlFor(auth.oauth_client?.https === true);
+        if (!callback) return void json(res, 409, { error: `이 제공자는 HTTPS 콜백을 요구하는데 기판의 TLS 문이 없습니다 — ${tlsDoor().error ?? "사유 미상"}` });
         let fields: Record<string, string | string[]> | undefined;
         if (auth.fields?.length) {
           const values: Record<string, string> = {};
@@ -708,7 +751,7 @@ export function createApi(
             clientSecret: b.client_secret ? String(b.client_secret) : undefined,
             account,
             fields,
-            redirect: fixedRedirect(OAUTH_CALLBACK_URL),
+            redirect: fixedRedirect(callback),
           });
           return void json(res, 200, { ...run, running: !run.done });
         } catch (e) {
@@ -934,21 +977,18 @@ export function createApi(
   // 리스너가 하나 더 서고, 그 문에는 인증이 없다
   if (opts.door?.listen !== false) {
     server.listen(opts.door?.listen?.port ?? API_PORT, opts.door?.listen?.host ?? "127.0.0.1");
-    // TLS 문 — 인가 콜백에 HTTPS 를 요구하는 제공자를 위한, 같은 라우트의 두 번째 문. loopback 이름 둘에만 선다
-    // (인증서의 SAN 이 localhost·127.0.0.1·::1). 인증서를 못 구우면 그 문만 안 서고 사유가 로그에 남는다
-    if (TLS_PORT != null) {
-      const tlsPort: number = TLS_PORT;
-      void ensureLocalCert()
-        .then((cert) => {
-          for (const host of ["127.0.0.1", "::1"]) {
-            const tls = https.createServer(cert, handle);
-            tls.on("error", (e) => console.error(`TLS 문(${host}:${tlsPort}) 실패 - ${e instanceof Error ? e.message : e}`));
-            tls.listen(tlsPort, host);
-          }
-          console.log(`TLS 문: ${OAUTH_CALLBACK_URL} (인가 콜백)`);
-        })
-        .catch((e) => console.error(`TLS 문을 열지 못했습니다 - ${e instanceof Error ? e.message : e}`));
-    }
+    // TLS 문 — 인가 콜백에 HTTPS 를 요구하는 제공자를 위한, 같은 라우트의 두 번째 문. **조건 없이**
+    // 연다(runner/tls.ts 머리 주석의 왜 — 선언으로 여닫으면 설치·제거가 남의 등록 주소를 갈아친다).
+    // 못 열어도 데몬은 그대로 선다: 사유는 /connections 의 tls 축으로 나가 화면이 그 자리에서 말한다
+    void openTlsDoor(handle).then((d) => {
+      adoptTlsOrigins(d.port);
+      console.log(d.open ? `TLS 문: ${callbackUrlFor(true)} (인가 콜백)` : `TLS 문 없음 - ${d.error}`);
+    });
+    // 두 번째 문의 수명을 첫 번째에 묶는다. 부르는 쪽이 쥐는 것은 이 server 하나뿐이라
+    // (테스트도, 임베더도) 닫을 손이 여기밖에 없다 — 안 묶으면 http 문을 닫아도 https 문이
+    // 남아 프로세스가 안 죽는다. 실측: 기동이 몇 ms 느려지는 것만으로 문이 여는 데 성공해,
+    // 그때부터 그 테스트 파일이 통째로 매달렸다(문이 열리기 전에 끝나면 안 보이던 잠복 결함)
+    server.once("close", () => closeTlsDoor());
   }
   return server;
 }
@@ -1104,6 +1144,7 @@ export function startDaemon(): void {
   // 답이 두 번 나가는 자리다).
   const shutdown = (): void => {
     ticker?.stop();
+    closeTlsDoor();
     retireAllResidents();
     retireAllScriptWorkers();
     stopAllRemotes();

@@ -157,7 +157,7 @@ export async function runOAuthFlow(serviceUrl: string, auth: AuthDecl, opts: OAu
   try {
     // HTTPS 요구는 흐름을 열기 전에 판정한다 — 제공자의 "redirect_uri 불일치" 는 사유가 없는 답이다
     if (oc.https && !redirect.uri.startsWith("https://")) {
-      throw new Error(`이 제공자는 콜백 주소에 HTTPS 를 요구합니다(oauth_client.https) — 기판의 TLS 문을 켜세요(RELAY_TLS_PORT). 지금 콜백: ${redirect.uri}`);
+      throw new Error(`이 제공자는 콜백 주소에 HTTPS 를 요구합니다(oauth_client.https) — 기판의 보안 문이 서 있어야 합니다(연결 화면이 못 선 사유와 [다시 시도]를 보여 줍니다). 지금 콜백: ${redirect.uri}`);
     }
     // client_id — registered 는 선언 또는 사람이 공급(조직 앱 등록), 그 외는 DCR
     let clientId: string;

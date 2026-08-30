@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ServiceConnect, { serviceStatusOf } from "@/components/ServiceConnect";
-import { serviceStatus, type ServiceStatusView } from "@/lib/api";
+import { serviceStatus, type ServiceStatusView, type TlsDoorView } from "@/lib/api";
 import type { Pkg } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,6 +23,8 @@ export default function ServiceDialog({
 }) {
   const [services, setServices] = useState<ServiceStatusView[]>([]);
   const [canDisconnect, setCanDisconnect] = useState(false);
+  // 문 상태는 이 다이얼로그도 자기 조회로 받는다 — 콘솔 연결 화면과 같은 답이어야 한다
+  const [tls, setTls] = useState<TlsDoorView>({ open: false, port: null, error: null, canTrust: false });
   const [open, setOpen] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -33,6 +35,7 @@ export default function ServiceDialog({
       const r = await serviceStatus(pkg.name);
       setServices(r.services);
       setCanDisconnect(r.canDisconnect);
+      setTls(r.tls);
       setOpen((cur) => cur ?? (r.services.length === 1 ? r.services[0].name : null));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -81,6 +84,7 @@ export default function ServiceDialog({
                       <ServiceConnect
                         pkg={pkg.name}
                         s={s}
+                        tls={tls}
                         canDisconnect={canDisconnect}
                         onChanged={changed}
                         onNote={(msg) => setNote((n) => ({ ...n, [s.name]: msg }))}

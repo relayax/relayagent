@@ -127,7 +127,7 @@ test("HTTPS 를 요구하는 제공자는 흐름 전에 막힌다 — 제공자�
   const https = { ...AUTH, oauth_client: { ...AUTH.oauth_client, https: true } } as AuthDecl;
   await assert.rejects(
     () => runOAuthFlow(AS, https, { redirect: fixedRedirect(CALLBACK), open: () => assert.fail("브라우저를 열면 안 된다") }),
-    /HTTPS 를 요구합니다.*RELAY_TLS_PORT/s,
+    /HTTPS 를 요구합니다.*보안 문이 서 있어야/s,
   );
 });
 

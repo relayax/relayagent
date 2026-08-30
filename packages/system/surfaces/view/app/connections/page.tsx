@@ -111,6 +111,7 @@ function Connections() {
                   <ServiceConnect
                     pkg={pkg.pkg}
                     s={s}
+                    tls={ov!.tls}
                     canDisconnect
                     onChanged={changed}
                     onNote={(msg) => setNote((n) => ({ ...n, [key]: msg }))}
