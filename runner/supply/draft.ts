@@ -1,14 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from "yaml";
 import { packagesPath, saveLedger, consoleInstall, type Ledger } from "./ledger.ts";
 import { releasesPath } from "./release.ts";
 import { loadManifest, judge, locateIssues, ManifestError, type Manifest, type Verdict } from "./manifest.ts";
 import { conformHarness } from "./conform.ts";
-import { runEntry } from "../spawn.ts";
+import { runCommand, runEntry } from "../spawn.ts";
 import { buildSurfaces, judgeRequires, validateDir } from "./install.ts";
 import { draftViewBase, type BuildResult } from "../runtime/view.ts";
 
@@ -50,14 +49,44 @@ function sealed(root: string, rel: string): string {
   return target;
 }
 
-function git(dir: string, ...args: string[]): { ok: boolean; out: string; raw: string } {
-  const r = spawnSync("git", ["-c", "user.name=relay", "-c", "user.email=relay@local", ...args], {
+/** 걸린 git 하나가 저장소 잠금을 영영 쥐지 못하게 하는 상한. 종전(spawnSync)에는 시한이 없었고
+ *  그 대기는 데몬 전체의 정지였다 — 비동기가 된 지금은 이 저장소만 기다린다 */
+const GIT_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * git 한 번 — **비동기다**. 이 파일의 git 은 초안 목록(listDrafts)을 통해 셸 사이드바가 15초마다
+ * 밟는 자리라, 동기 스폰이면 초안 수만큼 기판 전체(콘솔·위젯·세션·트리거)가 그때마다 멈춘다:
+ * 실측 2026-08-29 에 초안 12개로 한 번에 **1.17초** 였고(그동안 10ms 타이머가 한 번도 못 깼다),
+ * 그 정지가 데스크톱 셸의 건강검진에 걸려 기판이 죽은 것으로 판정됐다. spawn.ts runCommand 로 옮기는 2026-08-28 의 동기 스폰 일소에서
+ * 이 자리만 빠져 있었다(같은 파일의 그 주석이 이유를 이미 말하고 있다).
+ */
+async function git(dir: string, ...args: string[]): Promise<{ ok: boolean; out: string; raw: string }> {
+  const r = await runCommand("git", ["-c", "user.name=relay", "-c", "user.email=relay@local", ...args], {
     cwd: dir,
-    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
   });
   if (r.error) throw new Error(`git 실행 불가 — 수정 레이어는 git 이 필요합니다 (${r.error.message})`);
+  if (r.timedOut) throw new Error(`git 시한 초과(${GIT_TIMEOUT_MS / 60_000}분): git ${args.join(" ")} — ${dir}`);
   // porcelain 파싱은 raw 를 쓴다 — trim 이 첫 줄의 상태 열(선행 공백)을 잘라 경로가 한 글자 먹힌다
-  return { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim(), raw: r.stdout ?? "" };
+  return { ok: r.status === 0, out: (r.stdout + r.stderr).trim(), raw: r.stdout };
+}
+
+/**
+ * 한 작업 사본의 git 을 직렬화한다. 동기 스폰이던 시절에는 밖으로 난 함수 하나가 끝까지
+ * 원자적이었다 — `add` 와 `commit` 사이에 다른 요청의 git 이 끼어들 자리가 없었다. 비동기가
+ * 되면서 그 성질이 공짜로 사라지므로 여기서 되돌려 놓는다(같은 디렉토리의 빌드가 겹치지 않게
+ * 하는 runtime/view.ts 와 같은 규율).
+ *
+ * 잠금은 **인덱스를 만지는 함수**에서만 잡는다. 안쪽 헬퍼(git·changes·lastCommit)는 잡지 않는다 —
+ * 잡으면 자기 잠금에 걸린다. 읽기만 하는 문(readDraft·listDrafts·historyDraft)도 잡지 않는다:
+ * 초안 목록은 사이드바가 15초마다 밟는 자리라, 긴 발행 뒤에 줄 세우면 그 화면이 발행 내내 멈춘다.
+ */
+const repoLocks = new Map<string, Promise<void>>();
+function withRepo<T>(droot: string, fn: () => Promise<T>): Promise<T> {
+  const prev = repoLocks.get(droot) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  repoLocks.set(droot, next.then(() => undefined, () => undefined));
+  return next;
 }
 
 function copyTree(from: string, to: string, extraSkip: string[] = []): void {
@@ -126,8 +155,8 @@ export interface DraftChange {
   state: string;
 }
 
-function changes(droot: string): DraftChange[] {
-  const r = git(droot, "status", "--porcelain");
+async function changes(droot: string): Promise<DraftChange[]> {
+  const r = await git(droot, "status", "--porcelain");
   if (!r.ok) return [];
   return r.raw
     .split("\n")
@@ -139,8 +168,8 @@ function changes(droot: string): DraftChange[] {
     });
 }
 
-function lastCommit(droot: string): { hash: string; message: string; time: number } | null {
-  const r = git(droot, "log", "-1", "--format=%H%x09%ct%x09%s");
+async function lastCommit(droot: string): Promise<{ hash: string; message: string; time: number } | null> {
+  const r = await git(droot, "log", "-1", "--format=%H%x09%ct%x09%s");
   if (!r.ok || !r.out) return null;
   const [hash, ct, ...rest] = r.out.split("\t");
   return { hash, message: rest.join("\t"), time: Number(ct) * 1000 };
@@ -173,7 +202,7 @@ export function openDraft(
   ledger: Ledger,
   name: string,
   opts: { files?: Record<string, string>; seedHarness?: SeedHarness[]; manifest?: Record<string, unknown> } = {},
-): OpenResult {
+): Promise<OpenResult> {
   assertSlug(name);
   // 매니페스트 객체 → relay.yaml 은 기판이 적는다. 동사(system draft-open)가 yaml 을 수입하면
   // 설치본 트리 위에서 그 의존이 풀리지 않는다(실측 2026-08-26: 임베더 pod 의 store 마운트) —
@@ -182,6 +211,15 @@ export function openDraft(
     opts = { ...opts, files: { ...(opts.files ?? {}), "relay.yaml": stringifyYaml(opts.manifest) } };
   }
   const droot = draftPath(name);
+  return withRepo(droot, () => openLocked(ledger, name, droot, opts));
+}
+
+async function openLocked(
+  ledger: Ledger,
+  name: string,
+  droot: string,
+  opts: { files?: Record<string, string>; seedHarness?: SeedHarness[]; manifest?: Record<string, unknown> },
+): Promise<OpenResult> {
   const existed = fs.existsSync(droot);
   let from: OpenResult["from"] = "existing";
 
@@ -194,7 +232,7 @@ export function openDraft(
       fs.mkdirSync(droot, { recursive: true });
       from = "empty";
     }
-    const init = git(droot, "init", "-q", "-b", "main");
+    const init = await git(droot, "init", "-q", "-b", "main");
     if (!init.ok) throw new Error(`git init 실패: ${init.out}`);
   }
 
@@ -213,8 +251,8 @@ export function openDraft(
   }
 
   if (!existed) {
-    git(droot, "add", "-A");
-    const c = git(droot, "commit", "-q", "-m", from === "installed" ? `draft open (v${manifestVersion(droot) ?? "?"})` : "draft open");
+    await git(droot, "add", "-A");
+    const c = await git(droot, "commit", "-q", "-m", from === "installed" ? `draft open (v${manifestVersion(droot) ?? "?"})` : "draft open");
     if (!c.ok && !/nothing to commit/.test(c.out)) throw new Error(`최초 커밋 실패: ${c.out}`);
   }
 
@@ -245,9 +283,9 @@ export interface DraftStatus {
   installed: boolean;
 }
 
-export function readDraft(ledger: Ledger, name: string): DraftStatus;
-export function readDraft(ledger: Ledger, name: string, file: string): { file: string; content: string; hash: string };
-export function readDraft(ledger: Ledger, name: string, file?: string): DraftStatus | { file: string; content: string; hash: string } {
+export function readDraft(ledger: Ledger, name: string): Promise<DraftStatus>;
+export function readDraft(ledger: Ledger, name: string, file: string): Promise<{ file: string; content: string; hash: string }>;
+export async function readDraft(ledger: Ledger, name: string, file?: string): Promise<DraftStatus | { file: string; content: string; hash: string }> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name} — draft-open 으로 먼저 여세요`);
@@ -268,8 +306,8 @@ export function readDraft(ledger: Ledger, name: string, file?: string): DraftSta
     tree: tree(droot),
     files,
     hashes,
-    changes: changes(droot),
-    lastCommit: lastCommit(droot),
+    changes: await changes(droot),
+    lastCommit: await lastCommit(droot),
     version: { draft: manifestVersion(droot), live: rec ? manifestVersion(rec.path) : null },
     installed: !!rec,
   };
@@ -323,26 +361,30 @@ export function writeDraft(
   return { written, deleted, hashes };
 }
 
-export function diffDraft(name: string): { changes: DraftChange[]; diff: string } {
+export function diffDraft(name: string): Promise<{ changes: DraftChange[]; diff: string }> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
-  // 미추적 파일도 diff 본문에 실리도록 intent-to-add 로 등록한다 (index 만 만지고 내용은 그대로)
-  git(droot, "add", "-N", "-A");
-  const d = git(droot, "diff", "HEAD");
-  return { changes: changes(droot), diff: d.ok ? d.out : "" };
+  return withRepo(droot, async () => {
+    // 미추적 파일도 diff 본문에 실리도록 intent-to-add 로 등록한다 (index 만 만지고 내용은 그대로)
+    await git(droot, "add", "-N", "-A");
+    const d = await git(droot, "diff", "HEAD");
+    return { changes: await changes(droot), diff: d.ok ? d.out : "" };
+  });
 }
 
-export function commitDraft(name: string, message: string): { committed: boolean; hash?: string; note?: string } {
+export function commitDraft(name: string, message: string): Promise<{ committed: boolean; hash?: string; note?: string }> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
   if (!message?.trim()) throw new Error("커밋 메시지 필수");
-  git(droot, "add", "-A");
-  if (!changes(droot).length) return { committed: false, note: "변경 없음" };
-  const c = git(droot, "commit", "-q", "-m", message.trim());
-  if (!c.ok) throw new Error(`커밋 실패: ${c.out}`);
-  return { committed: true, hash: lastCommit(droot)?.hash };
+  return withRepo(droot, async () => {
+    await git(droot, "add", "-A");
+    if (!(await changes(droot)).length) return { committed: false, note: "변경 없음" };
+    const c = await git(droot, "commit", "-q", "-m", message.trim());
+    if (!c.ok) throw new Error(`커밋 실패: ${c.out}`);
+    return { committed: true, hash: (await lastCommit(droot))?.hash };
+  });
 }
 
 /**
@@ -370,30 +412,34 @@ export function discardDraft(name: string): { removed: string } {
   return { removed: name };
 }
 
-export function listDrafts(ledger: Ledger): { name: string; version: string | null; changes: number; installed: boolean; empty: boolean }[] {
+export async function listDrafts(ledger: Ledger): Promise<{ name: string; version: string | null; changes: number; installed: boolean; empty: boolean }[]> {
   const root = packagesPath();
   if (!fs.existsSync(root)) return [];
-  return fs
-    .readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && SLUG.test(e.name))
-    .map((e) => {
-      const droot = path.join(root, e.name);
-      const n = changes(droot).length;
-      return {
-        name: e.name,
-        version: manifestVersion(droot),
-        changes: n,
-        installed: !!ledger.packages[e.name],
-        // 빈 초안 = 이름만 짓고 만 것: 기록하지 않은 변경이 없고 이력이 "draft open" 한 줄뿐.
-        // 홈이 카드 대신 한 줄로 접고 바로 버릴 수 있게 한다(2026-08-27). changes 0 만으로는
-        // 첫 판을 기록해 둔 초안(내용 있음)과 구분이 안 됐다
-        empty: n === 0 && isScaffoldOnly(droot),
-      };
-    });
+  // 초안들을 동시에 읽는다 — 비동기가 되어 겹칠 수 있게 됐고, 이 문은 셸 사이드바가 15초마다
+  // 밟는 자리라 왕복을 줄줄이 세우면 그 간격을 그대로 먹는다
+  return await Promise.all(
+    fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && SLUG.test(e.name))
+      .map(async (e) => {
+        const droot = path.join(root, e.name);
+        const n = (await changes(droot)).length;
+        return {
+          name: e.name,
+          version: manifestVersion(droot),
+          changes: n,
+          installed: !!ledger.packages[e.name],
+          // 빈 초안 = 이름만 짓고 만 것: 기록하지 않은 변경이 없고 이력이 "draft open" 한 줄뿐.
+          // 홈이 카드 대신 한 줄로 접고 바로 버릴 수 있게 한다(2026-08-27). changes 0 만으로는
+          // 첫 판을 기록해 둔 초안(내용 있음)과 구분이 안 됐다
+          empty: n === 0 && (await isScaffoldOnly(droot)),
+        };
+      }),
+  );
 }
 
-function isScaffoldOnly(droot: string): boolean {
-  const r = git(droot, "log", "--format=%s", "-n", "2");
+async function isScaffoldOnly(droot: string): Promise<boolean> {
+  const r = await git(droot, "log", "--format=%s", "-n", "2");
   if (!r.ok) return false;
   const lines = r.out.split("\n").filter(Boolean);
   return lines.length === 1 && lines[0].startsWith("draft open");
@@ -401,11 +447,11 @@ function isScaffoldOnly(droot: string): boolean {
 
 /** 기록(커밋) 이력 — 최근 것부터. 화면의 [기록] 다이얼로그가 "이 지점으로" 를 붙이는 목록이다.
  *  종전에는 기록을 남길 수는 있어도 그 지점으로 돌아가는 문이 화면에 없었다 — 약속만 있는 버튼이었다 */
-export function historyDraft(name: string): { commits: { hash: string; message: string; time: number }[] } {
+export async function historyDraft(name: string): Promise<{ commits: { hash: string; message: string; time: number }[] }> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
-  const r = git(droot, "log", "--format=%H%x09%ct%x09%s", "-n", "50");
+  const r = await git(droot, "log", "--format=%H%x09%ct%x09%s", "-n", "50");
   if (!r.ok || !r.out) return { commits: [] };
   return {
     commits: r.out
@@ -424,21 +470,23 @@ export function historyDraft(name: string): { commits: { hash: string; message: 
  * 그 커밋 뒤에 생긴 추적 파일은 지운다 — 덮어쓰기만 하면 반쯤 되돌린 판이 된다. 한 번도 기록되지
  * 않은(미추적) 파일은 그대로 둔다: 기록에 없던 것을 기판이 지우면 사용자가 잃는다.
  */
-export function restoreDraft(name: string, hash: string): { restored: string; message: string } {
+export function restoreDraft(name: string, hash: string): Promise<{ restored: string; message: string }> {
   assertSlug(name);
   const droot = draftPath(name);
   if (!fs.existsSync(droot)) throw new Error(`draft 없음: ${name}`);
   if (!/^[0-9a-f]{7,40}$/.test(hash ?? "")) throw new Error(`기록 지문 형식 위반: ${hash}`);
-  const probe = git(droot, "rev-parse", "--verify", `${hash}^{commit}`);
-  if (!probe.ok) throw new Error(`없는 기록: ${hash}`);
-  const full = probe.out;
-  const now = new Set(git(droot, "ls-files").raw.split("\n").filter(Boolean));
-  const then = new Set(git(droot, "ls-tree", "-r", "--name-only", full).raw.split("\n").filter(Boolean));
-  const co = git(droot, "checkout", full, "--", ".");
-  if (!co.ok) throw new Error(`되돌리기 실패: ${co.out}`);
-  for (const f of now) if (!then.has(f)) fs.rmSync(sealed(droot, f), { force: true });
-  git(droot, "add", "-A");
-  return { restored: full, message: git(droot, "log", "-1", "--format=%s", full).out };
+  return withRepo(droot, async () => {
+    const probe = await git(droot, "rev-parse", "--verify", `${hash}^{commit}`);
+    if (!probe.ok) throw new Error(`없는 기록: ${hash}`);
+    const full = probe.out;
+    const now = new Set((await git(droot, "ls-files")).raw.split("\n").filter(Boolean));
+    const then = new Set((await git(droot, "ls-tree", "-r", "--name-only", full)).raw.split("\n").filter(Boolean));
+    const co = await git(droot, "checkout", full, "--", ".");
+    if (!co.ok) throw new Error(`되돌리기 실패: ${co.out}`);
+    for (const f of now) if (!then.has(f)) fs.rmSync(sealed(droot, f), { force: true });
+    await git(droot, "add", "-A");
+    return { restored: full, message: (await git(droot, "log", "-1", "--format=%s", full)).out };
+  });
 }
 
 function bumpPatch(v: string): string {
@@ -501,8 +549,8 @@ export async function stageRelease(name: string, opts: { version?: string } = {}
   const relRoot = releasesPath(name);
 
   // 변경도 새 버전 지정도 없으면 재발행할 이유가 없다 (HEAD 가 이미 릴리스 태그 위)
-  git(droot, "add", "-A");
-  if (!opts.version && !changes(droot).length && git(droot, "describe", "--tags", "--exact-match", "HEAD").ok) {
+  await git(droot, "add", "-A");
+  if (!opts.version && !(await changes(droot)).length && (await git(droot, "describe", "--tags", "--exact-match", "HEAD")).ok) {
     return { published: false, name, note: "마지막 릴리스 이후 변경 없음" };
   }
 
@@ -529,12 +577,12 @@ export async function stageRelease(name: string, opts: { version?: string } = {}
     .map((r) => `${r.variant}: ` + r.checks.filter((c) => !c.ok).map((c) => `${c.verb} — ${c.note}`).join(" / "));
   if (broken.length) throw new ManifestError(["하네스 계약 위반 (relay harness-check 로 재현):", ...broken]);
 
-  git(droot, "add", "-A");
-  if (changes(droot).length) {
-    const c = git(droot, "commit", "-q", "-m", `publish v${version}`);
+  await git(droot, "add", "-A");
+  if ((await changes(droot)).length) {
+    const c = await git(droot, "commit", "-q", "-m", `publish v${version}`);
     if (!c.ok) throw new Error(`publish 커밋 실패: ${c.out}`);
   }
-  git(droot, "tag", "-f", `v${version}`);
+  await git(droot, "tag", "-f", `v${version}`);
 
   const snapshot = path.join(relRoot, version);
   copyTree(droot, snapshot, buildOutSkip(droot));

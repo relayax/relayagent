@@ -399,7 +399,7 @@ export function createApi(
         // 배지의 수는 연결 화면과 같은 집계(connections.ts)에서 온다 — 두 화면이 다른 수를 말하면 안 된다
         const overview = await connectionsOverview(getLedger(), (k) => authority.credential(k));
         const l = getLedger();
-        return void json(res, 200, shellNav(l, runningServices(), await storeLatest(), listDrafts(l), { credentials: overview.attention }, loadSuites(l)));
+        return void json(res, 200, shellNav(l, runningServices(), await storeLatest(), await listDrafts(l), { credentials: overview.attention }, loadSuites(l)));
       }
       // 묶음(supply/suites.ts) — 사이드바 폴더이자 .relaypackages 봉투의 단위. 기판 상태라 셸과 같은 자리에서 낸다.
       // 판정 실패(미설치 구성원·이름 형식·순환)는 400 으로 사유를 그대로 낸다 — 화면이 그 문장을 보여 준다

@@ -15,12 +15,35 @@ const LEGACY_SERVICE = "relay";
 const SERVICE = RELAY_HOME === DEFAULT_HOME ? LEGACY_SERVICE : `relay:${RELAY_HOME}`;
 const FALLBACK = path.join(RELAY_HOME, "vault.json");
 
+/** `which security` 의 답은 이 프로세스가 사는 동안 바뀌지 않는다 — 그런데 이 판정은 자격
+ *  조회마다 걸려, 연결 전경 한 번(서비스·채널 수만큼)이 그 수만큼 동기 스폰을 물었다.
+ *  사이드바 배지가 15초마다 밟는 자리라 그 값이 그대로 기판의 정지 시간이 된다(2026-08-29) */
+let securityOnPath: boolean | null = null;
+
 function hasSecurity(): boolean {
   // RELAY_VAULT=file — Keychain 이 있어도 파일 vault 강제(헤드리스 서버·테스트 격리용).
-  // 테스트가 사용자 Keychain 을 오염시키는 것은 사고다
+  // 테스트가 사용자 Keychain 을 오염시키는 것은 사고다. 이 판정은 캐시하지 않는다 —
+  // 환경을 바꿔 부르는 호출자가 있고, 캐시해도 아낄 것이 없다
   if (process.env.RELAY_VAULT === "file") return false;
-  return spawnSync("which", ["security"]).status === 0;
+  if (securityOnPath === null) securityOnPath = spawnSync("which", ["security"]).status === 0;
+  return securityOnPath;
 }
+
+/**
+ * **없다고 확인된 좌표** — 그 조회를 잠시 건너뛴다. 캐시하는 것은 부재뿐이고, 값은 절대 담지
+ * 않는다(자격을 프로세스 메모리에 두는 것은 vault 의 존재 이유를 지운다).
+ *
+ * 자격이 안 앉은 좌표 하나가 동기 스폰 둘을 물었다 — 내 자리에서 못 찾고, 옛 자리에서 또 못 찾고.
+ * 하필 연결 전경이 세는 것이 바로 그 "빈 자격"들이라(connections.ts attentionOf), 사이드바 배지
+ * 한 번이 빈 자격 수만큼 그 두 배를 물었다. 실측 2026-08-29: 빈 좌표 7개에 0.7초, 그동안 데몬은
+ * 통째로 멎는다. 15초마다 밟는 자리라 그 값이 그대로 기판의 정지 시간이 된다.
+ *
+ * 영구가 아니라 시한인 이유: 이 프로세스의 쓰기는 아래에서 즉시 무르지만(vaultSet·vaultDelete)
+ * **다른 프로세스**의 쓰기는 알 수 없다 — 기본 홈의 CLI 로 자격을 넣은 사람이 앱에서 그것을
+ * 영영 못 보면 안 된다. 한 번쯤 늦게 보이는 것과 영영 안 보이는 것은 다르다.
+ */
+const ABSENT_TTL_MS = 60_000;
+const absent = new Map<string, number>();
 
 function fileVault(): Record<string, string> {
   if (!fs.existsSync(FALLBACK)) return {};
@@ -33,6 +56,7 @@ function saveFileVault(v: Record<string, string>): void {
 }
 
 export function vaultSet(key: string, value: string): void {
+  absent.delete(key); // 내 손으로 앉힌 자격은 즉시 보여야 한다
   if (hasSecurity()) {
     const r = spawnSync("security", ["add-generic-password", "-U", "-s", SERVICE, "-a", key, "-w", value]);
     if (r.status === 0) return;
@@ -49,6 +73,7 @@ function keychainGet(service: string, key: string): string | null {
 }
 
 export function vaultGet(key: string): string | null {
+  if ((absent.get(key) ?? 0) > Date.now()) return null;
   if (hasSecurity()) {
     const mine = keychainGet(SERVICE, key);
     if (mine !== null) return mine;
@@ -64,10 +89,13 @@ export function vaultGet(key: string): string | null {
       }
     }
   }
-  return fileVault()[key] ?? null;
+  const inFile = fileVault()[key] ?? null;
+  if (inFile === null) absent.set(key, Date.now() + ABSENT_TTL_MS);
+  return inFile;
 }
 
 export function vaultDelete(key: string): void {
+  absent.set(key, Date.now() + ABSENT_TTL_MS); // 지운 자격은 즉시 사라져 보여야 한다
   if (hasSecurity()) spawnSync("security", ["delete-generic-password", "-s", SERVICE, "-a", key]);
   const v = fileVault();
   if (key in v) {

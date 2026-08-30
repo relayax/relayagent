@@ -462,8 +462,8 @@ async function main(): Promise<void> {
       const { openDraft, readDraft } = await import("./supply/draft.ts");
       const name = args.find((a) => !a.startsWith("--"));
       if (!name) throw new Error("사용법: relay draft <이름>");
-      const r = openDraft(ledger, name);
-      const s = readDraft(ledger, name);
+      const r = await openDraft(ledger, name);
+      const s = await readDraft(ledger, name);
       const fromLabel = { installed: "설치본 사본", empty: "빈 스캐폴드", existing: "기존 draft" }[r.from];
       console.log(`draft 열림: ${r.path} (${fromLabel}${s.version.draft ? `, v${s.version.draft}` : ""})`);
       if (s.changes.length) console.log(`미커밋 변경 ${s.changes.length}건:\n` + s.changes.map((c) => `  ${c.state} ${c.file}`).join("\n"));

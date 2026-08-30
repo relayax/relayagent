@@ -73,10 +73,23 @@ function Console() {
     }
   }, []);
 
+  // 폴링은 **보일 때만** 돈다 — 전역 크롬(runtime/shell.ts loadNav)이 이미 그 규율이다.
+  // 숨은 탭이 계속 두드리면 아무도 안 보는 화면 때문에 기판이 초안 수·자격 수만큼의 왕복을
+  // 15초마다 문다. 데스크톱 앱은 창을 여러 개 띄우므로 그 값이 창 수만큼 곱해진다
+  // (2026-08-29: 그 왕복이 동기 스폰이라 기판이 그때마다 멎었고, 셸이 죽은 것으로 판정했다)
   useEffect(() => {
+    const t = setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") void load();
+    }, 15000);
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible") void load();
+    };
     void load();
-    const t = setInterval(() => void load(), 15000);
-    return () => clearInterval(t);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const edges = useMemo(() => edgesData(reg), [reg]);
