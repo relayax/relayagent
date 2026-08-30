@@ -547,7 +547,7 @@ export type InboxRow = {
   /** 기계가 판 슬롯인가(§5.3-25) — 목록은 이 축으로 위임 대화를 인스턴스 아래 접는다 */
   origin?: "dispatch" | "mission";
   /** 살아 있는가(§5.3-26) — 접어 둔 위임이 "돌고 있음"을 말할 수 있는 유일한 근거 */
-  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string;
+  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string; parentInstance?: string;
 };
 
 export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
@@ -572,6 +572,7 @@ export async function loadInbox(ctx: RelayCtx): Promise<InboxRow[]> {
         ...(c.lastEvent ? { lastEvent: c.lastEvent } : {}),
         ...(c.lastAlive ? { lastAlive: c.lastAlive } : {}),
         ...(c.parent ? { parent: c.parent } : {}),
+        ...(c.parentInstance ? { parentInstance: c.parentInstance } : {}),
       });
     }
   }));
@@ -585,7 +586,9 @@ export type ConversationRow = { conversation_id: string; session_count?: number;
   /** §5.3-25 — 기판이 밝힌 슬롯 출신: 위임(dispatch)·미션 수신(mission). 사람의 대화는 없다 */
   origin?: "dispatch" | "mission";
   /** §5.3-26 — 생존 실측. 서버 시계의 epoch ms 다(내 시계와 어긋날 수 있어 음수는 0 으로 접는다) */
-  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string };
+  busy?: boolean; lastEvent?: number; lastAlive?: number; parent?: string;
+  /** §5.3-26 — 부모 슬롯이 사는 인스턴스. 없으면 이 행과 같은 인스턴스(서브에이전트 위임) */
+  parentInstance?: string };
 
 // 서버가 밝힌 대화별 에이전트(§5.3-24 세션 행의 agent — 위임 세션의 정체성).
 // 위젯의 스레드 문법(displayBinding)은 로컬 좌표용이라 서버 발급 슬롯에는 이 축이 정본이다.
@@ -632,6 +635,7 @@ export async function loadConversationsOf(instanceId: string, _principal: string
       ...(typeof s.lastEvent === "number" && s.lastEvent > 0 ? { lastEvent: s.lastEvent } : {}),
       ...(typeof s.lastAlive === "number" && s.lastAlive > 0 ? { lastAlive: s.lastAlive } : {}),
       ...(typeof s.parent === "string" && s.parent ? { parent: s.parent } : {}),
+      ...(typeof s.parentInstance === "string" && s.parentInstance ? { parentInstance: s.parentInstance } : {}),
       title: typeof s.label === "string" && s.label ? s.label : undefined,
       last_started_at:
         typeof s.updated === "number" && Number.isFinite(s.updated) && s.updated > 0
@@ -643,6 +647,57 @@ export async function loadConversationsOf(instanceId: string, _principal: string
 
 export async function loadConversations(ctx: RelayCtx): Promise<ConversationsInfo> {
   return loadConversationsOf(ctx.instanceId, ctx.principal);
+}
+
+// ---------------- 맡긴 일 (위임 현황 — 인스턴스를 건너는 짝지음) ----------------
+
+/** 위임 행 = 대화 행 + **어느 인스턴스에서 왔는가**. 클릭이 그 인스턴스의 대화를 열어야 하니
+ *  좌표가 행과 함께 다녀야 한다(§2-6 — 마운트 문법은 클라이언트가 조립하지 않는다). */
+export type DelegationRow = ConversationRow & { instance: string };
+
+/**
+ * 이 행이 (myInstance, mySlot) 대화가 맡긴 일인가 — 짝지음의 판정 한 벌(§5.3-26).
+ *
+ * `parentInstance` 가 없으면 **그 행이 온 인스턴스**가 곧 부모의 인스턴스다: 서브에이전트
+ * 위임은 언제나 같은 자리에 서기 때문이고, 그래서 이 축이 생기기 전의 행도 그대로 읽힌다.
+ * 슬롯 접두 스니핑(`sub-`·`mission-`)은 하지 않는다 — 출신 판정은 기판 몫이다(§5.3-25).
+ */
+export function isDelegationOf(row: DelegationRow, myInstance: string, mySlot: string): boolean {
+  if (!row.origin || !row.parent) return false;
+  return row.parent === mySlot && (row.parentInstance ?? row.instance) === myInstance;
+}
+
+/**
+ * 이 대화가 맡긴 일 중 **지금 도는 것** — 인스턴스를 건너 훑는다.
+ *
+ * 왜 훑어야 하나: a2a 미션의 대화는 **수신 패키지 쪽에** 산다(카드뉴스 공장이 조사를 맡기면
+ * 그 대화는 조사 앱의 세션이다). 발신 대화의 목록만 읽으면 그 일은 어디에도 안 보인다 —
+ * 미션 둘이 30분을 도는데 화면이 조용했던 자리다(실측 2026-08-30). 열거원은 대화함과 같은
+ * 한 벌이다: instances.list(§5.6-32) × session.list(§5.3-21).
+ *
+ * 비용은 인스턴스 수만큼의 조회다 — 부르는 쪽이 계기를 고르고 연타를 흡수해야 한다(§5.8).
+ * 열거 capability 가 없거나 baseFor 주입이 없으면 자기 인스턴스만 훑는다: 그때 보이는 것은
+ * 서브에이전트 위임뿐이고, 그것이 이 축이 생기기 전의 화면 그대로다(조용한 강등이 아니라
+ * 종전 동작으로의 복귀다).
+ */
+export async function loadDelegationsOf(ctx: RelayCtx, mySlot: string): Promise<DelegationRow[]> {
+  let ids: string[] = [];
+  try {
+    ids = (await loadInstances()).map((i) => i.id);
+  } catch { /* 열거 실패 — 자기 인스턴스만 */ }
+  if (ctx.instanceId && !ids.includes(ctx.instanceId)) ids.unshift(ctx.instanceId);
+  const out: DelegationRow[] = [];
+  await Promise.all(ids.map(async (instance) => {
+    const info = await loadConversationsOf(instance, ctx.principal).catch(() => null);
+    if (!info) return;
+    for (const c of info.conversations) {
+      const row: DelegationRow = { ...c, instance };
+      if (row.busy && isDelegationOf(row, ctx.instanceId, mySlot)) out.push(row);
+    }
+  }));
+  // 오래 조용한 것이 위로 — 사용자가 먼저 궁금해하는 것은 잘 도는 쪽이 아니라 그쪽이다
+  out.sort((a, b) => (a.lastEvent ?? 0) - (b.lastEvent ?? 0));
+  return out;
 }
 
 /**

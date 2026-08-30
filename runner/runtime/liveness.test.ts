@@ -31,7 +31,7 @@ process.env.RELAY_PORT = "4757";
 process.env.RELAY_TURN_STALL_S = "2";
 
 const { runSession, enableResidents, localSessionIO, retireResidents, sessionLiveness } = await import("./harness.ts");
-const { localClientWireIO } = await import("./wire.ts");
+const { localClientWireIO, recordSessionParent } = await import("./wire.ts");
 const { localAuthority } = await import("../authority.ts");
 
 enableResidents();
@@ -183,15 +183,37 @@ test("기판이 박동을 요청한다 — 선언 없이 뛰는 어댑터는 옛
 });
 
 test("부모 대화 축은 목록에 그대로 나온다 — 위임이 어디로 보고하는지", async () => {
-  // 위임(agent_dispatch)이 세션 폴더에 적는 그 파일이다(runtime/tools.ts). 여기서 재는 것은
-  // 읽는 쪽 — 적힌 값이 계약 축으로 나가는가
+  // 적는 쪽과 읽는 쪽을 **함께** 잰다(recordSessionParent → listSessions). 파일 이름이 두
+  // 자리로 갈리면 축이 조용히 어긋나고, 화면은 그 부재를 "안 돌고 있음"으로 읽는다
   const slot = "sub-child";
-  fs.writeFileSync(path.join(io.sessionDir(PKG, slot), "parent"), "s-parent-1");
+  recordSessionParent(PKG, slot, { slot: "s-parent-1", instance: PKG });
   const row = (await wireIO.listSessions(PKG)).find((s) => s.session === slot);
   assert.ok(row, "행이 없다");
   assert.equal(row.parent, "s-parent-1");
+  assert.equal(row.parentInstance, PKG, "인스턴스 축이 빠졌다 — 인스턴스를 건너는 짝지음이 못 선다");
 
   // 사람이 연 대화에는 없다 — 없음이 정상이다
   const plain = (await wireIO.listSessions(PKG)).find((s) => s.session === "slow-work");
   assert.equal(plain?.parent, undefined);
+  assert.equal(plain?.parentInstance, undefined);
+});
+
+test("미션 세션의 부모는 다른 인스턴스에 산다 — 슬롯 하나로는 못 가리키던 자리", async () => {
+  // a2a 미션은 **수신 패키지**에 대화가 서고 부모는 발신 패키지에 있다. 인스턴스 축이 없으면
+  // 이 행은 부모를 가리킬 수 없어 종전에는 parent 를 아예 안 실었고, 그래서 미션으로만 일하는
+  // 앱에서는 현황 줄이 영영 비어 있었다(실측 2026-08-30)
+  const slot = "mission-caller-do-a-thing";
+  recordSessionParent(PKG, slot, { slot: "s-caller-7", instance: "caller-pkg" });
+  const row = (await wireIO.listSessions(PKG)).find((s) => s.session === slot);
+  assert.ok(row, "행이 없다");
+  assert.equal(row.origin, "mission");
+  assert.equal(row.parent, "s-caller-7");
+  assert.equal(row.parentInstance, "caller-pkg");
+
+  // 부모 미상 재위임(동사의 ctx.dispatch)은 **지운다** — 미션 슬롯은 (발신 패키지, 미션)
+  // 열쇠라 재사용되므로, 낡은 부모를 남기면 앞선 대화가 시키지도 않은 일을 자기 줄에 세운다
+  recordSessionParent(PKG, slot, null);
+  const cleared = (await wireIO.listSessions(PKG)).find((s) => s.session === slot);
+  assert.equal(cleared?.parent, undefined);
+  assert.equal(cleared?.parentInstance, undefined);
 });

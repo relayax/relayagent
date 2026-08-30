@@ -17,7 +17,7 @@ import { loadModule } from "./_load.mjs";
 globalThis.window = {};
 globalThis.document = { currentScript: null, querySelector: () => null };
 
-const { isDispatchTool, livenessOf, livenessLabel } = await loadModule("runtime.ts");
+const { isDispatchTool, livenessOf, livenessLabel, isDelegationOf } = await loadModule("runtime.ts");
 
 test("위임 판정은 문을 통과한 이름에도 걸린다 — 이것이 죽어 있던 그 비교다", () => {
   // 실제 봉투에 실려 오는 형태(문 이름 relay). 여기서 false 면 자동 탭 열기가 다시 죽는다
@@ -67,4 +67,28 @@ test("서버 시계가 앞서도 음수 경과를 만들지 않는다", () => {
   const l = livenessOf({ busy: true, lastEvent: now + 5_000, lastAlive: now + 5_000 }, now);
   assert.equal(l.silentMs, 0);
   assert.equal(l.state, "running");
+});
+
+// ③ **위임은 인스턴스를 건널 수 있다.** a2a 미션의 대화는 수신 패키지 쪽에 서고 부모는 발신
+//    패키지에 있다. 슬롯 하나로만 짝지으면 그 형은 영영 안 보인다 — 미션 둘이 30분을 도는데
+//    현황 줄이 비어 있던 자리다(실측 2026-08-30).
+const sub = { instance: "factory", origin: "dispatch", parent: "s-me", busy: true };
+const mission = { instance: "scout", origin: "mission", parent: "s-me", parentInstance: "factory", busy: true };
+
+test("같은 인스턴스 위임 — parentInstance 가 없으면 그 행이 온 인스턴스가 부모의 자리다", () => {
+  assert.equal(isDelegationOf(sub, "factory", "s-me"), true);
+  // 이 축이 생기기 전의 행(parentInstance 없음)이 그대로 읽혀야 한다 — additive 의 조건이다
+  assert.equal(isDelegationOf(sub, "scout", "s-me"), false, "남의 인스턴스 대화가 내 줄에 섰다");
+  assert.equal(isDelegationOf(sub, "factory", "s-other"), false);
+});
+
+test("남의 앱에서 도는 미션도 내 위임이다 — 좌표 둘로 짝짓는다", () => {
+  assert.equal(isDelegationOf(mission, "factory", "s-me"), true);
+  // 수신 패키지 쪽에서 보면 이것은 내 위임이 아니다 — 그 앱은 부탁을 받은 쪽이다
+  assert.equal(isDelegationOf(mission, "scout", "s-me"), false);
+});
+
+test("사람이 연 대화는 아무의 위임도 아니다 — origin·parent 둘 다 있어야 한다", () => {
+  assert.equal(isDelegationOf({ instance: "factory", parent: "s-me", busy: true }, "factory", "s-me"), false);
+  assert.equal(isDelegationOf({ instance: "factory", origin: "mission", busy: true }, "factory", "s-me"), false);
 });

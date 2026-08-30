@@ -75,14 +75,37 @@ fs.writeFileSync(path.join(CONS_DIR, "relay.yaml"), [
   "",
 ].join("\n"));
 
-// ── 수신(provider) 픽스처 — 미션 선언만. 세션은 브리지 스텁이 대신한다 ──
+// ── 수신(provider) 픽스처 — 미션 선언 + 하네스 한 벌.
+// 시한·배달 시험은 브리지 스텁으로 돌지만(수신 세션 자리를 가짜로 세운다), 부모 좌표가
+// 실제로 앉는지는 **진짜 브리지**로 재야 한다: 그 자리가 비어 있던 것이 이 축의 버그였다 ──
 const PROV_DIR = mk(path.join(ROOT, "prov"));
+mk(path.join(PROV_DIR, "agents", "recv"));
+fs.writeFileSync(path.join(PROV_DIR, "agents", "recv", "AGENT.md"), "미션을 받는 픽스처.\n");
+mk(path.join(PROV_DIR, "harness", "fake"));
+fs.writeFileSync(path.join(PROV_DIR, "harness", "fake", "run"), [
+  "#!/bin/bash",
+  "set -eu",
+  "if [ \"${1:-}\" = \"info\" ]; then",
+  "  printf '%s\\n' '{\"name\":\"fake\",\"provider\":\"none\",\"protocol\":3,\"verbs\":[\"session\",\"info\"],\"capabilities\":[]}'",
+  "  exit 0",
+  "fi",
+  "printf '%s\\n' '{\"event\":\"reply\",\"text\":\"미션 답\"}'",
+].join("\n") + "\n", { mode: 0o755 });
 fs.writeFileSync(path.join(PROV_DIR, "relay.yaml"), [
   "schema: relay/v1",
   'name: "@t/prov"',
   "version: 0.1.0",
   'display_name: "미션 수신 픽스처"',
   'description: "a2a 시한·배달 검증용"',
+  "harness:",
+  "  variants:",
+  "    - name: fake",
+  "      source: harness/fake",
+  "      entry: run",
+  "agents:",
+  "  - name: recv",
+  "    default: true",
+  "    persona: agents/recv/AGENT.md",
   "missions:",
   `  - name: ${MISSION}`,
   '    description: "제품 맥락 질의"',
@@ -105,8 +128,8 @@ const authority = localAuthority(() => ledger);
 function bridge(reply: () => Promise<string>): { host: HostBridge; seen: Record<string, unknown>[] } {
   const seen: Record<string, unknown>[] = [];
   const host = {
-    dispatch: (provider: string, mission: string, payload: string, consumer?: string) => {
-      seen.push({ provider, mission, payload, consumer });
+    dispatch: (provider: string, mission: string, payload: string, consumer?: string, consumerSlot?: string | null) => {
+      seen.push({ provider, mission, payload, consumer, consumerSlot });
       return reply();
     },
   } as unknown as HostBridge;
@@ -150,8 +173,11 @@ test("시한 안에 끝난 위임은 그 자리에서 답이 된다 — 사다�
   const r = await callTool(host, "agent-front");
   assert.equal(r.isError, false);
   assert.equal(r.content[0].text, "미션이 답한 본문");
-  // 열쇠의 재료(발신 패키지·미션)가 브리지에 그대로 간다 — 양쪽이 같은 슬롯을 계산하는 근거
-  assert.deepEqual(seen, [{ provider: "prov", mission: MISSION, payload: "본문", consumer: "cons" }]);
+  // 열쇠의 재료(발신 패키지·미션)가 브리지에 그대로 간다 — 양쪽이 같은 슬롯을 계산하는 근거.
+  // 발신 **슬롯**도 함께 간다: 수신 세션이 부모 좌표(§5.3-26)를 적는 근거이고, 아래 배달
+  // 사다리가 📬 를 보낼 주소와 같은 값이어야 한다 — 갈리면 화면이 말한 자리와 답이 앉는
+  // 자리가 달라진다
+  assert.deepEqual(seen, [{ provider: "prov", mission: MISSION, payload: "본문", consumer: "cons", consumerSlot: "agent-front" }]);
   assert.equal(delivered(), "", "제때 온 답을 배달까지 하면 같은 말이 두 번 앉는다");
 });
 
@@ -180,8 +206,10 @@ test("실패도 배달된다 — 물러난 도구가 마지막 말이면 발신 
 
 test("발신 슬롯 미상(구 번들)이면 배달하지 않는다 — 없는 주소로 턴을 열지 않는다", async () => {
   fs.rmSync(PROBE, { force: true });
-  const { host } = bridge(() => new Promise((r) => setTimeout(() => r("주소 없는 답"), 1_400)));
+  const { host, seen } = bridge(() => new Promise((r) => setTimeout(() => r("주소 없는 답"), 1_400)));
   const r = await callTool(host, null);
+  // 부모 좌표도 함께 미상이다 — 없는 주소를 부모라고 적으면 남의 대화가 이 일을 자기 것으로 센다
+  assert.equal(seen[0].consumerSlot, null);
   assert.match(r.content[0].text, /위임이 1초 안에 끝나지 않았습니다/);
   await new Promise((r2) => setTimeout(r2, 2_000));
   assert.equal(delivered(), "");
@@ -199,4 +227,24 @@ test("위임 슬롯의 열쇠는 (발신 패키지, 미션) — 소비자가 다
   ]) {
     assert.match(s, SLOT_RE, `세션 id 문법 밖 슬롯: ${s}`);
   }
+});
+
+test("미션 세션에 부모 좌표가 앉는다 — 남의 앱에서 도는 일을 발신 대화가 자기 것으로 셀 근거", async () => {
+  // 여기서만 진짜 브리지를 쓴다. 종전에는 이 자리가 label 만 적고 지나가서, 미션으로 일하는
+  // 앱의 현황 줄이 켜질 데이터가 아예 없었다(실측 2026-08-30 — 미션 둘이 도는데 화면은 조용).
+  const { makeHostBridge } = await import("../daemon.ts");
+  const host = makeHostBridge(() => ledger, () => null, authority);
+  const slotDir = path.join(process.env.RELAY_HOME as string, "sessions", "prov", a2aMissionSlot(MISSION, "cons"));
+
+  assert.equal(await host.dispatch("prov", MISSION, "본문", "cons", "s-caller-1"), "미션 답");
+  assert.equal(fs.readFileSync(path.join(slotDir, "parent"), "utf8"), "s-caller-1");
+  // 인스턴스 축이 없으면 이 슬롯은 **자기 패키지 안의** s-caller-1 을 가리키는 것으로 읽힌다 —
+  // 그런 대화는 없으므로 줄이 영영 안 선다. 부모가 남의 집에 산다는 것이 이 형의 전부다
+  assert.equal(fs.readFileSync(path.join(slotDir, "parent-instance"), "utf8"), "cons");
+
+  // 발신 슬롯 미상(동사의 ctx.dispatch)이면 낡은 부모를 지운다 — 미션 슬롯은 재사용되므로
+  // 남겨 두면 앞선 대화가 시키지도 않은 일을 자기 현황 줄에 세운다
+  assert.equal(await host.dispatch("prov", MISSION, "본문", "cons"), "미션 답");
+  assert.equal(fs.existsSync(path.join(slotDir, "parent")), false, "낡은 부모가 남았다");
+  assert.equal(fs.existsSync(path.join(slotDir, "parent-instance")), false);
 });

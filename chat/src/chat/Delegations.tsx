@@ -6,9 +6,13 @@
  * 순간 위임 카드는 그냥 이력이 되고, 그 뒤로 30분을 더 도는 서브에이전트를 말할 자리가 화면에
  * 아예 없었다. 사용자가 "진행중인가요?" 를 반복해 물어야 했던 것이 그 공백이다(2026-08-29).
  *
- * 짝지음의 근거는 세션 행의 `parent`(§5.3-26) 다. 종전에 부모↔자식 관계는 위임 배달 클로저의
- * 메모리에만 있어 데몬과 함께 죽었다 — 디스크에 남는 축이 생긴 뒤에야 새로고침·재기동을 건너
- * 이 줄을 세울 수 있다.
+ * 위임은 두 형이고 **둘 다 여기 선다**(2026-08-30). 서브에이전트 위임(agent_dispatch)은 같은
+ * 인스턴스 안에 대화가 서지만, a2a 미션은 **수신 패키지 쪽에** 선다 — 공장이 조사를 맡기면 그
+ * 대화는 조사 앱의 세션이다. 처음 판은 같은 인스턴스만 보고 `origin === "dispatch"` 만 세어서,
+ * 미션으로만 일하는 앱(선언이 전부 edges[].mission 인 앱)에서는 이 줄이 켜질 데이터 경로가
+ * 아예 없었다: 미션 둘이 도는 동안 화면은 조용했고 사용자는 다시 "안 돌고 있는 건가요"를
+ * 물어야 했다(실측 2026-08-30). 짝지음은 runtime.ts `isDelegationOf` 한 벌이고, 열거는
+ * 대화함과 같은 관용구다(instances.list × session.list).
  *
  * 갱신 규율(§5.8 — 유휴 폴링 폴백 금지):
  *  · 계기는 push 이벤트·visibility 복귀·창 포커스·사용자 행위. ServerTurnWatch 와 같은 관용구다.
@@ -23,25 +27,36 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import type { RelayCtx, ConversationRow } from "./runtime";
-import { loadConversationsOf, wireSessionForId, watchServerTurns, livenessOf, livenessLabel, livenessTitle } from "./runtime";
+import type { RelayCtx, DelegationRow } from "./runtime";
+import { loadDelegationsOf, wireSessionForId, watchServerTurns, livenessOf, livenessLabel, livenessTitle } from "./runtime";
 import { ActivePaneCtx } from "./ctx";
 
-/** 위임 행의 이름 — 기계 라벨("↳ agent-builder · detail-page")의 화살표를 떼고 사람 말로.
- *  ChatTabs.subLabel 의 쌍둥이다. import 하지 않는 이유는 순환이다(ChatTabs → Chat → 여기). */
-function nameOf(r: ConversationRow): string {
-  const t = (r.title || "").replace(/^↳\s*/, "").trim();
+/** 위임 행의 이름 — 기계 라벨의 화살표를 떼고 사람 말로.
+ *  ChatTabs.subLabel 의 쌍둥이다. import 하지 않는 이유는 순환이다(ChatTabs → Chat → 여기).
+ *  a2a 미션의 라벨은 `⇄ <발신> → <미션>` 인데 발신이 곧 이 대화라 되뇌는 말이다 — 떼고 그
+ *  자리에 **일하고 있는 앱**을 세운다: 남의 앱에서 돈다는 것이 이 형에서 사람이 알아야 할
+ *  단 하나다(눌러서 열 대화도 그쪽에 있다). */
+function nameOf(r: DelegationRow, myInstance: string): string {
+  const t = (r.title || "").replace(/^[↳⇄]\s*/, "").trim();
+  if (r.origin === "mission") {
+    const mission = (t.split("→").pop() ?? "").trim() || t;
+    return r.instance && r.instance !== myInstance ? `${r.instance} · ${mission}` : mission;
+  }
   if (t) return t;
   if (r.agent) return r.param ? `${r.agent} · ${r.param}` : r.agent;
   return r.conversation_id;
 }
 
-/** 진행 중인 위임이 화면에 있을 때의 재조회 간격 — 아래 주석의 근거 참조. */
+/** 진행 중인 위임이 화면에 있을 때의 재조회 간격 — 위 주석의 근거 참조. */
 const REFRESH_MS = 10_000;
+/** 행위 연타 흡수 창. 한 번의 훑기가 인스턴스 수만큼의 조회라(loadDelegationsOf) 종전 1.5초
+ *  보다 넓다 — 글을 쓰는 동안 매 1.5초마다 전 인스턴스를 훑을 이유가 없다. 계기가 분명한
+ *  갱신(마운트·턴 이벤트·주기 재조회)은 force 로 이 창을 건너뛴다. */
+const COALESCE_MS = 4_000;
 
 export function DelegationStrip({ ctx }: { ctx: RelayCtx }) {
   const active = useContext(ActivePaneCtx);
-  const [rows, setRows] = useState<ConversationRow[]>([]);
+  const [rows, setRows] = useState<DelegationRow[]>([]);
   // 경과 글자를 다시 그리기 위한 지금 — 네트워크와 무관하다
   const [now, setNow] = useState(() => Date.now());
   const inflight = useRef(false);
@@ -52,25 +67,26 @@ export function DelegationStrip({ ctx }: { ctx: RelayCtx }) {
   const refresh = useCallback(async (force = false) => {
     if (!ctx.instanceId || !mySlot || inflight.current) return;
     const t = Date.now();
-    if (!force && t - lastProbe.current < 1500) return; // 행위 연타 흡수 — 계기당 1회면 충분
+    if (!force && t - lastProbe.current < COALESCE_MS) return;
     lastProbe.current = t;
     inflight.current = true;
     try {
-      const info = await loadConversationsOf(ctx.instanceId, ctx.principal).catch(() => null);
-      if (!info) return;
-      // 내가 판 위임만. origin 판정은 기판 몫이고(§5.3-25) 슬롯 접두 스니핑은 금지다
-      setRows(info.conversations.filter((c) => c.origin === "dispatch" && c.parent === mySlot && c.busy));
+      // 내가 판 위임만. 짝지음도 origin 판정도 기판이 밝힌 축으로만 한다(§5.3-25/26) —
+      // 슬롯 접두 스니핑은 금지다
+      setRows(await loadDelegationsOf(ctx, mySlot));
       setNow(Date.now());
     } finally {
       inflight.current = false;
     }
-  }, [ctx.instanceId, ctx.principal, mySlot]);
+  }, [ctx, mySlot]);
 
   // 계기 구독 — ServerTurnWatch 와 같은 관용구(§5.8: 유휴 폴링 폴백 금지)
   useEffect(() => {
     if (!mySlot) return;
     void refresh(true);
-    const unwatch = watchServerTurns(ctx, () => void refresh());
+    // 턴 이벤트는 계기가 분명하다 — 위임을 건 턴이 끝나는 순간이 이 줄이 서야 할 바로 그때라
+    // 연타 창을 건너뛴다(그러지 않으면 방금 건 위임이 몇 초 동안 없는 것처럼 보인다)
+    const unwatch = watchServerTurns(ctx, () => void refresh(true));
     const onVis = () => { if (!document.hidden) void refresh(); };
     const onFocus = () => void refresh();
     const onAct = () => void refresh();
@@ -109,13 +125,13 @@ export function DelegationStrip({ ctx }: { ctx: RelayCtx }) {
         const l = livenessOf(r, now);
         const warn = l.state === "stalled";
         return (
-          <button key={r.conversation_id} type="button"
+          <button key={`${r.instance}/${r.conversation_id}`} type="button"
                   title={`${livenessTitle(l)} · 눌러서 이 작업의 대화를 열어요`}
                   className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-left text-[12px] hover:bg-muted"
                   onClick={() => {
                     try {
                       window.dispatchEvent(new CustomEvent("relay:chat-open", {
-                        detail: { instance: ctx.instanceId, conversation: r.conversation_id },
+                        detail: { instance: r.instance, conversation: r.conversation_id },
                       }));
                     } catch { /* 미배선 셸 — 줄은 그대로 정보로 남는다 */ }
                   }}>
@@ -124,7 +140,7 @@ export function DelegationStrip({ ctx }: { ctx: RelayCtx }) {
                 ? <span className="text-[var(--rc-err)]" aria-hidden>!</span>
                 : <Spinner role={undefined} aria-label={undefined} aria-hidden className="text-[var(--rc-accent)] size-3" />}
             </span>
-            <span className="min-w-0 flex-1 truncate text-foreground/75">{nameOf(r)}</span>
+            <span className="min-w-0 flex-1 truncate text-foreground/75">{nameOf(r, ctx.instanceId)}</span>
             <span className={cn("shrink-0 tabular-nums text-[11px]", warn ? "text-[var(--rc-err)]" : "text-muted-foreground")}>
               {livenessLabel(l)}
             </span>

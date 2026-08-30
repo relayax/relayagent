@@ -107,10 +107,17 @@ export interface SessionRow {
    *  "멈춤"이다. 화면이 그 둘을 다르게 말하라고 나누어 둔다. */
   lastAlive?: number;
   /** 이 대화를 판 부모 대화의 슬롯(§5.3-26 additive) — 위임이 어디로 보고하는지.
-   *  **같은 인스턴스 안의 슬롯**이라 목록이 그대로 짝지을 수 있다. 다른 인스턴스가 미션으로
-   *  연 대화(origin=mission)에는 없다 — 부모가 이 목록 밖에 있어 슬롯 하나로는 못 가리킨다.
    *  종전엔 이 관계가 배달 클로저의 메모리에만 있어 데몬이 죽으면 함께 사라졌다. */
   parent?: string;
+  /** 그 부모 슬롯이 사는 인스턴스(§5.3-26 additive, 2026-08-30) — 없으면 이 행과 같은 인스턴스다.
+   *  a2a 미션(origin=mission)의 부모는 **다른 패키지의 대화**라 슬롯 하나로는 가리킬 수 없다.
+   *  그래서 종전에는 이 형에 parent 를 아예 안 실었고, 다른 앱에 맡긴 일이 30분을 도는 동안
+   *  화면에는 그것을 말할 자리가 없었다(실측 2026-08-30: 조사 미션 둘이 도는데 현황 줄은 비어
+   *  있었다 — 사용자가 "안 돌고 있는 건가요"를 물어야 했던 그 자리다). 좌표를 하나 더 주면
+   *  같은 짝지음이 인스턴스를 건너 그대로 선다.
+   *  1인 기판은 인스턴스 id 가 곧 설치 이름이라 이 값이 §5.6-32 의 id 그대로다 — 임베더는
+   *  자기 이음새에서 자기 id 로 적는다. */
+  parentInstance?: string;
 }
 
 /** 개설 시점의 대화 바인딩(§5.3-22) — 판정을 통과한 값만 온다 */
@@ -736,6 +743,31 @@ function sessionsRoot(pkg: string): string {
   return path.join(RELAY_HOME, "sessions", pkg);
 }
 
+/**
+ * 위임 세션에 부모 대화의 좌표를 적는다 — **읽는 쪽(listSessions)과 같은 파일에 둔다**.
+ * 이 두 축(`parent`·`parent-instance`)은 짝지음의 유일한 근거라, 파일 이름이 생산과 소비로
+ * 갈리면 축이 조용히 어긋난다(화면은 "안 돌고 있음"으로 읽고, 그것과 진짜 죽음이 구별되지
+ * 않는다). 위임 두 형(agent_dispatch · a2a 미션)이 같은 문을 지나는 이유도 같다.
+ *
+ * 인스턴스를 함께 적는다: 같은 인스턴스 안의 위임에는 없어도 되는 값이지만, 형마다 다르게
+ * 적으면 읽는 쪽이 형을 갈라 봐야 한다. 한 벌로 적고 한 벌로 읽는다.
+ *
+ * `null` = 부모 미상(세션 밖에서 시작한 위임 — 동사의 `ctx.dispatch`). 그때는 **지운다**:
+ * 미션 슬롯은 (발신 패키지, 미션) 열쇠라 재위임에 재사용되므로, 남겨 두면 앞선 대화가
+ * 자기가 시키지도 않은 일을 자기 현황 줄에 세운다.
+ */
+export function recordSessionParent(pkg: string, slot: string, parent: { slot: string; instance: string } | null): void {
+  const dir = sessionDir(pkg, slot);
+  const at = (name: string): string => path.join(dir, name);
+  if (!parent) {
+    fs.rmSync(at("parent"), { force: true });
+    fs.rmSync(at("parent-instance"), { force: true });
+    return;
+  }
+  fs.writeFileSync(at("parent"), parent.slot);
+  fs.writeFileSync(at("parent-instance"), parent.instance);
+}
+
 export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
   const meta = (dir: string, name: string): string => {
     try {
@@ -768,6 +800,7 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
         const rowAgent = meta(dir, "agent");
         const rowParam = meta(dir, "param");
         const rowParent = meta(dir, "parent");
+        const rowParentInstance = meta(dir, "parent-instance");
         const origin = slotOrigin(e.name);
         // 목록은 디스크를 읽고 생존은 메모리에 있다 — 행을 세우는 이 자리가 둘이 만나는
         // 유일한 지점이다. 상주가 없으면 축이 통째로 빠진다(없음 = 안 돌고 있음)
@@ -777,6 +810,8 @@ export function localClientWireIO(getLedger: () => Ledger): ClientWireIO {
           ...(rowAgent ? { agent: rowAgent } : {}),
           ...(rowParam ? { param: rowParam } : {}),
           ...(rowParent ? { parent: rowParent } : {}),
+          // 인스턴스 축은 슬롯이 있을 때만 — 슬롯 없는 인스턴스는 가리키는 것이 없다
+          ...(rowParent && rowParentInstance ? { parentInstance: rowParentInstance } : {}),
           ...(origin ? { origin } : {}),
           ...(liveness?.busy ? { busy: true } : {}),
           ...(liveness?.lastEvent ? { lastEvent: liveness.lastEvent } : {}),

@@ -24,8 +24,11 @@ export interface HostBridge {
   /** 결재는 권위 이음새의 단일 문(authority.recordGrant)을 지난다 — 비동기 계약 */
   grant(g: Grant): Promise<unknown>;
   validate(dir: string): unknown;
-  /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다 */
-  dispatch(provider: string, mission: string, payload: string, consumer?: string): Promise<string>;
+  /** consumer = 발신 패키지 — 수신 대화의 위임 마커·라벨에 발신자의 얼굴을 남긴다.
+   *  consumerSlot = **발신 대화의 슬롯**(§5.3-26 parent). 수신 세션에 부모 좌표로 적혀서,
+   *  다른 패키지에서 도는 미션이 "누구의 부탁인지"를 재기동 뒤에도 말한다. 세션 밖에서
+   *  시작한 위임(동사의 ctx.dispatch)은 부모가 없다 — 그때는 미지정이 정답이다. */
+  dispatch(provider: string, mission: string, payload: string, consumer?: string, consumerSlot?: string | null): Promise<string>;
   // 수정 레이어 (draft.ts). 설치본은 실행 중이라 직접 만지지 않는다 — 편집은 draft, 반영은 publish
   /** manifest = 새 스캐폴드의 매니페스트 객체 — 기판이 relay.yaml 로 적는다(동사는 yaml 을 모른다) */
   draftOpen(name: string, opts?: { files?: Record<string, string>; seedHarness?: { source: string; entry: string }[]; manifest?: Record<string, unknown> }): unknown;
@@ -423,6 +426,8 @@ export function makeCtx(
     },
     dispatch: (provider, mission, payload) => {
       if (!hostBridge) throw new Error("dispatch 불가: host 브리지 없음");
+      // 발신 슬롯을 안 싣는다 — 동사는 대화 밖에서 돈다(caller 는 principal·agent 축뿐이다).
+      // 부모 없음은 미상이 아니라 사실이라, 수신 세션의 낡은 부모는 이 자리에서 지워진다
       return hostBridge.dispatch(provider, mission, payload, pkg);
     },
     host: rec.ring === 0 && hostBridge ? capHost(hostBridge, m.host_methods) : undefined,

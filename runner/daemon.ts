@@ -12,7 +12,7 @@ import { ensureLocalCert } from "./tls.ts";
 import { credKey } from "./vault.ts";
 import { loadManifest, landingAgentName, listScripts, agentScriptScope, shortName, outwardService, type Manifest, type ServiceDecl } from "./supply/manifest.ts";
 import { runSession, retireResident, retireResidents, retireAllResidents, setEnvelopeTap, setTurnTap, isSessionBusy, recoverDanglingTurns, listSessionSlots, enableResidents, resumeRemotes, stopAllRemotes, localSessionIO } from "./runtime/harness.ts";
-import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, type ClientWireIO } from "./runtime/wire.ts";
+import { handleClientWire, tapSessionEvent, adoptSessionTurn, releaseSessionTurn, recordSessionParent, type ClientWireIO } from "./runtime/wire.ts";
 import { runScript, runScriptFrom, scriptMeta, verbLabelsAt, mcpCall, localServiceIO, type HostBridge, type ServiceIO } from "./runtime/scripts.ts";
 // 동사 워커 — 상주(retireResidents)와 같은 자리에서 은퇴한다: 뿌리가 바뀌면 옛 코드의 워커는 조용해진 뒤 내려간다
 import { retireScriptWorkers, retireAllScriptWorkers } from "./runtime/script-pool.ts";
@@ -282,7 +282,7 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       const notes = [...(await startServices(l, name, r.path, r.manifest)), ...startChannels(l, name, r.path, r.manifest)];
       return { name: r.name, version: r.version, path: r.path, services: notes };
     },
-    dispatch: async (providerRef, mission, payload, consumer) => {
+    dispatch: async (providerRef, mission, payload, consumer, consumerSlot) => {
       const ledger = getLedger();
       const provider = resolveProvider(ledger, providerRef);
       if (!provider) throw new Error(`provider 미설치: ${providerRef}`);
@@ -295,6 +295,13 @@ export function makeHostBridge(getLedger: () => Ledger, getTicker: () => Ticker 
       // 위임 대화도 세션 목록의 시민이다 — 이름이 없으면 마커 원문이 라벨 행세를 해서 흉하다
       const labelFile = path.join(sessionDir(provider, slot), "label");
       if (!fs.existsSync(labelFile)) fs.writeFileSync(labelFile, `⇄ ${consumer ?? "외부"} → ${mission}`);
+      // 부모 좌표(§5.3-26) — 이 미션이 **어느 대화의 부탁인지**. 서브에이전트 위임과 달리
+      // 부모가 다른 패키지에 살아서 슬롯만으로는 못 가리킨다: 인스턴스를 함께 적는다.
+      // 매번 덮는다(존재 시 생략이 아니다) — 같은 슬롯은 재위임에 재사용되므로 마지막으로
+      // 시킨 대화가 곧 📬 를 받을 대화이고(deliverOnSettle 의 회신 주소와 같은 값이어야 한다),
+      // 발신 슬롯 미상이면 지운다: 낡은 부모를 남기면 앞선 대화가 시키지도 않은 일을 자기
+      // 현황 줄에 세운다
+      recordSessionParent(provider, slot, consumerSlot && consumer ? { slot: consumerSlot, instance: consumer } : null);
       const r = await runSession({ ledger, pkg: provider, authority, prompt, slot });
       return r.reply;
     },

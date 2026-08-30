@@ -21,6 +21,8 @@ import { serviceAuthHeader } from "./oauth.ts";
 import { runScript, runScriptFrom, scriptMeta, callEdgeTool, mcpList, type HostBridge } from "./scripts.ts";
 import { mcpDispatch, type McpIO, type McpToolInfo } from "./mcp.ts";
 import { runSession, isSessionBusy, retireResident, localSessionIO, sessionTreeOf, INTERRUPTED_MARK, type SessionIO } from "./harness.ts";
+// 부모 좌표는 읽는 쪽(listSessions)과 같은 문을 지난다 — 파일 이름이 갈리면 축이 조용히 어긋난다
+import { recordSessionParent } from "./wire.ts";
 import { a2aMissionMarker, a2aMissionSlot, a2aToolName, edgeToolName, parseA2aToolName, parseEdgeToolName, sanitizeToolSegment, PARAM_SLUGS_RE, SUB_SLOT_PREFIX } from "../protocol.ts";
 import { json } from "../http.ts";
 import type { Authority } from "../authority-contract.ts";
@@ -336,7 +338,10 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         if (isSessionBusy(a2a.provider, slot)) {
           throw new Error(`이미 진행 중인 위임: ⇄ ${a2a.provider} · ${mission} — 완료가 이 대화로 📬 배달된다. 기다렸다가 필요하면 그때 재위임하라.`);
         }
-        const run = host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg);
+        // 발신 슬롯을 함께 넘긴다 — 수신 세션이 부모 좌표(§5.3-26)를 적는 근거이자, 아래
+        // deliverOnSettle 이 📬 를 보낼 주소와 **같은 값**이어야 한다: 화면이 "이 대화가 맡긴
+        // 일"이라 말한 것과 답이 실제로 앉는 자리가 갈리면 둘 중 하나는 거짓말이 된다
+        const run = host.dispatch(a2a.provider, mission, String(args.payload ?? JSON.stringify(args)), pkg, callerSlot);
         const missionDeadlineS = dispatchDeadlineS();
         const done = await raceDeadline(run, missionDeadlineS);
         if (done) return done.reply;
@@ -402,7 +407,7 @@ function localMcpIO(ledger: Ledger, authority: Authority, host: HostBridge, pkg:
         // deliverOnSettle 의 클로저에만 살아서 데몬과 함께 죽었다. 그러면 다시 뜬 화면은
         // 진행 중인 위임을 보고도 "누가 시킨 일인지" 를 말하지 못한다 — 목록이 위임을
         // 부모 대화 아래 세우려면 재기동을 견디는 자리에 있어야 한다
-        if (callerSlot) fs.writeFileSync(path.join(sdir, "parent"), callerSlot);
+        if (callerSlot) recordSessionParent(pkg, slot, { slot: callerSlot, instance: pkg });
         // 마커는 화면 계약이다 — 위젯 SubAgentDispatchCard(SUBAGENT_RE)가 이 머리를 위임
         // 카드로 렌더한다(org turn.service dispatch 와 같은 형식)
         const prompt = `[서브에이전트 · ${pkg} · ${sub}]\n${instruction}`;

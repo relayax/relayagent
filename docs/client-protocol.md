@@ -285,7 +285,7 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
 
 21. **[현행 v1]** `session.list` = `GET {base}/sessions`
     → `{sessions: [{session, label, updated, archived, pinned, agent?, param?, origin?,
-    busy?, lastEvent?, lastAlive?, parent?}]}`.
+    busy?, lastEvent?, lastAlive?, parent?, parentInstance?}]}`.
     `agent`·`param`(additive, 2026-08-20) = 이 대화의 정체성 — 위임(agent_dispatch)이 만든
     세션처럼 착지 에이전트가 아닌 대화가 밝힌다. `param` 은 org param 축의 쌍둥이("빌더인데
     무엇의 빌더인가") — slug 목록(`[a-z0-9-]` csv, 쉼표 무공백)일 때만 목록으로 해석하고,
@@ -311,9 +311,15 @@ loopback 기판에도 동일 적용된다 — 예산은 서버가 아니라 브�
     도는 중에도 는다. `lastAlive` = 봉투 박동(harness `alive`)의 마지막 시각 — `lastEvent` 는
     오래됐는데 `lastAlive` 가 방금이면 "오래 걸리는 중"이고, 둘 다 오래됐으면 "멈춤"이다.
     화면은 그 둘을 다르게 말해야 한다: 스피너 하나로 접으면 동결이 진행으로 보인다.
-    `parent` = 이 대화를 판 부모 대화의 슬롯(**같은 인스턴스 안**). `origin:"mission"` 에는
-    없다 — 부모가 이 목록 밖이라 슬롯 하나로 못 가리킨다. 상주 없는 대화에는 네 축이 통째로
-    빠진다(없음 = 안 돌고 있음).
+    `parent` = 이 대화를 판 부모 대화의 슬롯. `parentInstance`(additive, 2026-08-30) = 그
+    슬롯이 사는 인스턴스 — **없으면 이 행과 같은 인스턴스다**(서브에이전트 위임은 늘 같은
+    자리에 서므로 종전 행은 그대로 읽힌다). a2a 미션(`origin:"mission"`)의 부모는 다른
+    인스턴스의 대화라 슬롯 하나로는 못 가리켰고, 그래서 종전에는 이 형에 `parent` 를 아예 안
+    실었다 — 다른 앱에 맡긴 일이 30분을 도는 동안 발신 대화에는 그것을 말할 자리가 없었다
+    (실측 2026-08-30: 조사 미션 둘이 도는데 화면은 조용했다). 좌표를 하나 더 주면 같은 짝지음이
+    인스턴스를 건너 그대로 선다: 클라이언트는 `instances.list`(§5.6-32) × `session.list` 로
+    훑고, `parent` 가 내 슬롯이고 `parentInstance ?? 그 행이 온 인스턴스` 가 내 인스턴스인
+    행만 내가 판 위임이다. 상주 없는 대화에는 생존 축이 통째로 빠진다(없음 = 안 돌고 있음).
     정렬: 고정 우선, 그 안에서 최근순(runner/runtime/wire.ts:459 현행 유지). 라벨 우선순위
     (사용자 label > auto-label > 첫 발화, client-wire.ts:437-449)는 기판 내부 규칙이다 —
     클라이언트는 `label` 을 그대로 그린다.
