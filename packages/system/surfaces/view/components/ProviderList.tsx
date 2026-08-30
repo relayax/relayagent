@@ -12,21 +12,24 @@
  *  · oauth  — 도구 자신의 로그인. 기판은 그 대화를 중계할 뿐이다(HarnessLogin).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import HarnessLogin from "@/components/HarnessLogin";
-import { connectProvider, disconnectProvider, type ProviderStatusView } from "@/lib/api";
+import { connectProvider, disconnectProvider, probeProviders, type ProviderStatusView } from "@/lib/api";
 
 export default function ProviderList({
   providers,
+  /** 자격이 바뀔 때마다 올려 주면 준비 상태를 다시 묻는다 */
+  reloadKey,
   /** oauth 로그인을 발화할 패키지 — 로그인 동사는 어댑터의 것이고 어댑터는 패키지 좌표로 실행된다.
    *  provider 는 앱을 안 가리지만 **그 provider 를 대는 어댑터를 가진 앱**이 하나는 있어야 한다 */
   loginPkg,
   onChanged,
 }: {
   providers: ProviderStatusView[];
+  reloadKey?: number;
   loginPkg: string | null;
   onChanged: () => void;
 }) {
@@ -35,6 +38,20 @@ export default function ProviderList({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [login, setLogin] = useState<ProviderStatusView | null>(null);
+  /** 어댑터가 답한 준비 상태 — 목록이 그려진 뒤 따로 물어 채운다.
+   *  금고만 보고 그리면 oauth 형이 영영 "연결 안 됨" 이다(자격이 도구 소유라 금고가 비어 있다) */
+  const [probe, setProbe] = useState<Record<string, { ready: boolean; reason: string; account?: any }> | null>(null);
+  const [probing, setProbing] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    setProbing(true);
+    probeProviders()
+      .then((r) => { if (live) setProbe(r); })
+      .catch(() => { if (live) setProbe({}); })
+      .finally(() => { if (live) setProbing(false); });
+    return () => { live = false; };
+  }, [providers.length, reloadKey]);
 
   if (!providers.length) {
     return (
@@ -91,9 +108,19 @@ export default function ProviderList({
                     {" · "}
                     {p.harnesses.join(", ")}
                     {p.origin === "bundled" ? " · 앱이 데려온 하네스" : ""}
+                    {(() => {
+                      const a = probe?.[p.provider]?.account as { email?: string; plan?: string } | null | undefined;
+                      return a?.email ? ` · ${a.email}${a.plan ? ` (${a.plan})` : ""}` : "";
+                    })()}
                   </span>
                 </span>
-                <Badge variant={p.hasCred ? "secondary" : "outline"}>{p.hasCred ? "연결됨" : "연결 안 됨"}</Badge>
+                {(() => {
+                  const st = probe?.[p.provider];
+                  // 아직 안 물어봤으면 "안 됨" 이라고 하지 않는다 — 모르는 것과 안 되는 것은 다르다
+                  if (!st) return <Badge variant="outline">{probing ? "확인 중…" : "확인 못 함"}</Badge>;
+                  if (st.ready) return <Badge variant="secondary">연결됨</Badge>;
+                  return <Badge variant="outline">{st.reason === "no-tool" ? "도구 없음" : "로그인 필요"}</Badge>;
+                })()}
               </div>
 
               {expanded ? (
@@ -131,6 +158,7 @@ export default function ProviderList({
 
                   {p.hasCred ? (
                     <div>
+                      {/* 금고에 값이 있을 때만 — oauth 형은 자격이 도구 소유라 기판이 지울 것이 없다 */}
                       <Button variant="ghost" size="sm" disabled={busy} onClick={() => void forget(p)}>연결 해제</Button>
                     </div>
                   ) : null}

@@ -237,6 +237,12 @@ export function loginStop(pkg: string): Promise<{ ok: boolean }> {
   return post(`/pkg/${encodeURIComponent(pkg)}/harness/login/stop`, {});
 }
 
+/** 제공사의 실제 준비 상태 — 어댑터를 띄워 묻는다. 목록(/connections)은 공짜이고 이쪽이 비싸서
+ *  화면이 먼저 그린 뒤 따로 부른다 */
+export function probeProviders(): Promise<Record<string, { ready: boolean; reason: "ok" | "no-tool" | "no-auth"; account?: unknown }>> {
+  return getJson("/providers/probe");
+}
+
 /** 제공사 자격 저장 — 앱이 아니라 provider 로 주소를 잡는다(자격이 실제로 앉는 자리) */
 export function connectProvider(provider: string, token: string): Promise<{ ok: boolean; provider: string }> {
   return post(`/provider/${encodeURIComponent(provider)}/connect`, { token });
@@ -365,8 +371,15 @@ export interface ProviderStatusView {
   harnesses: string[];
   /** oauth = 도구 자신의 로그인(구독) · token = 금고에 키 · null = 선언 없음 */
   kind: "oauth" | "token" | null;
-  /** 자격이 앉아 있는가. **값은 실리지 않는다** */
+  /** 기판 금고에 자격이 앉아 있는가. **"쓸 수 있나"의 답이 아니다** — oauth 형은 자격을
+   *  도구가 쥐므로 금고는 영영 비어 있다. 준비 여부는 ready 가 답한다 */
   hasCred: boolean;
+  /** 실제로 쓸 수 있나 — 어댑터가 답한다. null = 아직 안 물어봤다(확인 중) */
+  ready: boolean | null;
+  /** 미준비의 축 — 화면이 처방을 고른다 */
+  reason: "ok" | "no-tool" | "no-auth" | null;
+  /** 도구가 말한 계정 */
+  account?: { email?: string | null; plan?: string | null; method?: string | null } | null;
   help: { url?: string; note?: string } | null;
   icon: string | null;
   origin: "pool" | "bundled";

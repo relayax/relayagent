@@ -27,7 +27,7 @@ import { saveLedger, consoleInstall } from "./supply/ledger.ts";
 import { serveView, serveComponents, serveDraftView, serveDraftComponents, serveWorkspaceFile } from "./runtime/view.ts";
 import { shellNav, storeLatest, homeDoc, SHELL_JS, consoleHref } from "./runtime/shell.ts";
 import { loadSuites, upsertSuite, removeSuite, packSuite } from "./supply/suites.ts";
-import { serviceStatuses, channelStatuses, connectionsOverview } from "./runtime/connections.ts";
+import { serviceStatuses, channelStatuses, connectionsOverview, probeProviders } from "./runtime/connections.ts";
 import { assembleCredential, assembleFields, forgetAccount, judgeAccount, rememberAccount } from "./runtime/credential.ts";
 import { logLine } from "./supply/ledger.ts";
 import { dirCall, resolveDirService } from "./runtime/dirs.ts";
@@ -769,6 +769,13 @@ export function createApi(
         // 자산 문은 밖에서 오는 경로라 판정을 문 안에서 한 번 더 한다
         if (!poolNames().includes(name) || file.includes("..")) return void json(res, 404, { error: "없는 자산" });
         return void serveWorkspaceFile(path.join(POOL_DIR, name), file, req, res);
+      }
+
+      // 제공사의 실제 준비 상태 — 어댑터에게 묻는다(프로세스를 띄운다). 목록과 나눠 둔 이유는
+      // 비용이다: /connections 는 공짜로 서고 화면이 그린 뒤 이 문으로 행을 채운다.
+      // oauth 형은 자격이 도구 소유라 금고를 봐선 영영 알 수 없다 — 이 문이 유일한 답이다
+      if (p === "/providers/probe" && req.method === "GET") {
+        return void json(res, 200, await probeProviders(getLedger(), (pkg) => probeHarness(getLedger(), pkg)));
       }
 
       // ── AI 제공사 연결 — **패키지가 아니라 provider 로 주소를 잡는다** ──────

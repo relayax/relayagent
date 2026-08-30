@@ -221,8 +221,20 @@ export interface ProviderStatus {
   harnesses: string[];
   /** 자격형 — oauth = 도구 자신의 로그인(구독) · token = 금고에 키 · null = 선언 없음 */
   kind: "oauth" | "token" | null;
-  /** 금고에 자격이 앉아 있는가. **값은 절대 싣지 않는다** */
+  /** 기판 금고에 자격이 앉아 있는가. **값은 절대 싣지 않는다.**
+   *
+   *  **이것은 "쓸 수 있나"의 답이 아니다.** oauth 형(anthropic·openai)은 자격을 도구가 쥐고
+   *  자기 자리(Keychain·홈)에 두므로 기판 금고는 영영 비어 있다 — 그게 설계다. 그러니 이 값만
+   *  보고 "연결 안 됨"이라 그리면 claude 가 멀쩡히 도는데 화면은 안 됐다고 말한다(실사고
+   *  2026-08-30). 준비 여부의 정본은 아래 ready 이고, 그 답은 어댑터만 안다. */
   hasCred: boolean;
+  /** 실제로 쓸 수 있나 — **어댑터가 답한다**(setup 종료코드). null = 아직 안 물어봤다.
+   *  목록은 어댑터를 띄우지 않고 공짜로 서고, 준비 상태는 화면이 따로 물어 채운다 */
+  ready: boolean | null;
+  /** 미준비의 축 — 화면이 처방을 고르는 기준. ready 가 null 이면 이것도 null */
+  reason: "ok" | "no-tool" | "no-auth" | null;
+  /** 도구가 말한 계정 — 로그인한 사람이 누구인지. 준비 조회에서만 채워진다 */
+  account: unknown;
   /** 자격을 어디서 얻는지 — 화면이 링크와 안내로 보여준다 */
   help: { url?: string; note?: string } | null;
   /** provider 아이콘 주소 — 풀 어댑터면 /harness/<name>/asset/<file> */
@@ -255,6 +267,9 @@ export async function providerStatuses(ledger: Ledger, credential: Credential): 
       harnesses: [v.name],
       kind: llm.auth?.kind === "oauth" || llm.auth?.kind === "token" ? llm.auth.kind : null,
       hasCred: false,
+      ready: null,
+      reason: null,
+      account: null,
       help: llm.auth?.help ?? null,
       icon: llm.icon && assetBase ? `${assetBase}/${llm.icon}` : null,
       origin,
@@ -280,5 +295,33 @@ export async function providerStatuses(ledger: Ledger, credential: Credential): 
 
   const out = [...seen.values()].sort((a, b) => a.provider.localeCompare(b.provider));
   for (const p of out) p.hasCred = (await credential(`llm/${p.provider}`)) != null;
+  return out;
+}
+
+/**
+ * 제공사의 **실제** 준비 상태 — 어댑터에게 묻는다. 목록(providerStatuses)과 나눠 둔 이유는
+ * 비용이다: 이쪽은 어댑터마다 프로세스를 띄우므로 화면을 여는 행위가 그 비용을 내면 안 된다.
+ * 화면은 목록을 먼저 그리고(공짜) 이 답으로 행을 채운다.
+ *
+ * 판정은 하네스 축의 것을 그대로 쓴다(probeHarness) — 같은 사실을 두 곳에서 판정하면 갈린다.
+ * 콘솔 패키지로 묻는 이유: 풀이 공유라 그 패키지의 후보가 곧 이 기판의 어댑터 전부다.
+ */
+export async function probeProviders(
+  ledger: Ledger,
+  probe: (pkg: string) => Promise<{ provider: string | null; ready: boolean; reason: "ok" | "no-tool" | "no-auth"; account: unknown }[]>,
+): Promise<Record<string, { ready: boolean; reason: "ok" | "no-tool" | "no-auth"; account: unknown }>> {
+  const out: Record<string, { ready: boolean; reason: "ok" | "no-tool" | "no-auth"; account: unknown }> = {};
+  let rows: { provider: string | null; ready: boolean; reason: "ok" | "no-tool" | "no-auth"; account: unknown }[];
+  try {
+    rows = await probe(consoleInstall(ledger));
+  } catch {
+    return out; // 콘솔 미설치 — 물어볼 어댑터가 없다. 화면은 "확인 못 함" 으로 남는다
+  }
+  for (const r of rows) {
+    if (!r.provider) continue;
+    // 한 provider 를 여러 어댑터가 댈 수 있다 — 하나라도 준비됐으면 그 provider 는 쓸 수 있다
+    const cur = out[r.provider];
+    if (!cur || (!cur.ready && r.ready)) out[r.provider] = { ready: r.ready, reason: r.reason, account: r.account };
+  }
   return out;
 }

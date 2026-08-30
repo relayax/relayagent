@@ -147,3 +147,27 @@ test("provider 를 말하지 않는 어댑터는 목록에 서지 않는다 — 
   putPool("mystery", {});
   assert.deepEqual(await providerStatuses({ packages: {} } as never, async () => null), []);
 });
+
+test("oauth 형은 금고가 비어 있어도 '연결 안 됨'이 아니다 — 자격이 도구 소유라 금고는 영영 빈다", async () => {
+  clearPool();
+  putPool("claude-code", { llm: { provider: "anthropic", auth: { kind: "oauth" } } });
+  const ps = await providerStatuses({ packages: {} } as never, async () => null);
+  const a = ps.find((p) => p.provider === "anthropic")!;
+  assert.equal(a.hasCred, false, "금고는 비어 있다 — 그것이 설계다");
+  // 화면이 그리는 것은 ready 다. 목록만으로는 **모른다** — null 이지 false 가 아니다.
+  // false 로 두면 claude 가 멀쩡히 도는데 화면이 "연결 안 됨" 이라 말한다(실사고 2026-08-30)
+  assert.equal(a.ready, null, "안 물어봤으면 모르는 것이지 안 되는 것이 아니다");
+  assert.equal(a.reason, null);
+});
+
+test("준비 상태는 어댑터의 답을 provider 축으로 접는다 — 한 쪽만 준비돼도 그 provider 는 쓸 수 있다", async () => {
+  const { probeProviders } = await import("./connections.ts");
+  const got = await probeProviders({ packages: { system: { path: "/x" } } } as never, async () => [
+    { provider: "anthropic", ready: false, reason: "no-auth" as const, account: null },
+    { provider: "anthropic", ready: true, reason: "ok" as const, account: { email: "a@b.c" } },
+    { provider: null, ready: true, reason: "ok" as const, account: null },
+  ]);
+  assert.equal(got.anthropic.ready, true);
+  assert.deepEqual(got.anthropic.account, { email: "a@b.c" });
+  assert.equal(Object.keys(got).length, 1, "provider 를 말하지 않는 어댑터는 접히지 않는다");
+});

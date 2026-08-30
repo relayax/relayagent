@@ -38,6 +38,7 @@ function Connections() {
   const [open, setOpen] = useState<string | null>(focusPkg && focusSvc ? `${focusPkg}/${focusSvc}` : null);
   const [note, setNote] = useState<Record<string, string>>({});
   const [chanDlg, setChanDlg] = useState<Pkg | null>(null);
+  const [reloads, setReloads] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +58,9 @@ function Connections() {
 
   // 자격이 바뀌면 이 화면도, 사이드바 배지도 다시 읽는다(relay:nav-refresh 는 셸 스크립트가 듣는다)
   const changed = useCallback(() => {
+    // 자격이 바뀌면 목록만이 아니라 **준비 상태**도 다시 물어야 한다 — 로그인 직후 화면이
+    // "로그인 필요" 로 남아 있으면 사용자는 로그인이 안 된 줄 안다
+    setReloads((n) => n + 1);
     void load();
     try { window.dispatchEvent(new CustomEvent("relay:nav-refresh")); } catch { /* 무시 */ }
   }, [load]);
@@ -151,7 +155,7 @@ function Connections() {
             </div>
           ) : null}
 
-          {ov ? <ProviderList providers={ov.providers} loginPkg={ov.consolePkg || null} onChanged={changed} /> : null}
+          {ov ? <ProviderList providers={ov.providers} reloadKey={reloads} loginPkg={ov.consolePkg || null} onChanged={changed} /> : null}
 
           <Section title="바깥 서비스 — 연결 필요" hint="없으면 그 앱의 주 기능이 서지 않는 자격입니다. 사이드바 배지가 이 수를 셉니다." items={rows.need} />
           <Section title="바깥 서비스 — 선택" hint="없어도 앱은 돕니다. 넣으면 그 기능이 켜집니다 — 무엇이 켜지는지는 각 줄의 안내가 말합니다." items={rows.optional} />
